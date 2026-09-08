@@ -1,0 +1,140 @@
+package main
+
+import (
+	"context"
+	"flag"
+	"log"
+	"morphcache/internal/config"
+	"morphcache/internal/engine"
+	"morphcache/internal/persistence"
+	"morphcache/internal/server"
+	"net/http"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
+)
+
+func main() {
+	path := ""
+	for i, arg := range os.Args[1:] {
+		arg = strings.TrimPrefix(arg, "-")
+		arg = "-" + strings.TrimPrefix(arg, "-")
+		if strings.HasPrefix(arg, "-config=") {
+			path = strings.TrimPrefix(arg, "-config=")
+		}
+		if (arg == "-config" || arg == "--config") && i+2 < len(os.Args) {
+			path = os.Args[i+2]
+		}
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		log.Fatalf("configuration: %v", err)
+	}
+	if err = cfg.ApplyEnv(); err != nil {
+		log.Fatal(err)
+	}
+	flag.StringVar(&path, "config", path, "strict JSON configuration file")
+	flag.StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, "TCP listen address")
+	flag.IntVar(&cfg.Shards, "shards", cfg.Shards, "power-of-two shard count")
+	flag.IntVar(&cfg.MaxConnections, "max-connections", cfg.MaxConnections, "maximum simultaneous clients")
+	flag.Int64Var(&cfg.ReadTimeoutMS, "read-timeout-ms", cfg.ReadTimeoutMS, "request deadline in milliseconds")
+	flag.Int64Var(&cfg.WriteTimeoutMS, "write-timeout-ms", cfg.WriteTimeoutMS, "response deadline in milliseconds")
+	flag.IntVar(&cfg.MaxRequestBytes, "max-request-bytes", cfg.MaxRequestBytes, "maximum command bytes")
+	flag.IntVar(&cfg.MaxBulkBytes, "max-bulk-bytes", cfg.MaxBulkBytes, "maximum bulk bytes")
+	flag.IntVar(&cfg.MaxArguments, "max-arguments", cfg.MaxArguments, "maximum command arguments")
+	flag.Int64Var(&cfg.CleanupIntervalMS, "cleanup-interval-ms", cfg.CleanupIntervalMS, "expiration cleanup interval")
+	flag.Uint64Var(&cfg.MaxMemory, "max-memory", cfg.MaxMemory, "accounted memory budget in bytes, zero unlimited")
+	flag.BoolVar(&cfg.Encoding, "encoding", cfg.Encoding, "enable verified cheap codecs")
+	flag.StringVar(&cfg.AOFPath, "aof", cfg.AOFPath, "append-only file path (optional)")
+	flag.StringVar(&cfg.SnapshotPath, "snapshot", cfg.SnapshotPath, "snapshot file path (optional)")
+	flag.StringVar(&cfg.Fsync, "fsync", cfg.Fsync, "always, everysec, or no")
+	flag.BoolVar(&cfg.JSONShape, "json-shape", cfg.JSONShape, "enable background exact JSON template sharing")
+	flag.BoolVar(&cfg.Compression, "compression", cfg.Compression, "enable background LZ4/Zstandard")
+	flag.StringVar(&cfg.MetricsAddr, "metrics-listen", cfg.MetricsAddr, "separate loopback metrics address (optional)")
+	flag.StringVar(&cfg.EvictionPolicy, "eviction-policy", cfg.EvictionPolicy, "noeviction, allkeys-lru, or volatile-lru")
+	flag.StringVar(&cfg.AdminAddr, "admin-listen", cfg.AdminAddr, "separate loopback RESP admin address")
+	flag.Parse()
+	if flag.NArg() != 0 {
+		log.Fatal("unexpected positional arguments")
+	}
+	if err = cfg.Validate(); err != nil {
+		log.Fatal(err)
+	}
+	store, err := engine.NewWithOptions(engine.Options{Shards: cfg.Shards, MaxMemory: cfg.MaxMemory, Encoding: cfg.Encoding, ShapeEncoding: cfg.JSONShape, Compression: cfg.Compression})
+	if err != nil {
+		log.Fatal(err)
+	}
+	var journal *persistence.Log
+	if cfg.AOFPath != "" {
+		journal, err = persistence.Open(cfg.AOFPath, cfg.Fsync)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	if cfg.SnapshotPath != "" {
+		if err = persistence.ReplaySnapshot(cfg.SnapshotPath, func(records []persistence.Record) error { return store.Restore(records, false) }); err != nil {
+			log.Fatalf("snapshot recovery: %v", err)
+		}
+	}
+	if cfg.AOFPath != "" {
+		if err = persistence.Replay(cfg.AOFPath, func(records []persistence.Record) error { return store.Restore(records, false) }); err != nil {
+			log.Fatalf("AOF recovery: %v", err)
+		}
+	}
+	var j server.Journal
+	if journal != nil {
+		j = journal
+	}
+	listener, err := server.ListenWithJournal(cfg, store, j)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if cfg.AdminAddr != "" {
+		if err = listener.OpenAdmin(cfg.AdminAddr); err != nil {
+			listener.Close()
+			log.Fatal(err)
+		}
+	}
+	var metrics *http.Server
+	if cfg.MetricsAddr != "" {
+		metrics, err = listener.Metrics(cfg.MetricsAddr)
+		if err != nil {
+			listener.Close()
+			log.Fatal(err)
+		}
+	}
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
+	ticker := time.NewTicker(time.Duration(cfg.CleanupIntervalMS) * time.Millisecond)
+	defer ticker.Stop()
+	log.Printf("event=started listen=%s shards=%d", cfg.ListenAddr, cfg.Shards)
+	for {
+		select {
+		case <-signals:
+			listener.Close()
+			if metrics != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				metrics.Shutdown(ctx)
+				cancel()
+			}
+			if journal != nil {
+				if err = journal.Close(); err != nil {
+					log.Printf("event=persistence_close_failed error=%q", err)
+				}
+			}
+			if cfg.SnapshotPath != "" {
+				if err = persistence.Snapshot(cfg.SnapshotPath, store.Export(nil)); err != nil {
+					log.Printf("event=snapshot_failed error=%q", err)
+				}
+			}
+			log.Print("event=stopped")
+			return
+		case <-ticker.C:
+			store.CleanupExpiredLimit(1024)
+			listener.OptimizeSample()
+		}
+	}
+}

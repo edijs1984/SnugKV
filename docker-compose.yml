@@ -1,0 +1,6 @@
+services:
+  morphcache:
+    build: .
+    ports:
+      - "127.0.0.1:6380:6380"
+    stop_grace_period: 10s

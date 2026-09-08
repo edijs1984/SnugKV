@@ -1,0 +1,30 @@
+# Go build and test output
+/bin/
+*.test
+*.out
+coverage.out
+coverage.html
+
+# Local binaries built from the command packages
+/morphcache
+/morphbench
+/morphsoak
+
+# Runtime data and local configuration
+/data/
+*.aof
+*.aof.lock
+*.snapshot
+*.snapshot.tmp
+*.json.local
+
+# Local tooling and editor files
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*.swo
+
+# Temporary files
+tmp/
+*.tmp

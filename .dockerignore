@@ -1,0 +1,17 @@
+.git
+.gitignore
+.dockerignore
+.github
+.vscode
+.idea
+README.md
+PLAN.md
+PROGRESS.md
+MORPHCACHE_AGENT_SPEC.md
+docs
+benchmarks
+**/*_test.go
+tmp
+data
+*.aof
+*.snapshot

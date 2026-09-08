@@ -1,0 +1,158 @@
+package engine
+
+import (
+	"fmt"
+	"testing"
+	"time"
+)
+
+func auditMemory(t *testing.T, s *Store) {
+	t.Helper()
+	unlock := s.lockAll()
+	defer unlock()
+	var entries uint64
+	index := uint64(len(s.shards)) * 512
+	var arenaBytes uint64
+	schemaBytes := uint64(0)
+	if s.shards[0].shapes != nil {
+		schemaBytes = uint64(len(s.shards) * (2*256 + 2048 + 1024))
+	}
+	for i := range s.shards {
+		sh := &s.shards[i]
+		index += sh.data.CapacityBytes()
+		arenaBytes += sh.arena.MemoryBytes()
+		for k, e := range sh.data.All() {
+			entries += entryCharge(k, e)
+		}
+	}
+	m := s.Memory()
+	if m.AccountedBytes != index+entries+arenaBytes+schemaBytes || m.ArenaBytes != arenaBytes || m.SchemaBytes != schemaBytes || m.IndexReservedBytes != index || m.EntryBytes != entries {
+		t.Fatalf("audit %+v want index=%d entries=%d", m, index, entries)
+	}
+}
+func TestMemoryLimitAtomicity(t *testing.T) {
+	s, err := NewWithOptions(Options{Shards: 1, MaxMemory: 100000, Encoding: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Set("k", []byte("123456789"), 10000); err != nil {
+		t.Fatal(err)
+	}
+	before := s.Memory()
+	big := make([]byte, 200000)
+	if err = s.Set("k", big, 0); err != ErrOOM {
+		t.Fatal(err)
+	}
+	if _, _, err = s.GetSet("k", big); err != ErrOOM {
+		t.Fatal(err)
+	}
+	if err = s.MSet([]string{"k", "new"}, [][]byte{[]byte("changed"), big}); err != ErrOOM {
+		t.Fatal(err)
+	}
+	if got, _ := s.Get("k"); string(got) != "123456789" || s.TTL("k", true) < 0 {
+		t.Fatal("failed write mutated value or TTL")
+	}
+	if s.Memory() != before {
+		t.Fatal("failed writes changed accounting")
+	}
+	auditMemory(t, s)
+	s.Delete("k")
+	auditMemory(t, s)
+	now := time.Unix(100, 0)
+	s.now = func() time.Time { return now }
+	s.Set("k", []byte("value"), 1)
+	now = now.Add(time.Millisecond)
+	s.CleanupExpired()
+	auditMemory(t, s)
+}
+func TestEncodedEngineRoundTrip(t *testing.T) {
+	s, _ := NewWithOptions(Options{Shards: 4, Encoding: true})
+	for _, v := range []string{"123456789", "0042", "550e8400-e29b-41d4-a716-446655440000", "2026-09-07T12:34:56Z", "\x00\xff"} {
+		s.Set("k", []byte(v), 0)
+		got, ok := s.Get("k")
+		if !ok || string(got) != v {
+			t.Fatal("roundtrip")
+		}
+		auditMemory(t, s)
+	}
+	s.Set("counter", []byte("123456789"), 0)
+	s.Incr("counter")
+	if got, _ := s.Get("counter"); string(got) != "123456790" {
+		t.Fatal("encoded increment")
+	}
+	auditMemory(t, s)
+}
+
+func TestExpirationHeapChurn(t *testing.T) {
+	s := New()
+	now := time.Unix(100, 0)
+	s.now = func() time.Time { return now }
+	for i := 0; i < 1000; i++ {
+		s.Set("k", []byte("v"), 100)
+		s.Expire("k", time.Second)
+	}
+	sh := s.shardFor("k")
+	if sh.expiration.Len() != 1 {
+		t.Fatal("TTL heap grew under updates")
+	}
+	s.Persist("k")
+	if sh.expiration.Len() != 0 {
+		t.Fatal("persist retained heap item")
+	}
+	s.Expire("k", time.Second)
+	s.Set("k", []byte("new"), 0)
+	now = now.Add(time.Second)
+	if s.CleanupExpiredLimit(1) != 0 {
+		t.Fatal("stale expiration removed overwrite")
+	}
+	auditMemory(t, s)
+}
+
+func TestArenaBatchAccountingChurn(t *testing.T) {
+	s, _ := NewWithOptions(Options{Shards: 1})
+	keys := []string{"a", "b", "c", "d"}
+	for i := 0; i < 20; i++ {
+		values := [][]byte{make([]byte, 100+i), make([]byte, 40000), make([]byte, 17000), make([]byte, 1000)}
+		if err := s.MSet(keys, values); err != nil {
+			t.Fatal(err)
+		}
+		auditMemory(t, s)
+		got, found := s.MGet(keys)
+		for j := range keys {
+			if !found[j] || len(got[j]) != len(values[j]) {
+				t.Fatal("batch value lost")
+			}
+		}
+		s.DeleteMany(keys)
+		auditMemory(t, s)
+	}
+
+}
+
+func TestCompactionPreservesLiveBytesAndTTL(t *testing.T) {
+	s, _ := NewWithOptions(Options{Shards: 1})
+	now := time.Unix(100, 0)
+	s.now = func() time.Time { return now }
+	for i := 0; i < 20; i++ {
+		s.Set(fmt.Sprint(i), make([]byte, 10000), 60000)
+	}
+	for i := 0; i < 19; i++ {
+		s.Delete(fmt.Sprint(i))
+	}
+	before := s.Memory()
+	if s.Compact(16<<20) != 1 {
+		t.Fatal("compaction skipped")
+	}
+	after := s.Memory()
+	if after.AccountedBytes >= before.AccountedBytes {
+		t.Fatal("no reclaimed capacity")
+	}
+	got, ok := s.Get("19")
+	if !ok || len(got) != 10000 || s.TTL("19", true) != 60000 {
+		t.Fatal("compaction changed live record")
+	}
+	auditMemory(t, s)
+	s.Delete("19")
+	s.Compact(16 << 20)
+	auditMemory(t, s)
+}
