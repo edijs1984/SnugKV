@@ -36,15 +36,15 @@ func (s *TCPServer) Metrics(addr string) (*http.Server, error) {
 		s.mu.Lock()
 		connections := len(s.connections)
 		s.mu.Unlock()
-		fmt.Fprintf(w, "morphcache_active_connections %d\nmorphcache_keys %d\nmorphcache_memory_accounted_bytes %d\nmorphcache_memory_index_reserved_bytes %d\nmorphcache_logical_value_bytes %d\nmorphcache_input_bytes_total %d\nmorphcache_output_bytes_total %d\n", connections, st.Keys, m.AccountedBytes, m.IndexReservedBytes, st.ValueBytes, atomic.LoadUint64(&s.inputBytes), atomic.LoadUint64(&s.outputBytes))
+		fmt.Fprintf(w, "snugkv_active_connections %d\nsnugkv_keys %d\nsnugkv_memory_accounted_bytes %d\nsnugkv_memory_index_reserved_bytes %d\nsnugkv_logical_value_bytes %d\nsnugkv_input_bytes_total %d\nsnugkv_output_bytes_total %d\n", connections, st.Keys, m.AccountedBytes, m.IndexReservedBytes, st.ValueBytes, atomic.LoadUint64(&s.inputBytes), atomic.LoadUint64(&s.outputBytes))
 		details := s.server.store.Inspect()
-		fmt.Fprintf(w, "morphcache_encoded_value_bytes %d\nmorphcache_expired_keys_total %d\nmorphcache_evicted_keys_total %d\nmorphcache_schema_bytes %d\nmorphcache_dictionary_bytes %d\nmorphcache_schema_reserved_bytes %d\nmorphcache_arena_capacity_bytes %d\n", details.EncodedBytes, details.Expired, details.Evicted, details.SchemaBytes, details.DictionaryBytes, m.SchemaBytes, m.ArenaBytes)
+		fmt.Fprintf(w, "snugkv_encoded_value_bytes %d\nsnugkv_expired_keys_total %d\nsnugkv_evicted_keys_total %d\nsnugkv_schema_bytes %d\nsnugkv_dictionary_bytes %d\nsnugkv_schema_reserved_bytes %d\nsnugkv_arena_capacity_bytes %d\n", details.EncodedBytes, details.Expired, details.Evicted, details.SchemaBytes, details.DictionaryBytes, m.SchemaBytes, m.ArenaBytes)
 		for name, count := range details.Codecs {
-			fmt.Fprintf(w, "morphcache_codec_keys{codec=%q} %d\n", name, count)
+			fmt.Fprintf(w, "snugkv_codec_keys{codec=%q} %d\n", name, count)
 		}
 		if s.server.optimizer != nil {
 			o := s.server.optimizer.Stats()
-			fmt.Fprintf(w, "morphcache_optimizer_queue_depth %d\nmorphcache_optimizer_rewrites_total %d\nmorphcache_optimizer_stale_total %d\nmorphcache_optimizer_skipped_total %d\n", o.QueueDepth, o.Rewritten, o.Stale, o.Skipped)
+			fmt.Fprintf(w, "snugkv_optimizer_queue_depth %d\nsnugkv_optimizer_rewrites_total %d\nsnugkv_optimizer_stale_total %d\nsnugkv_optimizer_skipped_total %d\n", o.QueueDepth, o.Rewritten, o.Stale, o.Skipped)
 		}
 	})
 	h := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8192}
@@ -68,5 +68,5 @@ func (c countedConn) Write(p []byte) (int, error) {
 	return n, err
 }
 func isAdminCommand(args [][]byte) bool {
-	return len(args) > 0 && strings.HasPrefix(strings.ToUpper(string(args[0])), "MORPH.")
+	return len(args) > 0 && strings.HasPrefix(strings.ToUpper(string(args[0])), "SNUG.")
 }

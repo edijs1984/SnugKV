@@ -7,6 +7,6 @@ check:
 test:
 	go test ./...
 bench:
-	go run ./cmd/morphbench -keys 10000 -dataset sessions
+	go run ./cmd/snugbench -keys 10000 -dataset sessions
 soak:
-	go run -buildvcs=false ./cmd/morphsoak -duration "$${DURATION:-24h}" -keys "$${KEYS:-100000}"
+	go run -buildvcs=false ./cmd/snugsoak -duration "$${DURATION:-24h}" -keys "$${KEYS:-100000}"

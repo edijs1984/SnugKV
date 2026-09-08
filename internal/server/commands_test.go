@@ -3,8 +3,8 @@ package server
 import (
 	"errors"
 	"fmt"
-	"morphcache/internal/engine"
-	"morphcache/internal/persistence"
+	"snugkv/internal/engine"
+	"snugkv/internal/persistence"
 	"strings"
 	"testing"
 )
@@ -52,7 +52,7 @@ func TestCommandSubset(t *testing.T) {
 	if !strings.Contains(execute(t, s, "COMMAND"), "mset") {
 		t.Fatal("command metadata")
 	}
-	if !strings.Contains(execute(t, s, "HELLO", "2"), "morphcache") {
+	if !strings.Contains(execute(t, s, "HELLO", "2"), "snugkv") {
 		t.Fatal("hello")
 	}
 }

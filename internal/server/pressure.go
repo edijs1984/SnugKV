@@ -2,8 +2,8 @@ package server
 
 import (
 	"errors"
-	"morphcache/internal/engine"
-	"morphcache/internal/persistence"
+	"snugkv/internal/engine"
+	"snugkv/internal/persistence"
 	"strings"
 )
 

@@ -1,4 +1,4 @@
-module morphcache
+module snugkv
 
 go 1.27
 

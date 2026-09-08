@@ -3,7 +3,7 @@
 Status: Accepted
 
 Use strict JSON with standard-library parsing, avoiding a dependency for YAML or
-TOML. Defaults are overridden by a configuration file, MORPHCACHE_ environment
+TOML. Defaults are overridden by a configuration file, SNUGKV_ environment
 variables, and flags, in that order. Unknown fields and trailing JSON are errors.
 All settings require restart and validation occurs before listening.
 

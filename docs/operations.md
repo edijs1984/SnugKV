@@ -1,6 +1,6 @@
 # Operations
 
-Configuration precedence is defaults, strict JSON file, `MORPHCACHE_*` environment
+Configuration precedence is defaults, strict JSON file, `SNUGKV_*` environment
 variables, then command-line flags. Unknown JSON fields, trailing data, files over
 1 MiB, invalid shard counts, unsafe admin/metrics binds, and conflicting AOF and
 snapshot paths fail before serving. Settings require restart.
@@ -12,7 +12,7 @@ truncated final AOF frame is discarded; checksum corruption is fatal. A lock fil
 prevents concurrent AOF writers.
 
 Fsync modes are `always`, `everysec`, and `no`. An append failure rolls back the
-client mutation and rejects later writes until restart. `MORPH.AOFREWRITE` writes a
+client mutation and rejects later writes until restart. `SNUG.AOFREWRITE` writes a
 checksummed reset frame and complete logical state to a temporary file, syncs it,
 and atomically replaces the AOF.
 

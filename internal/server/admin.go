@@ -38,7 +38,7 @@ func adminAllowed(args [][]byte) bool {
 		return false
 	}
 	name := strings.ToUpper(string(args[0]))
-	if strings.HasPrefix(name, "MORPH.") {
+	if strings.HasPrefix(name, "SNUG.") {
 		return true
 	}
 	switch name {

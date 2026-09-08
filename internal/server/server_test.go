@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"morphcache/internal/engine"
+	"snugkv/internal/engine"
 )
 
 func TestExecutePingAndEcho(t *testing.T) {

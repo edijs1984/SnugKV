@@ -4,10 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"morphcache/internal/engine"
-	"morphcache/internal/optimizer"
-	"morphcache/internal/persistence"
-	"morphcache/internal/stats"
+	"snugkv/internal/engine"
+	"snugkv/internal/optimizer"
+	"snugkv/internal/persistence"
+	"snugkv/internal/stats"
 	"sort"
 	"strconv"
 	"strings"
@@ -35,9 +35,9 @@ type commandInfo struct {
 }
 
 var commandTable = map[string]commandInfo{
-	"MORPH.AOFREWRITE": {1, 1, 0, 0, 0, false},
-	"MORPH.COMPACT":    {1, 2, 0, 0, 0, false},
-	"MORPH.ENCODING":   {2, 2, 1, 1, 1, false}, "MORPH.MEMORY": {2, 2, 1, 1, 1, false}, "MORPH.STATS": {1, 1, 0, 0, 0, false}, "MORPH.POLICY": {2, 2, 1, 1, 1, false},
+	"SNUG.AOFREWRITE": {1, 1, 0, 0, 0, false},
+	"SNUG.COMPACT":    {1, 2, 0, 0, 0, false},
+	"SNUG.ENCODING":   {2, 2, 1, 1, 1, false}, "SNUG.MEMORY": {2, 2, 1, 1, 1, false}, "SNUG.STATS": {1, 1, 0, 0, 0, false}, "SNUG.POLICY": {2, 2, 1, 1, 1, false},
 	"PING": {1, 2, 0, 0, 0, false}, "ECHO": {2, 2, 0, 0, 0, false}, "QUIT": {1, 1, 0, 0, 0, false},
 	"SELECT": {2, 2, 0, 0, 0, false}, "HELLO": {2, 2, 0, 0, 0, false}, "INFO": {1, 2, 0, 0, 0, false},
 	"DBSIZE": {1, 1, 0, 0, 0, false}, "COMMAND": {1, 1, 0, 0, 0, false},
@@ -66,7 +66,7 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		key = string(args[1])
 	}
 	switch cmd {
-	case "MORPH.AOFREWRITE":
+	case "SNUG.AOFREWRITE":
 		writer, ok := s.journal.(interface {
 			Rewrite([]persistence.Record) error
 		})
@@ -77,7 +77,7 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			return nil, errors.New("ERR AOF rewrite failed")
 		}
 		return []byte("+OK\r\n"), nil
-	case "MORPH.COMPACT":
+	case "SNUG.COMPACT":
 		if s.optimizer == nil {
 			return nil, errors.New("ERR optimizer is disabled")
 		}
@@ -90,20 +90,20 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			return nil, errors.New("ERR optimizer queue is full")
 		}
 		return []byte("+QUEUED\r\n"), nil
-	case "MORPH.ENCODING", "MORPH.MEMORY", "MORPH.POLICY":
+	case "SNUG.ENCODING", "SNUG.MEMORY", "SNUG.POLICY":
 		name, raw, encoded, found := s.store.Encoding(key)
 		if !found {
 			return nullBulk(), nil
 		}
-		if cmd == "MORPH.ENCODING" {
+		if cmd == "SNUG.ENCODING" {
 			return formatBulkString([]byte(name)), nil
 		}
-		if cmd == "MORPH.MEMORY" {
+		if cmd == "SNUG.MEMORY" {
 			return array(formatBulkString([]byte("logical_bytes")), integer(int64(raw)), formatBulkString([]byte("encoded_bytes")), integer(int64(encoded))), nil
 		}
 		heat, _ := s.store.Policy(key)
 		return formatBulkString([]byte(fmt.Sprintf("heat_class:%s\ncurrent_codec:%s\nraw_bytes:%d\nencoded_bytes:%d\nreason:smallest verified eligible cheap representation\n", heat, name, raw, encoded))), nil
-	case "MORPH.STATS":
+	case "SNUG.STATS":
 		m := s.store.Memory()
 		return formatBulkString([]byte(fmt.Sprintf("accounted_bytes:%d\nindex_reserved_bytes:%d\nentry_bytes:%d\narena_bytes:%d\nschema_reserved_bytes:%d\nmax_memory:%d\n", m.AccountedBytes, m.IndexReservedBytes, m.EntryBytes, m.ArenaBytes, m.SchemaBytes, m.MaxBytes))), nil
 	case "PING":
@@ -124,7 +124,7 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		if key != "2" {
 			return nil, errors.New("NOPROTO unsupported protocol version")
 		}
-		return array(formatBulkString([]byte("server")), formatBulkString([]byte("morphcache")), formatBulkString([]byte("version")), formatBulkString([]byte("0.1.0")), formatBulkString([]byte("proto")), integer(2), formatBulkString([]byte("mode")), formatBulkString([]byte("standalone")), formatBulkString([]byte("role")), formatBulkString([]byte("master"))), nil
+		return array(formatBulkString([]byte("server")), formatBulkString([]byte("snugkv")), formatBulkString([]byte("version")), formatBulkString([]byte("0.1.0")), formatBulkString([]byte("proto")), integer(2), formatBulkString([]byte("mode")), formatBulkString([]byte("standalone")), formatBulkString([]byte("role")), formatBulkString([]byte("master"))), nil
 	case "SET":
 		options, err := setOptions(args[3:])
 		if err != nil {
@@ -219,7 +219,7 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		st := s.store.Stats()
 		out := ""
 		if section == "" || section == "all" || section == "default" || section == "server" {
-			out += "# Server\r\nmorphcache_version:0.1.0\r\n"
+			out += "# Server\r\nsnugkv_version:0.1.0\r\n"
 		}
 		if section == "" || section == "all" || section == "default" || section == "memory" {
 			m := s.store.Memory()

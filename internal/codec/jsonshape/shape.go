@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"hash/fnv"
-	"morphcache/internal/codec/dictionary"
+	"snugkv/internal/codec/dictionary"
 	"sync"
 )
 

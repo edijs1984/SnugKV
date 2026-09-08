@@ -1,4 +1,4 @@
-# MorphCache
+# SnugKV
 
 ## Agent-Ready Product and Engineering Specification
 
@@ -6,13 +6,13 @@
 **Implementation language:** Go  
 **Product category:** Redis-compatible, memory-efficient in-memory data store  
 **Primary differentiator:** Transparent, reversible and workload-aware value encoding  
-**Working name:** MorphCache; the product may be renamed later
+**Working name:** SnugKV; the product may be renamed later
 
 ---
 
 ## 1. Instructions for coding agents
 
-This file is the authoritative implementation brief for MorphCache. An agent working on the project must read this entire file before editing code.
+This file is the authoritative implementation brief for SnugKV. An agent working on the project must read this entire file before editing code.
 
 Agents must follow these rules:
 
@@ -56,7 +56,7 @@ A contribution is complete only when:
 
 ## 2. Executive summary
 
-MorphCache is a single-node in-memory key-value database written in Go. It exposes a deliberately small Redis-compatible interface while storing values in more compact representations whenever doing so is safe and beneficial.
+SnugKV is a single-node in-memory key-value database written in Go. It exposes a deliberately small Redis-compatible interface while storing values in more compact representations whenever doing so is safe and beneficial.
 
 Applications frequently cache values in inefficient textual forms:
 
@@ -69,7 +69,7 @@ Applications frequently cache values in inefficient textual forms:
 - sparse integer sets stored as general-purpose collections;
 - cold values kept uncompressed even when they are rarely read.
 
-MorphCache detects eligible patterns, evaluates candidate codecs and stores a compact representation. On `GET`, it reconstructs the exact original byte sequence. The client continues to see normal Redis-like values.
+SnugKV detects eligible patterns, evaluates candidate codecs and stores a compact representation. On `GET`, it reconstructs the exact original byte sequence. The client continues to see normal Redis-like values.
 
 The system adapts to workload behavior:
 
@@ -99,7 +99,7 @@ In-memory databases trade RAM for speed. In many deployments, the stored payload
 
 Compression alone does not solve the complete problem. General compression can waste CPU on small, hot or frequently modified values. It can also increase latency and temporarily allocate large decode buffers.
 
-MorphCache therefore needs a policy engine rather than one universal codec. It must decide:
+SnugKV therefore needs a policy engine rather than one universal codec. It must decide:
 
 1. whether a value should be transformed;
 2. which lossless representation best suits that value;
@@ -189,7 +189,7 @@ When persistence is enabled, codec IDs and persisted record formats must be vers
 
 ## 6. Target workloads
 
-MorphCache is initially optimized for:
+SnugKV is initially optimized for:
 
 1. **Session records** containing repeated JSON keys, UUIDs, timestamps, booleans, country codes and plan/status enums.
 2. **API response caches** containing many objects with the same shape but different values.
@@ -199,7 +199,7 @@ MorphCache is initially optimized for:
 6. **Large collections of identifiers** that can use compact binary or bitmap representations.
 7. **Mixed hot and cold cache populations** where cold values can tolerate a higher decode cost.
 
-MorphCache must also behave sensibly for incompressible values. Random or already compressed bytes must remain raw and should incur only bounded metadata overhead.
+SnugKV must also behave sensibly for incompressible values. Random or already compressed bytes must remain raw and should incur only bounded metadata overhead.
 
 ---
 
@@ -250,11 +250,11 @@ Compatibility is behavioral only for explicitly supported commands. Unsupported 
 
 #### Administrative extensions
 
-- `MORPH.ENCODING key`
-- `MORPH.MEMORY key`
-- `MORPH.STATS`
-- `MORPH.COMPACT [key|ALL]`
-- `MORPH.POLICY key`
+- `SNUG.ENCODING key`
+- `SNUG.MEMORY key`
+- `SNUG.STATS`
+- `SNUG.COMPACT [key|ALL]`
+- `SNUG.POLICY key`
 
 Administrative extensions must use a namespace that does not collide with Redis commands.
 
@@ -340,8 +340,8 @@ Agents should start with the following structure and modify it only through an A
 ```text
 .
 ├── cmd/
-│   ├── morphcache/              # server executable
-│   └── morphbench/              # benchmark/data generator CLI
+│   ├── snugkv/              # server executable
+│   └── snugbench/              # benchmark/data generator CLI
 ├── internal/
 │   ├── arena/                   # segmented byte allocation and compaction
 │   ├── codec/
@@ -828,7 +828,7 @@ The policy must first enforce minimum saving thresholds. The score then chooses 
 
 ### 14.5 Explainability
 
-`MORPH.POLICY key` should report information similar to:
+`SNUG.POLICY key` should report information similar to:
 
 ```text
 current_codec: raw
@@ -1193,7 +1193,7 @@ optimization:
 
 persistence:
   mode: none
-  aof_path: "data/morphcache.aof"
+  aof_path: "data/snugkv.aof"
   fsync: everysec
 
 observability:
@@ -1276,7 +1276,7 @@ Fuzz functions must include corpus seeds for previously fixed bugs.
 
 ### 25.4 Concurrency and stress tests
 
-Run randomized concurrent operations against both MorphCache and a simple reference model. Include overwrites, deletes, expirations, counters and forced background rewrites.
+Run randomized concurrent operations against both SnugKV and a simple reference model. Include overwrites, deletes, expirations, counters and forced background rewrites.
 
 Test under `go test -race` and with repeated execution.
 
@@ -1318,7 +1318,7 @@ Inject:
 - report throughput and p50/p95/p99 latency;
 - record process RSS and engine-accounted memory;
 - verify returned data while benchmarking;
-- compare against a raw MorphCache mode to isolate encoding benefit;
+- compare against a raw SnugKV mode to isolate encoding benefit;
 - compare with Redis only using equivalent supported semantics;
 - do not tune only for one favorable dataset.
 
@@ -1448,7 +1448,7 @@ Deliver:
 - atomic counters;
 - physical/logical memory accounting;
 - hard limit and `noeviction` behavior;
-- `INFO memory` and `MORPH.MEMORY`.
+- `INFO memory` and `SNUG.MEMORY`.
 
 Acceptance:
 
@@ -1465,7 +1465,7 @@ Deliver:
 - raw, integer, UUID and canonical timestamp codecs;
 - codec metadata envelope;
 - selection thresholds;
-- `MORPH.ENCODING` and `MORPH.POLICY`;
+- `SNUG.ENCODING` and `SNUG.POLICY`;
 - property and fuzz tests.
 
 Acceptance:
@@ -1505,7 +1505,7 @@ Deliver:
 - LZ4 and Zstandard codecs;
 - hot/warm/cold policies;
 - anti-thrashing hysteresis;
-- `MORPH.COMPACT`;
+- `SNUG.COMPACT`;
 - optimizer metrics.
 
 Acceptance:
@@ -1827,7 +1827,7 @@ Only consider these after version 1 acceptance:
 
 ## 35. Final implementation principle
 
-MorphCache should not compress data merely because it can. It should transform data only when the complete system cost improves.
+SnugKV should not compress data merely because it can. It should transform data only when the complete system cost improves.
 
 The governing principle is:
 

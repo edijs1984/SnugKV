@@ -1,4 +1,4 @@
-// morphbench measures a deterministic raw engine workload and verifies every read.
+// snugbench measures a deterministic raw engine workload and verifies every read.
 package main
 
 import (
@@ -8,9 +8,9 @@ import (
 	"flag"
 	"fmt"
 	"math/rand"
-	"morphcache/internal/engine"
 	"os"
 	"runtime"
+	"snugkv/internal/engine"
 	"sort"
 	"time"
 )

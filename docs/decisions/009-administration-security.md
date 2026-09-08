@@ -5,7 +5,7 @@ Status: Accepted
 Version 1 isolates administrative RESP commands and Prometheus metrics on separate
 listeners that accept only literal loopback IP addresses. The admin listener
 allows diagnostics, compaction, and AOF rewrite plus connection diagnostics; it
-rejects data mutations. Public clients cannot use `MORPH.*` while the admin
+rejects data mutations. Public clients cannot use `SNUG.*` while the admin
 listener is active. Metrics and logs omit keys and values.
 
 Native TLS and password authentication are deferred. Remote administration must

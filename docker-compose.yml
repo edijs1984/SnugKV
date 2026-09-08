@@ -1,5 +1,5 @@
 services:
-  morphcache:
+  snugkv:
     build: .
     ports:
       - "127.0.0.1:6380:6380"

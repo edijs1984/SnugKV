@@ -6,9 +6,9 @@ coverage.out
 coverage.html
 
 # Local binaries built from the command packages
-/morphcache
-/morphbench
-/morphsoak
+/snugkv
+/snugbench
+/snugsoak
 
 # Runtime data and local configuration
 /data/

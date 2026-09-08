@@ -4,7 +4,7 @@ These are single-run engineering measurements from 2026-09-07 on Linux amd64,
 Go 1.27.1, Intel Core i3-7020U (4 logical CPUs), GOMAXPROCS=4, 256 shards, seed 1,
 and 10,000 records. Every read was checked against its input. Process heap includes
 the harness; accounted bytes use the engine model. Commands are reproducible with
-`go run -buildvcs=false ./cmd/morphbench` and the flags below.
+`go run -buildvcs=false ./cmd/snugbench` and the flags below.
 
 | Dataset/config | Logical value bytes | Encoded payload | Accounted bytes | GET p50/p95/p99 ns |
 |---|---:|---:|---:|---:|

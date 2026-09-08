@@ -36,7 +36,7 @@ func TestLoadAndOverrides(t *testing.T) {
 	if err != nil || c.Shards != 8 || c.MaxConnections != 12 {
 		t.Fatalf("%+v %v", c, err)
 	}
-	t.Setenv("MORPHCACHE_SHARDS", "16")
+	t.Setenv("SNUGKV_SHARDS", "16")
 	if err = c.ApplyEnv(); err != nil || c.Shards != 16 {
 		t.Fatal(err)
 	}

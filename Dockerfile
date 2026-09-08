@@ -4,9 +4,9 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
-RUN CGO_ENABLED=0 go build -trimpath -o /morphcache ./cmd/morphcache
+RUN CGO_ENABLED=0 go build -trimpath -o /snugkv ./cmd/snugkv
 FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=build /morphcache /morphcache
+COPY --from=build /snugkv /snugkv
 EXPOSE 6380
-ENTRYPOINT ["/morphcache"]
+ENTRYPOINT ["/snugkv"]
 CMD ["-listen", "0.0.0.0:6380"]

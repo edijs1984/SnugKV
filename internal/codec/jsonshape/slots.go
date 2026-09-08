@@ -3,7 +3,7 @@ package jsonshape
 import (
 	"encoding/binary"
 	"errors"
-	"morphcache/internal/codec/dictionary"
+	"snugkv/internal/codec/dictionary"
 )
 
 // Slot tag zero is raw bytes; one is a dictionary ID. IDs never repeat within

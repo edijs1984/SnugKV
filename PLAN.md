@@ -1,6 +1,6 @@
-# MorphCache Delivery Plan
+# SnugKV Delivery Plan
 
-This plan is the implementation roadmap for taking the current prototype to a completion-ready single-node in-memory store aligned with the product specification in MORPHCACHE_AGENT_SPEC.md.
+This plan is the implementation roadmap for taking the current prototype to a completion-ready single-node in-memory store aligned with the product specification in SNUGKV_AGENT_SPEC.md.
 
 ## Phase 0: Foundations and working rules
 
@@ -12,7 +12,7 @@ This plan is the implementation roadmap for taking the current prototype to a co
 - Implemented a minimal command dispatcher for `PING`, `ECHO`, `SET`, `GET`, `DEL`, `INCR`, and `TTL`.
 - Implemented a RESP parser and a basic TCP server loop.
 - Added configuration defaults and power-of-two shard validation.
-- Added the `cmd/morphcache` entry point.
+- Added the `cmd/snugkv` entry point.
 
 ### Remaining
 
@@ -57,7 +57,7 @@ Match the minimum supported command set from the specification.
 1. Implement all commands in Section 7.2 for the supported subset.
 2. Implement correct RESP2 error semantics.
 3. Add command arity validation and integer parsing errors.
-4. Add `SELECT 0`, `HELLO 2`, `INFO`, `DBSIZE`, `COMMAND`, `EXISTS`, `MGET`, `SETNX`, `MSET`, `STRLEN`, `EXPIRE`, `PEXPIRE`, `PERSIST`, and the administrative `MORPH.*` commands.
+4. Add `SELECT 0`, `HELLO 2`, `INFO`, `DBSIZE`, `COMMAND`, `EXISTS`, `MGET`, `SETNX`, `MSET`, `STRLEN`, `EXPIRE`, `PEXPIRE`, `PERSIST`, and the administrative `SNUG.*` commands.
 5. Add tests for supported commands and unsupported-command behavior.
 
 ### Expected deliverables
@@ -135,12 +135,12 @@ Support AOF and snapshots only after the in-memory engine is stable.
 
 ### Goal
 
-Make MorphCache operable and diagnosable under load.
+Make SnugKV operable and diagnosable under load.
 
 ### Must do
 
 1. Add metrics for commands, latency, memory, codec usage, queue depth, and expiration/eviction counters.
-2. Implement `INFO memory` and `MORPH.*` admin commands.
+2. Implement `INFO memory` and `SNUG.*` admin commands.
 3. Add structured logging with safe redaction.
 4. Ensure metrics and admin interfaces are isolated and secure.
 

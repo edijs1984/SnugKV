@@ -2,8 +2,8 @@ package engine
 
 import (
 	"bytes"
-	"morphcache/internal/codec"
-	"morphcache/internal/codec/jsonshape"
+	"snugkv/internal/codec"
+	"snugkv/internal/codec/jsonshape"
 	"sync/atomic"
 	"time"
 )

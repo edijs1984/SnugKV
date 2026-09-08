@@ -1,6 +1,6 @@
 # Contributing
 
-MorphCache is a Go project. Use Go 1.27 or newer.
+SnugKV is a Go project. Use Go 1.27 or newer.
 
 Before opening a change, run:
 
@@ -14,4 +14,4 @@ the relevant benchmark, race, recovery, or property coverage. Record major
 design decisions as ADRs in `docs/decisions/` and keep `PROGRESS.md` current.
 
 The implementation rules and acceptance criteria are in
-`MORPHCACHE_AGENT_SPEC.md`.
+`SNUGKV_AGENT_SPEC.md`.

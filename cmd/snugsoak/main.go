@@ -1,4 +1,4 @@
-// morphsoak runs a mixed-temperature correctness and memory-growth workload.
+// snugsoak runs a mixed-temperature correctness and memory-growth workload.
 package main
 
 import (
@@ -7,10 +7,10 @@ import (
 	"flag"
 	"fmt"
 	"math/rand"
-	"morphcache/internal/engine"
-	"morphcache/internal/optimizer"
 	"os"
 	"runtime"
+	"snugkv/internal/engine"
+	"snugkv/internal/optimizer"
 	"sync"
 	"sync/atomic"
 	"time"

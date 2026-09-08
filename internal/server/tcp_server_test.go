@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"morphcache/internal/config"
-	"morphcache/internal/engine"
+	"snugkv/internal/config"
+	"snugkv/internal/engine"
 )
 
 func freeAddress(t *testing.T) string {
@@ -233,7 +233,7 @@ func TestSeparateAdminListener(t *testing.T) {
 	}
 	defer public.Close()
 	public.SetDeadline(time.Now().Add(time.Second))
-	io.WriteString(public, "*1\r\n$11\r\nMORPH.STATS\r\n")
+	io.WriteString(public, "*1\r\n$10\r\nSNUG.STATS\r\n")
 	line, _ := bufio.NewReader(public).ReadString('\n')
 	if line != "-ERR use the admin listener\r\n" {
 		t.Fatalf("public admin response %q", line)
@@ -272,7 +272,7 @@ func TestMetricsListener(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(body), "morphcache_memory_accounted_bytes") {
+	if !strings.Contains(string(body), "snugkv_memory_accounted_bytes") {
 		t.Fatalf("missing engine metrics: %s", body)
 	}
 	if _, err = s.Metrics("0.0.0.0:0"); err == nil {

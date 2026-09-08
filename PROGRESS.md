@@ -2,7 +2,7 @@
 
 ## Current milestone
 
-The single-node MorphCache implementation is complete for the command, storage,
+The single-node SnugKV implementation is complete for the command, storage,
 encoding, optimizer, persistence, observability, and packaging scope described by
 the specification. Release-scale benchmarking and a 24-hour soak remain external
 validation activities because they require dedicated time and hardware.
@@ -43,7 +43,7 @@ usable Git metadata.
 - Separate administration and metrics listener integration tests passed.
 - The mixed-temperature soak harness passed a two-second smoke run with 156,606
   verified reads, 1,566 writes, 156 TTL churn cycles, and zero mismatches.
-- The production Dockerfile built successfully as `morphcache:local`; a disposable
+- The production Dockerfile built successfully as `snugkv:local`; a disposable
   container passed redis-cli PING and SET/GET through its published port.
 
 Benchmark commands and measured results are in [benchmarks/README.md](benchmarks/README.md).

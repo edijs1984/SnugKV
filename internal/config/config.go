@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"morphcache/internal/resp"
 	"net"
 	"os"
 	"path/filepath"
+	"snugkv/internal/resp"
 	"strconv"
 	"time"
 )
@@ -138,56 +138,56 @@ func Load(path string) (Config, error) {
 	return c, nil
 }
 func (c *Config) ApplyEnv() error {
-	if v, ok := os.LookupEnv("MORPHCACHE_COMPRESSION"); ok {
+	if v, ok := os.LookupEnv("SNUGKV_COMPRESSION"); ok {
 		b, err := strconv.ParseBool(v)
 		if err != nil {
-			return errors.New("invalid MORPHCACHE_COMPRESSION")
+			return errors.New("invalid SNUGKV_COMPRESSION")
 		}
 		c.Compression = b
 	}
-	if v, ok := os.LookupEnv("MORPHCACHE_JSON_SHAPE"); ok {
+	if v, ok := os.LookupEnv("SNUGKV_JSON_SHAPE"); ok {
 		b, err := strconv.ParseBool(v)
 		if err != nil {
-			return errors.New("invalid MORPHCACHE_JSON_SHAPE")
+			return errors.New("invalid SNUGKV_JSON_SHAPE")
 		}
 		c.JSONShape = b
 	}
 	for name, dst := range map[string]*string{"AOF_PATH": &c.AOFPath, "SNAPSHOT_PATH": &c.SnapshotPath, "FSYNC": &c.Fsync, "EVICTION_POLICY": &c.EvictionPolicy, "METRICS_LISTEN": &c.MetricsAddr, "ADMIN_LISTEN": &c.AdminAddr} {
-		if v, ok := os.LookupEnv("MORPHCACHE_" + name); ok {
+		if v, ok := os.LookupEnv("SNUGKV_" + name); ok {
 			*dst = v
 		}
 	}
-	if v, ok := os.LookupEnv("MORPHCACHE_MAX_MEMORY"); ok {
+	if v, ok := os.LookupEnv("SNUGKV_MAX_MEMORY"); ok {
 		n, err := strconv.ParseUint(v, 10, 64)
 		if err != nil {
-			return errors.New("invalid MORPHCACHE_MAX_MEMORY")
+			return errors.New("invalid SNUGKV_MAX_MEMORY")
 		}
 		c.MaxMemory = n
 	}
-	if v, ok := os.LookupEnv("MORPHCACHE_ENCODING"); ok {
+	if v, ok := os.LookupEnv("SNUGKV_ENCODING"); ok {
 		b, err := strconv.ParseBool(v)
 		if err != nil {
-			return errors.New("invalid MORPHCACHE_ENCODING")
+			return errors.New("invalid SNUGKV_ENCODING")
 		}
 		c.Encoding = b
 	}
-	if v, ok := os.LookupEnv("MORPHCACHE_LISTEN"); ok {
+	if v, ok := os.LookupEnv("SNUGKV_LISTEN"); ok {
 		c.ListenAddr = v
 	}
 	for name, dst := range map[string]*int{"SHARDS": &c.Shards, "MAX_CONNECTIONS": &c.MaxConnections, "MAX_REQUEST_BYTES": &c.MaxRequestBytes, "MAX_BULK_BYTES": &c.MaxBulkBytes, "MAX_ARGUMENTS": &c.MaxArguments} {
-		if v, ok := os.LookupEnv("MORPHCACHE_" + name); ok {
+		if v, ok := os.LookupEnv("SNUGKV_" + name); ok {
 			n, err := strconv.Atoi(v)
 			if err != nil {
-				return fmt.Errorf("invalid MORPHCACHE_%s", name)
+				return fmt.Errorf("invalid SNUGKV_%s", name)
 			}
 			*dst = n
 		}
 	}
 	for name, dst := range map[string]*int64{"READ_TIMEOUT_MS": &c.ReadTimeoutMS, "WRITE_TIMEOUT_MS": &c.WriteTimeoutMS, "CLEANUP_INTERVAL_MS": &c.CleanupIntervalMS} {
-		if v, ok := os.LookupEnv("MORPHCACHE_" + name); ok {
+		if v, ok := os.LookupEnv("SNUGKV_" + name); ok {
 			n, err := strconv.ParseInt(v, 10, 64)
 			if err != nil {
-				return fmt.Errorf("invalid MORPHCACHE_%s", name)
+				return fmt.Errorf("invalid SNUGKV_%s", name)
 			}
 			*dst = n
 		}

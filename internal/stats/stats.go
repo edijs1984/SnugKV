@@ -49,10 +49,10 @@ func (r *Registry) WritePrometheus(w io.Writer) {
 	sort.Strings(names)
 	for _, name := range names {
 		c := r.commands[name]
-		fmt.Fprintf(w, "morphcache_commands_total{command=%q} %d\nmorphcache_command_errors_total{command=%q} %d\n", name, c.Count, name, c.Errors)
+		fmt.Fprintf(w, "snugkv_commands_total{command=%q} %d\nsnugkv_command_errors_total{command=%q} %d\n", name, c.Count, name, c.Errors)
 		for i, b := range bounds {
-			fmt.Fprintf(w, "morphcache_command_duration_seconds_bucket{command=%q,le=%q} %d\n", name, fmt.Sprint(b.Seconds()), c.Buckets[i])
+			fmt.Fprintf(w, "snugkv_command_duration_seconds_bucket{command=%q,le=%q} %d\n", name, fmt.Sprint(b.Seconds()), c.Buckets[i])
 		}
-		fmt.Fprintf(w, "morphcache_command_duration_seconds_bucket{command=%q,le=\"+Inf\"} %d\nmorphcache_command_duration_seconds_sum{command=%q} %f\nmorphcache_command_duration_seconds_count{command=%q} %d\n", name, c.Count, name, float64(c.Nanoseconds)/1e9, name, c.Count)
+		fmt.Fprintf(w, "snugkv_command_duration_seconds_bucket{command=%q,le=\"+Inf\"} %d\nsnugkv_command_duration_seconds_sum{command=%q} %f\nsnugkv_command_duration_seconds_count{command=%q} %d\n", name, c.Count, name, float64(c.Nanoseconds)/1e9, name, c.Count)
 	}
 }

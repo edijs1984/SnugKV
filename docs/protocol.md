@@ -20,5 +20,5 @@ MGET, DEL, and EXISTS lock shards in ascending order and provide an atomic
 cross-shard view. Engine locks are released before network responses are written.
 
 Administrative commands use the separate loopback admin listener when configured.
-That listener rejects data mutations; the public listener rejects `MORPH.*` while
+That listener rejects data mutations; the public listener rejects `SNUG.*` while
 the admin listener is active.
