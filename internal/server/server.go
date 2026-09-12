@@ -53,6 +53,7 @@ var commandTable = map[string]commandInfo{
 	"STRLEN": {2, 2, 1, 1, 1, false}, "EXPIRE": {3, 3, 1, 1, 1, true}, "PEXPIRE": {3, 3, 1, 1, 1, true},
 	"TTL": {2, 2, 1, 1, 1, false}, "PTTL": {2, 2, 1, 1, 1, false}, "PERSIST": {2, 2, 1, 1, 1, true},
 	"TYPE": {2, 2, 1, 1, 1, false},
+	"FLUSHDB": {1, 1, 0, 0, 0, true},
 }
 
 func (s *Server) execute(args [][]byte) ([]byte, error) {
@@ -238,7 +239,7 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 	}
 
 	return []byte("+OK\r\n"), nil
-	
+
 	case "SCAN":
 	cursor, err := strconv.ParseUint(string(args[1]), 10, 64)
 	if err != nil {
@@ -339,6 +340,11 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			out += fmt.Sprintf("# Keyspace\r\ndb0:keys=%d\r\n", st.Keys)
 		}
 		return formatBulkString([]byte(out)), nil
+	
+	case "FLUSHDB":
+	s.store.FlushDB()
+	return []byte("+OK\r\n"), nil
+
 	case "COMMAND":
 		names := make([]string, 0, len(commandTable))
 		for name := range commandTable {

@@ -154,3 +154,6 @@ func (s *Store) resetForRecovery() {
 		sh.expiration = expirationQueue{}
 	}
 }
+func (s *Store) FlushDB() {
+	s.resetForRecovery()
+}

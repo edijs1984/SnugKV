@@ -305,3 +305,50 @@ func TestRenamePreservesTTL(t *testing.T) {
 	}
 }
 
+func TestFlushDB(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "SET", "a", "1")
+	execute(t, s, "SET", "b", "2")
+	execute(t, s, "SET", "c", "3")
+
+	if got := execute(t, s, "DBSIZE"); got != ":3\r\n" {
+		t.Fatalf("before FLUSHDB got %q", got)
+	}
+
+	if got := execute(t, s, "FLUSHDB"); got != "+OK\r\n" {
+		t.Fatalf("FLUSHDB got %q", got)
+	}
+
+	if got := execute(t, s, "DBSIZE"); got != ":0\r\n" {
+		t.Fatalf("after FLUSHDB got %q", got)
+	}
+
+	if got := execute(t, s, "GET", "a"); got != "$-1\r\n" {
+		t.Fatalf("key survived FLUSHDB: %q", got)
+	}
+}
+
+func TestFlushDBDurabilityRollback(t *testing.T) {
+	store := engine.New()
+
+	store.Set("a", []byte("one"), 0)
+	store.Set("b", []byte("two"), 0)
+
+	s := New(store)
+	s.SetJournal(failingJournal{})
+
+	if _, err := s.Execute([][]byte{
+		[]byte("FLUSHDB"),
+	}); err == nil {
+		t.Fatal("expected FLUSHDB persistence failure")
+	}
+
+	if got := execute(t, s, "GET", "a"); got != "$3\r\none\r\n" {
+		t.Fatalf("rollback lost a: %q", got)
+	}
+
+	if got := execute(t, s, "GET", "b"); got != "$3\r\ntwo\r\n" {
+		t.Fatalf("rollback lost b: %q", got)
+	}
+}

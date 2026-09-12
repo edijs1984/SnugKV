@@ -30,7 +30,7 @@ These should be implemented first because many Redis clients, admin tools, and U
 
 ## Database commands
 
-- [ ] `FLUSHDB`
+- [x] `FLUSHDB`
 - [ ] `FLUSHALL`
 - [ ] `SWAPDB` — optional if multiple DBs are added later
 - [ ] Improve `DBSIZE`
