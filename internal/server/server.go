@@ -41,6 +41,7 @@ var commandTable = map[string]commandInfo{
 	"PING": {1, 2, 0, 0, 0, false}, "ECHO": {2, 2, 0, 0, 0, false}, "QUIT": {1, 1, 0, 0, 0, false},
 	"SELECT": {2, 2, 0, 0, 0, false}, "HELLO": {2, 2, 0, 0, 0, false}, "INFO": {1, 2, 0, 0, 0, false},
 	"DBSIZE": {1, 1, 0, 0, 0, false}, "COMMAND": {1, 1, 0, 0, 0, false},
+	"SCAN": {2, 0, 0, 0, 0, false},
 	"SET": {3, 0, 1, 1, 1, true}, "GET": {2, 2, 1, 1, 1, false}, "MGET": {2, 0, 1, -1, 1, false},
 	"DEL": {2, 0, 1, -1, 1, true}, "EXISTS": {2, 0, 1, -1, 1, false}, "GETSET": {3, 3, 1, 1, 1, true},
 	"SETNX": {3, 3, 1, 1, 1, true}, "MSET": {3, 0, 1, -1, 2, true},
@@ -213,8 +214,66 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		return boolean(s.store.Expire(key, time.Duration(n)*unit)), nil
 	case "PERSIST":
 		return boolean(s.store.Persist(key)), nil
+	case "SCAN":
+	cursor, err := strconv.ParseUint(string(args[1]), 10, 64)
+	if err != nil {
+		return nil, errors.New("ERR invalid cursor")
+	}
+
+	count := 10
+	pattern := "*"
+
+	for i := 2; i < len(args); {
+		option := strings.ToUpper(string(args[i]))
+
+		switch option {
+		case "COUNT":
+			if i+1 >= len(args) {
+				return nil, errors.New("ERR syntax error")
+			}
+
+			n, err := strconv.Atoi(string(args[i+1]))
+			if err != nil || n <= 0 {
+				return nil, errors.New("ERR syntax error")
+			}
+
+			// Protect SnugKV from ridiculous COUNT values.
+			if n > 10000 {
+				n = 10000
+			}
+
+			count = n
+			i += 2
+
+		case "MATCH":
+			if i+1 >= len(args) {
+				return nil, errors.New("ERR syntax error")
+			}
+
+			pattern = string(args[i+1])
+			i += 2
+
+		default:
+			return nil, errors.New("ERR syntax error")
+		}
+	}
+
+	nextCursor, foundKeys := s.store.Scan(cursor, count, pattern)
+
+	items := make([][]byte, 0, len(foundKeys))
+
+	for _, foundKey := range foundKeys {
+		items = append(items, formatBulkString([]byte(foundKey)))
+	}
+
+	return array(
+		formatBulkString([]byte(strconv.FormatUint(nextCursor, 10))),
+		array(items...),
+	), nil
+	
 	case "DBSIZE":
 		return integer(int64(s.store.Stats().Keys)), nil
+	
 	case "INFO":
 		section := strings.ToLower(key)
 		if section != "" && section != "all" && section != "default" && section != "server" && section != "memory" && section != "stats" && section != "keyspace" {

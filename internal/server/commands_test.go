@@ -136,3 +136,55 @@ func TestTypeExpiredKey(t *testing.T) {
 		t.Fatalf("got %q want %q", got, "+none\r\n")
 	}
 }
+func TestScan(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "SET", "user:1", "one")
+	execute(t, s, "SET", "user:2", "two")
+	execute(t, s, "SET", "session:1", "three")
+
+	got := execute(t, s, "SCAN", "0", "COUNT", "100")
+
+	if !strings.Contains(got, "user:1") {
+		t.Fatalf("SCAN missing user:1: %q", got)
+	}
+
+	if !strings.Contains(got, "user:2") {
+		t.Fatalf("SCAN missing user:2: %q", got)
+	}
+
+	if !strings.Contains(got, "session:1") {
+		t.Fatalf("SCAN missing session:1: %q", got)
+	}
+}
+
+func TestScanMatch(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "SET", "user:1", "one")
+	execute(t, s, "SET", "user:2", "two")
+	execute(t, s, "SET", "session:1", "three")
+
+	got := execute(
+		t,
+		s,
+		"SCAN",
+		"0",
+		"MATCH",
+		"user:*",
+		"COUNT",
+		"100",
+	)
+
+	if !strings.Contains(got, "user:1") {
+		t.Fatalf("SCAN missing user:1: %q", got)
+	}
+
+	if !strings.Contains(got, "user:2") {
+		t.Fatalf("SCAN missing user:2: %q", got)
+	}
+
+	if strings.Contains(got, "session:1") {
+		t.Fatalf("SCAN returned unwanted key: %q", got)
+	}
+}
