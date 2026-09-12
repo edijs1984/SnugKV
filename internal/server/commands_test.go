@@ -607,3 +607,77 @@ func TestSetRangeExtends(t *testing.T) {
 		t.Fatalf("SETRANGE value = %v want %v", value, expected)
 	}
 }
+
+func TestJSONSetGet(t *testing.T) {
+	s := New(engine.New())
+
+	if got := execute(
+		t,
+		s,
+		"JSON.SET",
+		"user:1",
+		"$",
+		`{"name":"Edijs","age":42}`,
+	); got != "+OK\r\n" {
+		t.Fatalf("JSON.SET got %q", got)
+	}
+
+	if got := execute(
+		t,
+		s,
+		"JSON.GET",
+		"user:1",
+		"$.name",
+	); got != "$7\r\n\"Edijs\"\r\n" {
+		t.Fatalf("JSON.GET got %q", got)
+	}
+}
+
+func TestJSONSetNested(t *testing.T) {
+	s := New(engine.New())
+
+	execute(
+		t,
+		s,
+		"JSON.SET",
+		"user:1",
+		"$",
+		`{"profile":{"name":"old"}}`,
+	)
+
+	if got := execute(
+		t,
+		s,
+		"JSON.SET",
+		"user:1",
+		"$.profile.name",
+		`"Edijs"`,
+	); got != "+OK\r\n" {
+		t.Fatalf("nested JSON.SET got %q", got)
+	}
+
+	if got := execute(
+		t,
+		s,
+		"JSON.GET",
+		"user:1",
+		"$.profile.name",
+	); got != "$7\r\n\"Edijs\"\r\n" {
+		t.Fatalf("nested JSON.GET got %q", got)
+	}
+}
+
+func TestJSONSetRejectsInvalidJSON(t *testing.T) {
+	s := New(engine.New())
+
+	_, err := s.Execute([][]byte{
+		[]byte("JSON.SET"),
+		[]byte("x"),
+		[]byte("$"),
+		[]byte(`{"broken"`),
+	})
+
+	if err == nil {
+		t.Fatal("expected invalid JSON error")
+	}
+}

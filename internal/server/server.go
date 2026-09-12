@@ -66,6 +66,8 @@ var commandTable = map[string]commandInfo{
 	"APPEND":   {3, 3, 1, 1, 1, true},
     "GETRANGE": {4, 4, 1, 1, 1, false},
     "SETRANGE": {4, 4, 1, 1, 1, true},
+	"JSON.SET": {4, 4, 1, 1, 1, true},
+    "JSON.GET": {2, 3, 1, 1, 1, false},
 }
 
 func (s *Server) execute(args [][]byte) ([]byte, error) {
@@ -85,6 +87,28 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		key = string(args[1])
 	}
 	switch cmd {
+	case "JSON.SET":
+	path := string(args[2])
+
+	if err := s.store.JSONSet(key, path, args[3]); err != nil {
+		return nil, err
+	}
+
+	return []byte("+OK\r\n"), nil
+	case "JSON.GET":
+	path := "$"
+
+	if len(args) == 3 {
+		path = string(args[2])
+	}
+
+	value, found, err := s.store.JSONGet(key, path)
+	if err != nil {
+		return nil, err
+	}
+
+	return optionalBulk(value, found), nil
+	
 	case "APPEND":
 	length, err := s.store.Append(key, args[2])
 	if err != nil {
