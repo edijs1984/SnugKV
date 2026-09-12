@@ -53,6 +53,34 @@ func (s *Store) Scan(cursor uint64, count int, pattern string) (uint64, []string
 
 	return end, keys[cursor:end]
 }
+func (s *Store) Keys(pattern string) []string {
+	var keys []string
+	now := s.now()
+
+	for i := range s.shards {
+		sh := &s.shards[i]
+
+		sh.mu.RLock()
+
+		for key, e := range sh.data.All() {
+			if e.expired(now) {
+				continue
+			}
+
+			if pattern != "*" && !globMatch(pattern, key) {
+				continue
+			}
+
+			keys = append(keys, key)
+		}
+
+		sh.mu.RUnlock()
+	}
+
+	sort.Strings(keys)
+
+	return keys
+}
 
 // globMatch implements the most useful Redis MATCH behaviour:
 // * = any number of characters

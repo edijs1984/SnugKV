@@ -21,7 +21,7 @@ These should be implemented first because many Redis clients, admin tools, and U
 
 - [x] `TYPE key`
 - [x] `SCAN cursor [MATCH pattern] [COUNT count] [TYPE type]`
-- [ ] `KEYS pattern`
+- [x] `KEYS pattern`
 - [ ] `RANDOMKEY`
 - [ ] `RENAME key newkey`
 - [ ] `RENAMENX key newkey`

@@ -188,3 +188,38 @@ func TestScanMatch(t *testing.T) {
 		t.Fatalf("SCAN returned unwanted key: %q", got)
 	}
 }
+
+func TestKeys(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "SET", "user:1", "one")
+	execute(t, s, "SET", "user:2", "two")
+	execute(t, s, "SET", "session:1", "three")
+
+	got := execute(t, s, "KEYS", "user:*")
+
+	if !strings.Contains(got, "user:1") {
+		t.Fatalf("KEYS missing user:1: %q", got)
+	}
+
+	if !strings.Contains(got, "user:2") {
+		t.Fatalf("KEYS missing user:2: %q", got)
+	}
+
+	if strings.Contains(got, "session:1") {
+		t.Fatalf("KEYS returned unwanted key: %q", got)
+	}
+}
+
+func TestKeysAll(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "SET", "a", "1")
+	execute(t, s, "SET", "b", "2")
+
+	got := execute(t, s, "KEYS", "*")
+
+	if !strings.Contains(got, "a") || !strings.Contains(got, "b") {
+		t.Fatalf("KEYS * missing keys: %q", got)
+	}
+}

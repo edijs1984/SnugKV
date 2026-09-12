@@ -42,6 +42,7 @@ var commandTable = map[string]commandInfo{
 	"SELECT": {2, 2, 0, 0, 0, false}, "HELLO": {2, 2, 0, 0, 0, false}, "INFO": {1, 2, 0, 0, 0, false},
 	"DBSIZE": {1, 1, 0, 0, 0, false}, "COMMAND": {1, 1, 0, 0, 0, false},
 	"SCAN": {2, 0, 0, 0, 0, false},
+	"KEYS": {2, 2, 0, 0, 0, false},
 	"SET": {3, 0, 1, 1, 1, true}, "GET": {2, 2, 1, 1, 1, false}, "MGET": {2, 0, 1, -1, 1, false},
 	"DEL": {2, 0, 1, -1, 1, true}, "EXISTS": {2, 0, 1, -1, 1, false}, "GETSET": {3, 3, 1, 1, 1, true},
 	"SETNX": {3, 3, 1, 1, 1, true}, "MSET": {3, 0, 1, -1, 2, true},
@@ -270,6 +271,17 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		formatBulkString([]byte(strconv.FormatUint(nextCursor, 10))),
 		array(items...),
 	), nil
+
+	case "KEYS":
+	foundKeys := s.store.Keys(string(args[1]))
+
+	items := make([][]byte, 0, len(foundKeys))
+
+	for _, foundKey := range foundKeys {
+		items = append(items, formatBulkString([]byte(foundKey)))
+	}
+
+	return array(items...), nil
 	
 	case "DBSIZE":
 		return integer(int64(s.store.Stats().Keys)), nil
