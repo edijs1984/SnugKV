@@ -1,6 +1,10 @@
 package engine
 
-import "sort"
+import (
+	"sort"
+    "time"
+	
+)
 	
 
 
@@ -124,4 +128,20 @@ func globMatch(pattern, value string) bool {
 	}
 
 	return dp[len(p)][len(v)]
+}
+
+func (s *Store) RandomKey() (string, bool) {
+	keys := s.Keys("*")
+
+	if len(keys) == 0 {
+		return "", false
+	}
+
+	// Good enough for RANDOMKEY; no cryptographic randomness needed.
+	n := time.Now().UnixNano()
+	if n < 0 {
+		n = -n
+	}
+
+	return keys[int(n%int64(len(keys)))], true
 }

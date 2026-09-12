@@ -223,3 +223,17 @@ func TestKeysAll(t *testing.T) {
 		t.Fatalf("KEYS * missing keys: %q", got)
 	}
 }
+
+func TestRandomKey(t *testing.T) {
+	s := New(engine.New())
+
+	if got := execute(t, s, "RANDOMKEY"); got != "$-1\r\n" {
+		t.Fatalf("empty RANDOMKEY got %q", got)
+	}
+
+	execute(t, s, "SET", "only-key", "value")
+
+	if got := execute(t, s, "RANDOMKEY"); got != "$8\r\nonly-key\r\n" {
+		t.Fatalf("RANDOMKEY got %q", got)
+	}
+}
