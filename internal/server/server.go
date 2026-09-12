@@ -51,6 +51,7 @@ var commandTable = map[string]commandInfo{
 	"DEL": {2, 0, 1, -1, 1, true}, "EXISTS": {2, 0, 1, -1, 1, false}, "GETSET": {3, 3, 1, 1, 1, true},
 	"SETNX": {3, 3, 1, 1, 1, true}, "MSET": {3, 0, 1, -1, 2, true},
 	"INCR": {2, 2, 1, 1, 1, true}, "DECR": {2, 2, 1, 1, 1, true}, "INCRBY": {3, 3, 1, 1, 1, true}, "DECRBY": {3, 3, 1, 1, 1, true},
+	"INCRBYFLOAT": {3, 3, 1, 1, 1, true},
 	"STRLEN": {2, 2, 1, 1, 1, false}, "EXPIRE": {3, 3, 1, 1, 1, true}, "PEXPIRE": {3, 3, 1, 1, 1, true},
 	"TTL": {2, 2, 1, 1, 1, false}, "PTTL": {2, 2, 1, 1, 1, false}, "PERSIST": {2, 2, 1, 1, 1, true},
 	"TYPE": {2, 2, 1, 1, 1, false},
@@ -365,6 +366,20 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 	}
 
 	return integer(int64(s.store.Touch(keys))), nil
+
+	case "INCRBYFLOAT":
+	increment, err := strconv.ParseFloat(string(args[2]), 64)
+
+	if err != nil || math.IsNaN(increment) || math.IsInf(increment, 0) {
+		return nil, errors.New("ERR value is not a valid float")
+	}
+
+	result, err := s.store.AddFloat(key, increment)
+	if err != nil {
+		return nil, err
+	}
+
+	return formatBulkString([]byte(result)), nil
 
 	case "COMMAND":
 		names := make([]string, 0, len(commandTable))

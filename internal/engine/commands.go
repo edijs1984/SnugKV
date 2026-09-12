@@ -317,6 +317,65 @@ func (s *Store) Rename(source, destination string, nx bool) (bool, error) {
 
 	return true, nil
 }
+
+func (s *Store) AddFloat(key string, increment float64) (string, error) {
+	if math.IsNaN(increment) || math.IsInf(increment, 0) {
+		return "", errors.New("ERR value is not a valid float")
+	}
+
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	now := s.now()
+
+	e, exists := sh.data.Get(key)
+
+	current := float64(0)
+
+	if exists {
+		if e.expired(now) {
+			s.remove(sh, key)
+			exists = false
+		} else {
+			raw := string(s.decode(e))
+
+			n, err := strconv.ParseFloat(raw, 64)
+			if err != nil || math.IsNaN(n) || math.IsInf(n, 0) {
+				return "", errors.New("ERR value is not a valid float")
+			}
+
+			current = n
+		}
+	}
+
+	result := current + increment
+
+	if math.IsNaN(result) || math.IsInf(result, 0) {
+		return "", errors.New("ERR increment would produce NaN or Infinity")
+	}
+
+	// Avoid storing "-0".
+	if result == 0 {
+		result = 0
+	}
+
+	formatted := strconv.FormatFloat(result, 'f', -1, 64)
+
+	updated := s.makeEntry([]byte(formatted))
+
+	if exists {
+		// INCRBYFLOAT preserves the existing TTL.
+		updated.expiresAt = e.expiresAt
+	}
+
+	if err := s.publish(sh, key, updated); err != nil {
+		return "", err
+	}
+
+	return formatted, nil
+}
+
 func (s *Store) Touch(keys []string) int {
 	count := 0
 	now := s.now()

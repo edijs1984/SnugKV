@@ -385,3 +385,44 @@ func TestTouch(t *testing.T) {
 		t.Fatalf("TOUCH modified a: %q", got)
 	}
 }
+
+func TestIncrByFloat(t *testing.T) {
+	s := New(engine.New())
+
+	if got := execute(t, s, "INCRBYFLOAT", "balance", "1.5"); got != "$3\r\n1.5\r\n" {
+		t.Fatalf("first INCRBYFLOAT got %q", got)
+	}
+
+	if got := execute(t, s, "INCRBYFLOAT", "balance", "2.25"); got != "$4\r\n3.75\r\n" {
+		t.Fatalf("second INCRBYFLOAT got %q", got)
+	}
+
+	if got := execute(t, s, "GET", "balance"); got != "$4\r\n3.75\r\n" {
+		t.Fatalf("stored value got %q", got)
+	}
+}
+
+func TestIncrByFloatNegative(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "SET", "n", "10")
+
+	if got := execute(t, s, "INCRBYFLOAT", "n", "-2.5"); got != "$3\r\n7.5\r\n" {
+		t.Fatalf("INCRBYFLOAT got %q", got)
+	}
+}
+func TestIncrByFloatRejectsInvalidValue(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "SET", "n", "hello")
+
+	_, err := s.Execute([][]byte{
+		[]byte("INCRBYFLOAT"),
+		[]byte("n"),
+		[]byte("1.5"),
+	})
+
+	if err == nil {
+		t.Fatal("expected INCRBYFLOAT error")
+	}
+}

@@ -78,7 +78,7 @@ Existing:
 
 Add:
 
-- [ ] `INCRBYFLOAT`
+- [x] `INCRBYFLOAT`
 - [ ] `APPEND`
 - [ ] `GETDEL`
 - [ ] `GETEX`
