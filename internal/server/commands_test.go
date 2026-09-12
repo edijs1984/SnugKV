@@ -237,3 +237,71 @@ func TestRandomKey(t *testing.T) {
 		t.Fatalf("RANDOMKEY got %q", got)
 	}
 }
+func TestRename(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "SET", "old", "hello")
+
+	if got := execute(t, s, "RENAME", "old", "new"); got != "+OK\r\n" {
+		t.Fatalf("RENAME got %q", got)
+	}
+
+	if got := execute(t, s, "GET", "old"); got != "$-1\r\n" {
+		t.Fatalf("old key still exists: %q", got)
+	}
+
+	if got := execute(t, s, "GET", "new"); got != "$5\r\nhello\r\n" {
+		t.Fatalf("new key incorrect: %q", got)
+	}
+}
+
+func TestRenameNX(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "SET", "source", "one")
+	execute(t, s, "SET", "destination", "two")
+
+	if got := execute(
+		t,
+		s,
+		"RENAMENX",
+		"source",
+		"destination",
+	); got != ":0\r\n" {
+		t.Fatalf("RENAMENX existing destination got %q", got)
+	}
+
+	if got := execute(t, s, "GET", "source"); got != "$3\r\none\r\n" {
+		t.Fatalf("source was modified: %q", got)
+	}
+
+	execute(t, s, "DEL", "destination")
+
+	if got := execute(
+		t,
+		s,
+		"RENAMENX",
+		"source",
+		"destination",
+	); got != ":1\r\n" {
+		t.Fatalf("RENAMENX got %q", got)
+	}
+
+	if got := execute(t, s, "GET", "destination"); got != "$3\r\none\r\n" {
+		t.Fatalf("destination incorrect: %q", got)
+	}
+}
+
+func TestRenamePreservesTTL(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "SET", "old", "hello", "PX", "60000")
+	execute(t, s, "RENAME", "old", "new")
+
+	got := execute(t, s, "PTTL", "new")
+
+	if got == ":-1\r\n" || got == ":-2\r\n" {
+		t.Fatalf("RENAME lost TTL: %q", got)
+	}
+}
+

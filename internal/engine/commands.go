@@ -264,3 +264,56 @@ func (s *Store) Sub(key string, decrement int64) (int64, error) {
 	}
 	return n, nil
 }
+
+func (s *Store) Rename(source, destination string, nx bool) (bool, error) {
+	if source == destination {
+		return false, errors.New("ERR source and destination objects are the same")
+	}
+
+	// Lock every shard because source and destination may live on different shards.
+	unlock := s.lockAll()
+	defer unlock()
+
+	now := s.now()
+
+	sourceShard := s.shardFor(source)
+	destinationShard := s.shardFor(destination)
+
+	sourceEntry, sourceExists := sourceShard.data.Get(source)
+
+	if !sourceExists || sourceEntry.expired(now) {
+		if sourceExists {
+			s.remove(sourceShard, source)
+		}
+
+		return false, errors.New("ERR no such key")
+	}
+
+	destinationEntry, destinationExists := destinationShard.data.Get(destination)
+
+	if destinationExists && destinationEntry.expired(now) {
+		s.remove(destinationShard, destination)
+		destinationExists = false
+	}
+
+	// RENAMENX must not replace an existing destination.
+	if nx && destinationExists {
+		return false, nil
+	}
+
+	// Decode and republish so arena ownership remains correct.
+	value := s.decode(sourceEntry)
+
+	replacement := s.makeEntry(value)
+
+	// RENAME preserves TTL.
+	replacement.expiresAt = sourceEntry.expiresAt
+
+	if err := s.publish(destinationShard, destination, replacement); err != nil {
+		return false, err
+	}
+
+	s.remove(sourceShard, source)
+
+	return true, nil
+}

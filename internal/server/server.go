@@ -44,6 +44,8 @@ var commandTable = map[string]commandInfo{
 	"SCAN": {2, 0, 0, 0, 0, false},
 	"KEYS": {2, 2, 0, 0, 0, false},
 	"RANDOMKEY": {1, 1, 0, 0, 0, false},
+	"RENAME":   {3, 3, 1, 2, 1, true},
+    "RENAMENX": {3, 3, 1, 2, 1, true},
 	"SET": {3, 0, 1, 1, 1, true}, "GET": {2, 2, 1, 1, 1, false}, "MGET": {2, 0, 1, -1, 1, false},
 	"DEL": {2, 0, 1, -1, 1, true}, "EXISTS": {2, 0, 1, -1, 1, false}, "GETSET": {3, 3, 1, 1, 1, true},
 	"SETNX": {3, 3, 1, 1, 1, true}, "MSET": {3, 0, 1, -1, 2, true},
@@ -216,6 +218,27 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		return boolean(s.store.Expire(key, time.Duration(n)*unit)), nil
 	case "PERSIST":
 		return boolean(s.store.Persist(key)), nil
+
+    case "RENAME", "RENAMENX":
+	source := string(args[1])
+	destination := string(args[2])
+
+	renamed, err := s.store.Rename(
+		source,
+		destination,
+		cmd == "RENAMENX",
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	if cmd == "RENAMENX" {
+		return boolean(renamed), nil
+	}
+
+	return []byte("+OK\r\n"), nil
+	
 	case "SCAN":
 	cursor, err := strconv.ParseUint(string(args[1]), 10, 64)
 	if err != nil {

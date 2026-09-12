@@ -22,9 +22,9 @@ These should be implemented first because many Redis clients, admin tools, and U
 - [x] `TYPE key`
 - [x] `SCAN cursor [MATCH pattern] [COUNT count] [TYPE type]`
 - [x] `KEYS pattern`
-- [ ] `RANDOMKEY`
-- [ ] `RENAME key newkey`
-- [ ] `RENAMENX key newkey`
+- [x] `RANDOMKEY`
+- [x] `RENAME key newkey`
+- [x] `RENAMENX key newkey`
 - [ ] `UNLINK key`
 - [ ] `TOUCH key`
 
