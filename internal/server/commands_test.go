@@ -488,3 +488,59 @@ func TestExpireTimeSpecialValues(t *testing.T) {
 		t.Fatalf("persistent EXPIRETIME got %q", got)
 	}
 }
+
+func TestGetDel(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "SET", "a", "hello")
+
+	if got := execute(t, s, "GETDEL", "a"); got != "$5\r\nhello\r\n" {
+		t.Fatalf("GETDEL got %q", got)
+	}
+
+	if got := execute(t, s, "GET", "a"); got != "$-1\r\n" {
+		t.Fatalf("GETDEL did not delete key: %q", got)
+	}
+
+	if got := execute(t, s, "GETDEL", "missing"); got != "$-1\r\n" {
+		t.Fatalf("missing GETDEL got %q", got)
+	}
+}
+
+func TestGetEx(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "SET", "a", "hello")
+
+	if got := execute(t, s, "GETEX", "a", "EX", "60"); got != "$5\r\nhello\r\n" {
+		t.Fatalf("GETEX got %q", got)
+	}
+
+	ttl := execute(t, s, "TTL", "a")
+
+	if ttl == ":-1\r\n" || ttl == ":-2\r\n" {
+		t.Fatalf("GETEX did not set TTL: %q", ttl)
+	}
+}
+
+func TestGetExPersist(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "SET", "a", "hello", "EX", "60")
+
+	if got := execute(t, s, "GETEX", "a", "PERSIST"); got != "$5\r\nhello\r\n" {
+		t.Fatalf("GETEX PERSIST got %q", got)
+	}
+
+	if got := execute(t, s, "TTL", "a"); got != ":-1\r\n" {
+		t.Fatalf("GETEX PERSIST did not remove TTL: %q", got)
+	}
+}
+
+func TestGetExMissing(t *testing.T) {
+	s := New(engine.New())
+
+	if got := execute(t, s, "GETEX", "missing", "EX", "60"); got != "$-1\r\n" {
+		t.Fatalf("GETEX missing got %q", got)
+	}
+}

@@ -80,8 +80,8 @@ Add:
 
 - [x] `INCRBYFLOAT`
 - [ ] `APPEND`
-- [ ] `GETDEL`
-- [ ] `GETEX`
+- [x] `GETDEL`
+- [x] `GETEX`
 - [ ] `GETRANGE`
 - [ ] `SETRANGE`
 - [ ] `MSETNX`

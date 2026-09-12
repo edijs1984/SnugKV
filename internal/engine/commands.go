@@ -453,3 +453,73 @@ func (s *Store) ExpireTime(key string, milliseconds bool) int64 {
 
 	return e.expiresAt.Time().Unix()
 }
+
+func (s *Store) GetDel(key string) ([]byte, bool) {
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	e, ok := sh.data.Get(key)
+	now := s.now()
+
+	if !ok || e.expired(now) {
+		if ok {
+			s.remove(sh, key)
+		}
+		return nil, false
+	}
+
+	value := s.decode(e)
+
+	s.remove(sh, key)
+
+	return value, true
+}
+func (s *Store) GetEx(
+	key string,
+	expireAt *time.Time,
+	persist bool,
+) ([]byte, bool) {
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	e, ok := sh.data.Get(key)
+	now := s.now()
+
+	if !ok || e.expired(now) {
+		if ok {
+			s.remove(sh, key)
+		}
+		return nil, false
+	}
+
+	value := s.decode(e)
+
+	if persist {
+		e.expiresAt = 0
+		e.version = atomic.AddUint64(&s.version, 1)
+
+		sh.data.Set(key, e)
+		sh.schedule(key, e.expiresAt)
+
+		return value, true
+	}
+
+	if expireAt != nil {
+		// Return the old value but delete the key if the requested
+		// expiration time is already in the past.
+		if !expireAt.After(now) {
+			s.remove(sh, key)
+			return value, true
+		}
+
+		e.expiresAt = stampOf(*expireAt)
+		e.version = atomic.AddUint64(&s.version, 1)
+
+		sh.data.Set(key, e)
+		sh.schedule(key, e.expiresAt)
+	}
+
+	return value, true
+}

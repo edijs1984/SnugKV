@@ -53,6 +53,8 @@ var commandTable = map[string]commandInfo{
     "PEXPIRETIME":  {2, 2, 1, 1, 1, false},
 	"SET": {3, 0, 1, 1, 1, true}, "GET": {2, 2, 1, 1, 1, false}, "MGET": {2, 0, 1, -1, 1, false},
 	"DEL": {2, 0, 1, -1, 1, true}, "EXISTS": {2, 0, 1, -1, 1, false}, "GETSET": {3, 3, 1, 1, 1, true},
+	"GETDEL": {2, 2, 1, 1, 1, true},
+    "GETEX":  {2, 4, 1, 1, 1, true},
 	"SETNX": {3, 3, 1, 1, 1, true}, "MSET": {3, 0, 1, -1, 2, true},
 	"INCR": {2, 2, 1, 1, 1, true}, "DECR": {2, 2, 1, 1, 1, true}, "INCRBY": {3, 3, 1, 1, 1, true}, "DECRBY": {3, 3, 1, 1, 1, true},
 	"INCRBYFLOAT": {3, 3, 1, 1, 1, true},
@@ -80,6 +82,78 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		key = string(args[1])
 	}
 	switch cmd {
+
+	case "GETDEL":
+	value, found := s.store.GetDel(key)
+
+	return optionalBulk(value, found), nil
+	case "GETEX":
+	var expireAt *time.Time
+	persist := false
+
+	if len(args) > 2 {
+		option := strings.ToUpper(string(args[2]))
+
+		switch option {
+		case "PERSIST":
+			if len(args) != 3 {
+				return nil, errors.New("ERR syntax error")
+			}
+
+			persist = true
+
+		case "EX", "PX", "EXAT", "PXAT":
+			if len(args) != 4 {
+				return nil, errors.New("ERR syntax error")
+			}
+
+			n, err := parseInt64(args[3])
+			if err != nil {
+				return nil, err
+			}
+
+			var when time.Time
+
+			switch option {
+			case "EX":
+				if n <= 0 {
+					return nil, errors.New("ERR invalid expire time in 'getex' command")
+				}
+
+				if n > math.MaxInt64/int64(time.Second) {
+					return nil, errors.New("ERR invalid expire time in 'getex' command")
+				}
+
+				when = time.Now().Add(time.Duration(n) * time.Second)
+
+			case "PX":
+				if n <= 0 {
+					return nil, errors.New("ERR invalid expire time in 'getex' command")
+				}
+
+				if n > math.MaxInt64/int64(time.Millisecond) {
+					return nil, errors.New("ERR invalid expire time in 'getex' command")
+				}
+
+				when = time.Now().Add(time.Duration(n) * time.Millisecond)
+
+			case "EXAT":
+				when = time.Unix(n, 0)
+
+			case "PXAT":
+				when = time.UnixMilli(n)
+			}
+
+			expireAt = &when
+
+		default:
+			return nil, errors.New("ERR syntax error")
+		}
+	}
+
+	value, found := s.store.GetEx(key, expireAt, persist)
+
+	return optionalBulk(value, found), nil
 	
 	case "SNUG.AOFREWRITE":
 		writer, ok := s.journal.(interface {
