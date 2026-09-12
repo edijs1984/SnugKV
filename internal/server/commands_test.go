@@ -352,3 +352,21 @@ func TestFlushDBDurabilityRollback(t *testing.T) {
 		t.Fatalf("rollback lost b: %q", got)
 	}
 }
+func TestUnlink(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "SET", "a", "1")
+	execute(t, s, "SET", "b", "2")
+
+	if got := execute(t, s, "UNLINK", "a", "b"); got != ":2\r\n" {
+		t.Fatalf("UNLINK got %q", got)
+	}
+
+	if got := execute(t, s, "GET", "a"); got != "$-1\r\n" {
+		t.Fatalf("a still exists: %q", got)
+	}
+
+	if got := execute(t, s, "GET", "b"); got != "$-1\r\n" {
+		t.Fatalf("b still exists: %q", got)
+	}
+}

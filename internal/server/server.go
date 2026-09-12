@@ -54,6 +54,7 @@ var commandTable = map[string]commandInfo{
 	"TTL": {2, 2, 1, 1, 1, false}, "PTTL": {2, 2, 1, 1, 1, false}, "PERSIST": {2, 2, 1, 1, 1, true},
 	"TYPE": {2, 2, 1, 1, 1, false},
 	"FLUSHDB": {1, 1, 0, 0, 0, true},
+	"UNLINK": {2, 0, 1, -1, 1, true},
 }
 
 func (s *Server) execute(args [][]byte) ([]byte, error) {
@@ -181,8 +182,17 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		return []byte("+OK\r\n"), err
 	case "EXISTS":
 		return integer(s.store.Exists(keys(args[1:]))), nil
-	case "DEL":
-		return integer(s.store.DeleteMany(keys(args[1:]))), nil
+	case "DEL", "UNLINK":
+	keys := make([]string, 0, len(args)-1)
+
+	for _, arg := range args[1:] {
+		keys = append(keys, string(arg))
+	}
+
+	deleted := s.store.DeleteMany(keys)
+
+	return integer(deleted), nil
+
 	case "INCR", "INCRBY", "DECR", "DECRBY":
 		delta := int64(1)
 		var err error
