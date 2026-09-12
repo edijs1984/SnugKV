@@ -544,3 +544,66 @@ func TestGetExMissing(t *testing.T) {
 		t.Fatalf("GETEX missing got %q", got)
 	}
 }
+
+func TestAppend(t *testing.T) {
+	s := New(engine.New())
+
+	if got := execute(t, s, "APPEND", "a", "hello"); got != ":5\r\n" {
+		t.Fatalf("APPEND got %q", got)
+	}
+
+	if got := execute(t, s, "APPEND", "a", " world"); got != ":11\r\n" {
+		t.Fatalf("APPEND got %q", got)
+	}
+
+	if got := execute(t, s, "GET", "a"); got != "$11\r\nhello world\r\n" {
+		t.Fatalf("APPEND stored wrong value: %q", got)
+	}
+}
+
+func TestGetRange(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "SET", "a", "hello world")
+
+	if got := execute(t, s, "GETRANGE", "a", "0", "4"); got != "$5\r\nhello\r\n" {
+		t.Fatalf("GETRANGE got %q", got)
+	}
+
+	if got := execute(t, s, "GETRANGE", "a", "-5", "-1"); got != "$5\r\nworld\r\n" {
+		t.Fatalf("GETRANGE negative got %q", got)
+	}
+}
+
+func TestSetRange(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "SET", "a", "hello world")
+
+	if got := execute(t, s, "SETRANGE", "a", "6", "SnugKV"); got != ":12\r\n" {
+		t.Fatalf("SETRANGE got %q", got)
+	}
+
+	if got := execute(t, s, "GET", "a"); got != "$12\r\nhello SnugKV\r\n" {
+		t.Fatalf("SETRANGE stored wrong value: %q", got)
+	}
+}
+func TestSetRangeExtends(t *testing.T) {
+	s := New(engine.New())
+
+	if got := execute(t, s, "SETRANGE", "a", "5", "x"); got != ":6\r\n" {
+		t.Fatalf("SETRANGE got %q", got)
+	}
+
+	value, found := s.store.Get("a")
+
+	if !found {
+		t.Fatal("SETRANGE did not create key")
+	}
+
+	expected := []byte{0, 0, 0, 0, 0, 'x'}
+
+	if string(value) != string(expected) {
+		t.Fatalf("SETRANGE value = %v want %v", value, expected)
+	}
+}

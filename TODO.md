@@ -82,8 +82,8 @@ Add:
 - [ ] `APPEND`
 - [x] `GETDEL`
 - [x] `GETEX`
-- [ ] `GETRANGE`
-- [ ] `SETRANGE`
+- [x] `GETRANGE`
+- [x] `SETRANGE`
 - [ ] `MSETNX`
 - [ ] `SETEX`
 - [ ] `PSETEX`

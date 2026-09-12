@@ -523,3 +523,146 @@ func (s *Store) GetEx(
 
 	return value, true
 }
+
+func (s *Store) Append(key string, suffix []byte) (int, error) {
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	now := s.now()
+
+	e, exists := sh.data.Get(key)
+
+	var current []byte
+	var expiresAt stamp
+
+	if exists {
+		if e.expired(now) {
+			s.remove(sh, key)
+			exists = false
+		} else {
+			current = s.decode(e)
+			expiresAt = e.expiresAt
+		}
+	}
+
+	if len(current)+len(suffix) > 32<<20 {
+		return 0, errors.New("ERR value exceeds 32 MiB limit")
+	}
+
+	value := make([]byte, 0, len(current)+len(suffix))
+	value = append(value, current...)
+	value = append(value, suffix...)
+
+	updated := s.makeEntry(value)
+	updated.expiresAt = expiresAt
+
+	if err := s.publish(sh, key, updated); err != nil {
+		return 0, err
+	}
+
+	return len(value), nil
+}
+
+func (s *Store) GetRange(key string, start, end int64) []byte {
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	e, ok := sh.data.Get(key)
+
+	if !ok || e.expired(s.now()) {
+		if ok {
+			s.remove(sh, key)
+		}
+		return []byte{}
+	}
+
+	value := s.decode(e)
+	length := int64(len(value))
+
+	if length == 0 {
+		return []byte{}
+	}
+
+	if start < 0 {
+		start = length + start
+	}
+
+	if end < 0 {
+		end = length + end
+	}
+
+	if start < 0 {
+		start = 0
+	}
+
+	if end < 0 || start >= length || start > end {
+		return []byte{}
+	}
+
+	if end >= length {
+		end = length - 1
+	}
+
+	return append([]byte(nil), value[start:end+1]...)
+}
+func (s *Store) SetRange(key string, offset int64, replacement []byte) (int, error) {
+	if offset < 0 {
+		return 0, errors.New("ERR offset is out of range")
+	}
+
+	if offset > 32<<20 {
+		return 0, errors.New("ERR string exceeds maximum allowed size")
+	}
+
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	now := s.now()
+
+	e, exists := sh.data.Get(key)
+
+	var current []byte
+	var expiresAt stamp
+
+	if exists {
+		if e.expired(now) {
+			s.remove(sh, key)
+			exists = false
+		} else {
+			current = s.decode(e)
+			expiresAt = e.expiresAt
+		}
+	}
+
+	required := offset + int64(len(replacement))
+
+	if required > 32<<20 {
+		return 0, errors.New("ERR string exceeds maximum allowed size")
+	}
+
+	if len(replacement) == 0 {
+		return len(current), nil
+	}
+
+	size := len(current)
+
+	if int(required) > size {
+		size = int(required)
+	}
+
+	value := make([]byte, size)
+	copy(value, current)
+	copy(value[int(offset):], replacement)
+
+	updated := s.makeEntry(value)
+	updated.expiresAt = expiresAt
+
+	if err := s.publish(sh, key, updated); err != nil {
+		return 0, err
+	}
+
+	return len(value), nil
+}

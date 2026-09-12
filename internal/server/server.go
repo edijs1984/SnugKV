@@ -63,6 +63,9 @@ var commandTable = map[string]commandInfo{
 	"TYPE": {2, 2, 1, 1, 1, false},
 	"FLUSHDB": {1, 1, 0, 0, 0, true},
 	"UNLINK": {2, 0, 1, -1, 1, true},
+	"APPEND":   {3, 3, 1, 1, 1, true},
+    "GETRANGE": {4, 4, 1, 1, 1, false},
+    "SETRANGE": {4, 4, 1, 1, 1, true},
 }
 
 func (s *Server) execute(args [][]byte) ([]byte, error) {
@@ -82,6 +85,41 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		key = string(args[1])
 	}
 	switch cmd {
+	case "APPEND":
+	length, err := s.store.Append(key, args[2])
+	if err != nil {
+		return nil, err
+	}
+
+	return integer(int64(length)), nil
+
+	case "GETRANGE":
+	start, err := parseInt64(args[2])
+	if err != nil {
+		return nil, err
+	}
+
+	end, err := parseInt64(args[3])
+	if err != nil {
+		return nil, err
+	}
+
+	value := s.store.GetRange(key, start, end)
+
+	return formatBulkString(value), nil
+
+	case "SETRANGE":
+	offset, err := parseInt64(args[2])
+	if err != nil {
+		return nil, err
+	}
+
+	length, err := s.store.SetRange(key, offset, args[3])
+	if err != nil {
+		return nil, err
+	}
+
+	return integer(int64(length)), nil
 
 	case "GETDEL":
 	value, found := s.store.GetDel(key)
