@@ -20,7 +20,7 @@ These should be implemented first because many Redis clients, admin tools, and U
 ## Key inspection
 
 - [x] `TYPE key`
-- [ ] `SCAN cursor [MATCH pattern] [COUNT count] [TYPE type]`
+- [x] `SCAN cursor [MATCH pattern] [COUNT count] [TYPE type]`
 - [ ] `KEYS pattern`
 - [ ] `RANDOMKEY`
 - [ ] `RENAME key newkey`
