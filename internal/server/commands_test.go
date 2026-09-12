@@ -7,6 +7,7 @@ import (
 	"snugkv/internal/persistence"
 	"strings"
 	"testing"
+	"time"
 )
 
 func execute(t *testing.T, s *Server, args ...string) string {
@@ -30,6 +31,8 @@ func TestCommandSubset(t *testing.T) {
 		{[]string{"SET", "k", "v", "NX", "PX", "10000"}, "+OK\r\n"},
 		{[]string{"SET", "k", "other", "NX"}, "$-1\r\n"},
 		{[]string{"GET", "k"}, "$1\r\nv\r\n"},
+		{[]string{"TYPE", "k"}, "+string\r\n"},
+        {[]string{"TYPE", "missing"}, "+none\r\n"},
 		{[]string{"SET", "absent", "v", "XX"}, "$-1\r\n"},
 		{[]string{"PERSIST", "k"}, ":1\r\n"}, {[]string{"PERSIST", "k"}, ":0\r\n"},
 		{[]string{"TTL", "k"}, ":-1\r\n"}, {[]string{"EXISTS", "k", "k", "absent"}, ":2\r\n"},
@@ -120,5 +123,16 @@ func TestEvictionAllowsBoundedWrite(t *testing.T) {
 	}
 	if got := store.Stats().Keys; got >= 10 || got == 0 {
 		t.Fatalf("unexpected keys %d", got)
+	}
+}
+func TestTypeExpiredKey(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "SET", "temp", "value", "PX", "1")
+
+	time.Sleep(5 * time.Millisecond)
+
+	if got := execute(t, s, "TYPE", "temp"); got != "+none\r\n" {
+		t.Fatalf("got %q want %q", got, "+none\r\n")
 	}
 }

@@ -3,4 +3,7 @@ services:
     build: .
     ports:
       - "127.0.0.1:6380:6380"
+    environment:
+      SNUGKV_ENCODING: "true"
+      SNUGKV_COMPRESSION: "true"
     stop_grace_period: 10s

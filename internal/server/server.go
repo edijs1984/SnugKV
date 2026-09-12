@@ -47,6 +47,7 @@ var commandTable = map[string]commandInfo{
 	"INCR": {2, 2, 1, 1, 1, true}, "DECR": {2, 2, 1, 1, 1, true}, "INCRBY": {3, 3, 1, 1, 1, true}, "DECRBY": {3, 3, 1, 1, 1, true},
 	"STRLEN": {2, 2, 1, 1, 1, false}, "EXPIRE": {3, 3, 1, 1, 1, true}, "PEXPIRE": {3, 3, 1, 1, 1, true},
 	"TTL": {2, 2, 1, 1, 1, false}, "PTTL": {2, 2, 1, 1, 1, false}, "PERSIST": {2, 2, 1, 1, 1, true},
+	"TYPE": {2, 2, 1, 1, 1, false},
 }
 
 func (s *Server) execute(args [][]byte) ([]byte, error) {
@@ -66,6 +67,7 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		key = string(args[1])
 	}
 	switch cmd {
+	
 	case "SNUG.AOFREWRITE":
 		writer, ok := s.journal.(interface {
 			Rewrite([]persistence.Record) error
@@ -138,6 +140,8 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			return nullBulk(), nil
 		}
 		return []byte("+OK\r\n"), nil
+	case "TYPE":
+	return []byte("+" + s.store.Type(key) + "\r\n"), nil
 	case "SETNX":
 		applied, err := s.store.SetConditional(key, args[2], engine.SetOptions{NX: true})
 		return boolean(applied), err

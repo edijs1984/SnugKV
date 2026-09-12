@@ -41,3 +41,25 @@ func (s *Store) Evict(key string) bool {
 	}
 	return false
 }
+
+func (s *Store) Type(key string) string {
+	sh := s.shardFor(key)
+
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	e, ok := sh.data.Get(key)
+	if !ok {
+		return "none"
+	}
+
+	if e.expired(s.now()) {
+		s.remove(sh, key)
+		return "none"
+	}
+
+	// At the moment all public Redis values in SnugKV are strings.
+	// Internal codecs such as integer/json-shape are storage optimizations
+	// and must not change Redis TYPE semantics.
+	return "string"
+}
