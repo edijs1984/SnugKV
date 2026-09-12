@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"strconv"
 )
 
 func execute(t *testing.T, s *Server, args ...string) string {
@@ -424,5 +425,66 @@ func TestIncrByFloatRejectsInvalidValue(t *testing.T) {
 
 	if err == nil {
 		t.Fatal("expected INCRBYFLOAT error")
+	}
+}
+
+func TestExpireAt(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "SET", "a", "1")
+
+	future := time.Now().Add(time.Hour).Unix()
+
+	if got := execute(
+		t,
+		s,
+		"EXPIREAT",
+		"a",
+		strconv.FormatInt(future, 10),
+	); got != ":1\r\n" {
+		t.Fatalf("EXPIREAT got %q", got)
+	}
+
+	if got := execute(t, s, "TTL", "a"); got == ":-1\r\n" {
+		t.Fatalf("EXPIREAT did not set TTL")
+	}
+}
+
+
+func TestExpireTime(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "SET", "a", "1")
+
+	future := time.Now().Add(time.Hour).Unix()
+
+	execute(
+		t,
+		s,
+		"EXPIREAT",
+		"a",
+		strconv.FormatInt(future, 10),
+	)
+
+	got := execute(t, s, "EXPIRETIME", "a")
+
+	expected := ":" + strconv.FormatInt(future, 10) + "\r\n"
+
+	if got != expected {
+		t.Fatalf("EXPIRETIME got %q want %q", got, expected)
+	}
+}
+
+func TestExpireTimeSpecialValues(t *testing.T) {
+	s := New(engine.New())
+
+	if got := execute(t, s, "EXPIRETIME", "missing"); got != ":-2\r\n" {
+		t.Fatalf("missing EXPIRETIME got %q", got)
+	}
+
+	execute(t, s, "SET", "persistent", "1")
+
+	if got := execute(t, s, "EXPIRETIME", "persistent"); got != ":-1\r\n" {
+		t.Fatalf("persistent EXPIRETIME got %q", got)
 	}
 }

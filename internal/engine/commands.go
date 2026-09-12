@@ -405,3 +405,51 @@ func (s *Store) Touch(keys []string) int {
 
 	return count
 }
+func (s *Store) ExpireAt(key string, when time.Time) bool {
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	e, ok := sh.data.Get(key)
+	now := s.now()
+
+	if !ok || e.expired(now) {
+		s.remove(sh, key)
+		return false
+	}
+
+	if !when.After(now) {
+		s.remove(sh, key)
+		return true
+	}
+
+	e.expiresAt = stampOf(when)
+	e.version = atomic.AddUint64(&s.version, 1)
+
+	sh.data.Set(key, e)
+	sh.schedule(key, e.expiresAt)
+
+	return true
+}
+func (s *Store) ExpireTime(key string, milliseconds bool) int64 {
+	sh := s.shardFor(key)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
+
+	e, ok := sh.data.Get(key)
+	now := s.now()
+
+	if !ok || e.expired(now) {
+		return -2
+	}
+
+	if e.expiresAt.IsZero() {
+		return -1
+	}
+
+	if milliseconds {
+		return e.expiresAt.Time().UnixMilli()
+	}
+
+	return e.expiresAt.Time().Unix()
+}

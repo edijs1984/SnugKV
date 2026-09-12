@@ -52,10 +52,10 @@ Existing:
 
 Add:
 
-- [ ] `EXPIREAT`
-- [ ] `PEXPIREAT`
-- [ ] `EXPIRETIME`
-- [ ] `PEXPIRETIME`
+- [x] `EXPIREAT`
+- [x] `PEXPIREAT`
+- [x] `EXPIRETIME`
+- [x] `PEXPIRETIME`
 - [ ] Redis-compatible `NX | XX | GT | LT` options for expiration commands
 
 ---
