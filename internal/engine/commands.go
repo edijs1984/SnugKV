@@ -317,3 +317,32 @@ func (s *Store) Rename(source, destination string, nx bool) (bool, error) {
 
 	return true, nil
 }
+func (s *Store) Touch(keys []string) int {
+	count := 0
+	now := s.now()
+
+	for _, key := range keys {
+		sh := s.shardFor(key)
+
+		sh.mu.Lock()
+
+		e, ok := sh.data.Get(key)
+
+		if !ok {
+			sh.mu.Unlock()
+			continue
+		}
+
+		if e.expired(now) {
+			s.remove(sh, key)
+			sh.mu.Unlock()
+			continue
+		}
+
+		count++
+
+		sh.mu.Unlock()
+	}
+
+	return count
+}

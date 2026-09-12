@@ -46,6 +46,7 @@ var commandTable = map[string]commandInfo{
 	"RANDOMKEY": {1, 1, 0, 0, 0, false},
 	"RENAME":   {3, 3, 1, 2, 1, true},
     "RENAMENX": {3, 3, 1, 2, 1, true},
+	"TOUCH": {2, 0, 1, -1, 1, false},
 	"SET": {3, 0, 1, 1, 1, true}, "GET": {2, 2, 1, 1, 1, false}, "MGET": {2, 0, 1, -1, 1, false},
 	"DEL": {2, 0, 1, -1, 1, true}, "EXISTS": {2, 0, 1, -1, 1, false}, "GETSET": {3, 3, 1, 1, 1, true},
 	"SETNX": {3, 3, 1, 1, 1, true}, "MSET": {3, 0, 1, -1, 2, true},
@@ -354,6 +355,16 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 	case "FLUSHDB":
 	s.store.FlushDB()
 	return []byte("+OK\r\n"), nil
+
+
+	case "TOUCH":
+	keys := make([]string, 0, len(args)-1)
+
+	for _, arg := range args[1:] {
+		keys = append(keys, string(arg))
+	}
+
+	return integer(int64(s.store.Touch(keys))), nil
 
 	case "COMMAND":
 		names := make([]string, 0, len(commandTable))

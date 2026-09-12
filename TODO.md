@@ -26,7 +26,7 @@ These should be implemented first because many Redis clients, admin tools, and U
 - [x] `RENAME key newkey`
 - [x] `RENAMENX key newkey`
 - [x] `UNLINK key`
-- [ ] `TOUCH key`
+- [x] `TOUCH key`
 
 ## Database commands
 

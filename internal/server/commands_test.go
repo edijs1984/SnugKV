@@ -370,3 +370,18 @@ func TestUnlink(t *testing.T) {
 		t.Fatalf("b still exists: %q", got)
 	}
 }
+
+func TestTouch(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "SET", "a", "1")
+	execute(t, s, "SET", "b", "2")
+
+	if got := execute(t, s, "TOUCH", "a", "b", "missing"); got != ":2\r\n" {
+		t.Fatalf("TOUCH got %q", got)
+	}
+
+	if got := execute(t, s, "GET", "a"); got != "$1\r\n1\r\n" {
+		t.Fatalf("TOUCH modified a: %q", got)
+	}
+}
