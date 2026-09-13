@@ -50,7 +50,12 @@ func (s *Store) makeEntry(value []byte) entry {
 	} else {
 		rec = codec.Record{ID: codec.Raw, RawLength: len(value), Data: append([]byte(nil), value...)}
 	}
-	return entry{value: rec.Data, codecID: rec.ID, rawLength: rec.RawLength}
+	return entry{
+		value:     rec.Data,
+		codecID:   rec.ID,
+		valueType: classifyValue(value),
+		rawLength: rec.RawLength,
+	}
 }
 func (s *Store) decode(e entry) []byte {
 	out, err := s.codecs.Decode(codec.Record{ID: e.codecID, RawLength: e.rawLength, Data: e.value, Schema: e.schema}, e.rawLength)

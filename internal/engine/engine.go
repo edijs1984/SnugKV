@@ -16,6 +16,7 @@ type entry struct {
 	schema                             *jsonshape.Schema
 	value                              []byte
 	codecID                            codec.ID
+	valueType                          ValueType
 	rawLength                          int
 	version                            uint64
 	expiresAt                          stamp
@@ -177,4 +178,3 @@ func (s *Store) Stats() DatasetStats {
 	}
 	return result
 }
-
