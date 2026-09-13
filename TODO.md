@@ -13,6 +13,305 @@ Expand SnugKV from the current Redis-compatible string/TTL subset into a broadly
 
 ---
 
+
+# EXECUTION ROADMAP — Quality → Public Alpha → Revenue
+
+This section defines the current execution order.
+
+The large Redis compatibility backlog below remains valid, but work should follow
+this roadmap unless a newly discovered correctness or security issue takes priority.
+
+## Product target
+
+The first public target is:
+
+> SnugKV v0.1 alpha — a Redis-compatible, memory-efficient datastore for
+> common cache/string/TTL workloads, suitable for evaluation, development,
+> benchmarks, and non-critical workloads.
+
+Do not claim that SnugKV is a complete production Redis replacement until the
+quality gates below are satisfied.
+
+## Decision rule
+
+Work in this order:
+
+1. correctness
+2. crash/security safety
+3. durability and recovery
+4. client compatibility
+5. operational usability
+6. reproducible performance evidence
+7. monetization
+8. broader Redis feature coverage
+9. micro-optimizations
+
+Do not trade significant latency, correctness, or maintainability for small RAM
+savings.
+
+---
+
+## Phase A — Public-alpha quality gate
+
+### Crash and protocol safety
+
+- [x] Legal large RESP values no longer crash arena allocation
+- [x] Arena tested through 32 MiB value size
+- [x] 1 MiB real `redis-cli SET` round-trip tested
+- [x] RESP fuzzing runs in CI
+- [ ] Add explicit 32 MiB server-level boundary test
+- [ ] Test oversized RESP rejection above configured limit
+- [ ] Test malformed/truncated request handling under real TCP connections
+- [ ] Test slow-client behavior and connection cleanup
+- [ ] Audit all reachable `panic` paths for remotely controlled input
+- [ ] Add connection/request resource limits where needed
+
+### Persistence and recovery
+
+- [x] Persistence preserves native semantic value types
+- [ ] Restart test after normal writes
+- [ ] Restart test with TTL values
+- [ ] Restart test with all semantic types
+- [ ] Restart test after JSON-shape encoding
+- [ ] Test truncated persistence record
+- [ ] Test corrupted persistence record
+- [ ] Test interrupted write/recovery behavior
+- [ ] Test recovery near configured memory limit
+- [ ] Define and document durability guarantees
+- [ ] Define persistence format/version compatibility policy
+
+### Memory safety and limits
+
+- [x] Memory accounting exists
+- [x] Arena allocation accounting exists
+- [ ] Verify MaxMemory under rewrite pressure
+- [ ] Verify MaxMemory during compaction
+- [ ] Verify atomic failure when an operation would exceed memory
+- [ ] Stress repeated allocate/free cycles for large values
+- [ ] Test fragmentation after mixed-size workloads
+- [ ] Verify eviction cannot violate memory accounting
+- [ ] Run leak/growth tests over long workloads
+
+### Concurrency
+
+- [x] Full repository race test runs in CI
+- [ ] Concurrent GET/SET/DEL stress
+- [ ] Concurrent TTL expiry stress
+- [ ] Concurrent optimizer/rewrite stress
+- [ ] Concurrent compaction stress
+- [ ] Concurrent persistence stress
+- [ ] Connection churn stress
+
+### Soak testing
+
+- [ ] 1 hour mixed-workload soak
+- [ ] 24 hour mixed-workload soak
+- [ ] 72 hour mixed-workload soak before beta
+- [ ] Track RSS/heap over time
+- [ ] Track goroutine count over time
+- [ ] Track error count and latency percentiles
+- [ ] Assert zero data mismatches
+
+---
+
+## Phase B — Real Redis client compatibility
+
+Test normal application flows, not only individual commands.
+
+- [x] `redis-cli` basic compatibility
+- [ ] ioredis smoke suite
+- [ ] node-redis smoke suite
+- [ ] go-redis smoke suite
+- [ ] redis-py smoke suite
+- [ ] Jedis smoke suite
+- [ ] Lettuce smoke suite
+- [ ] RedisInsight basic connectivity
+
+For each client record:
+
+- connection/setup behavior
+- commands automatically issued by the client
+- pipelining behavior
+- reconnect behavior
+- error handling
+- unsupported-command behavior
+
+Create and maintain a public compatibility matrix.
+
+---
+
+## Phase C — v0.1-alpha release readiness
+
+### Repository
+
+- [ ] `SECURITY.md`
+- [ ] `CLA.md`
+- [ ] `CHANGELOG.md`
+- [ ] `KNOWN-LIMITATIONS.md`
+- [ ] `COMPATIBILITY.md`
+- [ ] release/version policy
+- [ ] supported Go version documented
+- [ ] reproducible release build
+- [ ] tagged `v0.1.0-alpha`
+
+### Installation
+
+- [x] Dockerfile exists
+- [ ] Publish Docker image
+- [ ] Single-command Docker quick start
+- [ ] Persistent-volume example
+- [ ] Production-ish config example
+- [ ] graceful shutdown documentation
+- [ ] backup/restore documentation
+
+### README
+
+- [ ] 30-second quick start
+- [ ] Node.js example
+- [ ] Go example
+- [ ] Python example
+- [ ] migration-from-Redis example
+- [ ] supported-command matrix link
+- [ ] known-limitations warning
+- [ ] benchmark methodology link
+- [ ] commercial support/licensing section
+
+---
+
+## Phase D — Prove SnugKV's value
+
+Build one reproducible benchmark harness comparing:
+
+- SnugKV
+- Redis
+- Valkey
+- Dragonfly
+
+Datasets:
+
+- [ ] sessions
+- [ ] booleans
+- [ ] signed integers
+- [ ] unsigned integers
+- [ ] UUIDs
+- [ ] timestamps
+- [ ] small JSON
+- [ ] medium JSON
+- [ ] compressible blobs
+- [ ] random/incompressible blobs
+
+Measure:
+
+- [ ] logical bytes
+- [ ] resident/process memory
+- [ ] accounted SnugKV bytes
+- [ ] bytes per key
+- [ ] GET p50/p95/p99
+- [ ] SET p50/p95/p99
+- [ ] throughput
+- [ ] CPU
+- [ ] load time
+- [ ] recovery time
+
+Rules:
+
+- never publish conclusions from one run
+- run repeated samples
+- preserve raw benchmark output
+- publish hardware/software versions
+- do not claim SnugKV is faster or smaller unless the data demonstrates it
+
+Primary positioning to test:
+
+> Store more useful application data per GB while retaining Redis-compatible clients.
+
+---
+
+## Phase E — First revenue
+
+Do not wait for complete Redis compatibility before testing monetization.
+
+### Commercial model
+
+- [x] AGPL open-source license
+- [x] commercial-license document
+- [ ] commercial licensing FAQ
+- [ ] support/contact page
+- [ ] simple pricing page
+- [ ] define commercial/OEM licensing process
+
+Initial services to offer:
+
+- [ ] Redis memory-efficiency assessment
+- [ ] Redis → SnugKV migration assistance
+- [ ] deployment/integration support
+- [ ] performance profiling
+- [ ] custom codec/command development
+- [ ] commercial embedding license
+- [ ] paid support plan
+
+Initial pricing experiments:
+
+- Developer support: €99–199/month
+- Startup support: around €499/month
+- Business support: from €1,500/month
+- Consulting/performance work: €75–150/hour
+- Fixed performance/memory audit: €500–2,000
+- OEM/commercial licensing: custom
+
+First commercial milestone:
+
+- [ ] first external benchmark user
+- [ ] first external production-like test
+- [ ] first paying customer
+- [ ] €500/month recurring revenue
+- [ ] 3 paying customers
+
+---
+
+## Phase F — Compatibility expansion
+
+Only accelerate these after the alpha quality gate is credible.
+
+Priority order:
+
+1. Hashes
+2. Sets
+3. Lists
+4. Sorted sets
+5. Transactions
+6. Pub/Sub
+7. RESP3
+8. Streams
+9. replication
+10. clustering
+
+Do not implement every Redis feature merely for command-count parity. Prioritize
+features used by real users and paying prospects.
+
+---
+
+## Near-term engineering queue
+
+Work through these approximately in order:
+
+- [x] prevent large legal values from crashing arena allocator
+- [ ] lazy JSON-shape store allocation
+- [ ] audit remotely reachable panic paths
+- [ ] persistence/restart fault tests
+- [ ] server-level RESP boundary tests
+- [ ] client smoke-test harness
+- [ ] 1-hour soak harness/run
+- [ ] 24-hour soak
+- [ ] compatibility matrix
+- [ ] public-alpha documentation
+- [ ] reproducible Redis/Valkey/Dragonfly comparison
+- [ ] v0.1.0-alpha release
+- [ ] outreach for first benchmark users
+- [ ] paid support/migration offer
+
+---
+
 # P0 — Redis Compatibility Basics
 
 These should be implemented first because many Redis clients, admin tools, and UIs expect them.
@@ -116,7 +415,7 @@ SnugKV should internally support typed values while preserving Redis-compatible 
 - [x] `FLOAT64`
 - [x] `BOOL`
 - [x] `BYTES`
-- [ ] `JSON`
+- [x] `JSON`
 
 ## Requirements
 
@@ -130,7 +429,7 @@ SnugKV should internally support typed values while preserving Redis-compatible 
 - [ ] Add unit tests for every numeric edge case
 - [ ] Add overflow tests
 - [x] Add NaN/Infinity policy
-- [ ] Add persistence support for all new types
+- [x] Add persistence support for all new types
 - [ ] Add snapshot/AOF compatibility tests
 - [ ] Add memory benchmarks comparing typed vs raw ASCII values
 
@@ -556,7 +855,7 @@ Existing:
 
 Potential additions:
 
-- [ ] `SNUG.TYPE key`
+- [x] `SNUG.TYPE key`
 - [ ] `SNUG.ENCODING key`
 - [ ] `SNUG.SIZE key`
 - [ ] `SNUG.JSONSTATS key`
