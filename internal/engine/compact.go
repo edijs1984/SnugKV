@@ -26,27 +26,44 @@ func (s *Store) Compact(scratch uint64) int {
 		for key, e := range sh.all() {
 			items = append(items, pair{key, e})
 		}
-		sort.Slice(items, func(i, j int) bool { return len(items[i].value.value) > len(items[j].value.value) })
+		sort.Slice(items, func(i, j int) bool {
+			return len(items[i].value.encoded()) >
+				len(items[j].value.encoded())
+		})
+
 		lengths := make([]int, len(items))
 		for j := range items {
-			lengths[j] = len(items[j].value.value)
+			lengths[j] = len(items[j].value.encoded())
 		}
+
 		var fresh arena.Arena
 		projected := fresh.GrowthFor(lengths)
+
 		s.memory.mu.Lock()
 		if s.memory.max > 0 && s.memory.used-oldArena+projected > s.memory.max {
 			s.memory.mu.Unlock()
 			sh.mu.Unlock()
 			continue
 		}
+
+		for j := range items {
+			e := items[j].value
+			value := e.encoded()
+
+			e.ref = fresh.Alloc(value)
+			e.arena = nil
+			e.version = atomic.AddUint64(&s.version, 1)
+
+			items[j].value = e
+		}
+
+		sh.arena = fresh
+
 		for _, item := range items {
 			e := item.value
-			e.ref = fresh.Alloc(e.value)
-			e.value, _ = fresh.View(e.ref)
-			e.version = atomic.AddUint64(&s.version, 1)
+			e.arena = &sh.arena
 			sh.set(item.key, e)
 		}
-		sh.arena = fresh
 		sh.data.Compact()
 		newArena, newIndex := sh.arena.MemoryBytes(), sh.data.CapacityBytes()
 		s.memory.used = s.memory.used - oldArena - oldIndex + newArena + newIndex

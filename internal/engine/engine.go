@@ -13,8 +13,8 @@ import (
 
 type entry struct {
 	ref                                arena.Ref
+	arena                              *arena.Arena
 	schema                             *jsonshape.Schema
-	value                              []byte
 	rawLength                          int
 	version                            uint64
 	expiresAt                          stamp
@@ -22,6 +22,24 @@ type entry struct {
 	reads, writes                      uint16
 	codecID                            codec.ID
 	valueType                          ValueType
+}
+
+type preparedEntry struct {
+	entry
+	data []byte
+}
+
+func (e entry) encoded() []byte {
+	if e.arena == nil {
+		return nil
+	}
+
+	value, err := e.arena.View(e.ref)
+	if err != nil {
+		panic(err)
+	}
+
+	return value
 }
 
 func (e entry) expired(now time.Time) bool {

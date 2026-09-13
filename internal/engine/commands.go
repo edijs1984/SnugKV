@@ -141,7 +141,7 @@ func (s *Store) MSet(keys []string, values [][]byte) error {
 	}
 	unlock := s.lockAll()
 	defer unlock()
-	replacements := make(map[string]entry)
+	replacements := make(map[string]preparedEntry)
 	for i, k := range keys {
 		replacements[k] = s.makeEntry(values[i])
 	}
@@ -163,15 +163,15 @@ func (s *Store) MSet(keys []string, values [][]byte) error {
 
 		if old, ok := sh.get(k); ok {
 			before += entryCharge(k, old)
-			oldPayload += uint64(len(old.value))
+			oldPayload += uint64(len(old.encoded()))
 			oldLiveBlocks += sh.arena.AllocationBytes(old.ref)
 		} else {
 			growth[sh]++
 		}
 
 		after += entryCharge(k, e)
-		newPayload += uint64(len(e.value))
-		allocations[sh] = append(allocations[sh], len(e.value))
+		newPayload += uint64(len(e.data))
+		allocations[sh] = append(allocations[sh], len(e.data))
 	}
 	for sh, n := range growth {
 		extra += sh.data.GrowthBytes(n)
@@ -195,8 +195,8 @@ func (s *Store) MSet(keys []string, values [][]byte) error {
 		e := replacements[k]
 		sh := s.shardFor(k)
 
-		e.ref = sh.arena.Alloc(e.value)
-		e.value, _ = sh.arena.View(e.ref)
+		e.ref = sh.arena.Alloc(e.data)
+		e.arena = &sh.arena
 
 		newLiveBlocks += sh.arena.AllocationBytes(e.ref)
 		replacements[k] = e
@@ -213,12 +213,12 @@ func (s *Store) MSet(keys []string, values [][]byte) error {
 		sh := s.shardFor(k)
 		old, exists := sh.get(k)
 		if exists && old.schema != nil {
-			sh.shapes.ReleaseRecord(old.schema, old.value)
+			sh.shapes.ReleaseRecord(old.schema, old.encoded())
 		}
 		e.lastWrite = stampOf(s.now())
 		e.lastAccess = e.lastWrite
 		e.writes = 1
-		sh.set(k, e)
+		sh.set(k, e.entry)
 		if exists {
 			sh.arena.Free(old.ref)
 		}
@@ -268,7 +268,7 @@ func (s *Store) MSetNX(keys []string, values [][]byte) (bool, error) {
 	}
 
 	// Duplicate keys use the final supplied value, matching MSET behavior.
-	replacements := make(map[string]entry, len(keys))
+	replacements := make(map[string]preparedEntry, len(keys))
 
 	for i, key := range keys {
 		replacements[key] = s.makeEntry(values[i])
@@ -295,10 +295,10 @@ func (s *Store) MSetNX(keys []string, values [][]byte) (bool, error) {
 		sh := s.shardFor(key)
 
 		entryBytes += entryCharge(key, e)
-		newPayload += uint64(len(e.value))
+		newPayload += uint64(len(e.data))
 
 		growth[sh]++
-		allocations[sh] = append(allocations[sh], len(e.value))
+		allocations[sh] = append(allocations[sh], len(e.data))
 	}
 
 	for sh, n := range growth {
@@ -329,8 +329,8 @@ func (s *Store) MSetNX(keys []string, values [][]byte) (bool, error) {
 		e := replacements[key]
 		sh := s.shardFor(key)
 
-		e.ref = sh.arena.Alloc(e.value)
-		e.value, _ = sh.arena.View(e.ref)
+		e.ref = sh.arena.Alloc(e.data)
+		e.arena = &sh.arena
 
 		newLiveBlocks += sh.arena.AllocationBytes(e.ref)
 		replacements[key] = e
@@ -348,7 +348,7 @@ func (s *Store) MSetNX(keys []string, values [][]byte) (bool, error) {
 		e.lastAccess = e.lastWrite
 		e.writes = 1
 
-		sh.set(key, e)
+		sh.set(key, e.entry)
 		sh.schedule(key, e.expiresAt)
 	}
 

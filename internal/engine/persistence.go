@@ -67,7 +67,7 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 	unlock := s.lockAll()
 	defer unlock()
 	now := s.now()
-	updates := make(map[string]entry)
+	updates := make(map[string]preparedEntry)
 	deletions := make(map[string]bool)
 	for _, record := range records {
 		key := string(record.Key)
@@ -118,7 +118,7 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 			growth[sh]++
 		}
 		after += entryCharge(key, e)
-		allocations[sh] = append(allocations[sh], len(e.value))
+		allocations[sh] = append(allocations[sh], len(e.data))
 	}
 	for sh, n := range growth {
 		extra += sh.data.GrowthBytes(n)

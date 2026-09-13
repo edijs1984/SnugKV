@@ -25,7 +25,7 @@ func (s *Store) Candidate(key string, maxBytes int) (Candidate, bool) {
 	if !ok || e.expired(s.now()) || e.rawLength > maxBytes {
 		return Candidate{}, false
 	}
-	return Candidate{key, e.version, s.decode(e), len(e.value), e.lastRewrite.Time(), heat(e, s.now())}, true
+	return Candidate{key, e.version, s.decode(e), len(e.encoded()), e.lastRewrite.Time(), heat(e, s.now())}, true
 }
 func heat(e entry, now time.Time) string {
 	if now.Sub(e.lastWrite.Time()) < time.Minute && e.writes >= 10 {
@@ -90,18 +90,28 @@ func (s *Store) Rewrite(candidate Candidate, record codec.Record) bool {
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
 	e, ok := sh.get(candidate.Key)
-	if !ok || e.expired(s.now()) || e.version != candidate.Version || len(record.Data) >= len(e.value) {
+	if !ok ||
+		e.expired(s.now()) ||
+		e.version != candidate.Version ||
+		len(record.Data) >= len(e.encoded()) {
 		return false
 	}
+
 	if !bytes.Equal(s.decode(e), candidate.Value) {
 		return false
 	}
-	e.value = bytes.Clone(record.Data)
-	e.codecID = record.ID
-	e.schema = record.Schema
-	e.rawLength = record.RawLength
-	e.lastRewrite = stampOf(s.now())
-	return s.publish(sh, candidate.Key, e) == nil
+
+	prepared := preparedEntry{
+		entry: e,
+		data:  bytes.Clone(record.Data),
+	}
+
+	prepared.codecID = record.ID
+	prepared.schema = record.Schema
+	prepared.rawLength = record.RawLength
+	prepared.lastRewrite = stampOf(s.now())
+
+	return s.publish(sh, candidate.Key, prepared) == nil
 }
 
 // SampleKeys takes bounded samples from rotating shards; Go map iteration avoids
