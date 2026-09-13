@@ -913,6 +913,354 @@ func (s *Store) BitCount(
 	return total
 }
 
+func (s *Store) BitOp(
+	op string,
+	destination string,
+	sourceKeys []string,
+) (int, error) {
+	if len(sourceKeys) == 0 {
+		return 0, errors.New("ERR syntax error")
+	}
+
+	if op == "NOT" && len(sourceKeys) != 1 {
+		return 0, errors.New("ERR BITOP NOT must be called with a single source key")
+	}
+
+	unlock := s.lockAll()
+	defer unlock()
+
+	now := s.now()
+
+	sources := make([][]byte, len(sourceKeys))
+	maxLen := 0
+
+	// Read every source before touching destination because destination
+	// is allowed to also be one of the source keys.
+	for i, key := range sourceKeys {
+		sh := s.shardFor(key)
+		e, ok := sh.get(key)
+
+		if !ok {
+			continue
+		}
+
+		if e.expired(now) {
+			s.remove(sh, key)
+			continue
+		}
+
+		value := s.decode(e)
+		sources[i] = value
+
+		if len(value) > maxLen {
+			maxLen = len(value)
+		}
+	}
+
+	destShard := s.shardFor(destination)
+
+	// When every source is empty/non-existent, Redis leaves no
+	// destination string and returns zero.
+	if maxLen == 0 {
+		if old, ok := destShard.get(destination); ok {
+			s.remove(destShard, destination)
+			_ = old
+		}
+
+		return 0, nil
+	}
+
+	result := make([]byte, maxLen)
+
+	byteAt := func(src []byte, index int) byte {
+		if index >= len(src) {
+			return 0
+		}
+
+		return src[index]
+	}
+
+	switch op {
+	case "AND":
+		for i := 0; i < maxLen; i++ {
+			v := byte(0xff)
+
+			for _, src := range sources {
+				v &= byteAt(src, i)
+			}
+
+			result[i] = v
+		}
+
+	case "OR":
+		for i := 0; i < maxLen; i++ {
+			var v byte
+
+			for _, src := range sources {
+				v |= byteAt(src, i)
+			}
+
+			result[i] = v
+		}
+
+	case "XOR":
+		for i := 0; i < maxLen; i++ {
+			var v byte
+
+			for _, src := range sources {
+				v ^= byteAt(src, i)
+			}
+
+			result[i] = v
+		}
+
+	case "NOT":
+		src := sources[0]
+
+		// NOT result length is the source length.
+		result = make([]byte, len(src))
+
+		for i := range src {
+			result[i] = ^src[i]
+		}
+
+	case "DIFF":
+		for i := 0; i < maxLen; i++ {
+			x := byteAt(sources[0], i)
+			var others byte
+
+			for _, src := range sources[1:] {
+				others |= byteAt(src, i)
+			}
+
+			result[i] = x &^ others
+		}
+
+	case "DIFF1":
+		for i := 0; i < maxLen; i++ {
+			x := byteAt(sources[0], i)
+			var others byte
+
+			for _, src := range sources[1:] {
+				others |= byteAt(src, i)
+			}
+
+			result[i] = others &^ x
+		}
+
+	case "ANDOR":
+		for i := 0; i < maxLen; i++ {
+			x := byteAt(sources[0], i)
+			var others byte
+
+			for _, src := range sources[1:] {
+				others |= byteAt(src, i)
+			}
+
+			result[i] = x & others
+		}
+
+	case "ONE":
+		// A result bit is 1 iff exactly one source contains that bit.
+		for i := 0; i < maxLen; i++ {
+			var out byte
+
+			for bit := uint(0); bit < 8; bit++ {
+				mask := byte(1 << bit)
+				count := 0
+
+				for _, src := range sources {
+					if byteAt(src, i)&mask != 0 {
+						count++
+
+						if count > 1 {
+							break
+						}
+					}
+				}
+
+				if count == 1 {
+					out |= mask
+				}
+			}
+
+			result[i] = out
+		}
+
+	default:
+		return 0, errors.New("ERR syntax error")
+	}
+
+	if len(result) == 0 {
+		s.remove(destShard, destination)
+		return 0, nil
+	}
+
+	if len(result) > maxStringBytes {
+		return 0, errors.New("ERR value exceeds 32 MiB limit")
+	}
+
+	// BITOP replaces destination and therefore clears any old TTL.
+	if err := s.publish(
+		destShard,
+		destination,
+		s.makeEntry(result),
+	); err != nil {
+		return 0, err
+	}
+
+	return len(result), nil
+}
+
+func bitValueAt(value []byte, position int64) int {
+	byteIndex := position / 8
+	bitIndex := uint(7 - (position % 8))
+
+	if value[byteIndex]&(1<<bitIndex) != 0 {
+		return 1
+	}
+
+	return 0
+}
+
+func resolveRangeStart(length, start int64) int64 {
+	if start < 0 {
+		start = length + start
+	}
+
+	if start < 0 {
+		start = 0
+	}
+
+	return start
+}
+
+func (s *Store) BitPos(
+	key string,
+	target int,
+	start *int64,
+	end *int64,
+	bitMode bool,
+) (int64, error) {
+	if target != 0 && target != 1 {
+		return 0, errors.New("ERR bit must be 0 or 1")
+	}
+
+	sh := s.shardFor(key)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
+
+	e, ok := sh.get(key)
+
+	var value []byte
+
+	if ok && !e.expired(s.now()) {
+		value = s.decode(e)
+	}
+
+	lengthBits := int64(len(value)) * 8
+
+	// No explicit range.
+	if start == nil {
+		for position := int64(0); position < lengthBits; position++ {
+			if bitValueAt(value, position) == target {
+				return position, nil
+			}
+		}
+
+		if target == 0 {
+			// Redis treats the right side as zero padded when no
+			// explicit range is supplied.
+			return lengthBits, nil
+		}
+
+		return -1, nil
+	}
+
+	var unitLength int64
+
+	if bitMode {
+		unitLength = lengthBits
+	} else {
+		unitLength = int64(len(value))
+	}
+
+	startUnit := resolveRangeStart(unitLength, *start)
+
+	// start-only also uses implicit zero padding when searching for zero.
+	if end == nil {
+		if startUnit >= unitLength {
+			if target == 0 {
+				if bitMode {
+					return startUnit, nil
+				}
+
+				return startUnit * 8, nil
+			}
+
+			return -1, nil
+		}
+
+		var startBit int64
+
+		if bitMode {
+			startBit = startUnit
+		} else {
+			startBit = startUnit * 8
+		}
+
+		for position := startBit; position < lengthBits; position++ {
+			if bitValueAt(value, position) == target {
+				return position, nil
+			}
+		}
+
+		if target == 0 {
+			return lengthBits, nil
+		}
+
+		return -1, nil
+	}
+
+	// Explicit start+end is a bounded search. No implicit right-side
+	// zero padding is considered.
+	endUnit := *end
+
+	if endUnit < 0 {
+		endUnit = unitLength + endUnit
+	}
+
+	if endUnit < 0 || startUnit >= unitLength {
+		return -1, nil
+	}
+
+	if endUnit >= unitLength {
+		endUnit = unitLength - 1
+	}
+
+	if startUnit > endUnit {
+		return -1, nil
+	}
+
+	var startBit, endBit int64
+
+	if bitMode {
+		startBit = startUnit
+		endBit = endUnit
+	} else {
+		startBit = startUnit * 8
+		endBit = endUnit*8 + 7
+	}
+
+	for position := startBit; position <= endBit; position++ {
+		if bitValueAt(value, position) == target {
+			return position, nil
+		}
+	}
+
+	return -1, nil
+}
+
 func (s *Store) Touch(keys []string) int {
 	count := 0
 	now := s.now()

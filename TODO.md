@@ -90,8 +90,8 @@ Add:
 - [x] `GETBIT`
 - [x] `SETBIT`
 - [x] `BITCOUNT`
-- [ ] `BITOP`
-- [ ] `BITPOS`
+- [x] `BITOP`
+- [x] `BITPOS`
 
 ## SET compatibility
 

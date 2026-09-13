@@ -74,6 +74,8 @@ var commandTable = map[string]commandInfo{
 	"GETBIT":    {3, 3, 1, 1, 1, false},
 	"SETBIT":    {4, 4, 1, 1, 1, true},
 	"BITCOUNT":  {2, 5, 1, 1, 1, false},
+	"BITPOS":    {3, 6, 1, 1, 1, false},
+	"BITOP":     {4, 0, 2, -1, 1, true},
 	"JSON.SET":  {4, 5, 1, 1, 1, true},
 	"JSON.GET":  {2, 3, 1, 1, 1, false},
 	"JSON.TYPE": {2, 3, 1, 1, 1, false},
@@ -327,6 +329,99 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 				bitMode,
 			),
 		), nil
+
+	case "BITOP":
+		op := strings.ToUpper(string(args[1]))
+		destination := string(args[2])
+
+		switch op {
+		case "AND", "OR", "XOR", "NOT",
+			"DIFF", "DIFF1", "ANDOR", "ONE":
+		default:
+			return nil, errors.New("ERR syntax error")
+		}
+
+		if op == "NOT" && len(args) != 4 {
+			return nil, errors.New(
+				"ERR BITOP NOT must be called with a single source key",
+			)
+		}
+
+		sourceKeys := make([]string, 0, len(args)-3)
+
+		for _, arg := range args[3:] {
+			sourceKeys = append(sourceKeys, string(arg))
+		}
+
+		length, err := s.store.BitOp(
+			op,
+			destination,
+			sourceKeys,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		return integer(int64(length)), nil
+
+	case "BITPOS":
+		bitValue, err := strconv.Atoi(string(args[2]))
+		if err != nil || (bitValue != 0 && bitValue != 1) {
+			return nil, errors.New(
+				"ERR bit must be 0 or 1",
+			)
+		}
+
+		var start *int64
+		var end *int64
+		bitMode := false
+
+		if len(args) >= 4 {
+			v, err := parseInt64(args[3])
+			if err != nil {
+				return nil, errors.New(
+					"ERR value is not an integer or out of range",
+				)
+			}
+
+			start = &v
+		}
+
+		if len(args) >= 5 {
+			v, err := parseInt64(args[4])
+			if err != nil {
+				return nil, errors.New(
+					"ERR value is not an integer or out of range",
+				)
+			}
+
+			end = &v
+		}
+
+		if len(args) == 6 {
+			unit := strings.ToUpper(string(args[5]))
+
+			switch unit {
+			case "BYTE":
+			case "BIT":
+				bitMode = true
+			default:
+				return nil, errors.New("ERR syntax error")
+			}
+		}
+
+		position, err := s.store.BitPos(
+			key,
+			bitValue,
+			start,
+			end,
+			bitMode,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		return integer(position), nil
 
 	case "GETDEL":
 		value, found := s.store.GetDel(key)
