@@ -46,6 +46,10 @@ func New(store *engine.Store, c Config) (*Optimizer, error) {
 		o.wg.Add(1)
 		go o.worker()
 	}
+
+	o.wg.Add(1)
+	go o.maintenance()
+
 	return o, nil
 }
 func (o *Optimizer) Close() { o.cancel(); o.wg.Wait() }
@@ -87,6 +91,39 @@ func (o *Optimizer) reserve(n int) bool {
 	return true
 }
 func (o *Optimizer) release(n int) { o.mu.Lock(); o.scratch -= (16 << 20) + n*64; o.mu.Unlock() }
+func (o *Optimizer) maintenance() {
+	defer o.wg.Done()
+
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	const minDeadBytes uint64 = 1 << 20
+
+	for {
+		select {
+		case <-o.ctx.Done():
+			return
+
+		case <-ticker.C:
+			m := o.store.Memory()
+
+			if m.ArenaBytes == 0 || m.ArenaBytes <= m.ArenaLiveBlockBytes {
+				continue
+			}
+
+			dead := m.ArenaBytes - m.ArenaLiveBlockBytes
+
+			// Compact only when at least 1 MiB is dead and
+			// dead storage is at least 25% of the arena.
+			if dead < minDeadBytes || dead*4 < m.ArenaBytes {
+				continue
+			}
+
+			o.store.Compact(uint64(o.config.MaxScratchBytes))
+		}
+	}
+}
+
 func (o *Optimizer) worker() {
 	defer o.wg.Done()
 	for {
