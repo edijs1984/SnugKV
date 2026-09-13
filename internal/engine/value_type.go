@@ -70,6 +70,18 @@ func classifyValue(value []byte) ValueType {
 		}
 	}
 
+	// Canonical UINT64 values above MaxInt64.
+	//
+	// Values <= MaxInt64 are intentionally classified as INT64 first.
+	if len(value) > 0 {
+		if n, err := strconv.ParseUint(string(value), 10, 64); err == nil {
+			if strconv.FormatUint(n, 10) == string(value) &&
+				n > uint64(^uint64(0)>>1) {
+				return TypeUint64
+			}
+		}
+	}
+
 	// Redis strings are binary-safe. Invalid UTF-8 is therefore treated
 	// explicitly as BYTES rather than STRING.
 	if !utf8.Valid(value) {

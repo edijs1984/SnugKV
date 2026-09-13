@@ -10,7 +10,7 @@ func TestExactCodecs(t *testing.T) {
 	for _, tc := range []struct {
 		s  string
 		id ID
-	}{{"123456789", Integer}, {"0042", Raw}, {"-0", Raw}, {"+1", Raw}, {" 1", Raw}, {"9223372036854775808", Raw}, {"550e8400-e29b-41d4-a716-446655440000", UUID}, {"550E8400-E29B-41D4-A716-446655440000", Raw}, {"2026-09-07T12:34:56Z", Timestamp}, {"2026-09-07T12:34:56.000Z", Raw}, {"", Raw}} {
+	}{{"123456789", Integer}, {"0042", Raw}, {"-0", Raw}, {"+1", Raw}, {" 1", Raw}, {"9223372036854775808", UnsignedInteger}, {"550e8400-e29b-41d4-a716-446655440000", UUID}, {"550E8400-E29B-41D4-A716-446655440000", Raw}, {"2026-09-07T12:34:56Z", Timestamp}, {"2026-09-07T12:34:56.000Z", Raw}, {"", Raw}} {
 		rec := r.Encode([]byte(tc.s))
 		if rec.ID != tc.id {
 			t.Errorf("%q ID %d", tc.s, rec.ID)

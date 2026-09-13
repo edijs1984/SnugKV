@@ -23,7 +23,7 @@ func TestClassifyValueCanonicalInt64(t *testing.T) {
 		{"00", TypeString},
 
 		// Outside signed 64-bit range is not INT64.
-		{"9223372036854775808", TypeString},
+		{"9223372036854775808", TypeUint64},
 	}
 
 	for _, tt := range tests {
@@ -147,5 +147,73 @@ func TestValueTypeOf(t *testing.T) {
 				tt.want.String(),
 			)
 		}
+	}
+}
+
+func TestClassifyValueUint64(t *testing.T) {
+	tests := []struct {
+		value string
+		want  ValueType
+	}{
+		{"9223372036854775807", TypeInt64},
+		{"9223372036854775808", TypeUint64},
+		{"18446744073709551615", TypeUint64},
+
+		// Outside uint64.
+		{"18446744073709551616", TypeString},
+
+		// Non-canonical.
+		{"09223372036854775808", TypeString},
+		{"+9223372036854775808", TypeString},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.value, func(t *testing.T) {
+			got := classifyValue([]byte(tt.value))
+
+			if got != tt.want {
+				t.Fatalf(
+					"classifyValue(%q) = %s, want %s",
+					tt.value,
+					got.String(),
+					tt.want.String(),
+				)
+			}
+		})
+	}
+}
+
+func TestUint64StoreRoundTrip(t *testing.T) {
+	store := New()
+
+	value := []byte("18446744073709551615")
+
+	if err := store.Set("uint", value, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok := store.Get("uint")
+	if !ok {
+		t.Fatal("missing uint")
+	}
+
+	if !bytes.Equal(got, value) {
+		t.Fatalf(
+			"round trip changed value: got %q want %q",
+			got,
+			value,
+		)
+	}
+
+	valueType, ok := store.ValueTypeOf("uint")
+	if !ok {
+		t.Fatal("missing uint type")
+	}
+
+	if valueType != TypeUint64 {
+		t.Fatalf(
+			"type = %s, want UINT64",
+			valueType.String(),
+		)
 	}
 }

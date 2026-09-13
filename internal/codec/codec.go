@@ -14,10 +14,11 @@ import (
 type ID uint8
 
 const (
-	Raw       ID = 0
-	Integer   ID = 1
-	UUID      ID = 3
-	Timestamp ID = 4
+	Raw             ID = 0
+	Integer         ID = 1
+	UnsignedInteger ID = 2
+	UUID            ID = 3
+	Timestamp       ID = 4
 )
 
 type Record struct {
@@ -39,7 +40,15 @@ type Registry struct {
 
 func NewRegistry() *Registry {
 	r := &Registry{codecs: make(map[ID]Codec)}
-	for _, c := range []Codec{rawCodec{}, integerCodec{}, uuidCodec{}, timestampCodec{}, lz4Codec{}, zstdCodec{}} {
+	for _, c := range []Codec{
+		rawCodec{},
+		integerCodec{},
+		unsignedIntegerCodec{},
+		uuidCodec{},
+		timestampCodec{},
+		lz4Codec{},
+		zstdCodec{},
+	} {
 		if err := r.Register(c); err != nil {
 			panic(err)
 		}
@@ -137,6 +146,67 @@ func (integerCodec) Decode(src []byte, _ int) ([]byte, error) {
 		return nil, errors.New("invalid integer")
 	}
 	return []byte(strconv.FormatInt(n, 10)), nil
+}
+
+type unsignedIntegerCodec struct{}
+
+func (unsignedIntegerCodec) ID() ID {
+	return UnsignedInteger
+}
+
+func (unsignedIntegerCodec) Name() string {
+	return "unsigned-integer"
+}
+
+func (unsignedIntegerCodec) Encode(src []byte) ([]byte, bool) {
+	if len(src) == 0 {
+		return nil, false
+	}
+
+	n, err := strconv.ParseUint(string(src), 10, 64)
+	if err != nil {
+		return nil, false
+	}
+
+	// Only canonical unsigned decimal strings are eligible.
+	//
+	// Reject:
+	//   00123
+	//   +123
+	//   00
+	if strconv.FormatUint(n, 10) != string(src) {
+		return nil, false
+	}
+
+	// Signed INT64 values already have their own codec.
+	// UINT64 is reserved for values above MaxInt64.
+	if n <= uint64(^uint64(0)>>1) {
+		return nil, false
+	}
+
+	var buf [10]byte
+
+	size := binary.PutUvarint(buf[:], n)
+
+	return bytes.Clone(buf[:size]), true
+}
+
+func (unsignedIntegerCodec) Decode(
+	src []byte,
+	_ int,
+) ([]byte, error) {
+	n, size := binary.Uvarint(src)
+
+	if size <= 0 || size != len(src) {
+		return nil, errors.New("invalid unsigned integer")
+	}
+
+	// This codec must never contain values representable as INT64.
+	if n <= uint64(^uint64(0)>>1) {
+		return nil, errors.New("invalid unsigned integer range")
+	}
+
+	return []byte(strconv.FormatUint(n, 10)), nil
 }
 
 type uuidCodec struct{}

@@ -63,3 +63,11 @@ of keys while performing periodic writes, counter increments, TTL churn, cleanup
 and background optimization. It verifies every read and reports start, peak, and
 end accounted memory as JSON. `make soak` defaults to 24 hours; override `DURATION`
 for a smoke run.
+
+## License
+
+SnugKV is licensed under the [Apache License 2.0](LICENSE).
+
+SnugKV is an independent project and is not affiliated with or endorsed by Redis.
+Redis is a trademark of its respective owner.
+
