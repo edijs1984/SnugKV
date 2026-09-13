@@ -24,7 +24,7 @@ func (s *Store) SetConditional(key string, value []byte, options SetOptions) (bo
 	sh := s.shardFor(key)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
-	old, exists := sh.data.Get(key)
+	old, exists := sh.get(key)
 	exists = exists && !old.expired(s.now())
 	if options.NX && exists || options.XX && !exists {
 		return false, nil
@@ -45,7 +45,7 @@ func (s *Store) GetSet(key string, value []byte) ([]byte, bool, error) {
 	sh := s.shardFor(key)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
-	old, exists := sh.data.Get(key)
+	old, exists := sh.get(key)
 	exists = exists && !old.expired(s.now())
 	var previous []byte
 	if exists {
@@ -97,7 +97,7 @@ func (s *Store) MSet(keys []string, values [][]byte) error {
 	for _, k := range ordered {
 		e := replacements[k]
 		sh := s.shardFor(k)
-		if old, ok := sh.data.Get(k); ok {
+		if old, ok := sh.get(k); ok {
 			before += entryCharge(k, old)
 		} else {
 			growth[sh]++
@@ -132,14 +132,14 @@ func (s *Store) MSet(keys []string, values [][]byte) error {
 		e := replacements[k]
 		e.version = atomic.AddUint64(&s.version, 1)
 		sh := s.shardFor(k)
-		old, exists := sh.data.Get(k)
+		old, exists := sh.get(k)
 		if exists && old.schema != nil {
 			sh.shapes.ReleaseRecord(old.schema, old.value)
 		}
 		e.lastWrite = stampOf(s.now())
 		e.lastAccess = e.lastWrite
 		e.writes = 1
-		sh.data.Set(k, e)
+		sh.set(k, e)
 		if exists {
 			sh.arena.Free(old.ref)
 		}
@@ -154,7 +154,7 @@ func (s *Store) MGet(keys []string) ([][]byte, []bool) {
 	now := s.now()
 	values, found := make([][]byte, len(keys)), make([]bool, len(keys))
 	for i, key := range keys {
-		e, ok := s.shardFor(key).data.Get(key)
+		e, ok := s.shardFor(key).get(key)
 		if ok && !e.expired(now) {
 			values[i] = s.decode(e)
 			if now.Sub(e.lastAccess.Time()) > time.Minute {
@@ -164,7 +164,7 @@ func (s *Store) MGet(keys []string) ([][]byte, []bool) {
 			if e.reads < math.MaxUint32 {
 				e.reads++
 			}
-			s.shardFor(key).data.Set(key, e)
+			s.shardFor(key).set(key, e)
 			found[i] = true
 		}
 	}
@@ -176,7 +176,7 @@ func (s *Store) Exists(keys []string) int64 {
 	now := s.now()
 	var count int64
 	for _, key := range keys {
-		if e, ok := s.shardFor(key).data.Get(key); ok && !e.expired(now) {
+		if e, ok := s.shardFor(key).get(key); ok && !e.expired(now) {
 			count++
 		}
 	}
@@ -189,7 +189,7 @@ func (s *Store) DeleteMany(keys []string) int64 {
 	var count int64
 	for _, key := range keys {
 		sh := s.shardFor(key)
-		if e, ok := sh.data.Get(key); ok {
+		if e, ok := sh.get(key); ok {
 			if !e.expired(now) {
 				count++
 			}
@@ -202,7 +202,7 @@ func (s *Store) Expire(key string, ttl time.Duration) bool {
 	sh := s.shardFor(key)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
-	e, ok := sh.data.Get(key)
+	e, ok := sh.get(key)
 	now := s.now()
 	if !ok || e.expired(now) {
 		s.remove(sh, key)
@@ -213,7 +213,7 @@ func (s *Store) Expire(key string, ttl time.Duration) bool {
 	} else {
 		e.expiresAt = stampOf(now.Add(ttl))
 		e.version = atomic.AddUint64(&s.version, 1)
-		sh.data.Set(key, e)
+		sh.set(key, e)
 		sh.schedule(key, e.expiresAt)
 	}
 	return true
@@ -222,7 +222,7 @@ func (s *Store) Persist(key string) bool {
 	sh := s.shardFor(key)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
-	e, ok := sh.data.Get(key)
+	e, ok := sh.get(key)
 	if !ok || e.expired(s.now()) {
 		s.remove(sh, key)
 		return false
@@ -232,7 +232,7 @@ func (s *Store) Persist(key string) bool {
 	}
 	e.expiresAt = 0
 	e.version = atomic.AddUint64(&s.version, 1)
-	sh.data.Set(key, e)
+	sh.set(key, e)
 	sh.schedule(key, e.expiresAt)
 	return true
 }
@@ -245,7 +245,7 @@ func (s *Store) Sub(key string, decrement int64) (int64, error) {
 	sh := s.shardFor(key)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
-	e, ok := sh.data.Get(key)
+	e, ok := sh.get(key)
 	if !ok || e.expired(s.now()) {
 		return 0, errors.New("ERR increment or decrement would overflow")
 	}
@@ -279,7 +279,7 @@ func (s *Store) Rename(source, destination string, nx bool) (bool, error) {
 	sourceShard := s.shardFor(source)
 	destinationShard := s.shardFor(destination)
 
-	sourceEntry, sourceExists := sourceShard.data.Get(source)
+	sourceEntry, sourceExists := sourceShard.get(source)
 
 	if !sourceExists || sourceEntry.expired(now) {
 		if sourceExists {
@@ -289,7 +289,7 @@ func (s *Store) Rename(source, destination string, nx bool) (bool, error) {
 		return false, errors.New("ERR no such key")
 	}
 
-	destinationEntry, destinationExists := destinationShard.data.Get(destination)
+	destinationEntry, destinationExists := destinationShard.get(destination)
 
 	if destinationExists && destinationEntry.expired(now) {
 		s.remove(destinationShard, destination)
@@ -329,7 +329,7 @@ func (s *Store) AddFloat(key string, increment float64) (string, error) {
 
 	now := s.now()
 
-	e, exists := sh.data.Get(key)
+	e, exists := sh.get(key)
 
 	current := float64(0)
 
@@ -385,7 +385,7 @@ func (s *Store) Touch(keys []string) int {
 
 		sh.mu.Lock()
 
-		e, ok := sh.data.Get(key)
+		e, ok := sh.get(key)
 
 		if !ok {
 			sh.mu.Unlock()
@@ -410,7 +410,7 @@ func (s *Store) ExpireAt(key string, when time.Time) bool {
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
 
-	e, ok := sh.data.Get(key)
+	e, ok := sh.get(key)
 	now := s.now()
 
 	if !ok || e.expired(now) {
@@ -426,7 +426,7 @@ func (s *Store) ExpireAt(key string, when time.Time) bool {
 	e.expiresAt = stampOf(when)
 	e.version = atomic.AddUint64(&s.version, 1)
 
-	sh.data.Set(key, e)
+	sh.set(key, e)
 	sh.schedule(key, e.expiresAt)
 
 	return true
@@ -436,7 +436,7 @@ func (s *Store) ExpireTime(key string, milliseconds bool) int64 {
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
 
-	e, ok := sh.data.Get(key)
+	e, ok := sh.get(key)
 	now := s.now()
 
 	if !ok || e.expired(now) {
@@ -459,7 +459,7 @@ func (s *Store) GetDel(key string) ([]byte, bool) {
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
 
-	e, ok := sh.data.Get(key)
+	e, ok := sh.get(key)
 	now := s.now()
 
 	if !ok || e.expired(now) {
@@ -484,7 +484,7 @@ func (s *Store) GetEx(
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
 
-	e, ok := sh.data.Get(key)
+	e, ok := sh.get(key)
 	now := s.now()
 
 	if !ok || e.expired(now) {
@@ -500,7 +500,7 @@ func (s *Store) GetEx(
 		e.expiresAt = 0
 		e.version = atomic.AddUint64(&s.version, 1)
 
-		sh.data.Set(key, e)
+		sh.set(key, e)
 		sh.schedule(key, e.expiresAt)
 
 		return value, true
@@ -517,7 +517,7 @@ func (s *Store) GetEx(
 		e.expiresAt = stampOf(*expireAt)
 		e.version = atomic.AddUint64(&s.version, 1)
 
-		sh.data.Set(key, e)
+		sh.set(key, e)
 		sh.schedule(key, e.expiresAt)
 	}
 
@@ -531,7 +531,7 @@ func (s *Store) Append(key string, suffix []byte) (int, error) {
 
 	now := s.now()
 
-	e, exists := sh.data.Get(key)
+	e, exists := sh.get(key)
 
 	var current []byte
 	var expiresAt stamp
@@ -569,7 +569,7 @@ func (s *Store) GetRange(key string, start, end int64) []byte {
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
 
-	e, ok := sh.data.Get(key)
+	e, ok := sh.get(key)
 
 	if !ok || e.expired(s.now()) {
 		if ok {
@@ -622,7 +622,7 @@ func (s *Store) SetRange(key string, offset int64, replacement []byte) (int, err
 
 	now := s.now()
 
-	e, exists := sh.data.Get(key)
+	e, exists := sh.get(key)
 
 	var current []byte
 	var expiresAt stamp

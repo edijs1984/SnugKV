@@ -21,7 +21,7 @@ func (s *Store) Candidate(key string, maxBytes int) (Candidate, bool) {
 	sh := s.shardFor(key)
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
-	e, ok := sh.data.Get(key)
+	e, ok := sh.get(key)
 	if !ok || e.expired(s.now()) || e.rawLength > maxBytes {
 		return Candidate{}, false
 	}
@@ -43,7 +43,7 @@ func (s *Store) Policy(key string) (string, bool) {
 	sh := s.shardFor(key)
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
-	e, ok := sh.data.Get(key)
+	e, ok := sh.get(key)
 	if !ok || e.expired(s.now()) {
 		return "", false
 	}
@@ -89,7 +89,7 @@ func (s *Store) Rewrite(candidate Candidate, record codec.Record) bool {
 	sh := s.shardFor(candidate.Key)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
-	e, ok := sh.data.Get(candidate.Key)
+	e, ok := sh.get(candidate.Key)
 	if !ok || e.expired(s.now()) || e.version != candidate.Version || len(record.Data) >= len(e.value) {
 		return false
 	}

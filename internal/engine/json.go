@@ -25,7 +25,7 @@ func (s *Store) JSONSet(
 
 	now := s.now()
 
-	e, exists := sh.data.Get(key)
+	e, exists := sh.get(key)
 
 	if exists && e.expired(now) {
 		s.remove(sh, key)
@@ -98,7 +98,7 @@ func (s *Store) JSONGet(key, path string) ([]byte, bool, error) {
 
 	now := s.now()
 
-	e, exists := sh.data.Get(key)
+	e, exists := sh.get(key)
 
 	if !exists {
 		return nil, false, nil
@@ -138,7 +138,7 @@ func (s *Store) JSONType(key, path string) (string, bool, error) {
 
 	now := s.now()
 
-	e, exists := sh.data.Get(key)
+	e, exists := sh.get(key)
 
 	if !exists {
 		return "", false, nil
@@ -173,7 +173,7 @@ func (s *Store) JSONDel(key, path string) (int64, error) {
 
 	now := s.now()
 
-	e, exists := sh.data.Get(key)
+	e, exists := sh.get(key)
 
 	if !exists {
 		return 0, nil

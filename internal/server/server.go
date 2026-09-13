@@ -570,10 +570,41 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		if section == "" || section == "all" || section == "default" || section == "server" {
 			out += "# Server\r\nsnugkv_version:0.1.0\r\n"
 		}
-		if section == "" || section == "all" || section == "default" || section == "memory" {
-			m := s.store.Memory()
-			out += fmt.Sprintf("# Memory\r\nlogical_key_bytes:%d\r\nlogical_value_bytes:%d\r\nused_memory_accounted:%d\r\nindex_reserved_bytes:%d\r\nmaxmemory:%d\r\n", st.KeyBytes, st.ValueBytes, m.AccountedBytes, m.IndexReservedBytes, m.MaxBytes)
-		}
+	    if section == "" || section == "all" || section == "default" || section == "memory" {
+	m := s.store.Memory()
+	used := m.AccountedBytes
+
+	out += fmt.Sprintf(
+		"# Memory\r\n"+
+			"used_memory:%d\r\n"+
+			"used_memory_human:%s\r\n"+
+			"used_memory_peak:%d\r\n"+
+			"used_memory_peak_human:%s\r\n"+
+			"used_memory_dataset:%d\r\n"+
+			"used_memory_overhead:%d\r\n"+
+			"maxmemory:%d\r\n"+
+			"maxmemory_human:%s\r\n"+
+			"maxmemory_policy:noeviction\r\n"+
+			"logical_key_bytes:%d\r\n"+
+			"logical_value_bytes:%d\r\n"+
+			"index_reserved_bytes:%d\r\n"+
+			"arena_bytes:%d\r\n"+
+			"schema_reserved_bytes:%d\r\n",
+		used,
+		formatBytes(used),
+		used,
+		formatBytes(used),
+		st.KeyBytes+st.ValueBytes,
+		m.IndexReservedBytes+m.EntryBytes+m.SchemaBytes,
+		m.MaxBytes,
+		formatBytes(m.MaxBytes),
+		st.KeyBytes,
+		st.ValueBytes,
+		m.IndexReservedBytes,
+		m.ArenaBytes,
+		m.SchemaBytes,
+	)
+}
 		if section == "" || section == "all" || section == "default" || section == "stats" {
 			out += fmt.Sprintf("# Stats\r\ntotal_commands_processed:%d\r\n", atomic.LoadUint64(&s.commands))
 		}
@@ -727,4 +758,23 @@ func parseInt64(v []byte) (int64, error) {
 		return 0, errors.New("ERR value is not an integer or out of range")
 	}
 	return n, nil
+}
+
+func formatBytes(n uint64) string {
+	const (
+		kb = 1024
+		mb = 1024 * kb
+		gb = 1024 * mb
+	)
+
+	switch {
+	case n >= gb:
+		return fmt.Sprintf("%.2fG", float64(n)/gb)
+	case n >= mb:
+		return fmt.Sprintf("%.2fM", float64(n)/mb)
+	case n >= kb:
+		return fmt.Sprintf("%.2fK", float64(n)/kb)
+	default:
+		return fmt.Sprintf("%dB", n)
+	}
 }

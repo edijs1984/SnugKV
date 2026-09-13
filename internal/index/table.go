@@ -4,7 +4,6 @@ package index
 import "reflect"
 
 type slot[V any] struct {
-	hash  uint64
 	key   string
 	value V
 	state uint8
@@ -36,7 +35,7 @@ func (t *Table[V]) capacityFor(n int) int {
 	if capacity == 0 {
 		capacity = 8
 	}
-	for n > capacity*7/10 {
+	for n > capacity*8/10 {
 		capacity *= 2
 	}
 	return capacity
@@ -56,7 +55,7 @@ func (t *Table[V]) Get(key string) (V, bool) {
 		if s.state == 0 {
 			return zero, false
 		}
-		if s.state == 1 && s.hash == hash && s.key == key {
+		if s.state == 1 && s.key == key {
 			return s.value, true
 		}
 	}
@@ -85,7 +84,7 @@ func (t *Table[V]) insert(key string, value V) {
 	for n := 0; n < len(t.slots); n++ {
 		i := int((hash + uint64(n)) & mask)
 		s := &t.slots[i]
-		if s.state == 1 && s.hash == hash && s.key == key {
+		if s.state == 1 && s.key == key {
 			s.value = value
 			return
 		}
@@ -96,13 +95,13 @@ func (t *Table[V]) insert(key string, value V) {
 			if deleted >= 0 {
 				s = &t.slots[deleted]
 			}
-			*s = slot[V]{hash, key, value, 1}
+			*s = slot[V]{key, value, 1}
 			t.count++
 			return
 		}
 	}
 	if deleted >= 0 {
-		t.slots[deleted] = slot[V]{hash, key, value, 1}
+		t.slots[deleted] = slot[V]{key, value, 1}
 		t.count++
 		return
 	}
@@ -119,7 +118,7 @@ func (t *Table[V]) Delete(key string) {
 		if s.state == 0 {
 			return
 		}
-		if s.state == 1 && s.hash == hash && s.key == key {
+		if s.state == 1 && s.key == key {
 			var zero V
 			s.key = ""
 			s.value = zero
@@ -147,7 +146,7 @@ func (t *Table[V]) Compact() {
 		t.slots = nil
 		return
 	}
-	for t.count > capacity*7/10 {
+	for t.count > capacity*8/10 {
 		capacity *= 2
 	}
 	old := t.slots

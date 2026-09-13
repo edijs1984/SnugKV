@@ -58,7 +58,7 @@ func NewWithOptions(options Options) (*Store, error) {
 	}
 	s := &Store{shards: make([]shard, count), now: time.Now, codecs: codec.NewRegistry(), encoding: options.Encoding, compression: options.Compression, memory: accounting{used: base, index: uint64(count) * 512, schemas: schemaBase, max: options.MaxMemory}}
 	for i := range s.shards {
-		s.shards[i].data = index.New[entry]()
+		s.shards[i].data = index.New[uint32]()
 		if options.ShapeEncoding {
 			s.shards[i].shapes = jsonshape.New(2048, 8)
 		}
@@ -79,7 +79,7 @@ func (s *Store) Get(key string) ([]byte, bool) {
 	sh := s.shardFor(key)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
-	e, ok := sh.data.Get(key)
+	e, ok := sh.get(key)
 	if !ok || e.expired(s.now()) {
 		return nil, false
 	}
@@ -90,14 +90,14 @@ func (s *Store) Get(key string) ([]byte, bool) {
 	if e.reads < math.MaxUint32 {
 		e.reads++
 	}
-	sh.data.Set(key, e)
+	sh.set(key, e)
 	return s.decode(e), true
 }
 func (s *Store) Delete(key string) bool {
 	sh := s.shardFor(key)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
-	e, ok := sh.data.Get(key)
+	e, ok := sh.get(key)
 	s.remove(sh, key)
 	return ok && !e.expired(s.now())
 }
@@ -107,7 +107,7 @@ func (s *Store) Add(key string, delta int64) (int64, error) {
 	sh := s.shardFor(key)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
-	e, ok := sh.data.Get(key)
+	e, ok := sh.get(key)
 	if ok && e.expired(s.now()) {
 		s.remove(sh, key)
 		e = entry{}
@@ -139,7 +139,7 @@ func (s *Store) TTL(key string, milliseconds bool) int64 {
 	sh := s.shardFor(key)
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
-	e, ok := sh.data.Get(key)
+	e, ok := sh.get(key)
 	now := s.now()
 	if !ok || e.expired(now) {
 		return -2
@@ -166,7 +166,7 @@ func (s *Store) Stats() DatasetStats {
 		sh := &s.shards[i]
 		sh.mu.RLock()
 		now := s.now()
-		for k, e := range sh.data.All() {
+		for k, e := range sh.all() {
 			if !e.expired(now) {
 				result.Keys++
 				result.KeyBytes += uint64(len(k))
@@ -177,3 +177,4 @@ func (s *Store) Stats() DatasetStats {
 	}
 	return result
 }
+

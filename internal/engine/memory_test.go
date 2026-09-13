@@ -21,7 +21,7 @@ func auditMemory(t *testing.T, s *Store) {
 		sh := &s.shards[i]
 		index += sh.data.CapacityBytes()
 		arenaBytes += sh.arena.MemoryBytes()
-		for k, e := range sh.data.All() {
+		for k, e := range sh.all() {
 			entries += entryCharge(k, e)
 		}
 	}

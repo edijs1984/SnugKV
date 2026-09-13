@@ -26,7 +26,7 @@ func (s *Store) Scan(cursor uint64, count int, pattern string) (uint64, []string
 
 		sh.mu.RLock()
 
-		for key, e := range sh.data.All() {
+		for key, e := range sh.all() {
 			if e.expired(now) {
 				continue
 			}
@@ -66,7 +66,7 @@ func (s *Store) Keys(pattern string) []string {
 
 		sh.mu.RLock()
 
-		for key, e := range sh.data.All() {
+		for key, e := range sh.all() {
 			if e.expired(now) {
 				continue
 			}

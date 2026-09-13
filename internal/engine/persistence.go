@@ -17,7 +17,7 @@ func (s *Store) Export(keys []string) []persistence.Record {
 	all := keys == nil
 	if all {
 		for i := range s.shards {
-			for key := range s.shards[i].data.All() {
+			for key := range s.shards[i].all() {
 				keys = append(keys, key)
 			}
 		}
@@ -30,7 +30,7 @@ func (s *Store) Export(keys []string) []persistence.Record {
 			continue
 		}
 		seen[key] = true
-		e, ok := s.shardFor(key).data.Get(key)
+		e, ok := s.shardFor(key).get(key)
 		record := persistence.Record{Key: []byte(key)}
 		if !ok || e.expired(now) {
 			if all {
@@ -92,7 +92,7 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 	growth := make(map[*shard]int)
 	for key := range deletions {
 		sh := s.shardFor(key)
-		if old, ok := sh.data.Get(key); ok {
+		if old, ok := sh.get(key); ok {
 			before += entryCharge(key, old)
 			growth[sh]--
 		}
@@ -100,7 +100,7 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 	for _, key := range ordered {
 		e := updates[key]
 		sh := s.shardFor(key)
-		if old, ok := sh.data.Get(key); ok {
+		if old, ok := sh.get(key); ok {
 			before += entryCharge(key, old)
 		} else {
 			growth[sh]++
@@ -140,7 +140,7 @@ func (s *Store) resetForRecovery() {
 	defer unlock()
 	for i := range s.shards {
 		sh := &s.shards[i]
-		for key := range sh.data.All() {
+		for key := range sh.all() {
 			s.remove(sh, key)
 		}
 		s.memory.mu.Lock()
@@ -150,7 +150,7 @@ func (s *Store) resetForRecovery() {
 		s.memory.index -= indexBytes
 		s.memory.mu.Unlock()
 		sh.arena = arena.Arena{}
-		sh.data = index.New[entry]()
+		sh.data = index.New[uint32]()
 		sh.expiration = expirationQueue{}
 	}
 }

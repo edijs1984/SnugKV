@@ -23,7 +23,7 @@ func (s *Store) Compact(scratch uint64) int {
 			value entry
 		}
 		items := make([]pair, 0, sh.data.Len())
-		for key, e := range sh.data.All() {
+		for key, e := range sh.all() {
 			items = append(items, pair{key, e})
 		}
 		sort.Slice(items, func(i, j int) bool { return len(items[i].value.value) > len(items[j].value.value) })
@@ -44,7 +44,7 @@ func (s *Store) Compact(scratch uint64) int {
 			e.ref = fresh.Alloc(e.value)
 			e.value, _ = fresh.View(e.ref)
 			e.version = atomic.AddUint64(&s.version, 1)
-			sh.data.Set(item.key, e)
+			sh.set(item.key, e)
 		}
 		sh.arena = fresh
 		sh.data.Compact()

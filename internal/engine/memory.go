@@ -59,7 +59,7 @@ func (s *Store) publish(sh *shard, key string, e entry) error {
 	return s.publishRecord(sh, key, e, true)
 }
 func (s *Store) publishRecord(sh *shard, key string, e entry, enforce bool) error {
-	old, exists := sh.data.Get(key)
+	old, exists := sh.get(key)
 	var oldCost uint64
 	if exists {
 		oldCost = entryCharge(key, old)
@@ -103,7 +103,7 @@ func (s *Store) publishRecord(sh *shard, key string, e entry, enforce bool) erro
 	e.version = atomic.AddUint64(&s.version, 1)
 	e.ref = sh.arena.Alloc(e.value)
 	e.value, _ = sh.arena.View(e.ref)
-	sh.data.Set(key, e)
+	sh.set(key, e)
 	if exists {
 		sh.arena.Free(old.ref)
 	}
@@ -111,7 +111,7 @@ func (s *Store) publishRecord(sh *shard, key string, e entry, enforce bool) erro
 	return nil
 }
 func (s *Store) remove(sh *shard, key string) {
-	if e, ok := sh.data.Get(key); ok {
+	if e, ok := sh.get(key); ok {
 		if e.expired(s.now()) {
 			atomic.AddUint64(&s.expired, 1)
 		}
@@ -123,7 +123,7 @@ func (s *Store) remove(sh *shard, key string) {
 		s.memory.used -= cost
 		s.memory.entries -= cost
 		s.memory.mu.Unlock()
-		sh.data.Delete(key)
+		sh.delete(key)
 		sh.arena.Free(e.ref)
 		sh.schedule(key, 0)
 		atomic.AddUint64(&s.version, 1)
@@ -133,7 +133,7 @@ func (s *Store) Encoding(key string) (string, int, int, bool) {
 	sh := s.shardFor(key)
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
-	e, ok := sh.data.Get(key)
+	e, ok := sh.get(key)
 	if !ok || e.expired(s.now()) {
 		return "", 0, 0, false
 	}
@@ -146,7 +146,7 @@ func (s *Store) MemoryUsage(key string) (uint64, bool) {
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
 
-	e, ok := sh.data.Get(key)
+	e, ok := sh.get(key)
 	if !ok || e.expired(s.now()) {
 		return 0, false
 	}

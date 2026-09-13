@@ -11,17 +11,87 @@ type shard struct {
 	sampleOffset int
 	arena        arena.Arena
 	mu           sync.RWMutex
-	data         *index.Table[entry]
-	expiration   expirationQueue
-	shapes       *jsonshape.Store
+
+	data    *index.Table[uint32]
+	entries []entry
+	freeIDs []uint32
+
+	expiration expirationQueue
+	shapes     *jsonshape.Store
+}
+
+func (sh *shard) get(key string) (entry, bool) {
+	id, ok := sh.data.Get(key)
+	if !ok {
+		return entry{}, false
+	}
+
+	if int(id) >= len(sh.entries) {
+		panic("invalid entry id")
+	}
+
+	return sh.entries[id], true
+}
+
+func (sh *shard) set(key string, e entry) {
+	if id, ok := sh.data.Get(key); ok {
+		sh.entries[id] = e
+		return
+	}
+
+	var id uint32
+
+	if n := len(sh.freeIDs); n > 0 {
+		id = sh.freeIDs[n-1]
+		sh.freeIDs = sh.freeIDs[:n-1]
+		sh.entries[id] = e
+	} else {
+		id = uint32(len(sh.entries))
+		sh.entries = append(sh.entries, e)
+	}
+
+	sh.data.Set(key, id)
+}
+
+func (sh *shard) delete(key string) bool {
+	id, ok := sh.data.Get(key)
+	if !ok {
+		return false
+	}
+
+	sh.data.Delete(key)
+
+	if int(id) >= len(sh.entries) {
+		panic("invalid entry id")
+	}
+
+	sh.entries[id] = entry{}
+	sh.freeIDs = append(sh.freeIDs, id)
+
+	return true
+}
+
+func (sh *shard) all() func(func(string, entry) bool) {
+	return func(yield func(string, entry) bool) {
+		for key, id := range sh.data.All() {
+			if int(id) >= len(sh.entries) {
+				panic("invalid entry id")
+			}
+
+			if !yield(key, sh.entries[id]) {
+				return
+			}
+		}
+	}
 }
 
 func (s *Store) shardFor(key string) *shard {
-	// Stable FNV-1a; the map still compares complete keys.
 	h := uint64(14695981039346656037)
+
 	for i := 0; i < len(key); i++ {
 		h ^= uint64(key[i])
 		h *= 1099511628211
 	}
+
 	return &s.shards[h&uint64(len(s.shards)-1)]
 }
