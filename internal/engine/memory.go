@@ -109,7 +109,7 @@ func (s *Store) makeEntry(value []byte) preparedEntry {
 		entry: entry{
 			codecID:   rec.ID,
 			valueType: classifyValue(value),
-			rawLength: rec.RawLength,
+			rawLength: uint32(rec.RawLength),
 		},
 		data: rec.Data,
 	}
@@ -118,10 +118,10 @@ func (s *Store) makeEntry(value []byte) preparedEntry {
 func (s *Store) decode(sh *shard, e entry) []byte {
 	out, err := s.codecs.Decode(codec.Record{
 		ID:        e.codecID,
-		RawLength: e.rawLength,
+		RawLength: int(e.rawLength),
 		Data:      sh.encoded(e),
 		Schema:    e.schema,
-	}, e.rawLength)
+	}, int(e.rawLength))
 	// Only verified immutable records are published. A failure is an internal
 	// invariant violation and must never silently return corrupt bytes.
 	if err != nil {
@@ -205,7 +205,7 @@ func (s *Store) publishRecord(
 		e.writes = 1
 
 		if exists && s.now().Sub(old.lastWrite.Time()) < time.Minute {
-			if old.writes < ^uint16(0) {
+			if old.writes < ^uint8(0) {
 				e.writes = old.writes + 1
 			} else {
 				e.writes = old.writes
@@ -265,7 +265,7 @@ func (s *Store) Encoding(key string) (string, int, int, bool) {
 	if !ok || e.expired(s.now()) {
 		return "", 0, 0, false
 	}
-	return s.codecs.Name(e.codecID), e.rawLength, len(sh.encoded(e)), true
+	return s.codecs.Name(e.codecID), int(e.rawLength), len(sh.encoded(e)), true
 }
 
 func (s *Store) MemoryUsage(key string) (uint64, bool) {

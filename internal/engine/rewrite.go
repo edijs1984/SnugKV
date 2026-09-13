@@ -22,7 +22,7 @@ func (s *Store) Candidate(key string, maxBytes int) (Candidate, bool) {
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) || e.rawLength > maxBytes {
+	if !ok || e.expired(s.now()) || int(e.rawLength) > maxBytes {
 		return Candidate{}, false
 	}
 	return Candidate{key, e.version, s.decode(sh, e), len(sh.encoded(e)), e.lastRewrite.Time(), heat(e, s.now())}, true
@@ -108,7 +108,7 @@ func (s *Store) Rewrite(candidate Candidate, record codec.Record) bool {
 
 	prepared.codecID = record.ID
 	prepared.schema = record.Schema
-	prepared.rawLength = record.RawLength
+	prepared.rawLength = uint32(record.RawLength)
 	prepared.lastRewrite = stampOf(s.now())
 
 	return s.publish(sh, candidate.Key, prepared) == nil

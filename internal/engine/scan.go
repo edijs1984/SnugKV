@@ -2,11 +2,8 @@ package engine
 
 import (
 	"sort"
-    "time"
-	
+	"time"
 )
-	
-
 
 // Scan returns up to count live keys starting at cursor.
 // Cursor 0 starts a new scan. Returned cursor 0 means the scan is complete.
@@ -121,8 +118,8 @@ func globMatch(pattern, value string) bool {
 			default:
 				dp[i][j] =
 					dp[i-1][j-1] &&
-					p[i-1] == v[j-1]
-						
+						p[i-1] == v[j-1]
+
 			}
 		}
 	}

@@ -385,7 +385,7 @@ func (s *Store) MGet(keys []string) ([][]byte, []bool) {
 
 		e.lastAccess = stampOf(now)
 
-		if e.reads < ^uint16(0) {
+		if e.reads < ^uint8(0) {
 			e.reads++
 		}
 

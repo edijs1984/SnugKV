@@ -14,11 +14,11 @@ import (
 type entry struct {
 	ref                                arena.Ref
 	schema                             *jsonshape.Schema
-	rawLength                          int
 	version                            uint64
 	expiresAt                          stamp
 	lastRewrite, lastAccess, lastWrite stamp
-	reads, writes                      uint16
+	rawLength                          uint32
+	reads, writes                      uint8
 	codecID                            codec.ID
 	valueType                          ValueType
 }
@@ -101,7 +101,7 @@ func (s *Store) Get(key string) ([]byte, bool) {
 		e.reads = 0
 	}
 	e.lastAccess = stampOf(s.now())
-	if e.reads < ^uint16(0) {
+	if e.reads < ^uint8(0) {
 		e.reads++
 	}
 	sh.set(key, e)
