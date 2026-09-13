@@ -11,8 +11,8 @@ import (
 
 var ErrOOM = errors.New("OOM command not allowed when used memory exceeds max_memory")
 
-// Reservations are conservative charges for Go allocations, not measured RSS.
-const entryOverhead uint64 = 32
+// Reservations track owned engine allocations, not total process RSS.
+var entryStructBytes = uint64(unsafe.Sizeof(entry{}))
 
 type Options struct {
 	Shards        int
@@ -47,13 +47,11 @@ func (s *Store) Layout() LayoutStats {
 		sh.mu.RUnlock()
 	}
 
-	entrySize := uint64(unsafe.Sizeof(entry{}))
-
 	return LayoutStats{
-		EntryStructBytes:  entrySize,
+		EntryStructBytes:  entryStructBytes,
 		IndexSlotBytes:    indexSlotBytes,
 		EntryCapacity:     entryCapacity,
-		EntryStorageBytes: entryCapacity * entrySize,
+		EntryStorageBytes: entryCapacity * entryStructBytes,
 	}
 }
 
@@ -76,8 +74,23 @@ func (s *Store) Memory() MemoryStats {
 		s.memory.schemas,
 	}
 }
+
+// entryCharge is the live key-byte charge. Entry struct storage itself is
+// charged by reserved []entry capacity, because deleted slots remain allocated
+// and reusable.
 func entryCharge(key string, _ any) uint64 {
-	return entryOverhead + uint64(len(key))
+	return uint64(len(key))
+}
+
+func (sh *shard) entryGrowthBytes(additional int) uint64 {
+	next := sh.entryCapacityFor(additional)
+	current := cap(sh.entries)
+
+	if next <= current {
+		return 0
+	}
+
+	return uint64(next-current) * entryStructBytes
 }
 
 func (s *Store) makeEntry(value []byte) preparedEntry {
@@ -139,15 +152,23 @@ func (s *Store) publishRecord(
 	newCost := entryCharge(key, e)
 
 	extraIndex := uint64(0)
+	extraEntries := uint64(0)
+
 	if !exists {
 		extraIndex = sh.data.GrowthBytes(1)
+		extraEntries = sh.entryGrowthBytes(1)
 	}
 
 	s.memory.mu.Lock()
 	defer s.memory.mu.Unlock()
 
 	extraArena := sh.arena.GrowthFor([]int{len(e.data)})
-	next := s.memory.used - oldCost + newCost + extraIndex + extraArena
+	next := s.memory.used -
+		oldCost +
+		newCost +
+		extraIndex +
+		extraEntries +
+		extraArena
 
 	if e.schema != nil {
 		if sh.shapes == nil || !sh.shapes.RetainRecord(e.schema, e.data) {
@@ -167,7 +188,8 @@ func (s *Store) publishRecord(
 	}
 
 	s.memory.used = next
-	s.memory.entries = s.memory.entries - oldCost + newCost
+	s.memory.entries =
+		s.memory.entries - oldCost + newCost + extraEntries
 	s.memory.index += extraIndex
 	s.memory.arenas += extraArena
 
@@ -258,7 +280,9 @@ func (s *Store) MemoryUsage(key string) (uint64, bool) {
 		return 0, false
 	}
 
-	entryBytes := entryOverhead + uint64(len(key))
+	// Per-key usage assigns one entry struct to this key. Global Memory()
+	// additionally accounts for spare reserved entry capacity.
+	entryBytes := entryStructBytes + uint64(len(key))
 	arenaBytes := sh.arena.AllocationBytes(e.ref)
 
 	return entryBytes + arenaBytes, true

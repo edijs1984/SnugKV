@@ -150,7 +150,7 @@ func (s *Store) MSet(keys []string, values [][]byte) error {
 		ordered = append(ordered, key)
 	}
 	sort.Strings(ordered)
-	var before, after, extra, extraArena uint64
+	var before, after, extra, extraEntries, extraArena uint64
 	var oldPayload, oldLiveBlocks uint64
 	var newPayload uint64
 
@@ -175,18 +175,20 @@ func (s *Store) MSet(keys []string, values [][]byte) error {
 	}
 	for sh, n := range growth {
 		extra += sh.data.GrowthBytes(n)
+		extraEntries += sh.entryGrowthBytes(n)
 	}
 	for sh, lengths := range allocations {
 		extraArena += sh.arena.GrowthFor(lengths)
 	}
 	s.memory.mu.Lock()
 	defer s.memory.mu.Unlock()
-	next := s.memory.used - before + after + extra + extraArena
+	next := s.memory.used - before + after + extra + extraEntries + extraArena
 	if s.memory.max > 0 && next > s.memory.max {
 		return ErrOOM
 	}
 	s.memory.used = next
-	s.memory.entries = s.memory.entries - before + after
+	s.memory.entries =
+		s.memory.entries - before + after + extraEntries
 	s.memory.index += extra
 	s.memory.arenas += extraArena
 	var newLiveBlocks uint64
@@ -284,6 +286,7 @@ func (s *Store) MSetNX(keys []string, values [][]byte) (bool, error) {
 
 	var entryBytes uint64
 	var extraIndex uint64
+	var extraEntries uint64
 	var extraArena uint64
 	var newPayload uint64
 
@@ -303,6 +306,7 @@ func (s *Store) MSetNX(keys []string, values [][]byte) (bool, error) {
 
 	for sh, n := range growth {
 		extraIndex += sh.data.GrowthBytes(n)
+		extraEntries += sh.entryGrowthBytes(n)
 	}
 
 	for sh, lengths := range allocations {
@@ -312,14 +316,18 @@ func (s *Store) MSetNX(keys []string, values [][]byte) (bool, error) {
 	s.memory.mu.Lock()
 	defer s.memory.mu.Unlock()
 
-	next := s.memory.used + entryBytes + extraIndex + extraArena
+	next := s.memory.used +
+		entryBytes +
+		extraIndex +
+		extraEntries +
+		extraArena
 
 	if s.memory.max > 0 && next > s.memory.max {
 		return false, ErrOOM
 	}
 
 	s.memory.used = next
-	s.memory.entries += entryBytes
+	s.memory.entries += entryBytes + extraEntries
 	s.memory.index += extraIndex
 	s.memory.arenas += extraArena
 

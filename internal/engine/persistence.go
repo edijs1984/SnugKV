@@ -99,7 +99,7 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 		ordered = append(ordered, key)
 	}
 	sort.Strings(ordered)
-	var before, after, extra, extraArena uint64
+	var before, after, extra, extraEntries, extraArena uint64
 	allocations := make(map[*shard][]int)
 	growth := make(map[*shard]int)
 	for key := range deletions {
@@ -122,12 +122,18 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 	}
 	for sh, n := range growth {
 		extra += sh.data.GrowthBytes(n)
+		extraEntries += sh.entryGrowthBytes(n)
 	}
 	for sh, lengths := range allocations {
 		extraArena += sh.arena.GrowthFor(lengths)
 	}
 	s.memory.mu.Lock()
-	next := s.memory.used - before + after + extra + extraArena
+	next := s.memory.used -
+		before +
+		after +
+		extra +
+		extraEntries +
+		extraArena
 	if !force && s.memory.max > 0 && next > s.memory.max {
 		s.memory.mu.Unlock()
 		return ErrOOM
@@ -156,10 +162,14 @@ func (s *Store) resetForRecovery() {
 			s.remove(sh, key)
 		}
 		s.memory.mu.Lock()
-		arenaBytes, indexBytes := sh.arena.MemoryBytes(), sh.data.CapacityBytes()
-		s.memory.used -= arenaBytes + indexBytes
+		arenaBytes := sh.arena.MemoryBytes()
+		indexBytes := sh.data.CapacityBytes()
+		entryBytes := uint64(cap(sh.entries)) * entryStructBytes
+
+		s.memory.used -= arenaBytes + indexBytes + entryBytes
 		s.memory.arenas -= arenaBytes
 		s.memory.index -= indexBytes
+		s.memory.entries -= entryBytes
 		s.memory.mu.Unlock()
 		sh.arena = arena.Arena{}
 		sh.data = index.New[uint32]()

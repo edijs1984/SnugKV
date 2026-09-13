@@ -20,6 +20,30 @@ type shard struct {
 	shapes     *jsonshape.Store
 }
 
+func (sh *shard) entryCapacityFor(additional int) int {
+	if additional <= 0 {
+		return cap(sh.entries)
+	}
+
+	needed := additional - len(sh.freeIDs)
+	if needed <= 0 {
+		return cap(sh.entries)
+	}
+
+	target := len(sh.entries) + needed
+	capacity := cap(sh.entries)
+
+	for target > capacity {
+		growth := capacity / 8
+		if growth < 256 {
+			growth = 256
+		}
+		capacity += growth
+	}
+
+	return capacity
+}
+
 func (sh *shard) get(key string) (entry, bool) {
 	id, ok := sh.data.Get(key)
 	if !ok {
@@ -48,18 +72,8 @@ func (sh *shard) set(key string, e entry) {
 	} else {
 		id = uint32(len(sh.entries))
 
-		// Go's default slice growth leaves substantial unused capacity for
-		// large entry structs. Grow the dense entry pool more conservatively:
-		// at least 256 slots at a time, then roughly 12.5% once it is large.
 		if len(sh.entries) == cap(sh.entries) {
-			current := cap(sh.entries)
-
-			growth := current / 8
-			if growth < 256 {
-				growth = 256
-			}
-
-			next := current + growth
+			next := sh.entryCapacityFor(1)
 
 			entries := make([]entry, len(sh.entries), next)
 			copy(entries, sh.entries)
