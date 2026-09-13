@@ -46,11 +46,18 @@ func (s *Store) JSONSet(
 			return false, err
 		}
 
-		if err := s.publish(sh, key, s.makeEntry(encoded)); err != nil {
+		entry := s.makeEntry(encoded)
+		entry.valueType = TypeJSON
+
+		if err := s.publish(sh, key, entry); err != nil {
 			return false, err
 		}
 
 		return true, nil
+	}
+
+	if e.valueType != TypeJSON {
+		return false, errors.New("WRONGTYPE Operation against a key holding the wrong kind of value")
 	}
 
 	root, err := jsonvalue.Parse(s.decode(e))
@@ -82,6 +89,7 @@ func (s *Store) JSONSet(
 	}
 
 	updated := s.makeEntry(encoded)
+	updated.valueType = TypeJSON
 	updated.expiresAt = e.expiresAt
 
 	if err := s.publish(sh, key, updated); err != nil {
@@ -107,6 +115,10 @@ func (s *Store) JSONGet(key, path string) ([]byte, bool, error) {
 	if e.expired(now) {
 		s.remove(sh, key)
 		return nil, false, nil
+	}
+
+	if e.valueType != TypeJSON {
+		return nil, false, errors.New("WRONGTYPE Operation against a key holding the wrong kind of value")
 	}
 
 	root, err := jsonvalue.Parse(s.decode(e))
@@ -149,6 +161,10 @@ func (s *Store) JSONType(key, path string) (string, bool, error) {
 		return "", false, nil
 	}
 
+	if e.valueType != TypeJSON {
+		return "", false, errors.New("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+
 	root, err := jsonvalue.Parse(s.decode(e))
 	if err != nil {
 		return "", false, errors.New("WRONGTYPE value is not valid JSON")
@@ -184,6 +200,10 @@ func (s *Store) JSONDel(key, path string) (int64, error) {
 		return 0, nil
 	}
 
+	if e.valueType != TypeJSON {
+		return 0, errors.New("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+
 	if path == "$" {
 		s.remove(sh, key)
 		return 1, nil
@@ -209,6 +229,7 @@ func (s *Store) JSONDel(key, path string) (int64, error) {
 	}
 
 	updated := s.makeEntry(encoded)
+	updated.valueType = TypeJSON
 	updated.expiresAt = e.expiresAt
 
 	if err := s.publish(sh, key, updated); err != nil {
