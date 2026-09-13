@@ -39,10 +39,15 @@ and administration details. Contributions should follow
 Supported commands:
 
 - Connection: `PING`, `ECHO`, `QUIT`, `SELECT 0`, `HELLO 2`, `INFO`, `DBSIZE`, `COMMAND`.
-- Strings: `SET` with `NX`/`XX` and `EX`/`PX`, `GET`, `MGET`, `DEL`, `EXISTS`, `GETSET`, `SETNX`, `MSET`, `INCR`, `INCRBY`, `DECR`, `DECRBY`, `STRLEN`.
-- Expiration: `EXPIRE`, `PEXPIRE`, `TTL`, `PTTL`, `PERSIST`.
-- Administration: `SNUG.ENCODING`, `SNUG.MEMORY`, `SNUG.STATS`, `SNUG.COMPACT`, `SNUG.POLICY`, `SNUG.AOFREWRITE`.
+- Keys: `DEL`, `UNLINK`, `EXISTS`, `TYPE`, `TOUCH`, `KEYS`, `SCAN`, `RANDOMKEY`, `RENAME`, `RENAMENX`.
+- Strings: `SET`, `GET`, `GETSET`, `GETDEL`, `GETEX`, `SETNX`, `SETEX`, `PSETEX`, `MSET`, `MSETNX`, `MGET`, `APPEND`, `STRLEN`, `GETRANGE`, `SETRANGE`.
+- Numeric: `INCR`, `INCRBY`, `DECR`, `DECRBY`, `INCRBYFLOAT`.
+- Bit operations: `GETBIT`, `SETBIT`, `BITCOUNT`, `BITPOS`, `BITOP`.
+- Expiration: `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT`, `EXPIRETIME`, `PEXPIRETIME`, `TTL`, `PTTL`, `PERSIST`.
+- JSON: `JSON.SET`, `JSON.GET`, `JSON.TYPE`, `JSON.DEL`.
+- Administration: `FLUSHDB`, `FLUSHALL`, `MEMORY`, `SNUG.ENCODING`, `SNUG.MEMORY`, `SNUG.STATS`, `SNUG.COMPACT`, `SNUG.POLICY`, `SNUG.AOFREWRITE`.
 
+The admin listener
 The admin listener defaults to loopback and accepts diagnostics only. When it is
 active, `SNUG.*` commands are rejected on the public listener. Metrics are also
 loopback-only. See [protocol](docs/protocol.md), [operations](docs/operations.md),

@@ -18,11 +18,20 @@ The implementation rules and acceptance criteria are in
 
 ## Licensing of contributions
 
-By submitting a contribution to SnugKV, you agree that your contribution
-may be distributed under the project's GNU Affero General Public License
-v3.0.
+SnugKV uses a dual-licensing model:
 
-The project may introduce a Contributor License Agreement (CLA) in the
-future for contributors whose changes are incorporated into commercially
-licensed versions of SnugKV.
+- GNU Affero General Public License v3.0 (AGPL-3.0) for the public project;
+- separate commercial licenses offered by the project owner.
+
+External contributions are accepted only after the contributor agrees to the
+SnugKV Contributor License Agreement (CLA). The CLA grants the project owner
+the rights necessary to distribute contributed code under both the AGPL-3.0
+and separate commercial licenses.
+
+Until the CLA process is published, please open an issue before submitting a
+substantial code contribution.
+
+By submitting a contribution after agreeing to the CLA, you confirm that you
+have the legal right to submit the contribution and grant the rights described
+by the CLA.
 
