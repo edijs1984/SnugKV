@@ -105,3 +105,46 @@ func TestSamplingEventuallyVisitsEveryKey(t *testing.T) {
 		t.Fatalf("visited %d keys", len(seen))
 	}
 }
+
+func TestShapeEncodingSkipsPrimitiveValues(t *testing.T) {
+	s, err := NewWithOptions(Options{
+		Shards:        1,
+		Encoding:      true,
+		ShapeEncoding: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	values := [][]byte{
+		[]byte("true"),
+		[]byte("false"),
+		[]byte("123456"),
+		[]byte("1.25"),
+		[]byte(`"hello"`),
+		[]byte("plain text"),
+	}
+
+	for i, value := range values {
+		key := fmt.Sprintf("k%d", i)
+
+		if err := s.Set(key, value, 0); err != nil {
+			t.Fatal(err)
+		}
+
+		candidate, ok := s.Candidate(key, 1<<20)
+		if !ok {
+			t.Fatalf("missing candidate for %q", value)
+		}
+
+		record := s.EncodeCandidate(candidate)
+		if record.ID == 5 {
+			t.Fatalf("primitive %q selected json-shape codec", value)
+		}
+	}
+
+	schemas, _ := s.shards[0].shapes.Stats()
+	if schemas != 0 {
+		t.Fatalf("primitive values created %d schemas", schemas)
+	}
+}

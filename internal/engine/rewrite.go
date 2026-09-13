@@ -52,10 +52,25 @@ func (s *Store) Policy(key string) (string, bool) {
 	}
 	return heat(e, s.now()), true
 }
+func structuredJSONCandidate(src []byte) bool {
+	for _, b := range src {
+		switch b {
+		case ' ', '\n', '\r', '\t':
+			continue
+		case '{', '[':
+			return true
+		default:
+			return false
+		}
+	}
+
+	return false
+}
+
 func (s *Store) EncodeCandidate(candidate Candidate) codec.Record {
 	best := s.codecs.Encode(candidate.Value)
 	sh := s.shardFor(candidate.Key)
-	if sh.shapes != nil {
+	if sh.shapes != nil && structuredJSONCandidate(candidate.Value) {
 		schema, slots, ok := sh.shapes.Candidate(candidate.Value)
 		if ok {
 			data := sh.shapes.EncodeSlots(slots)
