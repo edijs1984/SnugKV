@@ -1,0 +1,10 @@
+SnugKV
+Copyright 2026 Edijs Ziedins
+
+SnugKV is an independent software project.
+
+SnugKV implements compatibility with portions of the Redis protocol and
+command interface. SnugKV is not affiliated with, sponsored by, or
+endorsed by Redis.
+
+Redis and related marks are trademarks of their respective owners.

@@ -66,8 +66,15 @@ for a smoke run.
 
 ## License
 
-SnugKV is licensed under the [Apache License 2.0](LICENSE).
+SnugKV is available under the
+[GNU Affero General Public License v3.0](LICENSE).
 
-SnugKV is an independent project and is not affiliated with or endorsed by Redis.
-Redis is a trademark of its respective owner.
+For organizations that require proprietary use, embedding, redistribution,
+or hosted-service terms that are not compatible with the AGPL-3.0,
+separate commercial licensing is available.
+
+See [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md) for details.
+
+SnugKV is an independent project and is not affiliated with or endorsed by
+Redis. Redis and related marks are trademarks of their respective owners.
 
