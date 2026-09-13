@@ -143,6 +143,16 @@ func (o *Optimizer) worker() {
 				o.release(size)
 				continue
 			}
+
+			// The optimizer requires at least 16 bytes of absolute savings.
+			// If the current physical representation is already smaller than
+			// 16 bytes, no possible codec can satisfy that requirement.
+			if candidate.EncodedBytes < 16 {
+				atomic.AddUint64(&o.skipped, 1)
+				o.release(size)
+				continue
+			}
+
 			record := o.store.EncodeCandidate(candidate)
 			// Hysteresis requires at least 16 bytes and 12.5% improvement.
 			saving := candidate.EncodedBytes - len(record.Data)

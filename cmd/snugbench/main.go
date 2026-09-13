@@ -109,26 +109,68 @@ func main() {
 			os.Exit(2)
 		}
 	}
-	start := time.Now()
+	loadStart := time.Now()
 	for i, v := range values {
 		if err := s.Set(fmt.Sprint(i), v, 0); err != nil {
 			panic(err)
 		}
 	}
+	load := time.Since(loadStart)
+
+	var optimize time.Duration
+	var compact time.Duration
+	var candidateAttempts uint64
+	var rewriteSuccesses uint64
+
 	if *jsonShape || *compression {
+		optimizeStart := time.Now()
+
 		for pass := 0; pass < 10; pass++ {
+			var passRewrites uint64
+
 			for i := range values {
+				candidateAttempts++
+
 				candidate, ok := s.Candidate(fmt.Sprint(i), 1<<20)
-				if ok {
-					s.Rewrite(candidate, s.EncodeCandidate(candidate))
+				if !ok {
+					continue
+				}
+
+				// Match the production optimizer's minimum-saving rule.
+				if candidate.EncodedBytes < 16 {
+					continue
+				}
+
+				record := s.EncodeCandidate(candidate)
+				saving := candidate.EncodedBytes - len(record.Data)
+
+				// Require at least 16 bytes and 12.5% improvement.
+				if saving < 16 ||
+					saving*8 < candidate.EncodedBytes {
+					continue
+				}
+
+				if s.Rewrite(candidate, record) {
+					rewriteSuccesses++
+					passRewrites++
 				}
 			}
+
+			// Representation has converged. More passes cannot improve
+			// anything until the data itself changes.
+			if passRewrites == 0 {
+				break
+			}
 		}
+
+		optimize = time.Since(optimizeStart)
+
+		compactStart := time.Now()
 		s.Compact(256 << 20)
+		compact = time.Since(compactStart)
 	}
-	load := time.Since(start)
 	samples := make([]int64, *count)
-	start = time.Now()
+	readStart := time.Now()
 	for i, v := range values {
 		before := time.Now()
 		got, ok := s.Get(fmt.Sprint(i))
@@ -137,7 +179,7 @@ func main() {
 			panic("data mismatch")
 		}
 	}
-	reads := time.Since(start)
+	reads := time.Since(readStart)
 	sort.Slice(samples, func(i, j int) bool { return samples[i] < samples[j] })
 	runtime.GC()
 	var mem runtime.MemStats
@@ -146,7 +188,34 @@ func main() {
 	if *encoding {
 		mode = "encoded"
 	}
-	out := map[string]interface{}{"go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "cpus": runtime.NumCPU(), "gomaxprocs": runtime.GOMAXPROCS(0), "dataset": *dataset, "seed": *seed, "keys": *count, "shards": *shards, "mode": mode, "load_ns": load.Nanoseconds(), "reads_ns": reads.Nanoseconds(), "get_p50_ns": samples[len(samples)/2], "get_p95_ns": samples[len(samples)*95/100], "get_p99_ns": samples[len(samples)*99/100], "process_heap_alloc": mem.HeapAlloc, "logical": s.Stats(), "memory": s.Memory(), "layout": s.Layout(), "inspection": s.Inspect(), "mismatches": 0, "measurement_note": "single run; process heap includes benchmark harness; no product claim"}
+	out := map[string]interface{}{
+		"go":                 runtime.Version(),
+		"os":                 runtime.GOOS,
+		"arch":               runtime.GOARCH,
+		"cpus":               runtime.NumCPU(),
+		"gomaxprocs":         runtime.GOMAXPROCS(0),
+		"dataset":            *dataset,
+		"seed":               *seed,
+		"keys":               *count,
+		"shards":             *shards,
+		"mode":               mode,
+		"load_ns":            load.Nanoseconds(),
+		"optimize_ns":        optimize.Nanoseconds(),
+		"compact_ns":         compact.Nanoseconds(),
+		"candidate_attempts": candidateAttempts,
+		"rewrite_successes":  rewriteSuccesses,
+		"reads_ns":           reads.Nanoseconds(),
+		"get_p50_ns":         samples[len(samples)/2],
+		"get_p95_ns":         samples[len(samples)*95/100],
+		"get_p99_ns":         samples[len(samples)*99/100],
+		"process_heap_alloc": mem.HeapAlloc,
+		"logical":            s.Stats(),
+		"memory":             s.Memory(),
+		"layout":             s.Layout(),
+		"inspection":         s.Inspect(),
+		"mismatches":         0,
+		"measurement_note":   "single run; load excludes optimizer and compaction; process heap includes benchmark harness; no product claim",
+	}
 	if err := json.NewEncoder(os.Stdout).Encode(out); err != nil {
 		panic(err)
 	}

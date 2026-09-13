@@ -42,33 +42,32 @@ func (s *Server) Execute(args [][]byte) (response []byte, resultErr error) {
 	if s.durabilityFailed {
 		return nil, errors.New("ERR persistence is unavailable; restart after repairing storage")
 	}
-    
+
 	if cmd == "FLUSHDB" {
-	before := s.store.Export(nil)
+		before := s.store.Export(nil)
 
-	result, err := s.executePressure(args)
-	if err != nil {
-		return result, err
-	}
-
-	reset := []persistence.Record{
-		{Reset: true},
-	}
-
-	if err = s.journal.Append(reset); err != nil {
-		s.durabilityFailed = true
-
-		if rollbackErr := s.store.Restore(before, true); rollbackErr != nil {
-			return nil, errors.New("ERR persistence and rollback failed")
+		result, err := s.executePressure(args)
+		if err != nil {
+			return result, err
 		}
 
-		return nil, errors.New("ERR persistence append failed")
-	    }
+		reset := []persistence.Record{
+			{Reset: true},
+		}
 
-	    return result, nil
-       }
+		if err = s.journal.Append(reset); err != nil {
+			s.durabilityFailed = true
 
-	
+			if rollbackErr := s.store.Restore(before, true); rollbackErr != nil {
+				return nil, errors.New("ERR persistence and rollback failed")
+			}
+
+			return nil, errors.New("ERR persistence append failed")
+		}
+
+		return result, nil
+	}
+
 	// Validate arity before deriving the affected key set.
 	if len(args) < info.min || info.max > 0 && len(args) > info.max {
 		return s.executePressure(args)

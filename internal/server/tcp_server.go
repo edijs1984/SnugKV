@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"io"
+	"log"
 	"net"
 	"snugkv/internal/config"
 	"snugkv/internal/engine"
@@ -11,7 +12,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"log"
 )
 
 type TCPServer struct {
@@ -111,23 +111,23 @@ func (s *TCPServer) handleConn(conn net.Conn) {
 		if err := conn.SetReadDeadline(time.Now().Add(time.Duration(s.config.ReadTimeoutMS) * time.Millisecond)); err != nil {
 			return
 		}
-       msg, err := decoder.ReadCommand()
-       if err != nil {
-	     if err == io.EOF {
-		return
-	}
+		msg, err := decoder.ReadCommand()
+		if err != nil {
+			if err == io.EOF {
+				return
+			}
 
-	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-		// Normal idle/read timeout. Close connection silently.
-		return
-	}
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				// Normal idle/read timeout. Close connection silently.
+				return
+			}
 
-	log.Printf("RESP decode error: %v", err)
+			log.Printf("RESP decode error: %v", err)
 
-	// Protocol error: reply once and close.
-	_ = s.write(conn, []byte("-ERR invalid RESP\r\n"))
-	return
-}
+			// Protocol error: reply once and close.
+			_ = s.write(conn, []byte("-ERR invalid RESP\r\n"))
+			return
+		}
 		if s.adminOnly && !adminAllowed(msg) {
 			if s.write(conn, []byte("-ERR command is unavailable on admin listener\r\n")) != nil {
 				return

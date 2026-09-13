@@ -42,7 +42,7 @@ var commandTable = map[string]commandInfo{
 	"SNUG.MEMORY":     {2, 2, 1, 1, 1, false},
 	"SNUG.STATS":      {1, 1, 0, 0, 0, false},
 	"SNUG.POLICY":     {2, 2, 1, 1, 1, false},
-	"PING": {1, 2, 0, 0, 0, false}, "ECHO": {2, 2, 0, 0, 0, false}, "QUIT": {1, 1, 0, 0, 0, false},
+	"PING":            {1, 2, 0, 0, 0, false}, "ECHO": {2, 2, 0, 0, 0, false}, "QUIT": {1, 1, 0, 0, 0, false},
 	"SELECT": {2, 2, 0, 0, 0, false}, "HELLO": {2, 2, 0, 0, 0, false}, "INFO": {1, 2, 0, 0, 0, false},
 	"DBSIZE": {1, 1, 0, 0, 0, false}, "COMMAND": {1, 0, 0, 0, 0, false},
 	"SCAN":        {2, 0, 0, 0, 0, false},
