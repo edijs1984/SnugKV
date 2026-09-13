@@ -368,7 +368,7 @@ func (s *Store) MGet(keys []string) ([][]byte, []bool) {
 				e.reads = 0
 			}
 			e.lastAccess = stampOf(now)
-			if e.reads < math.MaxUint32 {
+			if e.reads < ^uint16(0) {
 				e.reads++
 			}
 			s.shardFor(key).set(key, e)

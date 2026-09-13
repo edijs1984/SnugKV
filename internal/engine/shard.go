@@ -47,6 +47,25 @@ func (sh *shard) set(key string, e entry) {
 		sh.entries[id] = e
 	} else {
 		id = uint32(len(sh.entries))
+
+		// Go's default slice growth leaves substantial unused capacity for
+		// large entry structs. Grow the dense entry pool more conservatively:
+		// at least 256 slots at a time, then roughly 12.5% once it is large.
+		if len(sh.entries) == cap(sh.entries) {
+			current := cap(sh.entries)
+
+			growth := current / 8
+			if growth < 256 {
+				growth = 256
+			}
+
+			next := current + growth
+
+			entries := make([]entry, len(sh.entries), next)
+			copy(entries, sh.entries)
+			sh.entries = entries
+		}
+
 		sh.entries = append(sh.entries, e)
 	}
 

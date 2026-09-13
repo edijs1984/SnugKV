@@ -146,7 +146,7 @@ func main() {
 	if *encoding {
 		mode = "encoded"
 	}
-	out := map[string]interface{}{"go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "cpus": runtime.NumCPU(), "gomaxprocs": runtime.GOMAXPROCS(0), "dataset": *dataset, "seed": *seed, "keys": *count, "shards": *shards, "mode": mode, "load_ns": load.Nanoseconds(), "reads_ns": reads.Nanoseconds(), "get_p50_ns": samples[len(samples)/2], "get_p95_ns": samples[len(samples)*95/100], "get_p99_ns": samples[len(samples)*99/100], "process_heap_alloc": mem.HeapAlloc, "logical": s.Stats(), "memory": s.Memory(), "inspection": s.Inspect(), "mismatches": 0, "measurement_note": "single run; process heap includes benchmark harness; no product claim"}
+	out := map[string]interface{}{"go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "cpus": runtime.NumCPU(), "gomaxprocs": runtime.GOMAXPROCS(0), "dataset": *dataset, "seed": *seed, "keys": *count, "shards": *shards, "mode": mode, "load_ns": load.Nanoseconds(), "reads_ns": reads.Nanoseconds(), "get_p50_ns": samples[len(samples)/2], "get_p95_ns": samples[len(samples)*95/100], "get_p99_ns": samples[len(samples)*99/100], "process_heap_alloc": mem.HeapAlloc, "logical": s.Stats(), "memory": s.Memory(), "layout": s.Layout(), "inspection": s.Inspect(), "mismatches": 0, "measurement_note": "single run; process heap includes benchmark harness; no product claim"}
 	if err := json.NewEncoder(os.Stdout).Encode(out); err != nil {
 		panic(err)
 	}

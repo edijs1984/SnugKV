@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 )
 
 var ErrOOM = errors.New("OOM command not allowed when used memory exceeds max_memory")
@@ -21,6 +22,41 @@ type Options struct {
 	Compression   bool
 }
 type MemoryStats struct{ AccountedBytes, MaxBytes, IndexReservedBytes, EntryBytes, ArenaBytes, ArenaPayloadBytes, ArenaLiveBlockBytes, SchemaBytes uint64 }
+
+type LayoutStats struct {
+	EntryStructBytes  uint64
+	IndexSlotBytes    uint64
+	EntryCapacity     uint64
+	EntryStorageBytes uint64
+}
+
+func (s *Store) Layout() LayoutStats {
+	var entryCapacity uint64
+	var indexSlotBytes uint64
+
+	for i := range s.shards {
+		sh := &s.shards[i]
+		sh.mu.RLock()
+
+		entryCapacity += uint64(cap(sh.entries))
+
+		if indexSlotBytes == 0 {
+			indexSlotBytes = sh.data.EntryBytes()
+		}
+
+		sh.mu.RUnlock()
+	}
+
+	entrySize := uint64(unsafe.Sizeof(entry{}))
+
+	return LayoutStats{
+		EntryStructBytes:  entrySize,
+		IndexSlotBytes:    indexSlotBytes,
+		EntryCapacity:     entryCapacity,
+		EntryStorageBytes: entryCapacity * entrySize,
+	}
+}
+
 type accounting struct {
 	mu                                                                        sync.Mutex
 	used, index, entries, max, arenas, arenaPayload, arenaLiveBlocks, schemas uint64
@@ -116,7 +152,11 @@ func (s *Store) publishRecord(sh *shard, key string, e entry, enforce bool) erro
 		e.lastAccess = e.lastWrite
 		e.writes = 1
 		if exists && s.now().Sub(old.lastWrite.Time()) < time.Minute {
-			e.writes = old.writes + 1
+			if old.writes < ^uint16(0) {
+				e.writes = old.writes + 1
+			} else {
+				e.writes = old.writes
+			}
 		}
 	}
 	e.version = atomic.AddUint64(&s.version, 1)
