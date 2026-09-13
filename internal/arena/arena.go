@@ -157,3 +157,14 @@ func (a *Arena) Free(ref Ref) {
 	binary.LittleEndian.PutUint64(data[ref.offset+8:], a.free[bucket])
 	a.free[bucket] = (uint64(ref.segment)+1)<<32 | uint64(ref.offset)
 }
+
+// AllocationBytes returns the physical arena block reserved for ref.
+func (a *Arena) AllocationBytes(ref Ref) uint64 {
+	if ref.generation == 0 {
+		return 0
+	}
+
+	_, block := class(int(ref.length))
+
+	return uint64(block)
+}

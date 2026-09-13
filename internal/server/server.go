@@ -70,6 +70,7 @@ var commandTable = map[string]commandInfo{
     "JSON.GET": {2, 3, 1, 1, 1, false},
 	"JSON.TYPE": {2, 3, 1, 1, 1, false},
     "JSON.DEL":  {2, 3, 1, 1, 1, true},
+	"MEMORY": {2, 5, 0, 0, 0, false},
 }
 
 func (s *Server) execute(args [][]byte) ([]byte, error) {
@@ -89,7 +90,41 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		key = string(args[1])
 	}
 	switch cmd {
-	
+	case "MEMORY":
+	subcommand := strings.ToUpper(string(args[1]))
+
+	switch subcommand {
+	case "USAGE":
+		if len(args) != 3 && len(args) != 5 {
+			return nil, errors.New("ERR syntax error")
+		}
+
+		if len(args) == 5 {
+			if !strings.EqualFold(string(args[3]), "SAMPLES") {
+				return nil, errors.New("ERR syntax error")
+			}
+
+			samples, err := strconv.ParseInt(string(args[4]), 10, 64)
+			if err != nil || samples < 0 {
+				return nil, errors.New("ERR syntax error")
+			}
+
+			// Accepted for Redis compatibility.
+			// SnugKV currently stores values as one logical entry,
+			// so sampling is not needed yet.
+			_ = samples
+		}
+
+		usage, found := s.store.MemoryUsage(string(args[2]))
+		if !found {
+			return nullBulk(), nil
+		}
+
+		return integer(int64(usage)), nil
+
+	default:
+		return nil, errors.New("ERR unknown subcommand")
+	}
 	case "JSON.DEL":
 	path := "$"
 

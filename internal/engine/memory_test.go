@@ -156,3 +156,23 @@ func TestCompactionPreservesLiveBytesAndTTL(t *testing.T) {
 	s.Compact(16 << 20)
 	auditMemory(t, s)
 }
+
+func TestMemoryUsage(t *testing.T) {
+	s := New()
+
+	if err := s.Set("hello", []byte("world"), 0); err != nil {
+		t.Fatal(err)
+	}
+
+	usage, found := s.MemoryUsage("hello")
+
+	if !found {
+		t.Fatal("expected key")
+	}
+
+	if usage == 0 {
+		t.Fatal("expected non-zero memory usage")
+	}
+
+	t.Logf("MEMORY USAGE hello = %d bytes", usage)
+}

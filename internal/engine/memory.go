@@ -139,3 +139,20 @@ func (s *Store) Encoding(key string) (string, int, int, bool) {
 	}
 	return s.codecs.Name(e.codecID), e.rawLength, len(e.value), true
 }
+
+func (s *Store) MemoryUsage(key string) (uint64, bool) {
+	sh := s.shardFor(key)
+
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
+
+	e, ok := sh.data.Get(key)
+	if !ok || e.expired(s.now()) {
+		return 0, false
+	}
+
+	entryBytes := entryOverhead + uint64(len(key))
+	arenaBytes := sh.arena.AllocationBytes(e.ref)
+
+	return entryBytes + arenaBytes, true
+}

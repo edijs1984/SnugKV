@@ -741,3 +741,46 @@ func TestJSONDelRoot(t *testing.T) {
 		t.Fatalf("JSON.DEL root left key behind: %q", got)
 	}
 }
+
+func TestMemoryUsage(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "SET", "hello", "world")
+
+	got := execute(t, s, "MEMORY", "USAGE", "hello")
+
+	if got == "$-1\r\n" {
+		t.Fatalf("MEMORY USAGE returned nil")
+	}
+
+	if !strings.HasPrefix(got, ":") {
+		t.Fatalf("MEMORY USAGE got %q", got)
+	}
+}
+func TestMemoryUsageMissing(t *testing.T) {
+	s := New(engine.New())
+
+	if got := execute(t, s, "MEMORY", "USAGE", "missing"); got != "$-1\r\n" {
+		t.Fatalf("MEMORY USAGE missing got %q", got)
+	}
+}
+
+func TestMemoryUsageSamples(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "SET", "hello", "world")
+
+	got := execute(
+		t,
+		s,
+		"MEMORY",
+		"USAGE",
+		"hello",
+		"SAMPLES",
+		"0",
+	)
+
+	if !strings.HasPrefix(got, ":") {
+		t.Fatalf("MEMORY USAGE SAMPLES got %q", got)
+	}
+}

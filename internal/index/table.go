@@ -179,3 +179,6 @@ func (t *Table[V]) Sample(cursor, budget, limit int) ([]string, int) {
 	}
 	return out, cursor
 }
+func (t *Table[V]) EntryBytes() uint64 {
+	return uint64(reflect.TypeOf(slot[V]{}).Size())
+}
