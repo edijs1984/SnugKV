@@ -19,8 +19,15 @@ func auditMemory(t *testing.T, s *Store) {
 	}
 	for i := range s.shards {
 		sh := &s.shards[i]
+
 		index += sh.data.CapacityBytes()
 		arenaBytes += sh.arena.MemoryBytes()
+
+		// EntryBytes includes the physical reserved []entry pool plus
+		// live key bytes. Deleted/free entry slots remain allocated
+		// until the shard is compacted/reset.
+		entries += uint64(cap(sh.entries)) * entryStructBytes
+
 		for k, e := range sh.all() {
 			entries += entryCharge(k, e)
 		}
