@@ -76,7 +76,7 @@ type segment struct {
 }
 type Arena struct {
 	segments   []segment
-	free       [64]uint64
+	free       [128]uint64
 	generation uint64
 }
 
@@ -131,7 +131,7 @@ func class(n int) (int, int) {
 		block += step
 		bucket++
 
-		if bucket >= 64 {
+		if bucket >= len(Arena{}.free) {
 			panic("arena allocation too large")
 		}
 	}

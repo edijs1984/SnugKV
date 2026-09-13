@@ -2,6 +2,7 @@ package arena
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 	"unsafe"
 )
@@ -79,5 +80,42 @@ func TestRefPacking(t *testing.T) {
 func TestPackedRefSize(t *testing.T) {
 	if got := unsafe.Sizeof(Ref{}); got != 16 {
 		t.Fatalf("Ref size = %d, want 16", got)
+	}
+}
+
+func TestLargeAllocations(t *testing.T) {
+	sizes := []int{
+		1 << 20,
+		8 << 20,
+		16 << 20,
+		32 << 20,
+	}
+
+	for _, size := range sizes {
+		t.Run(fmt.Sprintf("%d", size), func(t *testing.T) {
+			var a Arena
+
+			value := make([]byte, size)
+			for i := range value {
+				value[i] = byte(i)
+			}
+
+			ref := a.Alloc(value)
+
+			got, err := a.View(ref)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if !bytes.Equal(got, value) {
+				t.Fatal("large allocation round-trip mismatch")
+			}
+
+			if gotAllocation := a.AllocationBytes(ref); gotAllocation < uint64(size+8) {
+				t.Fatalf("allocation too small: got %d need at least %d", gotAllocation, size+8)
+			}
+
+			a.Free(ref)
+		})
 	}
 }
