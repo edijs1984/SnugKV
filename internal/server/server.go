@@ -71,6 +71,9 @@ var commandTable = map[string]commandInfo{
 	"APPEND":    {3, 3, 1, 1, 1, true},
 	"GETRANGE":  {4, 4, 1, 1, 1, false},
 	"SETRANGE":  {4, 4, 1, 1, 1, true},
+	"GETBIT":    {3, 3, 1, 1, 1, false},
+	"SETBIT":    {4, 4, 1, 1, 1, true},
+	"BITCOUNT":  {2, 5, 1, 1, 1, false},
 	"JSON.SET":  {4, 5, 1, 1, 1, true},
 	"JSON.GET":  {2, 3, 1, 1, 1, false},
 	"JSON.TYPE": {2, 3, 1, 1, 1, false},
@@ -238,6 +241,92 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		}
 
 		return integer(int64(length)), nil
+
+	case "GETBIT":
+		offset, err := parseInt64(args[2])
+		if err != nil {
+			return nil, errors.New(
+				"ERR bit offset is not an integer or out of range",
+			)
+		}
+
+		bit, err := s.store.GetBit(key, offset)
+		if err != nil {
+			return nil, err
+		}
+
+		return integer(bit), nil
+
+	case "SETBIT":
+		offset, err := parseInt64(args[2])
+		if err != nil {
+			return nil, errors.New(
+				"ERR bit offset is not an integer or out of range",
+			)
+		}
+
+		bitValue, err := strconv.Atoi(string(args[3]))
+		if err != nil || (bitValue != 0 && bitValue != 1) {
+			return nil, errors.New(
+				"ERR bit is not an integer or out of range",
+			)
+		}
+
+		oldBit, err := s.store.SetBit(
+			key,
+			offset,
+			bitValue,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		return integer(oldBit), nil
+
+	case "BITCOUNT":
+		if len(args) == 3 {
+			return nil, errors.New("ERR syntax error")
+		}
+
+		var start *int64
+		var end *int64
+		bitMode := false
+
+		if len(args) >= 4 {
+			startValue, err := parseInt64(args[2])
+			if err != nil {
+				return nil, errors.New("ERR value is not an integer or out of range")
+			}
+
+			endValue, err := parseInt64(args[3])
+			if err != nil {
+				return nil, errors.New("ERR value is not an integer or out of range")
+			}
+
+			start = &startValue
+			end = &endValue
+		}
+
+		if len(args) == 5 {
+			unit := strings.ToUpper(string(args[4]))
+
+			switch unit {
+			case "BYTE":
+			case "BIT":
+				bitMode = true
+			default:
+				return nil, errors.New("ERR syntax error")
+			}
+		}
+
+		return integer(
+			s.store.BitCount(
+				key,
+				start,
+				end,
+				bitMode,
+			),
+		), nil
 
 	case "GETDEL":
 		value, found := s.store.GetDel(key)

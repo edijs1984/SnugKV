@@ -87,9 +87,9 @@ Add:
 - [x] `MSETNX`
 - [x] `SETEX`
 - [x] `PSETEX`
-- [ ] `GETBIT`
-- [ ] `SETBIT`
-- [ ] `BITCOUNT`
+- [x] `GETBIT`
+- [x] `SETBIT`
+- [x] `BITCOUNT`
 - [ ] `BITOP`
 - [ ] `BITPOS`
 

@@ -3,6 +3,7 @@ package engine
 import (
 	"errors"
 	"math"
+	"math/bits"
 	"sort"
 	"strconv"
 	"sync/atomic"
@@ -640,6 +641,276 @@ func (s *Store) AddFloat(key string, increment float64) (string, error) {
 	}
 
 	return formatted, nil
+}
+
+const maxStringBytes = 32 << 20
+const maxBitOffset = int64(maxStringBytes*8 - 1)
+
+func (s *Store) GetBit(key string, offset int64) (int64, error) {
+	if offset < 0 || offset > maxBitOffset {
+		return 0, errors.New("ERR bit offset is not an integer or out of range")
+	}
+
+	sh := s.shardFor(key)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
+
+	e, ok := sh.get(key)
+
+	if !ok || e.expired(s.now()) {
+		return 0, nil
+	}
+
+	value := s.decode(e)
+
+	byteIndex := offset / 8
+	if byteIndex >= int64(len(value)) {
+		return 0, nil
+	}
+
+	bitIndex := uint(7 - (offset % 8))
+	mask := byte(1 << bitIndex)
+
+	if value[byteIndex]&mask != 0 {
+		return 1, nil
+	}
+
+	return 0, nil
+}
+
+func (s *Store) SetBit(
+	key string,
+	offset int64,
+	bitValue int,
+) (int64, error) {
+	if offset < 0 || offset > maxBitOffset {
+		return 0, errors.New("ERR bit offset is not an integer or out of range")
+	}
+
+	if bitValue != 0 && bitValue != 1 {
+		return 0, errors.New("ERR bit is not an integer or out of range")
+	}
+
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	now := s.now()
+
+	old, exists := sh.get(key)
+
+	var current []byte
+	var expiresAt stamp
+
+	if exists {
+		if old.expired(now) {
+			s.remove(sh, key)
+			exists = false
+		} else {
+			current = s.decode(old)
+			expiresAt = old.expiresAt
+		}
+	}
+
+	byteIndex := int(offset / 8)
+	required := byteIndex + 1
+
+	updatedValue := make([]byte, required)
+
+	if len(current) > 0 {
+		if len(current) > required {
+			updatedValue = make([]byte, len(current))
+		}
+
+		copy(updatedValue, current)
+	}
+
+	bitIndex := uint(7 - (offset % 8))
+	mask := byte(1 << bitIndex)
+
+	oldBit := int64(0)
+
+	if updatedValue[byteIndex]&mask != 0 {
+		oldBit = 1
+	}
+
+	if bitValue == 1 {
+		updatedValue[byteIndex] |= mask
+	} else {
+		updatedValue[byteIndex] &^= mask
+	}
+
+	updated := s.makeEntry(updatedValue)
+
+	// SETBIT modifies the existing value and preserves TTL.
+	if exists {
+		updated.expiresAt = expiresAt
+	}
+
+	if err := s.publish(sh, key, updated); err != nil {
+		return 0, err
+	}
+
+	return oldBit, nil
+}
+
+func normalizeBitRange(
+	length int64,
+	start int64,
+	end int64,
+) (int64, int64, bool) {
+	if length <= 0 {
+		return 0, 0, false
+	}
+
+	if start < 0 {
+		start = length + start
+	}
+
+	if end < 0 {
+		end = length + end
+	}
+
+	if start < 0 {
+		start = 0
+	}
+
+	if end < 0 || start >= length {
+		return 0, 0, false
+	}
+
+	if end >= length {
+		end = length - 1
+	}
+
+	if start > end {
+		return 0, 0, false
+	}
+
+	return start, end, true
+}
+
+func countBitsInBitRange(
+	value []byte,
+	startBit int64,
+	endBit int64,
+) int64 {
+	if len(value) == 0 {
+		return 0
+	}
+
+	firstByte := startBit / 8
+	lastByte := endBit / 8
+
+	var count int64
+
+	if firstByte == lastByte {
+		for bit := startBit; bit <= endBit; bit++ {
+			byteIndex := bit / 8
+			bitIndex := uint(7 - (bit % 8))
+
+			if value[byteIndex]&(1<<bitIndex) != 0 {
+				count++
+			}
+		}
+
+		return count
+	}
+
+	firstByteEnd := firstByte*8 + 7
+
+	for bit := startBit; bit <= firstByteEnd; bit++ {
+		bitIndex := uint(7 - (bit % 8))
+
+		if value[firstByte]&(1<<bitIndex) != 0 {
+			count++
+		}
+	}
+
+	for byteIndex := firstByte + 1; byteIndex < lastByte; byteIndex++ {
+		count += int64(bits.OnesCount8(value[byteIndex]))
+	}
+
+	lastByteStart := lastByte * 8
+
+	for bit := lastByteStart; bit <= endBit; bit++ {
+		bitIndex := uint(7 - (bit % 8))
+
+		if value[lastByte]&(1<<bitIndex) != 0 {
+			count++
+		}
+	}
+
+	return count
+}
+
+func (s *Store) BitCount(
+	key string,
+	start *int64,
+	end *int64,
+	bitMode bool,
+) int64 {
+	sh := s.shardFor(key)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
+
+	e, ok := sh.get(key)
+
+	if !ok || e.expired(s.now()) {
+		return 0
+	}
+
+	value := s.decode(e)
+
+	if len(value) == 0 {
+		return 0
+	}
+
+	if start == nil || end == nil {
+		var total int64
+
+		for _, b := range value {
+			total += int64(bits.OnesCount8(b))
+		}
+
+		return total
+	}
+
+	if bitMode {
+		lengthBits := int64(len(value)) * 8
+
+		rangeStart, rangeEnd, ok :=
+			normalizeBitRange(lengthBits, *start, *end)
+
+		if !ok {
+			return 0
+		}
+
+		return countBitsInBitRange(
+			value,
+			rangeStart,
+			rangeEnd,
+		)
+	}
+
+	rangeStart, rangeEnd, ok :=
+		normalizeBitRange(
+			int64(len(value)),
+			*start,
+			*end,
+		)
+
+	if !ok {
+		return 0
+	}
+
+	var total int64
+
+	for i := rangeStart; i <= rangeEnd; i++ {
+		total += int64(bits.OnesCount8(value[i]))
+	}
+
+	return total
 }
 
 func (s *Store) Touch(keys []string) int {
