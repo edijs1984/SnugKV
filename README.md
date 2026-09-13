@@ -47,7 +47,6 @@ Supported commands:
 - JSON: `JSON.SET`, `JSON.GET`, `JSON.TYPE`, `JSON.DEL`.
 - Administration: `FLUSHDB`, `FLUSHALL`, `MEMORY`, `SNUG.ENCODING`, `SNUG.MEMORY`, `SNUG.STATS`, `SNUG.COMPACT`, `SNUG.POLICY`, `SNUG.AOFREWRITE`.
 
-The admin listener
 The admin listener defaults to loopback and accepts diagnostics only. When it is
 active, `SNUG.*` commands are rejected on the public listener. Metrics are also
 loopback-only. See [protocol](docs/protocol.md), [operations](docs/operations.md),
