@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"snugkv/internal/engine"
 	"snugkv/internal/persistence"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
-	"strconv"
 )
 
 func execute(t *testing.T, s *Server, args ...string) string {
@@ -33,7 +33,7 @@ func TestCommandSubset(t *testing.T) {
 		{[]string{"SET", "k", "other", "NX"}, "$-1\r\n"},
 		{[]string{"GET", "k"}, "$1\r\nv\r\n"},
 		{[]string{"TYPE", "k"}, "+string\r\n"},
-        {[]string{"TYPE", "missing"}, "+none\r\n"},
+		{[]string{"TYPE", "missing"}, "+none\r\n"},
 		{[]string{"SET", "absent", "v", "XX"}, "$-1\r\n"},
 		{[]string{"PERSIST", "k"}, ":1\r\n"}, {[]string{"PERSIST", "k"}, ":0\r\n"},
 		{[]string{"TTL", "k"}, ":-1\r\n"}, {[]string{"EXISTS", "k", "k", "absent"}, ":2\r\n"},
@@ -450,7 +450,6 @@ func TestExpireAt(t *testing.T) {
 	}
 }
 
-
 func TestExpireTime(t *testing.T) {
 	s := New(engine.New())
 
@@ -782,5 +781,78 @@ func TestMemoryUsageSamples(t *testing.T) {
 
 	if !strings.HasPrefix(got, ":") {
 		t.Fatalf("MEMORY USAGE SAMPLES got %q", got)
+	}
+}
+
+func TestSnugType(t *testing.T) {
+	store, err := engine.NewWithOptions(engine.Options{
+		Shards:      16,
+		Encoding:    true,
+		Compression: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := New(store)
+
+	tests := []struct {
+		key   string
+		value string
+		want  string
+	}{
+		{"string", "hello", "STRING"},
+		{"int", "123456789", "INT64"},
+		{"uint", "9223372036854775808", "UINT64"},
+		{"float", "3.141592653589793", "FLOAT64"},
+		{"bool", "true", "BOOL"},
+	}
+
+	for _, tt := range tests {
+		execute(t, s, "SET", tt.key, tt.value)
+
+		got := execute(t, s, "SNUG.TYPE", tt.key)
+		want := "$" + strconv.Itoa(len(tt.want)) + "\r\n" + tt.want + "\r\n"
+
+		if got != want {
+			t.Fatalf(
+				"SNUG.TYPE %s got %q want %q",
+				tt.key,
+				got,
+				want,
+			)
+		}
+	}
+
+	execute(t, s, "JSON.SET", "doc", "$", `{"name":"SnugKV"}`)
+
+	if got := execute(t, s, "SNUG.TYPE", "doc"); got != "$4\r\nJSON\r\n" {
+		t.Fatalf("JSON type got %q", got)
+	}
+
+	if got := execute(t, s, "SNUG.TYPE", "missing"); got != "$-1\r\n" {
+		t.Fatalf("missing type got %q", got)
+	}
+}
+
+func TestSnugTypeDiffersFromEncoding(t *testing.T) {
+	store, err := engine.NewWithOptions(engine.Options{
+		Shards:   16,
+		Encoding: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := New(store)
+
+	execute(t, s, "SET", "negzero", "-0")
+
+	if got := execute(t, s, "SNUG.TYPE", "negzero"); got != "$7\r\nFLOAT64\r\n" {
+		t.Fatalf("semantic type got %q", got)
+	}
+
+	if got := execute(t, s, "SNUG.ENCODING", "negzero"); got != "$3\r\nraw\r\n" {
+		t.Fatalf("physical encoding got %q", got)
 	}
 }
