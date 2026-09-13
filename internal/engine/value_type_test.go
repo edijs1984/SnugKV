@@ -313,3 +313,81 @@ func TestFloat64StoreRoundTrip(t *testing.T) {
 		})
 	}
 }
+
+func TestClassifyValueBool(t *testing.T) {
+	tests := []struct {
+		value string
+		want  ValueType
+	}{
+		{"true", TypeBool},
+		{"false", TypeBool},
+
+		// Only exact lowercase representations are inferred.
+		{"TRUE", TypeString},
+		{"FALSE", TypeString},
+		{"True", TypeString},
+		{"False", TypeString},
+
+		// Numeric representations retain numeric semantics.
+		{"1", TypeInt64},
+		{"0", TypeInt64},
+
+		// Other truth-like strings remain ordinary strings.
+		{"yes", TypeString},
+		{"no", TypeString},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.value, func(t *testing.T) {
+			got := classifyValue([]byte(tt.value))
+
+			if got != tt.want {
+				t.Fatalf(
+					"classifyValue(%q) = %s, want %s",
+					tt.value,
+					got.String(),
+					tt.want.String(),
+				)
+			}
+		})
+	}
+}
+
+func TestBoolStoreRoundTrip(t *testing.T) {
+	store := New()
+
+	for _, value := range []string{"true", "false"} {
+		t.Run(value, func(t *testing.T) {
+			key := "bool:" + value
+
+			if err := store.Set(key, []byte(value), 0); err != nil {
+				t.Fatal(err)
+			}
+
+			got, ok := store.Get(key)
+			if !ok {
+				t.Fatal("missing bool")
+			}
+
+			if !bytes.Equal(got, []byte(value)) {
+				t.Fatalf(
+					"round trip changed value: got %q want %q",
+					got,
+					value,
+				)
+			}
+
+			valueType, ok := store.ValueTypeOf(key)
+			if !ok {
+				t.Fatal("missing bool type")
+			}
+
+			if valueType != TypeBool {
+				t.Fatalf(
+					"type = %s, want BOOL",
+					valueType.String(),
+				)
+			}
+		})
+	}
+}

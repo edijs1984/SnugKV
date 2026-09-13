@@ -99,6 +99,14 @@ func classifyValue(value []byte) ValueType {
 		}
 	}
 
+	// Canonical BOOL.
+	//
+	// Only exact lowercase Redis-visible representations are inferred.
+	// Case variants remain STRING so classification never normalizes bytes.
+	if string(value) == "true" || string(value) == "false" {
+		return TypeBool
+	}
+
 	// Redis strings are binary-safe. Invalid UTF-8 is therefore treated
 	// explicitly as BYTES rather than STRING.
 	if !utf8.Valid(value) {

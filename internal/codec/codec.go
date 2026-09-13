@@ -21,6 +21,7 @@ const (
 	UUID            ID = 3
 	Timestamp       ID = 4
 	Float64         ID = 6
+	Boolean         ID = 7
 )
 
 type Record struct {
@@ -49,6 +50,7 @@ func NewRegistry() *Registry {
 		uuidCodec{},
 		timestampCodec{},
 		float64Codec{},
+		boolCodec{},
 		lz4Codec{},
 		zstdCodec{},
 	} {
@@ -282,6 +284,37 @@ func (float64Codec) Decode(src []byte, _ int) ([]byte, error) {
 	}
 
 	return []byte(strconv.FormatFloat(n, 'g', -1, 64)), nil
+}
+
+type boolCodec struct{}
+
+func (boolCodec) ID() ID       { return Boolean }
+func (boolCodec) Name() string { return "bool" }
+
+func (boolCodec) Encode(src []byte) ([]byte, bool) {
+	switch string(src) {
+	case "false":
+		return []byte{0}, true
+	case "true":
+		return []byte{1}, true
+	default:
+		return nil, false
+	}
+}
+
+func (boolCodec) Decode(src []byte, _ int) ([]byte, error) {
+	if len(src) != 1 {
+		return nil, errors.New("invalid bool")
+	}
+
+	switch src[0] {
+	case 0:
+		return []byte("false"), nil
+	case 1:
+		return []byte("true"), nil
+	default:
+		return nil, errors.New("invalid bool value")
+	}
 }
 
 type uuidCodec struct{}

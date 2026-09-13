@@ -114,7 +114,7 @@ SnugKV should internally support typed values while preserving Redis-compatible 
 - [x] canonical `INT64` encoding
 - [x] `UINT64`
 - [x] `FLOAT64`
-- [ ] `BOOL`
+- [x] `BOOL`
 - [x] `BYTES`
 - [ ] `JSON`
 
