@@ -25,6 +25,7 @@ type Record struct {
 	Value       []byte `json:"value,omitempty"`
 	ExpiresAtMS int64  `json:"expires_at_ms,omitempty"`
 	Deleted     bool   `json:"deleted,omitempty"`
+	ValueType   uint8  `json:"value_type,omitempty"`
 }
 type Log struct {
 	lock   *os.File

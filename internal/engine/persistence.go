@@ -39,6 +39,7 @@ func (s *Store) Export(keys []string) []persistence.Record {
 			record.Deleted = true
 		} else {
 			record.Value = s.decode(e)
+			record.ValueType = uint8(e.valueType)
 			if !e.expiresAt.IsZero() {
 				record.ExpiresAtMS = e.expiresAt.UnixMilli()
 			}
@@ -76,6 +77,17 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 			continue
 		}
 		e := s.makeEntry(record.Value)
+
+		if record.ValueType > uint8(TypeJSON) {
+			return errors.New("ERR recovered value has unknown type")
+		}
+
+		// Zero is TypeString and also keeps old persistence files compatible.
+		// Non-zero types are restored exactly from persisted metadata.
+		if record.ValueType != 0 {
+			e.valueType = ValueType(record.ValueType)
+		}
+
 		if record.ExpiresAtMS != 0 {
 			e.expiresAt = stamp(record.ExpiresAtMS)
 		}
