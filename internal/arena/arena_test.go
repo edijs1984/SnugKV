@@ -3,6 +3,7 @@ package arena
 import (
 	"bytes"
 	"testing"
+	"unsafe"
 )
 
 func TestReuseAndGeneration(t *testing.T) {
@@ -47,5 +48,36 @@ func TestBatchProjection(t *testing.T) {
 	}
 	if a.MemoryBytes() != growth {
 		t.Fatalf("got %d want %d", a.MemoryBytes(), growth)
+	}
+}
+
+func TestRefPacking(t *testing.T) {
+	ref := newRef(
+		(1<<refSegmentBits)-1,
+		(1<<refOffsetBits)-1,
+		32<<20,
+		0x1122334455667788,
+	)
+
+	if ref.segment() != (1<<refSegmentBits)-1 {
+		t.Fatalf("segment mismatch: %d", ref.segment())
+	}
+
+	if ref.offset() != (1<<refOffsetBits)-1 {
+		t.Fatalf("offset mismatch: %d", ref.offset())
+	}
+
+	if ref.length() != 32<<20 {
+		t.Fatalf("length mismatch: %d", ref.length())
+	}
+
+	if ref.generation != 0x1122334455667788 {
+		t.Fatalf("generation mismatch: %x", ref.generation)
+	}
+}
+
+func TestPackedRefSize(t *testing.T) {
+	if got := unsafe.Sizeof(Ref{}); got != 16 {
+		t.Fatalf("Ref size = %d, want 16", got)
 	}
 }

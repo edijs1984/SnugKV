@@ -11,10 +11,65 @@ const SegmentBytes = 8 << 10
 const segmentMetadata = 32
 
 // Ref is an opaque allocation identity. Generation prevents aliasing after reuse.
+//
+// The allocation location is packed into 64 bits:
+//
+//	25 bits segment
+//	13 bits offset
+//	26 bits length
+//
+// Normal arena segments are 8 KiB, so 13 offset bits are sufficient.
+// 26 length bits support values up to just under 64 MiB, above SnugKV's
+// 32 MiB RESP bulk limit. Generation remains a full 64 bits.
 type Ref struct {
-	segment, offset, length uint32
-	generation              uint64
+	location   uint64
+	generation uint64
 }
+
+const (
+	refLengthBits  = 26
+	refOffsetBits  = 13
+	refSegmentBits = 25
+
+	refLengthMask  = uint64(1<<refLengthBits) - 1
+	refOffsetMask  = uint64(1<<refOffsetBits) - 1
+	refSegmentMask = uint64(1<<refSegmentBits) - 1
+)
+
+func newRef(segment, offset, length uint32, generation uint64) Ref {
+	if uint64(segment) > refSegmentMask {
+		panic("arena segment index exceeds reference capacity")
+	}
+	if uint64(offset) > refOffsetMask {
+		panic("arena offset exceeds reference capacity")
+	}
+	if uint64(length) > refLengthMask {
+		panic("arena value exceeds reference capacity")
+	}
+
+	location :=
+		uint64(segment)<<(refOffsetBits+refLengthBits) |
+			uint64(offset)<<refLengthBits |
+			uint64(length)
+
+	return Ref{
+		location:   location,
+		generation: generation,
+	}
+}
+
+func (r Ref) segment() uint32 {
+	return uint32((r.location >> (refOffsetBits + refLengthBits)) & refSegmentMask)
+}
+
+func (r Ref) offset() uint32 {
+	return uint32((r.location >> refLengthBits) & refOffsetMask)
+}
+
+func (r Ref) length() uint32 {
+	return uint32(r.location & refLengthMask)
+}
+
 type segment struct {
 	data []byte
 	used uint32
@@ -173,21 +228,21 @@ func (a *Arena) Alloc(value []byte) Ref {
 	}
 	binary.LittleEndian.PutUint64(a.segments[seg].data[offset:], a.generation)
 	copy(a.segments[seg].data[offset+8:], value)
-	return Ref{uint32(seg), uint32(offset), uint32(len(value)), a.generation}
+	return newRef(uint32(seg), uint32(offset), uint32(len(value)), a.generation)
 }
 func (a *Arena) View(ref Ref) ([]byte, error) {
 	if ref.generation == 0 {
-		if ref.length == 0 {
+		if ref.length() == 0 {
 			return []byte{}, nil
 		}
 		return nil, errors.New("invalid empty reference")
 	}
-	if int(ref.segment) >= len(a.segments) {
+	if int(ref.segment()) >= len(a.segments) {
 		return nil, errors.New("invalid segment")
 	}
-	data := a.segments[ref.segment].data
-	start := uint64(ref.offset)
-	end := start + 8 + uint64(ref.length)
+	data := a.segments[ref.segment()].data
+	start := uint64(ref.offset())
+	end := start + 8 + uint64(ref.length())
 	if end > uint64(len(data)) || binary.LittleEndian.Uint64(data[start:]) != ref.generation {
 		return nil, errors.New("stale arena reference")
 	}
@@ -200,11 +255,11 @@ func (a *Arena) Free(ref Ref) {
 	if _, err := a.View(ref); err != nil {
 		panic(err)
 	}
-	bucket, _ := class(int(ref.length))
-	data := a.segments[ref.segment].data
-	binary.LittleEndian.PutUint64(data[ref.offset:], 0)
-	binary.LittleEndian.PutUint64(data[ref.offset+8:], a.free[bucket])
-	a.free[bucket] = (uint64(ref.segment)+1)<<32 | uint64(ref.offset)
+	bucket, _ := class(int(ref.length()))
+	data := a.segments[ref.segment()].data
+	binary.LittleEndian.PutUint64(data[ref.offset():], 0)
+	binary.LittleEndian.PutUint64(data[ref.offset()+8:], a.free[bucket])
+	a.free[bucket] = (uint64(ref.segment())+1)<<32 | uint64(ref.offset())
 }
 
 // AllocationBytes returns the physical arena block reserved for ref.
@@ -213,7 +268,7 @@ func (a *Arena) AllocationBytes(ref Ref) uint64 {
 		return 0
 	}
 
-	_, block := class(int(ref.length))
+	_, block := class(int(ref.length()))
 
 	return uint64(block)
 }
