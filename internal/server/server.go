@@ -59,6 +59,7 @@ var commandTable = map[string]commandInfo{
 	"SETEX":  {4, 4, 1, 1, 1, true},
 	"PSETEX": {4, 4, 1, 1, 1, true},
 	"MSET":   {3, 0, 1, -1, 2, true},
+	"MSETNX": {3, 0, 1, -1, 2, true},
 	"INCR":   {2, 2, 1, 1, 1, true}, "DECR": {2, 2, 1, 1, 1, true}, "INCRBY": {3, 3, 1, 1, 1, true}, "DECRBY": {3, 3, 1, 1, 1, true},
 	"INCRBYFLOAT": {3, 3, 1, 1, 1, true},
 	"STRLEN":      {2, 2, 1, 1, 1, false}, "EXPIRE": {3, 4, 1, 1, 1, true}, "PEXPIRE": {3, 4, 1, 1, 1, true},
@@ -496,6 +497,26 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		}
 		err := s.store.MSet(names, values)
 		return []byte("+OK\r\n"), err
+	case "MSETNX":
+		if len(args)%2 != 1 {
+			return nil, errors.New("ERR wrong number of arguments for 'msetnx' command")
+		}
+
+		names := make([]string, 0, (len(args)-1)/2)
+		values := make([][]byte, 0, (len(args)-1)/2)
+
+		for i := 1; i < len(args); i += 2 {
+			names = append(names, string(args[i]))
+			values = append(values, args[i+1])
+		}
+
+		applied, err := s.store.MSetNX(names, values)
+		if err != nil {
+			return nil, err
+		}
+
+		return boolean(applied), nil
+
 	case "EXISTS":
 		return integer(s.store.Exists(keys(args[1:]))), nil
 	case "DEL", "UNLINK":

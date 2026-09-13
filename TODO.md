@@ -84,7 +84,7 @@ Add:
 - [x] `GETEX`
 - [x] `GETRANGE`
 - [x] `SETRANGE`
-- [ ] `MSETNX`
+- [x] `MSETNX`
 - [x] `SETEX`
 - [x] `PSETEX`
 - [ ] `GETBIT`
@@ -139,7 +139,7 @@ SnugKV should internally support typed values while preserving Redis-compatible 
 # P0 — Decimal / Floating Point Support
 
 - [ ] Implement strict Redis-compatible float parser
-- [ ] Implement `INCRBYFLOAT`
+- [x] Implement `INCRBYFLOAT`
 - [ ] Support atomic float increments
 - [ ] Define canonical float serialization
 - [ ] Preserve precision expectations
@@ -295,10 +295,10 @@ SnugKV already has JSON-shape compression. Add first-class JSON operations.
 
 Start with:
 
-- [ ] `JSON.SET`
-- [ ] `JSON.GET`
-- [ ] `JSON.DEL`
-- [ ] `JSON.TYPE`
+- [x] `JSON.SET`
+- [x] `JSON.GET`
+- [x] `JSON.DEL`
+- [x] `JSON.TYPE`
 - [ ] `JSON.CLEAR`
 - [ ] `JSON.NUMINCRBY`
 - [ ] `JSON.NUMMULTBY`

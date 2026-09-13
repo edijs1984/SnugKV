@@ -226,6 +226,134 @@ func (s *Store) MSet(keys []string, values [][]byte) error {
 	}
 	return nil
 }
+
+func (s *Store) MSetNX(keys []string, values [][]byte) (bool, error) {
+	if len(keys) != len(values) {
+		return false, errors.New("ERR mismatched key/value count")
+	}
+
+	for _, value := range values {
+		if len(value) > 32<<20 {
+			return false, errors.New("ERR value exceeds 32 MiB limit")
+		}
+	}
+
+	unlock := s.lockAll()
+	defer unlock()
+
+	now := s.now()
+
+	// Redis MSETNX is all-or-nothing. Check the entire target key set
+	// before allocating or publishing anything.
+	seen := make(map[string]struct{}, len(keys))
+
+	for _, key := range keys {
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		seen[key] = struct{}{}
+
+		sh := s.shardFor(key)
+
+		if old, ok := sh.get(key); ok {
+			if old.expired(now) {
+				// Expired keys are logically absent.
+				s.remove(sh, key)
+				continue
+			}
+
+			return false, nil
+		}
+	}
+
+	// Duplicate keys use the final supplied value, matching MSET behavior.
+	replacements := make(map[string]entry, len(keys))
+
+	for i, key := range keys {
+		replacements[key] = s.makeEntry(values[i])
+	}
+
+	ordered := make([]string, 0, len(replacements))
+
+	for key := range replacements {
+		ordered = append(ordered, key)
+	}
+
+	sort.Strings(ordered)
+
+	var entryBytes uint64
+	var extraIndex uint64
+	var extraArena uint64
+	var newPayload uint64
+
+	growth := make(map[*shard]int)
+	allocations := make(map[*shard][]int)
+
+	for _, key := range ordered {
+		e := replacements[key]
+		sh := s.shardFor(key)
+
+		entryBytes += entryCharge(key, e)
+		newPayload += uint64(len(e.value))
+
+		growth[sh]++
+		allocations[sh] = append(allocations[sh], len(e.value))
+	}
+
+	for sh, n := range growth {
+		extraIndex += sh.data.GrowthBytes(n)
+	}
+
+	for sh, lengths := range allocations {
+		extraArena += sh.arena.GrowthFor(lengths)
+	}
+
+	s.memory.mu.Lock()
+	defer s.memory.mu.Unlock()
+
+	next := s.memory.used + entryBytes + extraIndex + extraArena
+
+	if s.memory.max > 0 && next > s.memory.max {
+		return false, ErrOOM
+	}
+
+	s.memory.used = next
+	s.memory.entries += entryBytes
+	s.memory.index += extraIndex
+	s.memory.arenas += extraArena
+
+	var newLiveBlocks uint64
+
+	for _, key := range ordered {
+		e := replacements[key]
+		sh := s.shardFor(key)
+
+		e.ref = sh.arena.Alloc(e.value)
+		e.value, _ = sh.arena.View(e.ref)
+
+		newLiveBlocks += sh.arena.AllocationBytes(e.ref)
+		replacements[key] = e
+	}
+
+	s.memory.arenaPayload += newPayload
+	s.memory.arenaLiveBlocks += newLiveBlocks
+
+	for _, key := range ordered {
+		e := replacements[key]
+		sh := s.shardFor(key)
+
+		e.version = atomic.AddUint64(&s.version, 1)
+		e.lastWrite = stampOf(now)
+		e.lastAccess = e.lastWrite
+		e.writes = 1
+
+		sh.set(key, e)
+		sh.schedule(key, e.expiresAt)
+	}
+
+	return true, nil
+}
+
 func (s *Store) MGet(keys []string) ([][]byte, []bool) {
 	unlock := s.lockAll()
 	defer unlock()
