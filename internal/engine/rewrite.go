@@ -25,7 +25,7 @@ func (s *Store) Candidate(key string, maxBytes int) (Candidate, bool) {
 	if !ok || e.expired(s.now()) || e.rawLength > maxBytes {
 		return Candidate{}, false
 	}
-	return Candidate{key, e.version, s.decode(e), len(e.encoded()), e.lastRewrite.Time(), heat(e, s.now())}, true
+	return Candidate{key, e.version, s.decode(sh, e), len(sh.encoded(e)), e.lastRewrite.Time(), heat(e, s.now())}, true
 }
 func heat(e entry, now time.Time) string {
 	if now.Sub(e.lastWrite.Time()) < time.Minute && e.writes >= 10 {
@@ -93,11 +93,11 @@ func (s *Store) Rewrite(candidate Candidate, record codec.Record) bool {
 	if !ok ||
 		e.expired(s.now()) ||
 		e.version != candidate.Version ||
-		len(record.Data) >= len(e.encoded()) {
+		len(record.Data) >= len(sh.encoded(e)) {
 		return false
 	}
 
-	if !bytes.Equal(s.decode(e), candidate.Value) {
+	if !bytes.Equal(s.decode(sh, e), candidate.Value) {
 		return false
 	}
 

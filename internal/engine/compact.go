@@ -27,13 +27,13 @@ func (s *Store) Compact(scratch uint64) int {
 			items = append(items, pair{key, e})
 		}
 		sort.Slice(items, func(i, j int) bool {
-			return len(items[i].value.encoded()) >
-				len(items[j].value.encoded())
+			return len(sh.encoded(items[i].value)) >
+				len(sh.encoded(items[j].value))
 		})
 
 		lengths := make([]int, len(items))
 		for j := range items {
-			lengths[j] = len(items[j].value.encoded())
+			lengths[j] = len(sh.encoded(items[j].value))
 		}
 
 		var fresh arena.Arena
@@ -48,10 +48,9 @@ func (s *Store) Compact(scratch uint64) int {
 
 		for j := range items {
 			e := items[j].value
-			value := e.encoded()
+			value := sh.encoded(e)
 
 			e.ref = fresh.Alloc(value)
-			e.arena = nil
 			e.version = atomic.AddUint64(&s.version, 1)
 
 			items[j].value = e
@@ -60,9 +59,7 @@ func (s *Store) Compact(scratch uint64) int {
 		sh.arena = fresh
 
 		for _, item := range items {
-			e := item.value
-			e.arena = &sh.arena
-			sh.set(item.key, e)
+			sh.set(item.key, item.value)
 		}
 		sh.data.Compact()
 		newArena, newIndex := sh.arena.MemoryBytes(), sh.data.CapacityBytes()

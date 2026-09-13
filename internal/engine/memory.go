@@ -115,11 +115,11 @@ func (s *Store) makeEntry(value []byte) preparedEntry {
 	}
 }
 
-func (s *Store) decode(e entry) []byte {
+func (s *Store) decode(sh *shard, e entry) []byte {
 	out, err := s.codecs.Decode(codec.Record{
 		ID:        e.codecID,
 		RawLength: e.rawLength,
-		Data:      e.encoded(),
+		Data:      sh.encoded(e),
 		Schema:    e.schema,
 	}, e.rawLength)
 	// Only verified immutable records are published. A failure is an internal
@@ -184,7 +184,7 @@ func (s *Store) publishRecord(
 	}
 
 	if old.schema != nil {
-		sh.shapes.ReleaseRecord(old.schema, old.encoded())
+		sh.shapes.ReleaseRecord(old.schema, sh.encoded(old))
 	}
 
 	s.memory.used = next
@@ -194,7 +194,7 @@ func (s *Store) publishRecord(
 	s.memory.arenas += extraArena
 
 	if exists {
-		s.memory.arenaPayload -= uint64(len(old.encoded()))
+		s.memory.arenaPayload -= uint64(len(sh.encoded(old)))
 	}
 
 	s.memory.arenaPayload += uint64(len(e.data))
@@ -215,7 +215,6 @@ func (s *Store) publishRecord(
 
 	e.version = atomic.AddUint64(&s.version, 1)
 	e.ref = sh.arena.Alloc(e.data)
-	e.arena = &sh.arena
 
 	newBlockBytes := sh.arena.AllocationBytes(e.ref)
 
@@ -244,12 +243,12 @@ func (s *Store) remove(sh *shard, key string) {
 		}
 		s.memory.mu.Lock()
 		if e.schema != nil {
-			sh.shapes.ReleaseRecord(e.schema, e.encoded())
+			sh.shapes.ReleaseRecord(e.schema, sh.encoded(e))
 		}
 		cost := entryCharge(key, e)
 		s.memory.used -= cost
 		s.memory.entries -= cost
-		s.memory.arenaPayload -= uint64(len(e.encoded()))
+		s.memory.arenaPayload -= uint64(len(sh.encoded(e)))
 		s.memory.arenaLiveBlocks -= sh.arena.AllocationBytes(e.ref)
 		s.memory.mu.Unlock()
 		sh.delete(key)
@@ -266,7 +265,7 @@ func (s *Store) Encoding(key string) (string, int, int, bool) {
 	if !ok || e.expired(s.now()) {
 		return "", 0, 0, false
 	}
-	return s.codecs.Name(e.codecID), e.rawLength, len(e.encoded()), true
+	return s.codecs.Name(e.codecID), e.rawLength, len(sh.encoded(e)), true
 }
 
 func (s *Store) MemoryUsage(key string) (uint64, bool) {

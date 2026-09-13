@@ -60,7 +60,7 @@ func (s *Store) JSONSet(
 		return false, errors.New("WRONGTYPE Operation against a key holding the wrong kind of value")
 	}
 
-	root, err := jsonvalue.Parse(s.decode(e))
+	root, err := jsonvalue.Parse(s.decode(sh, e))
 	if err != nil {
 		return false, errors.New("WRONGTYPE value is not valid JSON")
 	}
@@ -121,7 +121,7 @@ func (s *Store) JSONGet(key, path string) ([]byte, bool, error) {
 		return nil, false, errors.New("WRONGTYPE Operation against a key holding the wrong kind of value")
 	}
 
-	root, err := jsonvalue.Parse(s.decode(e))
+	root, err := jsonvalue.Parse(s.decode(sh, e))
 	if err != nil {
 		return nil, false, errors.New("WRONGTYPE value is not valid JSON")
 	}
@@ -165,7 +165,7 @@ func (s *Store) JSONType(key, path string) (string, bool, error) {
 		return "", false, errors.New("WRONGTYPE Operation against a key holding the wrong kind of value")
 	}
 
-	root, err := jsonvalue.Parse(s.decode(e))
+	root, err := jsonvalue.Parse(s.decode(sh, e))
 	if err != nil {
 		return "", false, errors.New("WRONGTYPE value is not valid JSON")
 	}
@@ -209,7 +209,7 @@ func (s *Store) JSONDel(key, path string) (int64, error) {
 		return 1, nil
 	}
 
-	root, err := jsonvalue.Parse(s.decode(e))
+	root, err := jsonvalue.Parse(s.decode(sh, e))
 	if err != nil {
 		return 0, errors.New("WRONGTYPE value is not valid JSON")
 	}

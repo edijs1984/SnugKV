@@ -13,7 +13,6 @@ import (
 
 type entry struct {
 	ref                                arena.Ref
-	arena                              *arena.Arena
 	schema                             *jsonshape.Schema
 	rawLength                          int
 	version                            uint64
@@ -29,12 +28,8 @@ type preparedEntry struct {
 	data []byte
 }
 
-func (e entry) encoded() []byte {
-	if e.arena == nil {
-		return nil
-	}
-
-	value, err := e.arena.View(e.ref)
+func (sh *shard) encoded(e entry) []byte {
+	value, err := sh.arena.View(e.ref)
 	if err != nil {
 		panic(err)
 	}
@@ -110,7 +105,7 @@ func (s *Store) Get(key string) ([]byte, bool) {
 		e.reads++
 	}
 	sh.set(key, e)
-	return s.decode(e), true
+	return s.decode(sh, e), true
 }
 func (s *Store) Delete(key string) bool {
 	sh := s.shardFor(key)
@@ -135,8 +130,8 @@ func (s *Store) Add(key string, delta int64) (int64, error) {
 	var n int64
 	if ok {
 		var err error
-		n, err = strconv.ParseInt(string(s.decode(e)), 10, 64)
-		if err != nil || strconv.FormatInt(n, 10) != string(s.decode(e)) {
+		n, err = strconv.ParseInt(string(s.decode(sh, e)), 10, 64)
+		if err != nil || strconv.FormatInt(n, 10) != string(s.decode(sh, e)) {
 			return 0, errors.New("ERR value is not an integer or out of range")
 		}
 	}

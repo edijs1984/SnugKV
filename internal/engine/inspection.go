@@ -17,7 +17,7 @@ func (s *Store) Inspect() Inspection {
 		for _, e := range sh.all() {
 			if !e.expired(now) {
 				out.Keys++
-				out.EncodedBytes += uint64(len(e.encoded()))
+				out.EncodedBytes += uint64(len(sh.encoded(e)))
 				out.LogicalBytes += uint64(e.rawLength)
 				out.Codecs[s.codecs.Name(e.codecID)]++
 			}

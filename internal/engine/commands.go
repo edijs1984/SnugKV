@@ -63,7 +63,7 @@ func (s *Store) SetWithOptions(
 	hadPrevious := false
 
 	if options.Get && exists {
-		previous = s.decode(old)
+		previous = s.decode(sh, old)
 		hadPrevious = true
 	}
 
@@ -108,7 +108,7 @@ func (s *Store) GetSet(key string, value []byte) ([]byte, bool, error) {
 	exists = exists && !old.expired(s.now())
 	var previous []byte
 	if exists {
-		previous = s.decode(old)
+		previous = s.decode(sh, old)
 	}
 	if err := s.publish(sh, key, s.makeEntry(value)); err != nil {
 		return nil, false, err
@@ -163,7 +163,7 @@ func (s *Store) MSet(keys []string, values [][]byte) error {
 
 		if old, ok := sh.get(k); ok {
 			before += entryCharge(k, old)
-			oldPayload += uint64(len(old.encoded()))
+			oldPayload += uint64(len(sh.encoded(old)))
 			oldLiveBlocks += sh.arena.AllocationBytes(old.ref)
 		} else {
 			growth[sh]++
@@ -198,7 +198,6 @@ func (s *Store) MSet(keys []string, values [][]byte) error {
 		sh := s.shardFor(k)
 
 		e.ref = sh.arena.Alloc(e.data)
-		e.arena = &sh.arena
 
 		newLiveBlocks += sh.arena.AllocationBytes(e.ref)
 		replacements[k] = e
@@ -215,7 +214,7 @@ func (s *Store) MSet(keys []string, values [][]byte) error {
 		sh := s.shardFor(k)
 		old, exists := sh.get(k)
 		if exists && old.schema != nil {
-			sh.shapes.ReleaseRecord(old.schema, old.encoded())
+			sh.shapes.ReleaseRecord(old.schema, sh.encoded(old))
 		}
 		e.lastWrite = stampOf(s.now())
 		e.lastAccess = e.lastWrite
@@ -338,7 +337,6 @@ func (s *Store) MSetNX(keys []string, values [][]byte) (bool, error) {
 		sh := s.shardFor(key)
 
 		e.ref = sh.arena.Alloc(e.data)
-		e.arena = &sh.arena
 
 		newLiveBlocks += sh.arena.AllocationBytes(e.ref)
 		replacements[key] = e
@@ -366,25 +364,38 @@ func (s *Store) MSetNX(keys []string, values [][]byte) (bool, error) {
 func (s *Store) MGet(keys []string) ([][]byte, []bool) {
 	unlock := s.lockAll()
 	defer unlock()
+
 	now := s.now()
-	values, found := make([][]byte, len(keys)), make([]bool, len(keys))
+	values := make([][]byte, len(keys))
+	found := make([]bool, len(keys))
+
 	for i, key := range keys {
-		e, ok := s.shardFor(key).get(key)
-		if ok && !e.expired(now) {
-			values[i] = s.decode(e)
-			if now.Sub(e.lastAccess.Time()) > time.Minute {
-				e.reads = 0
-			}
-			e.lastAccess = stampOf(now)
-			if e.reads < ^uint16(0) {
-				e.reads++
-			}
-			s.shardFor(key).set(key, e)
-			found[i] = true
+		sh := s.shardFor(key)
+		e, ok := sh.get(key)
+
+		if !ok || e.expired(now) {
+			continue
 		}
+
+		values[i] = s.decode(sh, e)
+
+		if now.Sub(e.lastAccess.Time()) > time.Minute {
+			e.reads = 0
+		}
+
+		e.lastAccess = stampOf(now)
+
+		if e.reads < ^uint16(0) {
+			e.reads++
+		}
+
+		sh.set(key, e)
+		found[i] = true
 	}
+
 	return values, found
 }
+
 func (s *Store) Exists(keys []string) int64 {
 	unlock := s.lockAll()
 	defer unlock()
@@ -524,8 +535,8 @@ func (s *Store) Sub(key string, decrement int64) (int64, error) {
 	if !ok || e.expired(s.now()) {
 		return 0, errors.New("ERR increment or decrement would overflow")
 	}
-	n, err := strconv.ParseInt(string(s.decode(e)), 10, 64)
-	if err != nil || strconv.FormatInt(n, 10) != string(s.decode(e)) {
+	n, err := strconv.ParseInt(string(s.decode(sh, e)), 10, 64)
+	if err != nil || strconv.FormatInt(n, 10) != string(s.decode(sh, e)) {
 		return 0, errors.New("ERR value is not an integer or out of range")
 	}
 	if n >= 0 {
@@ -577,7 +588,7 @@ func (s *Store) Rename(source, destination string, nx bool) (bool, error) {
 	}
 
 	// Decode and republish so arena ownership remains correct.
-	value := s.decode(sourceEntry)
+	value := s.decode(sourceShard, sourceEntry)
 
 	replacement := s.makeEntry(value)
 
@@ -613,7 +624,7 @@ func (s *Store) AddFloat(key string, increment float64) (string, error) {
 			s.remove(sh, key)
 			exists = false
 		} else {
-			raw := string(s.decode(e))
+			raw := string(s.decode(sh, e))
 
 			n, err := strconv.ParseFloat(raw, 64)
 			if err != nil || math.IsNaN(n) || math.IsInf(n, 0) {
@@ -669,7 +680,7 @@ func (s *Store) GetBit(key string, offset int64) (int64, error) {
 		return 0, nil
 	}
 
-	value := s.decode(e)
+	value := s.decode(sh, e)
 
 	byteIndex := offset / 8
 	if byteIndex >= int64(len(value)) {
@@ -715,7 +726,7 @@ func (s *Store) SetBit(
 			s.remove(sh, key)
 			exists = false
 		} else {
-			current = s.decode(old)
+			current = s.decode(sh, old)
 			expiresAt = old.expiresAt
 		}
 	}
@@ -868,7 +879,7 @@ func (s *Store) BitCount(
 		return 0
 	}
 
-	value := s.decode(e)
+	value := s.decode(sh, e)
 
 	if len(value) == 0 {
 		return 0
@@ -957,7 +968,7 @@ func (s *Store) BitOp(
 			continue
 		}
 
-		value := s.decode(e)
+		value := s.decode(sh, e)
 		sources[i] = value
 
 		if len(value) > maxLen {
@@ -1163,7 +1174,7 @@ func (s *Store) BitPos(
 	var value []byte
 
 	if ok && !e.expired(s.now()) {
-		value = s.decode(e)
+		value = s.decode(sh, e)
 	}
 
 	lengthBits := int64(len(value)) * 8
@@ -1348,7 +1359,7 @@ func (s *Store) GetDel(key string) ([]byte, bool) {
 		return nil, false
 	}
 
-	value := s.decode(e)
+	value := s.decode(sh, e)
 
 	s.remove(sh, key)
 
@@ -1373,7 +1384,7 @@ func (s *Store) GetEx(
 		return nil, false
 	}
 
-	value := s.decode(e)
+	value := s.decode(sh, e)
 
 	if persist {
 		e.expiresAt = 0
@@ -1420,7 +1431,7 @@ func (s *Store) Append(key string, suffix []byte) (int, error) {
 			s.remove(sh, key)
 			exists = false
 		} else {
-			current = s.decode(e)
+			current = s.decode(sh, e)
 			expiresAt = e.expiresAt
 		}
 	}
@@ -1457,7 +1468,7 @@ func (s *Store) GetRange(key string, start, end int64) []byte {
 		return []byte{}
 	}
 
-	value := s.decode(e)
+	value := s.decode(sh, e)
 	length := int64(len(value))
 
 	if length == 0 {
@@ -1511,7 +1522,7 @@ func (s *Store) SetRange(key string, offset int64, replacement []byte) (int, err
 			s.remove(sh, key)
 			exists = false
 		} else {
-			current = s.decode(e)
+			current = s.decode(sh, e)
 			expiresAt = e.expiresAt
 		}
 	}

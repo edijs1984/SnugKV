@@ -30,7 +30,8 @@ func (s *Store) Export(keys []string) []persistence.Record {
 			continue
 		}
 		seen[key] = true
-		e, ok := s.shardFor(key).get(key)
+		sh := s.shardFor(key)
+		e, ok := sh.get(key)
 		record := persistence.Record{Key: []byte(key)}
 		if !ok || e.expired(now) {
 			if all {
@@ -38,7 +39,7 @@ func (s *Store) Export(keys []string) []persistence.Record {
 			}
 			record.Deleted = true
 		} else {
-			record.Value = s.decode(e)
+			record.Value = s.decode(sh, e)
 			record.ValueType = uint8(e.valueType)
 			if !e.expiresAt.IsZero() {
 				record.ExpiresAtMS = e.expiresAt.UnixMilli()
