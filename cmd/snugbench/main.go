@@ -18,7 +18,8 @@ import (
 func main() {
 	count := flag.Int("keys", 10000, "number of keys")
 	size := flag.Int("bytes", 256, "value bytes")
-	dataset := flag.String("dataset", "random", "random, sessions, telemetry, counters, api, compressible, compressed, mixed")
+	shards := flag.Int("shards", 256, "number of engine shards; must be a positive power of two")
+	dataset := flag.String("dataset", "random", "random, sessions, telemetry, counters, uint64, float64, bool, uuid, smalljson, mediumjson, api, compressible, compressed, mixed")
 	encoding := flag.Bool("encoding", false, "enable cheap value encodings")
 	jsonShape := flag.Bool("json-shape", false, "enable JSON shape storage")
 	compression := flag.Bool("compression", false, "enable general compression candidates")
@@ -28,8 +29,12 @@ func main() {
 		fmt.Fprintln(os.Stderr, "keys and bytes must be positive")
 		os.Exit(2)
 	}
+	if *shards < 1 || *shards > 65536 || (*shards&(*shards-1)) != 0 {
+		fmt.Fprintln(os.Stderr, "shards must be a positive power of two at most 65536")
+		os.Exit(2)
+	}
 	s, err := engine.NewWithOptions(engine.Options{
-		Shards:        256,
+		Shards:        *shards,
 		Encoding:      *encoding,
 		ShapeEncoding: *jsonShape,
 		Compression:   *compression,
@@ -48,7 +53,43 @@ func main() {
 		case "api":
 			values[i] = []byte(fmt.Sprintf(`{"status":"ok","requestId":"%08x","items":[{"id":%d,"name":"Example item","enabled":true,"category":"standard","description":"A moderately sized API response record used to measure repeated structural bytes without changing the client-visible JSON representation.","links":{"self":"/v1/items/%d","collection":"/v1/items"},"metadata":{"owner":"team-cache","region":"eu-north","revision":7}}],"paging":{"next":null,"limit":50,"total":1},"generatedAt":"2026-09-07T12:34:56Z"}`, i, i, i))
 		case "counters":
-			values[i] = []byte(fmt.Sprint(i))
+			values[i] = []byte(fmt.Sprintf("%d", 1000000000+i))
+
+		case "uint64":
+			// Above MaxInt64 so SnugKV classifies these as UINT64.
+			values[i] = []byte(fmt.Sprintf("%d", uint64(9223372036854775808)+uint64(i)))
+
+		case "float64":
+			values[i] = []byte(fmt.Sprintf("%.12f", 3.141592653589+float64(i)/1000000))
+
+		case "bool":
+			if i%2 == 0 {
+				values[i] = []byte("true")
+			} else {
+				values[i] = []byte("false")
+			}
+
+		case "uuid":
+			values[i] = []byte(fmt.Sprintf(
+				"%08x-1234-4abc-8def-%012x",
+				uint32(i),
+				uint64(i),
+			))
+
+		case "smalljson":
+			values[i] = []byte(fmt.Sprintf(
+				`{"id":%d,"active":true,"plan":"free","country":"LV"}`,
+				i,
+			))
+
+		case "mediumjson":
+			values[i] = []byte(fmt.Sprintf(
+				`{"id":%d,"active":true,"plan":"standard","country":"LV","profile":{"language":"lv","timezone":"Europe/Riga","theme":"dark"},"roles":["reader","member"],"metrics":{"logins":%d,"score":%.2f}}`,
+				i,
+				i%1000,
+				float64(i%10000)/100,
+			))
+
 		case "compressed":
 			var buffer bytes.Buffer
 			writer := gzip.NewWriter(&buffer)
@@ -105,7 +146,7 @@ func main() {
 	if *encoding {
 		mode = "encoded"
 	}
-	out := map[string]interface{}{"go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "cpus": runtime.NumCPU(), "gomaxprocs": runtime.GOMAXPROCS(0), "dataset": *dataset, "seed": *seed, "keys": *count, "shards": 256, "mode": mode, "load_ns": load.Nanoseconds(), "reads_ns": reads.Nanoseconds(), "get_p50_ns": samples[len(samples)/2], "get_p95_ns": samples[len(samples)*95/100], "get_p99_ns": samples[len(samples)*99/100], "process_heap_alloc": mem.HeapAlloc, "logical": s.Stats(), "memory": s.Memory(), "inspection": s.Inspect(), "mismatches": 0, "measurement_note": "single run; process heap includes benchmark harness; no product claim"}
+	out := map[string]interface{}{"go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "cpus": runtime.NumCPU(), "gomaxprocs": runtime.GOMAXPROCS(0), "dataset": *dataset, "seed": *seed, "keys": *count, "shards": *shards, "mode": mode, "load_ns": load.Nanoseconds(), "reads_ns": reads.Nanoseconds(), "get_p50_ns": samples[len(samples)/2], "get_p95_ns": samples[len(samples)*95/100], "get_p99_ns": samples[len(samples)*99/100], "process_heap_alloc": mem.HeapAlloc, "logical": s.Stats(), "memory": s.Memory(), "inspection": s.Inspect(), "mismatches": 0, "measurement_note": "single run; process heap includes benchmark harness; no product claim"}
 	if err := json.NewEncoder(os.Stdout).Encode(out); err != nil {
 		panic(err)
 	}
