@@ -66,8 +66,10 @@ var commandTable = map[string]commandInfo{
 	"APPEND":   {3, 3, 1, 1, 1, true},
     "GETRANGE": {4, 4, 1, 1, 1, false},
     "SETRANGE": {4, 4, 1, 1, 1, true},
-	"JSON.SET": {4, 4, 1, 1, 1, true},
+	"JSON.SET": {4, 5, 1, 1, 1, true},
     "JSON.GET": {2, 3, 1, 1, 1, false},
+	"JSON.TYPE": {2, 3, 1, 1, 1, false},
+    "JSON.DEL":  {2, 3, 1, 1, 1, true},
 }
 
 func (s *Server) execute(args [][]byte) ([]byte, error) {
@@ -87,14 +89,66 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		key = string(args[1])
 	}
 	switch cmd {
-	case "JSON.SET":
-	path := string(args[2])
+	
+	case "JSON.DEL":
+	path := "$"
 
-	if err := s.store.JSONSet(key, path, args[3]); err != nil {
+	if len(args) == 3 {
+		path = string(args[2])
+	}
+
+	deleted, err := s.store.JSONDel(key, path)
+	if err != nil {
 		return nil, err
 	}
 
+	return integer(deleted), nil	
+
+	case "JSON.TYPE":
+	path := "$"
+
+	if len(args) == 3 {
+		path = string(args[2])
+	}
+
+	jsonType, found, err := s.store.JSONType(key, path)
+	if err != nil {
+		return nil, err
+	}
+
+	if !found {
+		return nullBulk(), nil
+	}
+
+	return formatBulkString([]byte(jsonType)), nil
+	case "JSON.SET":
+	path := string(args[2])
+
+	nx := false
+	xx := false
+
+	if len(args) == 5 {
+		switch strings.ToUpper(string(args[4])) {
+		case "NX":
+			nx = true
+		case "XX":
+			xx = true
+		default:
+			return nil, errors.New("ERR syntax error")
+		}
+	}
+
+	applied, err := s.store.JSONSet(key, path, args[3], nx, xx)
+	if err != nil {
+		return nil, err
+	}
+
+	if !applied {
+		return nullBulk(), nil
+	}
+
 	return []byte("+OK\r\n"), nil
+	
 	case "JSON.GET":
 	path := "$"
 
@@ -108,7 +162,7 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 	}
 
 	return optionalBulk(value, found), nil
-	
+
 	case "APPEND":
 	length, err := s.store.Append(key, args[2])
 	if err != nil {

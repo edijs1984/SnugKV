@@ -109,3 +109,67 @@ func Set(root any, path string, value any) (any, error) {
 
 	return root, nil
 }
+
+func TypeOf(value any) string {
+	switch v := value.(type) {
+	case nil:
+		return "null"
+	case map[string]any:
+		return "object"
+	case []any:
+		return "array"
+	case string:
+		return "string"
+	case bool:
+		return "boolean"
+	case float64:
+		if v == float64(int64(v)) {
+			return "integer"
+		}
+		return "number"
+	default:
+		return "unknown"
+	}
+}
+
+func Delete(root any, path string) (any, bool, error) {
+	parts, err := PathParts(path)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if len(parts) == 0 {
+		return nil, true, nil
+	}
+
+	object, ok := root.(map[string]any)
+	if !ok {
+		return root, false, nil
+	}
+
+	current := object
+
+	for i := 0; i < len(parts)-1; i++ {
+		next, exists := current[parts[i]]
+		if !exists {
+			return root, false, nil
+		}
+
+		child, ok := next.(map[string]any)
+		if !ok {
+			return root, false, nil
+		}
+
+		current = child
+	}
+
+	last := parts[len(parts)-1]
+
+	if _, exists := current[last]; !exists {
+		return root, false, nil
+	}
+
+	delete(current, last)
+
+	return root, true, nil
+}

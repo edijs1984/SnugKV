@@ -681,3 +681,63 @@ func TestJSONSetRejectsInvalidJSON(t *testing.T) {
 		t.Fatal("expected invalid JSON error")
 	}
 }
+
+func TestJSONType(t *testing.T) {
+	s := New(engine.New())
+
+	execute(
+		t,
+		s,
+		"JSON.SET",
+		"user",
+		"$",
+		`{"name":"Edijs","age":42,"active":true}`,
+	)
+
+	if got := execute(t, s, "JSON.TYPE", "user", "$"); got != "$6\r\nobject\r\n" {
+		t.Fatalf("JSON.TYPE root got %q", got)
+	}
+
+	if got := execute(t, s, "JSON.TYPE", "user", "$.name"); got != "$6\r\nstring\r\n" {
+		t.Fatalf("JSON.TYPE string got %q", got)
+	}
+
+	if got := execute(t, s, "JSON.TYPE", "user", "$.age"); got != "$7\r\ninteger\r\n" {
+		t.Fatalf("JSON.TYPE integer got %q", got)
+	}
+}
+
+func TestJSONDel(t *testing.T) {
+	s := New(engine.New())
+
+	execute(
+		t,
+		s,
+		"JSON.SET",
+		"user",
+		"$",
+		`{"name":"Edijs","profile":{"city":"Riga"}}`,
+	)
+
+	if got := execute(t, s, "JSON.DEL", "user", "$.profile.city"); got != ":1\r\n" {
+		t.Fatalf("JSON.DEL got %q", got)
+	}
+
+	if got := execute(t, s, "JSON.GET", "user", "$.profile.city"); got != "$-1\r\n" {
+		t.Fatalf("JSON.DEL did not remove path: %q", got)
+	}
+}
+
+func TestJSONDelRoot(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "JSON.SET", "user", "$", `{"name":"Edijs"}`)
+
+	if got := execute(t, s, "JSON.DEL", "user", "$"); got != ":1\r\n" {
+		t.Fatalf("JSON.DEL root got %q", got)
+	}
+
+	if got := execute(t, s, "JSON.GET", "user", "$"); got != "$-1\r\n" {
+		t.Fatalf("JSON.DEL root left key behind: %q", got)
+	}
+}
