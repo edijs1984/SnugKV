@@ -40,28 +40,32 @@ var commandTable = map[string]commandInfo{
 	"SNUG.ENCODING":   {2, 2, 1, 1, 1, false}, "SNUG.MEMORY": {2, 2, 1, 1, 1, false}, "SNUG.STATS": {1, 1, 0, 0, 0, false}, "SNUG.POLICY": {2, 2, 1, 1, 1, false},
 	"PING": {1, 2, 0, 0, 0, false}, "ECHO": {2, 2, 0, 0, 0, false}, "QUIT": {1, 1, 0, 0, 0, false},
 	"SELECT": {2, 2, 0, 0, 0, false}, "HELLO": {2, 2, 0, 0, 0, false}, "INFO": {1, 2, 0, 0, 0, false},
-	"DBSIZE": {1, 1, 0, 0, 0, false}, "COMMAND": {1, 1, 0, 0, 0, false},
+	"DBSIZE": {1, 1, 0, 0, 0, false}, "COMMAND": {1, 0, 0, 0, 0, false},
 	"SCAN":        {2, 0, 0, 0, 0, false},
 	"KEYS":        {2, 2, 0, 0, 0, false},
 	"RANDOMKEY":   {1, 1, 0, 0, 0, false},
 	"RENAME":      {3, 3, 1, 2, 1, true},
 	"RENAMENX":    {3, 3, 1, 2, 1, true},
 	"TOUCH":       {2, 0, 1, -1, 1, false},
-	"EXPIREAT":    {3, 3, 1, 1, 1, true},
-	"PEXPIREAT":   {3, 3, 1, 1, 1, true},
+	"EXPIREAT":    {3, 4, 1, 1, 1, true},
+	"PEXPIREAT":   {3, 4, 1, 1, 1, true},
 	"EXPIRETIME":  {2, 2, 1, 1, 1, false},
 	"PEXPIRETIME": {2, 2, 1, 1, 1, false},
 	"SET":         {3, 0, 1, 1, 1, true}, "GET": {2, 2, 1, 1, 1, false}, "MGET": {2, 0, 1, -1, 1, false},
 	"DEL": {2, 0, 1, -1, 1, true}, "EXISTS": {2, 0, 1, -1, 1, false}, "GETSET": {3, 3, 1, 1, 1, true},
 	"GETDEL": {2, 2, 1, 1, 1, true},
 	"GETEX":  {2, 4, 1, 1, 1, true},
-	"SETNX":  {3, 3, 1, 1, 1, true}, "MSET": {3, 0, 1, -1, 2, true},
-	"INCR": {2, 2, 1, 1, 1, true}, "DECR": {2, 2, 1, 1, 1, true}, "INCRBY": {3, 3, 1, 1, 1, true}, "DECRBY": {3, 3, 1, 1, 1, true},
+	"SETNX":  {3, 3, 1, 1, 1, true},
+	"SETEX":  {4, 4, 1, 1, 1, true},
+	"PSETEX": {4, 4, 1, 1, 1, true},
+	"MSET":   {3, 0, 1, -1, 2, true},
+	"INCR":   {2, 2, 1, 1, 1, true}, "DECR": {2, 2, 1, 1, 1, true}, "INCRBY": {3, 3, 1, 1, 1, true}, "DECRBY": {3, 3, 1, 1, 1, true},
 	"INCRBYFLOAT": {3, 3, 1, 1, 1, true},
-	"STRLEN":      {2, 2, 1, 1, 1, false}, "EXPIRE": {3, 3, 1, 1, 1, true}, "PEXPIRE": {3, 3, 1, 1, 1, true},
+	"STRLEN":      {2, 2, 1, 1, 1, false}, "EXPIRE": {3, 4, 1, 1, 1, true}, "PEXPIRE": {3, 4, 1, 1, 1, true},
 	"TTL": {2, 2, 1, 1, 1, false}, "PTTL": {2, 2, 1, 1, 1, false}, "PERSIST": {2, 2, 1, 1, 1, true},
 	"TYPE":      {2, 2, 1, 1, 1, false},
-	"FLUSHDB":   {1, 1, 0, 0, 0, true},
+	"FLUSHDB":   {1, 2, 0, 0, 0, true},
+	"FLUSHALL":  {1, 2, 0, 0, 0, true},
 	"UNLINK":    {2, 0, 1, -1, 1, true},
 	"APPEND":    {3, 3, 1, 1, 1, true},
 	"GETRANGE":  {4, 4, 1, 1, 1, false},
@@ -408,19 +412,62 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		applied, err := s.store.SetConditional(key, args[2], options)
+
+		applied, previous, hadPrevious, err :=
+			s.store.SetWithOptions(key, args[2], options)
+
 		if err != nil {
 			return nil, err
 		}
+
+		// Redis SET ... GET returns the previous value regardless of
+		// whether NX/XX allowed the write to happen.
+		if options.Get {
+			return optionalBulk(previous, hadPrevious), nil
+		}
+
 		if !applied {
 			return nullBulk(), nil
 		}
+
 		return []byte("+OK\r\n"), nil
 	case "TYPE":
 		return []byte("+" + s.store.Type(key) + "\r\n"), nil
 	case "SETNX":
 		applied, err := s.store.SetConditional(key, args[2], engine.SetOptions{NX: true})
 		return boolean(applied), err
+
+	case "SETEX", "PSETEX":
+		n, err := parseInt64(args[2])
+		if err != nil || n <= 0 {
+			return nil, fmt.Errorf(
+				"ERR invalid expire time in '%s' command",
+				strings.ToLower(cmd),
+			)
+		}
+
+		unit := time.Second
+		if cmd == "PSETEX" {
+			unit = time.Millisecond
+		}
+
+		if n > math.MaxInt64/int64(unit) {
+			return nil, fmt.Errorf(
+				"ERR invalid expire time in '%s' command",
+				strings.ToLower(cmd),
+			)
+		}
+
+		_, err = s.store.SetConditional(
+			key,
+			args[3],
+			engine.SetOptions{TTL: time.Duration(n) * unit},
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		return []byte("+OK\r\n"), nil
 	case "GET", "STRLEN":
 		v, found := s.store.Get(key)
 		if cmd == "STRLEN" {
@@ -485,17 +532,35 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+
 		unit := time.Second
 		if cmd == "PEXPIRE" {
 			unit = time.Millisecond
 		}
-		if n <= 0 {
-			return boolean(s.store.Expire(key, 0)), nil
-		}
+
 		if n > math.MaxInt64/int64(unit) {
 			return nil, errors.New("ERR invalid expire time")
 		}
-		return boolean(s.store.Expire(key, time.Duration(n)*unit)), nil
+
+		condition := ""
+
+		if len(args) == 4 {
+			condition = strings.ToUpper(string(args[3]))
+
+			switch condition {
+			case "NX", "XX", "GT", "LT":
+			default:
+				return nil, errors.New("ERR syntax error")
+			}
+		}
+
+		return boolean(
+			s.store.ExpireConditional(
+				key,
+				time.Duration(n)*unit,
+				condition,
+			),
+		), nil
 	case "PERSIST":
 		return boolean(s.store.Persist(key)), nil
 
@@ -651,7 +716,19 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		}
 		return formatBulkString([]byte(out)), nil
 
-	case "FLUSHDB":
+	case "FLUSHDB", "FLUSHALL":
+		if len(args) == 2 {
+			option := strings.ToUpper(string(args[1]))
+
+			if option != "SYNC" && option != "ASYNC" {
+				return nil, errors.New("ERR syntax error")
+			}
+
+			// SnugKV currently has one database.
+			// ASYNC is accepted for Redis compatibility but reset is
+			// currently performed synchronously.
+		}
+
 		s.store.FlushDB()
 		return []byte("+OK\r\n"), nil
 
@@ -692,7 +769,21 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			when = time.Unix(timestamp, 0)
 		}
 
-		return boolean(s.store.ExpireAt(key, when)), nil
+		condition := ""
+
+		if len(args) == 4 {
+			condition = strings.ToUpper(string(args[3]))
+
+			switch condition {
+			case "NX", "XX", "GT", "LT":
+			default:
+				return nil, errors.New("ERR syntax error")
+			}
+		}
+
+		return boolean(
+			s.store.ExpireAtConditional(key, when, condition),
+		), nil
 
 	case "EXPIRETIME", "PEXPIRETIME":
 		return integer(
@@ -700,60 +791,174 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		), nil
 
 	case "COMMAND":
-		names := make([]string, 0, len(commandTable))
-		for name := range commandTable {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		var entries [][]byte
-		for _, name := range names {
-			c := commandTable[name]
+		commandEntry := func(name string) []byte {
+			c, ok := commandTable[name]
+			if !ok {
+				return nullBulk()
+			}
+
 			arity := c.min
 			if c.max != c.min {
 				arity = -arity
 			}
+
 			flag := "readonly"
 			if c.write {
 				flag = "write"
 			}
-			entries = append(entries, array(formatBulkString([]byte(strings.ToLower(name))), integer(int64(arity)), array(formatBulkString([]byte(flag))), integer(int64(c.first)), integer(int64(c.last)), integer(int64(c.step))))
+
+			return array(
+				formatBulkString([]byte(strings.ToLower(name))),
+				integer(int64(arity)),
+				array(formatBulkString([]byte(flag))),
+				integer(int64(c.first)),
+				integer(int64(c.last)),
+				integer(int64(c.step)),
+			)
 		}
-		return array(entries...), nil
+
+		if len(args) == 1 {
+			names := make([]string, 0, len(commandTable))
+
+			for name := range commandTable {
+				names = append(names, name)
+			}
+
+			sort.Strings(names)
+
+			entries := make([][]byte, 0, len(names))
+			for _, name := range names {
+				entries = append(entries, commandEntry(name))
+			}
+
+			return array(entries...), nil
+		}
+
+		subcommand := strings.ToUpper(string(args[1]))
+
+		switch subcommand {
+		case "COUNT":
+			if len(args) != 2 {
+				return nil, errors.New("ERR wrong number of arguments for 'command|count' command")
+			}
+
+			return integer(int64(len(commandTable))), nil
+
+		case "INFO":
+			if len(args) < 3 {
+				return nil, errors.New("ERR wrong number of arguments for 'command|info' command")
+			}
+
+			entries := make([][]byte, 0, len(args)-2)
+
+			for _, arg := range args[2:] {
+				name := strings.ToUpper(string(arg))
+
+				if _, ok := commandTable[name]; !ok {
+					entries = append(entries, nullBulk())
+					continue
+				}
+
+				entries = append(entries, commandEntry(name))
+			}
+
+			return array(entries...), nil
+
+		default:
+			return nil, errors.New("ERR unknown subcommand")
+		}
 	}
 	return nil, errors.New("ERR command unavailable")
 }
 func setOptions(args [][]byte) (engine.SetOptions, error) {
 	var o engine.SetOptions
-	expire := false
+
+	expirationSeen := false
+	conditionSeen := false
+	getSeen := false
+
 	for i := 0; i < len(args); i++ {
-		switch strings.ToUpper(string(args[i])) {
+		option := strings.ToUpper(string(args[i]))
+
+		switch option {
 		case "NX", "XX":
-			if o.NX || o.XX {
+			if conditionSeen {
 				return o, errors.New("ERR syntax error")
 			}
-			o.NX = strings.EqualFold(string(args[i]), "NX")
-			o.XX = !o.NX
+
+			conditionSeen = true
+			o.NX = option == "NX"
+			o.XX = option == "XX"
+
+		case "GET":
+			if getSeen {
+				return o, errors.New("ERR syntax error")
+			}
+
+			getSeen = true
+			o.Get = true
+
+		case "KEEPTTL":
+			if expirationSeen {
+				return o, errors.New("ERR syntax error")
+			}
+
+			expirationSeen = true
+			o.KeepTTL = true
+
 		case "EX", "PX":
-			if expire || i+1 >= len(args) {
+			if expirationSeen || i+1 >= len(args) {
 				return o, errors.New("ERR syntax error")
 			}
-			expire = true
-			unit := time.Second
-			if strings.EqualFold(string(args[i]), "PX") {
-				unit = time.Millisecond
-			}
+
+			expirationSeen = true
 			i++
+
 			n, err := parseInt64(args[i])
-			if err != nil || n <= 0 || n > math.MaxInt64/int64(unit) {
+			if err != nil {
 				return o, errors.New("ERR invalid expire time in 'set' command")
 			}
+
+			unit := time.Second
+			if option == "PX" {
+				unit = time.Millisecond
+			}
+
+			if n <= 0 || n > math.MaxInt64/int64(unit) {
+				return o, errors.New("ERR invalid expire time in 'set' command")
+			}
+
 			o.TTL = time.Duration(n) * unit
+
+		case "EXAT", "PXAT":
+			if expirationSeen || i+1 >= len(args) {
+				return o, errors.New("ERR syntax error")
+			}
+
+			expirationSeen = true
+			i++
+
+			n, err := parseInt64(args[i])
+			if err != nil || n <= 0 {
+				return o, errors.New("ERR invalid expire time in 'set' command")
+			}
+
+			o.HasExpireAt = true
+
+			if option == "PXAT" {
+				o.ExpireAt = time.UnixMilli(n)
+			} else {
+				o.ExpireAt = time.Unix(n, 0)
+			}
+
 		default:
 			return o, errors.New("ERR syntax error")
 		}
 	}
+
 	return o, nil
 }
+
 func keys(args [][]byte) []string {
 	out := make([]string, len(args))
 	for i, arg := range args {

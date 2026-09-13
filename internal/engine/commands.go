@@ -10,34 +10,92 @@ import (
 )
 
 type SetOptions struct {
-	NX, XX bool
-	TTL    time.Duration
+	NX, XX      bool
+	Get         bool
+	KeepTTL     bool
+	TTL         time.Duration
+	ExpireAt    time.Time
+	HasExpireAt bool
 }
 
-func (s *Store) SetConditional(key string, value []byte, options SetOptions) (bool, error) {
+func (s *Store) SetConditional(
+	key string,
+	value []byte,
+	options SetOptions,
+) (bool, error) {
+	applied, _, _, err := s.SetWithOptions(key, value, options)
+	return applied, err
+}
+
+func (s *Store) SetWithOptions(
+	key string,
+	value []byte,
+	options SetOptions,
+) (bool, []byte, bool, error) {
 	if len(value) > 32<<20 {
-		return false, errors.New("ERR value exceeds 32 MiB limit")
+		return false, nil, false, errors.New("ERR value exceeds 32 MiB limit")
 	}
-	if options.TTL < 0 || options.NX && options.XX {
-		return false, errors.New("ERR invalid SET options")
+
+	if options.TTL < 0 ||
+		options.NX && options.XX ||
+		options.KeepTTL && options.TTL > 0 ||
+		options.KeepTTL && options.HasExpireAt ||
+		options.TTL > 0 && options.HasExpireAt {
+		return false, nil, false, errors.New("ERR invalid SET options")
 	}
+
 	sh := s.shardFor(key)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
+
+	now := s.now()
+
 	old, exists := sh.get(key)
-	exists = exists && !old.expired(s.now())
+
+	if exists && old.expired(now) {
+		s.remove(sh, key)
+		exists = false
+		old = entry{}
+	}
+
+	var previous []byte
+	hadPrevious := false
+
+	if options.Get && exists {
+		previous = s.decode(old)
+		hadPrevious = true
+	}
+
 	if options.NX && exists || options.XX && !exists {
-		return false, nil
+		return false, previous, hadPrevious, nil
 	}
+
 	e := s.makeEntry(value)
-	if options.TTL > 0 {
-		e.expiresAt = stampOf(s.now().Add(options.TTL))
+
+	switch {
+	case options.KeepTTL && exists:
+		e.expiresAt = old.expiresAt
+
+	case options.TTL > 0:
+		e.expiresAt = stampOf(now.Add(options.TTL))
+
+	case options.HasExpireAt:
+		e.expiresAt = stampOf(options.ExpireAt)
 	}
+
 	if err := s.publish(sh, key, e); err != nil {
-		return false, err
+		return false, nil, false, err
 	}
-	return true, nil
+
+	// Absolute expiration in the past means SET succeeds but
+	// the resulting key is immediately expired.
+	if options.HasExpireAt && !options.ExpireAt.After(now) {
+		s.remove(sh, key)
+	}
+
+	return true, previous, hadPrevious, nil
 }
+
 func (s *Store) GetSet(key string, value []byte) ([]byte, bool, error) {
 	if len(value) > 32<<20 {
 		return nil, false, errors.New("ERR value exceeds 32 MiB limit")
@@ -92,17 +150,26 @@ func (s *Store) MSet(keys []string, values [][]byte) error {
 	}
 	sort.Strings(ordered)
 	var before, after, extra, extraArena uint64
+	var oldPayload, oldLiveBlocks uint64
+	var newPayload uint64
+
 	allocations := make(map[*shard][]int)
 	growth := make(map[*shard]int)
+
 	for _, k := range ordered {
 		e := replacements[k]
 		sh := s.shardFor(k)
+
 		if old, ok := sh.get(k); ok {
 			before += entryCharge(k, old)
+			oldPayload += uint64(len(old.value))
+			oldLiveBlocks += sh.arena.AllocationBytes(old.ref)
 		} else {
 			growth[sh]++
 		}
+
 		after += entryCharge(k, e)
+		newPayload += uint64(len(e.value))
 		allocations[sh] = append(allocations[sh], len(e.value))
 	}
 	for sh, n := range growth {
@@ -121,13 +188,24 @@ func (s *Store) MSet(keys []string, values [][]byte) error {
 	s.memory.entries = s.memory.entries - before + after
 	s.memory.index += extra
 	s.memory.arenas += extraArena
+	var newLiveBlocks uint64
+
 	for _, k := range ordered {
 		e := replacements[k]
 		sh := s.shardFor(k)
+
 		e.ref = sh.arena.Alloc(e.value)
 		e.value, _ = sh.arena.View(e.ref)
+
+		newLiveBlocks += sh.arena.AllocationBytes(e.ref)
 		replacements[k] = e
 	}
+
+	s.memory.arenaPayload =
+		s.memory.arenaPayload - oldPayload + newPayload
+
+	s.memory.arenaLiveBlocks =
+		s.memory.arenaLiveBlocks - oldLiveBlocks + newLiveBlocks
 	for _, k := range ordered {
 		e := replacements[k]
 		e.version = atomic.AddUint64(&s.version, 1)
@@ -199,25 +277,85 @@ func (s *Store) DeleteMany(keys []string) int64 {
 	return count
 }
 func (s *Store) Expire(key string, ttl time.Duration) bool {
+	return s.ExpireConditional(key, ttl, "")
+}
+
+func (s *Store) ExpireConditional(
+	key string,
+	ttl time.Duration,
+	condition string,
+) bool {
+	return s.expireAtConditional(
+		key,
+		s.now().Add(ttl),
+		condition,
+	)
+}
+
+func (s *Store) expireAtConditional(
+	key string,
+	when time.Time,
+	condition string,
+) bool {
 	sh := s.shardFor(key)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
+
 	e, ok := sh.get(key)
 	now := s.now()
+
 	if !ok || e.expired(now) {
-		s.remove(sh, key)
+		if ok {
+			s.remove(sh, key)
+		}
 		return false
 	}
-	if ttl <= 0 {
-		s.remove(sh, key)
-	} else {
-		e.expiresAt = stampOf(now.Add(ttl))
-		e.version = atomic.AddUint64(&s.version, 1)
-		sh.set(key, e)
-		sh.schedule(key, e.expiresAt)
+
+	hasExpiry := !e.expiresAt.IsZero()
+
+	switch condition {
+	case "":
+	case "NX":
+		if hasExpiry {
+			return false
+		}
+
+	case "XX":
+		if !hasExpiry {
+			return false
+		}
+
+	case "GT":
+		// Persistent keys are treated as having infinite TTL.
+		if !hasExpiry || !when.After(e.expiresAt.Time()) {
+			return false
+		}
+
+	case "LT":
+		// Persistent keys have infinite TTL, therefore every finite
+		// expiration is less than their current expiration.
+		if hasExpiry && !when.Before(e.expiresAt.Time()) {
+			return false
+		}
+
+	default:
+		return false
 	}
+
+	if !when.After(now) {
+		s.remove(sh, key)
+		return true
+	}
+
+	e.expiresAt = stampOf(when)
+	e.version = atomic.AddUint64(&s.version, 1)
+
+	sh.set(key, e)
+	sh.schedule(key, e.expiresAt)
+
 	return true
 }
+
 func (s *Store) Persist(key string) bool {
 	sh := s.shardFor(key)
 	sh.mu.Lock()
@@ -406,31 +544,17 @@ func (s *Store) Touch(keys []string) int {
 	return count
 }
 func (s *Store) ExpireAt(key string, when time.Time) bool {
-	sh := s.shardFor(key)
-	sh.mu.Lock()
-	defer sh.mu.Unlock()
-
-	e, ok := sh.get(key)
-	now := s.now()
-
-	if !ok || e.expired(now) {
-		s.remove(sh, key)
-		return false
-	}
-
-	if !when.After(now) {
-		s.remove(sh, key)
-		return true
-	}
-
-	e.expiresAt = stampOf(when)
-	e.version = atomic.AddUint64(&s.version, 1)
-
-	sh.set(key, e)
-	sh.schedule(key, e.expiresAt)
-
-	return true
+	return s.ExpireAtConditional(key, when, "")
 }
+
+func (s *Store) ExpireAtConditional(
+	key string,
+	when time.Time,
+	condition string,
+) bool {
+	return s.expireAtConditional(key, when, condition)
+}
+
 func (s *Store) ExpireTime(key string, milliseconds bool) int64 {
 	sh := s.shardFor(key)
 	sh.mu.RLock()

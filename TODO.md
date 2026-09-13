@@ -31,13 +31,13 @@ These should be implemented first because many Redis clients, admin tools, and U
 ## Database commands
 
 - [x] `FLUSHDB`
-- [ ] `FLUSHALL`
+- [x] `FLUSHALL`
 - [ ] `SWAPDB` — optional if multiple DBs are added later
 - [ ] Improve `DBSIZE`
 - [ ] Improve `INFO`
 - [ ] Improve `COMMAND`
-- [ ] `COMMAND INFO`
-- [ ] `COMMAND COUNT`
+- [x] `COMMAND INFO`
+- [x] `COMMAND COUNT`
 - [ ] `COMMAND DOCS` — optional
 
 ## Expiration
@@ -56,7 +56,7 @@ Add:
 - [x] `PEXPIREAT`
 - [x] `EXPIRETIME`
 - [x] `PEXPIRETIME`
-- [ ] Redis-compatible `NX | XX | GT | LT` options for expiration commands
+- [x] Redis-compatible `NX | XX | GT | LT` options for expiration commands
 
 ---
 
@@ -85,8 +85,8 @@ Add:
 - [x] `GETRANGE`
 - [x] `SETRANGE`
 - [ ] `MSETNX`
-- [ ] `SETEX`
-- [ ] `PSETEX`
+- [x] `SETEX`
+- [x] `PSETEX`
 - [ ] `GETBIT`
 - [ ] `SETBIT`
 - [ ] `BITCOUNT`
@@ -97,10 +97,10 @@ Add:
 
 Add remaining Redis `SET` options where useful:
 
-- [ ] `GET`
-- [ ] `KEEPTTL`
-- [ ] `EXAT`
-- [ ] `PXAT`
+- [x] `GET`
+- [x] `KEEPTTL`
+- [x] `EXAT`
+- [x] `PXAT`
 
 ---
 

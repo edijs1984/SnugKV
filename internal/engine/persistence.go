@@ -151,6 +151,8 @@ func (s *Store) resetForRecovery() {
 		s.memory.mu.Unlock()
 		sh.arena = arena.Arena{}
 		sh.data = index.New[uint32]()
+		sh.entries = nil
+		sh.freeIDs = nil
 		sh.expiration = expirationQueue{}
 	}
 }
