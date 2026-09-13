@@ -189,22 +189,21 @@ func (unsignedIntegerCodec) Encode(src []byte) ([]byte, bool) {
 		return nil, false
 	}
 
-	var buf [10]byte
+	out := make([]byte, 8)
+	binary.LittleEndian.PutUint64(out, n)
 
-	size := binary.PutUvarint(buf[:], n)
-
-	return bytes.Clone(buf[:size]), true
+	return out, true
 }
 
 func (unsignedIntegerCodec) Decode(
 	src []byte,
 	_ int,
 ) ([]byte, error) {
-	n, size := binary.Uvarint(src)
-
-	if size <= 0 || size != len(src) {
+	if len(src) != 8 {
 		return nil, errors.New("invalid unsigned integer")
 	}
+
+	n := binary.LittleEndian.Uint64(src)
 
 	// This codec must never contain values representable as INT64.
 	if n <= uint64(^uint64(0)>>1) {
@@ -293,27 +292,29 @@ func (boolCodec) Name() string { return "bool" }
 
 func (boolCodec) Encode(src []byte) ([]byte, bool) {
 	switch string(src) {
-	case "false":
-		return []byte{0}, true
-	case "true":
-		return []byte{1}, true
+	case "false", "true":
+		// No payload is required. RawLength distinguishes the exact
+		// canonical values:
+		//   true  -> 4
+		//   false -> 5
+		return nil, true
 	default:
 		return nil, false
 	}
 }
 
-func (boolCodec) Decode(src []byte, _ int) ([]byte, error) {
-	if len(src) != 1 {
-		return nil, errors.New("invalid bool")
+func (boolCodec) Decode(src []byte, rawLength int) ([]byte, error) {
+	if len(src) != 0 {
+		return nil, errors.New("invalid bool payload")
 	}
 
-	switch src[0] {
-	case 0:
-		return []byte("false"), nil
-	case 1:
+	switch rawLength {
+	case 4:
 		return []byte("true"), nil
+	case 5:
+		return []byte("false"), nil
 	default:
-		return nil, errors.New("invalid bool value")
+		return nil, errors.New("invalid bool length")
 	}
 }
 

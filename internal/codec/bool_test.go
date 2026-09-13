@@ -9,11 +9,10 @@ func TestBoolCodec(t *testing.T) {
 	c := boolCodec{}
 
 	tests := []struct {
-		value   string
-		encoded byte
+		value string
 	}{
-		{"false", 0},
-		{"true", 1},
+		{"false"},
+		{"true"},
 	}
 
 	for _, tt := range tests {
@@ -23,16 +22,8 @@ func TestBoolCodec(t *testing.T) {
 				t.Fatalf("Encode(%q) rejected valid bool", tt.value)
 			}
 
-			if len(data) != 1 {
-				t.Fatalf("encoded length = %d, want 1", len(data))
-			}
-
-			if data[0] != tt.encoded {
-				t.Fatalf(
-					"encoded byte = %d, want %d",
-					data[0],
-					tt.encoded,
-				)
+			if len(data) != 0 {
+				t.Fatalf("encoded length = %d, want 0", len(data))
 			}
 
 			decoded, err := c.Decode(data, len(tt.value))
@@ -80,16 +71,25 @@ func TestBoolCodecRejectsNonCanonicalValues(t *testing.T) {
 func TestBoolCodecRejectsCorruptEncoding(t *testing.T) {
 	c := boolCodec{}
 
-	if _, err := c.Decode([]byte{}, 4); err == nil {
-		t.Fatal("expected error for empty bool encoding")
+	// Empty payload is valid; the raw length distinguishes true/false.
+	if got, err := c.Decode(nil, 4); err != nil || string(got) != "true" {
+		t.Fatalf("decode true: got %q err %v", got, err)
 	}
 
-	if _, err := c.Decode([]byte{2}, 4); err == nil {
-		t.Fatal("expected error for invalid bool byte")
+	if got, err := c.Decode(nil, 5); err != nil || string(got) != "false" {
+		t.Fatalf("decode false: got %q err %v", got, err)
 	}
 
-	if _, err := c.Decode([]byte{0, 1}, 4); err == nil {
-		t.Fatal("expected error for oversized bool encoding")
+	if _, err := c.Decode([]byte{1}, 4); err == nil {
+		t.Fatal("expected error for non-empty bool payload")
+	}
+
+	if _, err := c.Decode(nil, 3); err == nil {
+		t.Fatal("expected error for invalid bool length")
+	}
+
+	if _, err := c.Decode(nil, 6); err == nil {
+		t.Fatal("expected error for invalid bool length")
 	}
 }
 
@@ -108,9 +108,9 @@ func TestRegistryChoosesBoolCodec(t *testing.T) {
 				)
 			}
 
-			if len(rec.Data) != 1 {
+			if len(rec.Data) != 0 {
 				t.Fatalf(
-					"stored length = %d, want 1",
+					"stored length = %d, want 0",
 					len(rec.Data),
 				)
 			}

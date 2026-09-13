@@ -76,3 +76,72 @@ func TestGeneralCompression(t *testing.T) {
 		}
 	}
 }
+
+func TestBooleanUsesZeroPayload(t *testing.T) {
+	r := NewRegistry()
+
+	for _, value := range []string{"true", "false"} {
+		rec := r.Encode([]byte(value))
+
+		if rec.ID != Boolean {
+			t.Fatalf("%q codec = %s, want bool", value, r.Name(rec.ID))
+		}
+
+		if len(rec.Data) != 0 {
+			t.Fatalf("%q encoded bytes = %d, want 0", value, len(rec.Data))
+		}
+
+		got, err := r.Decode(rec, len(value))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if string(got) != value {
+			t.Fatalf("got %q want %q", got, value)
+		}
+	}
+}
+
+func TestUnsignedIntegerUsesEightBytes(t *testing.T) {
+	r := NewRegistry()
+
+	values := []string{
+		"9223372036854775808",
+		"18446744073709551615",
+	}
+
+	for _, value := range values {
+		rec := r.Encode([]byte(value))
+
+		if rec.ID != UnsignedInteger {
+			t.Fatalf("%q codec = %s, want unsigned-integer", value, r.Name(rec.ID))
+		}
+
+		if len(rec.Data) != 8 {
+			t.Fatalf("%q encoded bytes = %d, want 8", value, len(rec.Data))
+		}
+
+		got, err := r.Decode(rec, len(value))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if string(got) != value {
+			t.Fatalf("got %q want %q", got, value)
+		}
+	}
+}
+
+func TestBooleanRejectsInvalidStoredForms(t *testing.T) {
+	r := NewRegistry()
+
+	for _, rec := range []Record{
+		{ID: Boolean, RawLength: 4, Data: []byte{1}},
+		{ID: Boolean, RawLength: 3},
+		{ID: Boolean, RawLength: 6},
+	} {
+		if _, err := r.Decode(rec, 16); err == nil {
+			t.Fatalf("accepted invalid bool record: %+v", rec)
+		}
+	}
+}
