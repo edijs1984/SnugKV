@@ -20,16 +20,25 @@ type Options struct {
 	ShapeEncoding bool
 	Compression   bool
 }
-type MemoryStats struct{ AccountedBytes, MaxBytes, IndexReservedBytes, EntryBytes, ArenaBytes, SchemaBytes uint64 }
+type MemoryStats struct{ AccountedBytes, MaxBytes, IndexReservedBytes, EntryBytes, ArenaBytes, ArenaPayloadBytes, ArenaLiveBlockBytes, SchemaBytes uint64 }
 type accounting struct {
-	mu                                         sync.Mutex
-	used, index, entries, max, arenas, schemas uint64
+	mu                                                                        sync.Mutex
+	used, index, entries, max, arenas, arenaPayload, arenaLiveBlocks, schemas uint64
 }
 
 func (s *Store) Memory() MemoryStats {
 	s.memory.mu.Lock()
 	defer s.memory.mu.Unlock()
-	return MemoryStats{s.memory.used, s.memory.max, s.memory.index, s.memory.entries, s.memory.arenas, s.memory.schemas}
+	return MemoryStats{
+		s.memory.used,
+		s.memory.max,
+		s.memory.index,
+		s.memory.entries,
+		s.memory.arenas,
+		s.memory.arenaPayload,
+		s.memory.arenaLiveBlocks,
+		s.memory.schemas,
+	}
 }
 func entryCharge(key string, e entry) uint64 {
 	return entryOverhead + uint64(len(key)) + uint64(0)
@@ -92,6 +101,11 @@ func (s *Store) publishRecord(sh *shard, key string, e entry, enforce bool) erro
 	s.memory.index += extraIndex
 	s.memory.arenas += extraArena
 
+	if exists {
+		s.memory.arenaPayload -= uint64(len(old.value))
+	}
+	s.memory.arenaPayload += uint64(len(e.value))
+
 	if e.lastWrite.IsZero() {
 		e.lastWrite = stampOf(s.now())
 		e.lastAccess = e.lastWrite
@@ -103,6 +117,14 @@ func (s *Store) publishRecord(sh *shard, key string, e entry, enforce bool) erro
 	e.version = atomic.AddUint64(&s.version, 1)
 	e.ref = sh.arena.Alloc(e.value)
 	e.value, _ = sh.arena.View(e.ref)
+
+	newBlockBytes := sh.arena.AllocationBytes(e.ref)
+	if exists {
+		oldBlockBytes := sh.arena.AllocationBytes(old.ref)
+		s.memory.arenaLiveBlocks -= oldBlockBytes
+	}
+	s.memory.arenaLiveBlocks += newBlockBytes
+
 	sh.set(key, e)
 	if exists {
 		sh.arena.Free(old.ref)
@@ -122,6 +144,8 @@ func (s *Store) remove(sh *shard, key string) {
 		cost := entryCharge(key, e)
 		s.memory.used -= cost
 		s.memory.entries -= cost
+		s.memory.arenaPayload -= uint64(len(e.value))
+		s.memory.arenaLiveBlocks -= sh.arena.AllocationBytes(e.ref)
 		s.memory.mu.Unlock()
 		sh.delete(key)
 		sh.arena.Free(e.ref)

@@ -5,7 +5,6 @@ package arena
 import (
 	"encoding/binary"
 	"errors"
-	"math/bits"
 )
 
 const SegmentBytes = 8 << 10
@@ -22,17 +21,67 @@ type segment struct {
 }
 type Arena struct {
 	segments   []segment
-	free       [32]uint64
+	free       [64]uint64
 	generation uint64
 }
 
 func class(n int) (int, int) {
 	size := n + 8
+
 	if size < 16 {
 		size = 16
 	}
-	power := bits.Len(uint(size - 1))
-	return power, 1 << power
+
+	switch {
+	case size <= 128:
+		block := (size + 15) &^ 15
+		return block/16 - 1, block
+
+	case size <= 256:
+		block := (size + 31) &^ 31
+		return 8 + (block-160)/32, block
+
+	case size <= 512:
+		block := (size + 63) &^ 63
+		return 12 + (block-320)/64, block
+
+	case size <= 1024:
+		block := (size + 127) &^ 127
+		return 16 + (block-640)/128, block
+
+	case size <= 2048:
+		block := (size + 255) &^ 255
+		return 20 + (block-1280)/256, block
+
+	case size <= 4096:
+		block := (size + 511) &^ 511
+		return 24 + (block-2560)/512, block
+
+	case size <= 8192:
+		block := (size + 1023) &^ 1023
+		return 28 + (block-5120)/1024, block
+	}
+
+	// Large allocations use ~12.5% size classes instead of powers of two.
+	// This keeps worst-case internal fragmentation much lower.
+	block := 8192
+	bucket := 32
+
+	for block < size {
+		step := block / 8
+		if step < 1024 {
+			step = 1024
+		}
+
+		block += step
+		bucket++
+
+		if bucket >= 64 {
+			panic("arena allocation too large")
+		}
+	}
+
+	return bucket, block
 }
 func (a *Arena) MemoryBytes() uint64 {
 	total := uint64(cap(a.segments) * segmentMetadata)

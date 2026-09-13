@@ -41,36 +41,36 @@ var commandTable = map[string]commandInfo{
 	"PING": {1, 2, 0, 0, 0, false}, "ECHO": {2, 2, 0, 0, 0, false}, "QUIT": {1, 1, 0, 0, 0, false},
 	"SELECT": {2, 2, 0, 0, 0, false}, "HELLO": {2, 2, 0, 0, 0, false}, "INFO": {1, 2, 0, 0, 0, false},
 	"DBSIZE": {1, 1, 0, 0, 0, false}, "COMMAND": {1, 1, 0, 0, 0, false},
-	"SCAN": {2, 0, 0, 0, 0, false},
-	"KEYS": {2, 2, 0, 0, 0, false},
-	"RANDOMKEY": {1, 1, 0, 0, 0, false},
-	"RENAME":   {3, 3, 1, 2, 1, true},
-    "RENAMENX": {3, 3, 1, 2, 1, true},
-	"TOUCH": {2, 0, 1, -1, 1, false},
-	"EXPIREAT":     {3, 3, 1, 1, 1, true},
-    "PEXPIREAT":    {3, 3, 1, 1, 1, true},
-    "EXPIRETIME":   {2, 2, 1, 1, 1, false},
-    "PEXPIRETIME":  {2, 2, 1, 1, 1, false},
-	"SET": {3, 0, 1, 1, 1, true}, "GET": {2, 2, 1, 1, 1, false}, "MGET": {2, 0, 1, -1, 1, false},
+	"SCAN":        {2, 0, 0, 0, 0, false},
+	"KEYS":        {2, 2, 0, 0, 0, false},
+	"RANDOMKEY":   {1, 1, 0, 0, 0, false},
+	"RENAME":      {3, 3, 1, 2, 1, true},
+	"RENAMENX":    {3, 3, 1, 2, 1, true},
+	"TOUCH":       {2, 0, 1, -1, 1, false},
+	"EXPIREAT":    {3, 3, 1, 1, 1, true},
+	"PEXPIREAT":   {3, 3, 1, 1, 1, true},
+	"EXPIRETIME":  {2, 2, 1, 1, 1, false},
+	"PEXPIRETIME": {2, 2, 1, 1, 1, false},
+	"SET":         {3, 0, 1, 1, 1, true}, "GET": {2, 2, 1, 1, 1, false}, "MGET": {2, 0, 1, -1, 1, false},
 	"DEL": {2, 0, 1, -1, 1, true}, "EXISTS": {2, 0, 1, -1, 1, false}, "GETSET": {3, 3, 1, 1, 1, true},
 	"GETDEL": {2, 2, 1, 1, 1, true},
-    "GETEX":  {2, 4, 1, 1, 1, true},
-	"SETNX": {3, 3, 1, 1, 1, true}, "MSET": {3, 0, 1, -1, 2, true},
+	"GETEX":  {2, 4, 1, 1, 1, true},
+	"SETNX":  {3, 3, 1, 1, 1, true}, "MSET": {3, 0, 1, -1, 2, true},
 	"INCR": {2, 2, 1, 1, 1, true}, "DECR": {2, 2, 1, 1, 1, true}, "INCRBY": {3, 3, 1, 1, 1, true}, "DECRBY": {3, 3, 1, 1, 1, true},
 	"INCRBYFLOAT": {3, 3, 1, 1, 1, true},
-	"STRLEN": {2, 2, 1, 1, 1, false}, "EXPIRE": {3, 3, 1, 1, 1, true}, "PEXPIRE": {3, 3, 1, 1, 1, true},
+	"STRLEN":      {2, 2, 1, 1, 1, false}, "EXPIRE": {3, 3, 1, 1, 1, true}, "PEXPIRE": {3, 3, 1, 1, 1, true},
 	"TTL": {2, 2, 1, 1, 1, false}, "PTTL": {2, 2, 1, 1, 1, false}, "PERSIST": {2, 2, 1, 1, 1, true},
-	"TYPE": {2, 2, 1, 1, 1, false},
-	"FLUSHDB": {1, 1, 0, 0, 0, true},
-	"UNLINK": {2, 0, 1, -1, 1, true},
-	"APPEND":   {3, 3, 1, 1, 1, true},
-    "GETRANGE": {4, 4, 1, 1, 1, false},
-    "SETRANGE": {4, 4, 1, 1, 1, true},
-	"JSON.SET": {4, 5, 1, 1, 1, true},
-    "JSON.GET": {2, 3, 1, 1, 1, false},
+	"TYPE":      {2, 2, 1, 1, 1, false},
+	"FLUSHDB":   {1, 1, 0, 0, 0, true},
+	"UNLINK":    {2, 0, 1, -1, 1, true},
+	"APPEND":    {3, 3, 1, 1, 1, true},
+	"GETRANGE":  {4, 4, 1, 1, 1, false},
+	"SETRANGE":  {4, 4, 1, 1, 1, true},
+	"JSON.SET":  {4, 5, 1, 1, 1, true},
+	"JSON.GET":  {2, 3, 1, 1, 1, false},
 	"JSON.TYPE": {2, 3, 1, 1, 1, false},
-    "JSON.DEL":  {2, 3, 1, 1, 1, true},
-	"MEMORY": {2, 5, 0, 0, 0, false},
+	"JSON.DEL":  {2, 3, 1, 1, 1, true},
+	"MEMORY":    {2, 5, 0, 0, 0, false},
 }
 
 func (s *Server) execute(args [][]byte) ([]byte, error) {
@@ -91,221 +91,221 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 	}
 	switch cmd {
 	case "MEMORY":
-	subcommand := strings.ToUpper(string(args[1]))
+		subcommand := strings.ToUpper(string(args[1]))
 
-	switch subcommand {
-	case "USAGE":
-		if len(args) != 3 && len(args) != 5 {
-			return nil, errors.New("ERR syntax error")
-		}
-
-		if len(args) == 5 {
-			if !strings.EqualFold(string(args[3]), "SAMPLES") {
+		switch subcommand {
+		case "USAGE":
+			if len(args) != 3 && len(args) != 5 {
 				return nil, errors.New("ERR syntax error")
 			}
 
-			samples, err := strconv.ParseInt(string(args[4]), 10, 64)
-			if err != nil || samples < 0 {
-				return nil, errors.New("ERR syntax error")
+			if len(args) == 5 {
+				if !strings.EqualFold(string(args[3]), "SAMPLES") {
+					return nil, errors.New("ERR syntax error")
+				}
+
+				samples, err := strconv.ParseInt(string(args[4]), 10, 64)
+				if err != nil || samples < 0 {
+					return nil, errors.New("ERR syntax error")
+				}
+
+				// Accepted for Redis compatibility.
+				// SnugKV currently stores values as one logical entry,
+				// so sampling is not needed yet.
+				_ = samples
 			}
 
-			// Accepted for Redis compatibility.
-			// SnugKV currently stores values as one logical entry,
-			// so sampling is not needed yet.
-			_ = samples
+			usage, found := s.store.MemoryUsage(string(args[2]))
+			if !found {
+				return nullBulk(), nil
+			}
+
+			return integer(int64(usage)), nil
+
+		default:
+			return nil, errors.New("ERR unknown subcommand")
+		}
+	case "JSON.DEL":
+		path := "$"
+
+		if len(args) == 3 {
+			path = string(args[2])
 		}
 
-		usage, found := s.store.MemoryUsage(string(args[2]))
+		deleted, err := s.store.JSONDel(key, path)
+		if err != nil {
+			return nil, err
+		}
+
+		return integer(deleted), nil
+
+	case "JSON.TYPE":
+		path := "$"
+
+		if len(args) == 3 {
+			path = string(args[2])
+		}
+
+		jsonType, found, err := s.store.JSONType(key, path)
+		if err != nil {
+			return nil, err
+		}
+
 		if !found {
 			return nullBulk(), nil
 		}
 
-		return integer(int64(usage)), nil
-
-	default:
-		return nil, errors.New("ERR unknown subcommand")
-	}
-	case "JSON.DEL":
-	path := "$"
-
-	if len(args) == 3 {
-		path = string(args[2])
-	}
-
-	deleted, err := s.store.JSONDel(key, path)
-	if err != nil {
-		return nil, err
-	}
-
-	return integer(deleted), nil	
-
-	case "JSON.TYPE":
-	path := "$"
-
-	if len(args) == 3 {
-		path = string(args[2])
-	}
-
-	jsonType, found, err := s.store.JSONType(key, path)
-	if err != nil {
-		return nil, err
-	}
-
-	if !found {
-		return nullBulk(), nil
-	}
-
-	return formatBulkString([]byte(jsonType)), nil
+		return formatBulkString([]byte(jsonType)), nil
 	case "JSON.SET":
-	path := string(args[2])
+		path := string(args[2])
 
-	nx := false
-	xx := false
+		nx := false
+		xx := false
 
-	if len(args) == 5 {
-		switch strings.ToUpper(string(args[4])) {
-		case "NX":
-			nx = true
-		case "XX":
-			xx = true
-		default:
-			return nil, errors.New("ERR syntax error")
+		if len(args) == 5 {
+			switch strings.ToUpper(string(args[4])) {
+			case "NX":
+				nx = true
+			case "XX":
+				xx = true
+			default:
+				return nil, errors.New("ERR syntax error")
+			}
 		}
-	}
 
-	applied, err := s.store.JSONSet(key, path, args[3], nx, xx)
-	if err != nil {
-		return nil, err
-	}
+		applied, err := s.store.JSONSet(key, path, args[3], nx, xx)
+		if err != nil {
+			return nil, err
+		}
 
-	if !applied {
-		return nullBulk(), nil
-	}
+		if !applied {
+			return nullBulk(), nil
+		}
 
-	return []byte("+OK\r\n"), nil
-	
+		return []byte("+OK\r\n"), nil
+
 	case "JSON.GET":
-	path := "$"
+		path := "$"
 
-	if len(args) == 3 {
-		path = string(args[2])
-	}
+		if len(args) == 3 {
+			path = string(args[2])
+		}
 
-	value, found, err := s.store.JSONGet(key, path)
-	if err != nil {
-		return nil, err
-	}
+		value, found, err := s.store.JSONGet(key, path)
+		if err != nil {
+			return nil, err
+		}
 
-	return optionalBulk(value, found), nil
+		return optionalBulk(value, found), nil
 
 	case "APPEND":
-	length, err := s.store.Append(key, args[2])
-	if err != nil {
-		return nil, err
-	}
+		length, err := s.store.Append(key, args[2])
+		if err != nil {
+			return nil, err
+		}
 
-	return integer(int64(length)), nil
+		return integer(int64(length)), nil
 
 	case "GETRANGE":
-	start, err := parseInt64(args[2])
-	if err != nil {
-		return nil, err
-	}
+		start, err := parseInt64(args[2])
+		if err != nil {
+			return nil, err
+		}
 
-	end, err := parseInt64(args[3])
-	if err != nil {
-		return nil, err
-	}
+		end, err := parseInt64(args[3])
+		if err != nil {
+			return nil, err
+		}
 
-	value := s.store.GetRange(key, start, end)
+		value := s.store.GetRange(key, start, end)
 
-	return formatBulkString(value), nil
+		return formatBulkString(value), nil
 
 	case "SETRANGE":
-	offset, err := parseInt64(args[2])
-	if err != nil {
-		return nil, err
-	}
+		offset, err := parseInt64(args[2])
+		if err != nil {
+			return nil, err
+		}
 
-	length, err := s.store.SetRange(key, offset, args[3])
-	if err != nil {
-		return nil, err
-	}
+		length, err := s.store.SetRange(key, offset, args[3])
+		if err != nil {
+			return nil, err
+		}
 
-	return integer(int64(length)), nil
+		return integer(int64(length)), nil
 
 	case "GETDEL":
-	value, found := s.store.GetDel(key)
+		value, found := s.store.GetDel(key)
 
-	return optionalBulk(value, found), nil
+		return optionalBulk(value, found), nil
 	case "GETEX":
-	var expireAt *time.Time
-	persist := false
+		var expireAt *time.Time
+		persist := false
 
-	if len(args) > 2 {
-		option := strings.ToUpper(string(args[2]))
-
-		switch option {
-		case "PERSIST":
-			if len(args) != 3 {
-				return nil, errors.New("ERR syntax error")
-			}
-
-			persist = true
-
-		case "EX", "PX", "EXAT", "PXAT":
-			if len(args) != 4 {
-				return nil, errors.New("ERR syntax error")
-			}
-
-			n, err := parseInt64(args[3])
-			if err != nil {
-				return nil, err
-			}
-
-			var when time.Time
+		if len(args) > 2 {
+			option := strings.ToUpper(string(args[2]))
 
 			switch option {
-			case "EX":
-				if n <= 0 {
-					return nil, errors.New("ERR invalid expire time in 'getex' command")
+			case "PERSIST":
+				if len(args) != 3 {
+					return nil, errors.New("ERR syntax error")
 				}
 
-				if n > math.MaxInt64/int64(time.Second) {
-					return nil, errors.New("ERR invalid expire time in 'getex' command")
+				persist = true
+
+			case "EX", "PX", "EXAT", "PXAT":
+				if len(args) != 4 {
+					return nil, errors.New("ERR syntax error")
 				}
 
-				when = time.Now().Add(time.Duration(n) * time.Second)
-
-			case "PX":
-				if n <= 0 {
-					return nil, errors.New("ERR invalid expire time in 'getex' command")
+				n, err := parseInt64(args[3])
+				if err != nil {
+					return nil, err
 				}
 
-				if n > math.MaxInt64/int64(time.Millisecond) {
-					return nil, errors.New("ERR invalid expire time in 'getex' command")
+				var when time.Time
+
+				switch option {
+				case "EX":
+					if n <= 0 {
+						return nil, errors.New("ERR invalid expire time in 'getex' command")
+					}
+
+					if n > math.MaxInt64/int64(time.Second) {
+						return nil, errors.New("ERR invalid expire time in 'getex' command")
+					}
+
+					when = time.Now().Add(time.Duration(n) * time.Second)
+
+				case "PX":
+					if n <= 0 {
+						return nil, errors.New("ERR invalid expire time in 'getex' command")
+					}
+
+					if n > math.MaxInt64/int64(time.Millisecond) {
+						return nil, errors.New("ERR invalid expire time in 'getex' command")
+					}
+
+					when = time.Now().Add(time.Duration(n) * time.Millisecond)
+
+				case "EXAT":
+					when = time.Unix(n, 0)
+
+				case "PXAT":
+					when = time.UnixMilli(n)
 				}
 
-				when = time.Now().Add(time.Duration(n) * time.Millisecond)
+				expireAt = &when
 
-			case "EXAT":
-				when = time.Unix(n, 0)
-
-			case "PXAT":
-				when = time.UnixMilli(n)
+			default:
+				return nil, errors.New("ERR syntax error")
 			}
-
-			expireAt = &when
-
-		default:
-			return nil, errors.New("ERR syntax error")
 		}
-	}
 
-	value, found := s.store.GetEx(key, expireAt, persist)
+		value, found := s.store.GetEx(key, expireAt, persist)
 
-	return optionalBulk(value, found), nil
-	
+		return optionalBulk(value, found), nil
+
 	case "SNUG.AOFREWRITE":
 		writer, ok := s.journal.(interface {
 			Rewrite([]persistence.Record) error
@@ -345,7 +345,45 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		return formatBulkString([]byte(fmt.Sprintf("heat_class:%s\ncurrent_codec:%s\nraw_bytes:%d\nencoded_bytes:%d\nreason:smallest verified eligible cheap representation\n", heat, name, raw, encoded))), nil
 	case "SNUG.STATS":
 		m := s.store.Memory()
-		return formatBulkString([]byte(fmt.Sprintf("accounted_bytes:%d\nindex_reserved_bytes:%d\nentry_bytes:%d\narena_bytes:%d\nschema_reserved_bytes:%d\nmax_memory:%d\n", m.AccountedBytes, m.IndexReservedBytes, m.EntryBytes, m.ArenaBytes, m.SchemaBytes, m.MaxBytes))), nil
+		arenaWaste := uint64(0)
+		if m.ArenaBytes > m.ArenaPayloadBytes {
+			arenaWaste = m.ArenaBytes - m.ArenaPayloadBytes
+		}
+
+		arenaInternalWaste := uint64(0)
+		if m.ArenaLiveBlockBytes > m.ArenaPayloadBytes {
+			arenaInternalWaste = m.ArenaLiveBlockBytes - m.ArenaPayloadBytes
+		}
+
+		arenaDeadWaste := uint64(0)
+		if m.ArenaBytes > m.ArenaLiveBlockBytes {
+			arenaDeadWaste = m.ArenaBytes - m.ArenaLiveBlockBytes
+		}
+
+		return formatBulkString([]byte(fmt.Sprintf(
+			"accounted_bytes:%d\n"+
+				"index_reserved_bytes:%d\n"+
+				"entry_bytes:%d\n"+
+				"arena_bytes:%d\n"+
+				"arena_payload_bytes:%d\n"+
+				"arena_live_block_bytes:%d\n"+
+				"arena_internal_waste_bytes:%d\n"+
+				"arena_dead_waste_bytes:%d\n"+
+				"arena_waste_bytes:%d\n"+
+				"schema_reserved_bytes:%d\n"+
+				"max_memory:%d\n",
+			m.AccountedBytes,
+			m.IndexReservedBytes,
+			m.EntryBytes,
+			m.ArenaBytes,
+			m.ArenaPayloadBytes,
+			m.ArenaLiveBlockBytes,
+			arenaInternalWaste,
+			arenaDeadWaste,
+			arenaWaste,
+			m.SchemaBytes,
+			m.MaxBytes,
+		))), nil
 	case "PING":
 		if len(args) == 2 {
 			return formatBulkString(args[1]), nil
@@ -379,7 +417,7 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		}
 		return []byte("+OK\r\n"), nil
 	case "TYPE":
-	return []byte("+" + s.store.Type(key) + "\r\n"), nil
+		return []byte("+" + s.store.Type(key) + "\r\n"), nil
 	case "SETNX":
 		applied, err := s.store.SetConditional(key, args[2], engine.SetOptions{NX: true})
 		return boolean(applied), err
@@ -414,15 +452,15 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 	case "EXISTS":
 		return integer(s.store.Exists(keys(args[1:]))), nil
 	case "DEL", "UNLINK":
-	keys := make([]string, 0, len(args)-1)
+		keys := make([]string, 0, len(args)-1)
 
-	for _, arg := range args[1:] {
-		keys = append(keys, string(arg))
-	}
+		for _, arg := range args[1:] {
+			keys = append(keys, string(arg))
+		}
 
-	deleted := s.store.DeleteMany(keys)
+		deleted := s.store.DeleteMany(keys)
 
-	return integer(deleted), nil
+		return integer(deleted), nil
 
 	case "INCR", "INCRBY", "DECR", "DECRBY":
 		delta := int64(1)
@@ -461,105 +499,105 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 	case "PERSIST":
 		return boolean(s.store.Persist(key)), nil
 
-    case "RENAME", "RENAMENX":
-	source := string(args[1])
-	destination := string(args[2])
+	case "RENAME", "RENAMENX":
+		source := string(args[1])
+		destination := string(args[2])
 
-	renamed, err := s.store.Rename(
-		source,
-		destination,
-		cmd == "RENAMENX",
-	)
+		renamed, err := s.store.Rename(
+			source,
+			destination,
+			cmd == "RENAMENX",
+		)
 
-	if err != nil {
-		return nil, err
-	}
+		if err != nil {
+			return nil, err
+		}
 
-	if cmd == "RENAMENX" {
-		return boolean(renamed), nil
-	}
+		if cmd == "RENAMENX" {
+			return boolean(renamed), nil
+		}
 
-	return []byte("+OK\r\n"), nil
+		return []byte("+OK\r\n"), nil
 
 	case "SCAN":
-	cursor, err := strconv.ParseUint(string(args[1]), 10, 64)
-	if err != nil {
-		return nil, errors.New("ERR invalid cursor")
-	}
-
-	count := 10
-	pattern := "*"
-
-	for i := 2; i < len(args); {
-		option := strings.ToUpper(string(args[i]))
-
-		switch option {
-		case "COUNT":
-			if i+1 >= len(args) {
-				return nil, errors.New("ERR syntax error")
-			}
-
-			n, err := strconv.Atoi(string(args[i+1]))
-			if err != nil || n <= 0 {
-				return nil, errors.New("ERR syntax error")
-			}
-
-			// Protect SnugKV from ridiculous COUNT values.
-			if n > 10000 {
-				n = 10000
-			}
-
-			count = n
-			i += 2
-
-		case "MATCH":
-			if i+1 >= len(args) {
-				return nil, errors.New("ERR syntax error")
-			}
-
-			pattern = string(args[i+1])
-			i += 2
-
-		default:
-			return nil, errors.New("ERR syntax error")
+		cursor, err := strconv.ParseUint(string(args[1]), 10, 64)
+		if err != nil {
+			return nil, errors.New("ERR invalid cursor")
 		}
-	}
 
-	nextCursor, foundKeys := s.store.Scan(cursor, count, pattern)
+		count := 10
+		pattern := "*"
 
-	items := make([][]byte, 0, len(foundKeys))
+		for i := 2; i < len(args); {
+			option := strings.ToUpper(string(args[i]))
 
-	for _, foundKey := range foundKeys {
-		items = append(items, formatBulkString([]byte(foundKey)))
-	}
+			switch option {
+			case "COUNT":
+				if i+1 >= len(args) {
+					return nil, errors.New("ERR syntax error")
+				}
 
-	return array(
-		formatBulkString([]byte(strconv.FormatUint(nextCursor, 10))),
-		array(items...),
-	), nil
+				n, err := strconv.Atoi(string(args[i+1]))
+				if err != nil || n <= 0 {
+					return nil, errors.New("ERR syntax error")
+				}
+
+				// Protect SnugKV from ridiculous COUNT values.
+				if n > 10000 {
+					n = 10000
+				}
+
+				count = n
+				i += 2
+
+			case "MATCH":
+				if i+1 >= len(args) {
+					return nil, errors.New("ERR syntax error")
+				}
+
+				pattern = string(args[i+1])
+				i += 2
+
+			default:
+				return nil, errors.New("ERR syntax error")
+			}
+		}
+
+		nextCursor, foundKeys := s.store.Scan(cursor, count, pattern)
+
+		items := make([][]byte, 0, len(foundKeys))
+
+		for _, foundKey := range foundKeys {
+			items = append(items, formatBulkString([]byte(foundKey)))
+		}
+
+		return array(
+			formatBulkString([]byte(strconv.FormatUint(nextCursor, 10))),
+			array(items...),
+		), nil
 
 	case "KEYS":
-	foundKeys := s.store.Keys(string(args[1]))
+		foundKeys := s.store.Keys(string(args[1]))
 
-	items := make([][]byte, 0, len(foundKeys))
+		items := make([][]byte, 0, len(foundKeys))
 
-	for _, foundKey := range foundKeys {
-		items = append(items, formatBulkString([]byte(foundKey)))
-	}
+		for _, foundKey := range foundKeys {
+			items = append(items, formatBulkString([]byte(foundKey)))
+		}
 
-	return array(items...), nil
+		return array(items...), nil
 
 	case "RANDOMKEY":
-	key, found := s.store.RandomKey()
-	if !found {
-		return nullBulk(), nil
-	}
+		key, found := s.store.RandomKey()
+		if !found {
+			return nullBulk(), nil
+		}
 
-	return formatBulkString([]byte(key)), nil
-	
+		return formatBulkString([]byte(key)), nil
+
 	case "DBSIZE":
 		return integer(int64(s.store.Stats().Keys)), nil
-	
+
 	case "INFO":
 		section := strings.ToLower(key)
 		if section != "" && section != "all" && section != "default" && section != "server" && section != "memory" && section != "stats" && section != "keyspace" {
@@ -570,41 +608,41 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		if section == "" || section == "all" || section == "default" || section == "server" {
 			out += "# Server\r\nsnugkv_version:0.1.0\r\n"
 		}
-	    if section == "" || section == "all" || section == "default" || section == "memory" {
-	m := s.store.Memory()
-	used := m.AccountedBytes
+		if section == "" || section == "all" || section == "default" || section == "memory" {
+			m := s.store.Memory()
+			used := m.AccountedBytes
 
-	out += fmt.Sprintf(
-		"# Memory\r\n"+
-			"used_memory:%d\r\n"+
-			"used_memory_human:%s\r\n"+
-			"used_memory_peak:%d\r\n"+
-			"used_memory_peak_human:%s\r\n"+
-			"used_memory_dataset:%d\r\n"+
-			"used_memory_overhead:%d\r\n"+
-			"maxmemory:%d\r\n"+
-			"maxmemory_human:%s\r\n"+
-			"maxmemory_policy:noeviction\r\n"+
-			"logical_key_bytes:%d\r\n"+
-			"logical_value_bytes:%d\r\n"+
-			"index_reserved_bytes:%d\r\n"+
-			"arena_bytes:%d\r\n"+
-			"schema_reserved_bytes:%d\r\n",
-		used,
-		formatBytes(used),
-		used,
-		formatBytes(used),
-		st.KeyBytes+st.ValueBytes,
-		m.IndexReservedBytes+m.EntryBytes+m.SchemaBytes,
-		m.MaxBytes,
-		formatBytes(m.MaxBytes),
-		st.KeyBytes,
-		st.ValueBytes,
-		m.IndexReservedBytes,
-		m.ArenaBytes,
-		m.SchemaBytes,
-	)
-}
+			out += fmt.Sprintf(
+				"# Memory\r\n"+
+					"used_memory:%d\r\n"+
+					"used_memory_human:%s\r\n"+
+					"used_memory_peak:%d\r\n"+
+					"used_memory_peak_human:%s\r\n"+
+					"used_memory_dataset:%d\r\n"+
+					"used_memory_overhead:%d\r\n"+
+					"maxmemory:%d\r\n"+
+					"maxmemory_human:%s\r\n"+
+					"maxmemory_policy:noeviction\r\n"+
+					"logical_key_bytes:%d\r\n"+
+					"logical_value_bytes:%d\r\n"+
+					"index_reserved_bytes:%d\r\n"+
+					"arena_bytes:%d\r\n"+
+					"schema_reserved_bytes:%d\r\n",
+				used,
+				formatBytes(used),
+				used,
+				formatBytes(used),
+				st.KeyBytes+st.ValueBytes,
+				m.IndexReservedBytes+m.EntryBytes+m.SchemaBytes,
+				m.MaxBytes,
+				formatBytes(m.MaxBytes),
+				st.KeyBytes,
+				st.ValueBytes,
+				m.IndexReservedBytes,
+				m.ArenaBytes,
+				m.SchemaBytes,
+			)
+		}
 		if section == "" || section == "all" || section == "default" || section == "stats" {
 			out += fmt.Sprintf("# Stats\r\ntotal_commands_processed:%d\r\n", atomic.LoadUint64(&s.commands))
 		}
@@ -612,56 +650,54 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			out += fmt.Sprintf("# Keyspace\r\ndb0:keys=%d\r\n", st.Keys)
 		}
 		return formatBulkString([]byte(out)), nil
-	
-	case "FLUSHDB":
-	s.store.FlushDB()
-	return []byte("+OK\r\n"), nil
 
+	case "FLUSHDB":
+		s.store.FlushDB()
+		return []byte("+OK\r\n"), nil
 
 	case "TOUCH":
-	keys := make([]string, 0, len(args)-1)
+		keys := make([]string, 0, len(args)-1)
 
-	for _, arg := range args[1:] {
-		keys = append(keys, string(arg))
-	}
+		for _, arg := range args[1:] {
+			keys = append(keys, string(arg))
+		}
 
-	return integer(int64(s.store.Touch(keys))), nil
+		return integer(int64(s.store.Touch(keys))), nil
 
 	case "INCRBYFLOAT":
-	increment, err := strconv.ParseFloat(string(args[2]), 64)
+		increment, err := strconv.ParseFloat(string(args[2]), 64)
 
-	if err != nil || math.IsNaN(increment) || math.IsInf(increment, 0) {
-		return nil, errors.New("ERR value is not a valid float")
-	}
+		if err != nil || math.IsNaN(increment) || math.IsInf(increment, 0) {
+			return nil, errors.New("ERR value is not a valid float")
+		}
 
-	result, err := s.store.AddFloat(key, increment)
-	if err != nil {
-		return nil, err
-	}
+		result, err := s.store.AddFloat(key, increment)
+		if err != nil {
+			return nil, err
+		}
 
-	return formatBulkString([]byte(result)), nil
+		return formatBulkString([]byte(result)), nil
 
 	case "EXPIREAT", "PEXPIREAT":
-	timestamp, err := parseInt64(args[2])
-	if err != nil {
-		return nil, err
-	}
+		timestamp, err := parseInt64(args[2])
+		if err != nil {
+			return nil, err
+		}
 
-	var when time.Time
+		var when time.Time
 
-	if cmd == "PEXPIREAT" {
-		when = time.UnixMilli(timestamp)
-	} else {
-		when = time.Unix(timestamp, 0)
-	}
+		if cmd == "PEXPIREAT" {
+			when = time.UnixMilli(timestamp)
+		} else {
+			when = time.Unix(timestamp, 0)
+		}
 
-	return boolean(s.store.ExpireAt(key, when)), nil
+		return boolean(s.store.ExpireAt(key, when)), nil
 
-case "EXPIRETIME", "PEXPIRETIME":
-	return integer(
-		s.store.ExpireTime(key, cmd == "PEXPIRETIME"),
-	), nil
-
+	case "EXPIRETIME", "PEXPIRETIME":
+		return integer(
+			s.store.ExpireTime(key, cmd == "PEXPIRETIME"),
+		), nil
 
 	case "COMMAND":
 		names := make([]string, 0, len(commandTable))
