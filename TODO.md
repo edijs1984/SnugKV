@@ -113,7 +113,7 @@ SnugKV should internally support typed values while preserving Redis-compatible 
 - [x] `STRING`
 - [x] canonical `INT64` encoding
 - [x] `UINT64`
-- [ ] `FLOAT64`
+- [x] `FLOAT64`
 - [ ] `BOOL`
 - [x] `BYTES`
 - [ ] `JSON`
@@ -123,13 +123,13 @@ SnugKV should internally support typed values while preserving Redis-compatible 
 - [x] Add a compact type tag to stored entries
 - [x] Preserve exact Redis string round-trip behavior
 - [x] Automatically detect canonical integers
-- [ ] Automatically detect canonical floats where safe
+- [x] Automatically detect canonical floats where safe
 - [x] Avoid converting strings such as `"00123"` into integers
 - [x] Avoid converting values when exact byte reconstruction would change
 - [ ] Support direct typed API operations internally
 - [ ] Add unit tests for every numeric edge case
 - [ ] Add overflow tests
-- [ ] Add NaN/Infinity policy
+- [x] Add NaN/Infinity policy
 - [ ] Add persistence support for all new types
 - [ ] Add snapshot/AOF compatibility tests
 - [ ] Add memory benchmarks comparing typed vs raw ASCII values

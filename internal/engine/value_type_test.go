@@ -19,7 +19,7 @@ func TestClassifyValueCanonicalInt64(t *testing.T) {
 		// Non-canonical textual representations must remain strings.
 		{"00123", TypeString},
 		{"+123", TypeString},
-		{"-0", TypeString},
+		{"-0", TypeFloat64},
 		{"00", TypeString},
 
 		// Outside signed 64-bit range is not INT64.
@@ -215,5 +215,101 @@ func TestUint64StoreRoundTrip(t *testing.T) {
 			"type = %s, want UINT64",
 			valueType.String(),
 		)
+	}
+}
+
+func TestClassifyValueFloat64(t *testing.T) {
+	tests := []struct {
+		value string
+		want  ValueType
+	}{
+		{"0.1", TypeFloat64},
+		{"-0.1", TypeFloat64},
+		{"3.141592653589793", TypeFloat64},
+		{"1e+20", TypeFloat64},
+		{"1e-20", TypeFloat64},
+		{"-0", TypeFloat64},
+
+		// Integers retain their more specific types.
+		{"0", TypeInt64},
+		{"123", TypeInt64},
+		{"9223372036854775808", TypeUint64},
+
+		// Valid numeric values whose textual representation would change
+		// during reconstruction remain strings.
+		{"1.0", TypeString},
+		{"1.00", TypeString},
+		{"01.5", TypeString},
+		{"+1.5", TypeString},
+		{"1e3", TypeString},
+		{"1E+20", TypeString},
+
+		// Special IEEE-754 values are not inferred as native FLOAT64.
+		{"NaN", TypeString},
+		{"Inf", TypeString},
+		{"+Inf", TypeString},
+		{"-Inf", TypeString},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.value, func(t *testing.T) {
+			got := classifyValue([]byte(tt.value))
+			if got != tt.want {
+				t.Fatalf(
+					"classifyValue(%q) = %s, want %s",
+					tt.value,
+					got.String(),
+					tt.want.String(),
+				)
+			}
+		})
+	}
+}
+
+func TestFloat64StoreRoundTrip(t *testing.T) {
+	store := New()
+
+	values := []string{
+		"0.1",
+		"-0.1",
+		"3.141592653589793",
+		"1e+20",
+		"1e-20",
+		"-0",
+	}
+
+	for _, value := range values {
+		t.Run(value, func(t *testing.T) {
+			key := "float:" + value
+
+			if err := store.Set(key, []byte(value), 0); err != nil {
+				t.Fatal(err)
+			}
+
+			got, ok := store.Get(key)
+			if !ok {
+				t.Fatal("missing float")
+			}
+
+			if !bytes.Equal(got, []byte(value)) {
+				t.Fatalf(
+					"round trip changed value: got %q want %q",
+					got,
+					value,
+				)
+			}
+
+			valueType, ok := store.ValueTypeOf(key)
+			if !ok {
+				t.Fatal("missing float type")
+			}
+
+			if valueType != TypeFloat64 {
+				t.Fatalf(
+					"type = %s, want FLOAT64",
+					valueType.String(),
+				)
+			}
+		})
 	}
 }

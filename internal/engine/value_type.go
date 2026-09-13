@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"math"
 	"strconv"
 	"unicode/utf8"
 )
@@ -79,6 +80,22 @@ func classifyValue(value []byte) ValueType {
 				n > uint64(^uint64(0)>>1) {
 				return TypeUint64
 			}
+		}
+	}
+
+	// Canonical FLOAT64.
+	//
+	// Only infer FLOAT64 when IEEE-754 -> text reconstruction produces the
+	// exact same bytes. This deliberately leaves alternate representations
+	// such as "1.00" and "1e3" as STRING.
+	if len(value) > 0 {
+		text := string(value)
+
+		if n, err := strconv.ParseFloat(text, 64); err == nil &&
+			!math.IsNaN(n) &&
+			!math.IsInf(n, 0) &&
+			strconv.FormatFloat(n, 'g', -1, 64) == text {
+			return TypeFloat64
 		}
 	}
 

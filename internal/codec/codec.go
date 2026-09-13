@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"math"
 	"snugkv/internal/codec/jsonshape"
 	"strconv"
 	"time"
@@ -19,6 +20,7 @@ const (
 	UnsignedInteger ID = 2
 	UUID            ID = 3
 	Timestamp       ID = 4
+	Float64         ID = 6
 )
 
 type Record struct {
@@ -46,6 +48,7 @@ func NewRegistry() *Registry {
 		unsignedIntegerCodec{},
 		uuidCodec{},
 		timestampCodec{},
+		float64Codec{},
 		lz4Codec{},
 		zstdCodec{},
 	} {
@@ -75,7 +78,7 @@ func (r *Registry) Name(id ID) string {
 func (r *Registry) Encode(src []byte) Record {
 	best := Record{ID: Raw, RawLength: len(src), Data: bytes.Clone(src)}
 	for _, c := range r.order {
-		if c.ID() == Raw || c.ID() >= 5 {
+		if c.ID() == Raw || c.ID() == 5 || c.ID() >= 9 {
 			continue
 		}
 		data, ok := c.Encode(src)
@@ -207,6 +210,78 @@ func (unsignedIntegerCodec) Decode(
 	}
 
 	return []byte(strconv.FormatUint(n, 10)), nil
+}
+
+type float64Codec struct{}
+
+func (float64Codec) ID() ID       { return Float64 }
+func (float64Codec) Name() string { return "float64" }
+
+func canonicalFloat64(src []byte) (float64, bool) {
+	if len(src) == 0 {
+		return 0, false
+	}
+
+	text := string(src)
+
+	n, err := strconv.ParseFloat(text, 64)
+	if err != nil || math.IsNaN(n) || math.IsInf(n, 0) {
+		return 0, false
+	}
+
+	// The binary float must be able to reconstruct the exact textual form.
+	//
+	// This intentionally rejects alternate textual representations such as:
+	//   1.0
+	//   1.00
+	//   1e3
+	//   1E+20
+	//   +1.5
+	//
+	// even when they represent the same numeric value.
+	if strconv.FormatFloat(n, 'g', -1, 64) != text {
+		return 0, false
+	}
+
+	return n, true
+}
+
+func (float64Codec) Encode(src []byte) ([]byte, bool) {
+	n, ok := canonicalFloat64(src)
+	if !ok {
+		return nil, false
+	}
+
+	// Canonical integers have dedicated INT64 / UINT64 codecs.
+	// Avoid treating their canonical decimal form as FLOAT64.
+	if i, err := strconv.ParseInt(string(src), 10, 64); err == nil &&
+		strconv.FormatInt(i, 10) == string(src) {
+		return nil, false
+	}
+
+	if u, err := strconv.ParseUint(string(src), 10, 64); err == nil &&
+		strconv.FormatUint(u, 10) == string(src) {
+		return nil, false
+	}
+
+	out := make([]byte, 8)
+	binary.LittleEndian.PutUint64(out, math.Float64bits(n))
+
+	return out, true
+}
+
+func (float64Codec) Decode(src []byte, _ int) ([]byte, error) {
+	if len(src) != 8 {
+		return nil, errors.New("invalid float64")
+	}
+
+	n := math.Float64frombits(binary.LittleEndian.Uint64(src))
+
+	if math.IsNaN(n) || math.IsInf(n, 0) {
+		return nil, errors.New("invalid float64 value")
+	}
+
+	return []byte(strconv.FormatFloat(n, 'g', -1, 64)), nil
 }
 
 type uuidCodec struct{}
