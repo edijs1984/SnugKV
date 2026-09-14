@@ -33,6 +33,6 @@ All notable changes to SnugKV will be documented in this file.
 - One-hour TCP/RESP soak completed with zero client errors.
 - TCP soak showed stable engine-accounted memory and stable arena allocation.
 
-## [0.1.0-alpha] - TBD
+## [0.1.0-alpha] - 2026-09-14
 
 Initial public alpha release.

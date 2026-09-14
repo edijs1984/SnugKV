@@ -5,30 +5,51 @@
 coverage.out
 coverage.html
 
-# Local binaries built from the command packages
+# Local binaries built from command packages
 /snugkv
 /snugbench
 /snugsoak
 
-# Runtime data and local configuration
+# Runtime data and persistence files
 /data/
 *.aof
 *.aof.lock
 *.snapshot
 *.snapshot.tmp
-*.json.local
 
-# Local tooling and editor files
+# Benchmark / soak output
+/soak-results/
+/benchmark-results-local/
+/tmp-results/
+
+# Local configuration / secrets
+*.local
+*.json.local
+.env
+.env.*
+!.env.example
+
+# Compatibility harness dependencies
+compat/node/node_modules/
+compat/python/.venv/
+compat/python/__pycache__/
+compat/python/*.pyc
+
+# IDE / editor files
 .idea/
 .vscode/
 .DS_Store
 *.swp
 *.swo
+*~
 
 # Temporary files
+/tmp/
 tmp/
 *.tmp
-# Compatibility harness dependencies
-compat/node/node_modules/
-compat/python/.venv/
-compat/python/__pycache__/
+
+# Logs
+*.log
+
+.venv/
+venv/
