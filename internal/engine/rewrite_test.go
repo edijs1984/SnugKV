@@ -143,8 +143,115 @@ func TestShapeEncodingSkipsPrimitiveValues(t *testing.T) {
 		}
 	}
 
-	schemas, _ := s.shards[0].shapes.Stats()
-	if schemas != 0 {
-		t.Fatalf("primitive values created %d schemas", schemas)
+	if s.shards[0].shapes != nil {
+		t.Fatal("primitive values eagerly created shape store")
+	}
+
+	memory := s.Memory()
+	if memory.SchemaBytes != 0 {
+		t.Fatalf("primitive values charged %d schema bytes", memory.SchemaBytes)
+	}
+}
+
+func TestShapeStoreAllocatesLazily(t *testing.T) {
+	s, err := NewWithOptions(Options{
+		Shards:        16,
+		Encoding:      true,
+		ShapeEncoding: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	initial := s.Memory()
+	if initial.SchemaBytes != 0 {
+		t.Fatalf("new store charged %d schema bytes", initial.SchemaBytes)
+	}
+
+	for i := range s.shards {
+		if s.shards[i].shapes != nil {
+			t.Fatalf("shard %d eagerly created shape store", i)
+		}
+	}
+
+	key := "json-key"
+	value := []byte(`{"country":"LV","status":"active","plan":"free","user":12345,"long_repeated_property_name":true}`)
+
+	if err := s.Set(key, value, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	candidate, ok := s.Candidate(key, 4096)
+	if !ok {
+		t.Fatal("missing JSON candidate")
+	}
+
+	before := s.Memory()
+	if before.SchemaBytes != 0 {
+		t.Fatalf("SET unexpectedly charged %d schema bytes", before.SchemaBytes)
+	}
+
+	_ = s.EncodeCandidate(candidate)
+
+	sh := s.shardFor(key)
+	if sh.shapes == nil {
+		t.Fatal("JSON candidate did not create shape store")
+	}
+
+	after := s.Memory()
+	if after.SchemaBytes != shapeStoreBaseBytes {
+		t.Fatalf("schema bytes = %d, want %d", after.SchemaBytes, shapeStoreBaseBytes)
+	}
+
+	if after.AccountedBytes-before.AccountedBytes != shapeStoreBaseBytes {
+		t.Fatalf(
+			"accounted growth = %d, want %d",
+			after.AccountedBytes-before.AccountedBytes,
+			shapeStoreBaseBytes,
+		)
+	}
+}
+
+func TestLazyShapeStoreRespectsMaxMemory(t *testing.T) {
+	const shards = 1
+	base := uint64(shards) * 512
+
+	s, err := NewWithOptions(Options{
+		Shards:        shards,
+		Encoding:      true,
+		ShapeEncoding: true,
+		MaxMemory:     base,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if s.shards[0].shapes != nil {
+		t.Fatal("shape store allocated eagerly")
+	}
+
+	// Directly exercise lazy admission without adding key/value memory.
+	candidate := Candidate{
+		Key:   "k",
+		Value: []byte(`{"country":"LV","status":"active","user":123}`),
+	}
+
+	record := s.EncodeCandidate(candidate)
+
+	if s.shards[0].shapes != nil {
+		t.Fatal("shape store allocated despite max-memory limit")
+	}
+
+	if record.ID == 5 {
+		t.Fatal("json-shape selected without shape-store budget")
+	}
+
+	memory := s.Memory()
+	if memory.AccountedBytes != base || memory.SchemaBytes != 0 {
+		t.Fatalf(
+			"unexpected accounting: used=%d schemas=%d",
+			memory.AccountedBytes,
+			memory.SchemaBytes,
+		)
 	}
 }

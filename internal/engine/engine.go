@@ -42,12 +42,15 @@ func (e entry) expired(now time.Time) bool {
 }
 
 // Store owns immutable byte values. Returned values belong to the caller.
+const shapeStoreBaseBytes = uint64(2*256 + 2048 + 1024)
+
 type Store struct {
 	expired, evicted uint64
 	shards           []shard
 	now              func() time.Time
 	codecs           *codec.Registry
 	encoding         bool
+	shapeEncoding    bool
 	compression      bool
 	memory           accounting
 	version          uint64
@@ -62,20 +65,24 @@ func NewWithOptions(options Options) (*Store, error) {
 		return nil, errors.New("shards must be a positive power of two at most 65536")
 	}
 	base := uint64(count) * 512
-	schemaBase := uint64(0)
-	if options.ShapeEncoding {
-		schemaBase = uint64(count) * (2*256 + 2048 + 1024)
-		base += schemaBase
-	}
 	if options.MaxMemory > 0 && options.MaxMemory < base {
 		return nil, ErrOOM
 	}
-	s := &Store{shards: make([]shard, count), now: time.Now, codecs: codec.NewRegistry(), encoding: options.Encoding, compression: options.Compression, memory: accounting{used: base, index: uint64(count) * 512, schemas: schemaBase, max: options.MaxMemory}}
+	s := &Store{
+		shards:        make([]shard, count),
+		now:           time.Now,
+		codecs:        codec.NewRegistry(),
+		encoding:      options.Encoding,
+		shapeEncoding: options.ShapeEncoding,
+		compression:   options.Compression,
+		memory: accounting{
+			used:  base,
+			index: base,
+			max:   options.MaxMemory,
+		},
+	}
 	for i := range s.shards {
 		s.shards[i].data = index.New[uint32]()
-		if options.ShapeEncoding {
-			s.shards[i].shapes = jsonshape.New(2048, 8)
-		}
 	}
 	return s, nil
 }

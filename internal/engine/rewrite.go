@@ -52,6 +52,33 @@ func (s *Store) Policy(key string) (string, bool) {
 	}
 	return heat(e, s.now()), true
 }
+func (s *Store) ensureShapeStore(sh *shard) *jsonshape.Store {
+	if !s.shapeEncoding {
+		return nil
+	}
+
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	if sh.shapes != nil {
+		return sh.shapes
+	}
+
+	s.memory.mu.Lock()
+	defer s.memory.mu.Unlock()
+
+	next := s.memory.used + shapeStoreBaseBytes
+	if s.memory.max > 0 && next > s.memory.max {
+		return nil
+	}
+
+	sh.shapes = jsonshape.New(2048, 8)
+	s.memory.used = next
+	s.memory.schemas += shapeStoreBaseBytes
+
+	return sh.shapes
+}
+
 func structuredJSONCandidate(src []byte) bool {
 	for _, b := range src {
 		switch b {
@@ -70,14 +97,17 @@ func structuredJSONCandidate(src []byte) bool {
 func (s *Store) EncodeCandidate(candidate Candidate) codec.Record {
 	best := s.codecs.Encode(candidate.Value)
 	sh := s.shardFor(candidate.Key)
-	if sh.shapes != nil && structuredJSONCandidate(candidate.Value) {
-		schema, slots, ok := sh.shapes.Candidate(candidate.Value)
-		if ok {
-			data := sh.shapes.EncodeSlots(slots)
-			if len(data)+16 < len(best.Data) {
-				decoded, err := jsonshape.Decode(schema, data, len(candidate.Value))
-				if err == nil && bytes.Equal(decoded, candidate.Value) {
-					best = codec.Record{ID: 5, RawLength: len(candidate.Value), Data: data, Schema: schema}
+	if structuredJSONCandidate(candidate.Value) {
+		shapes := s.ensureShapeStore(sh)
+		if shapes != nil {
+			schema, slots, ok := shapes.Candidate(candidate.Value)
+			if ok {
+				data := shapes.EncodeSlots(slots)
+				if len(data)+16 < len(best.Data) {
+					decoded, err := jsonshape.Decode(schema, data, len(candidate.Value))
+					if err == nil && bytes.Equal(decoded, candidate.Value) {
+						best = codec.Record{ID: 5, RawLength: len(candidate.Value), Data: data, Schema: schema}
+					}
 				}
 			}
 		}
