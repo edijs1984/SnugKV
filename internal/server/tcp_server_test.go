@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -295,4 +296,149 @@ func TestConnectionPanicRecovery(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("connection panic was not recovered")
 	}
+}
+
+func TestTCPBulkSizeBoundary(t *testing.T) {
+	const maxBulk = 32 << 20
+
+	store := engine.New()
+	s, err := Listen("127.0.0.1:0", store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	addr := s.listener.Addr().String()
+
+	t.Run("accepts exact maximum bulk", func(t *testing.T) {
+		conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+
+		// Large local transfers can take longer under -race.
+		if err := conn.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
+			t.Fatal(err)
+		}
+
+		header := fmt.Sprintf(
+			"*3\r\n$3\r\nSET\r\n$8\r\nboundary\r\n$%d\r\n",
+			maxBulk,
+		)
+
+		if _, err := io.WriteString(conn, header); err != nil {
+			t.Fatal(err)
+		}
+
+		chunk := make([]byte, 64<<10)
+		for i := range chunk {
+			chunk[i] = 'x'
+		}
+
+		remaining := maxBulk
+		for remaining > 0 {
+			n := len(chunk)
+			if n > remaining {
+				n = remaining
+			}
+
+			if _, err := conn.Write(chunk[:n]); err != nil {
+				t.Fatal(err)
+			}
+
+			remaining -= n
+		}
+
+		if _, err := io.WriteString(conn, "\r\n"); err != nil {
+			t.Fatal(err)
+		}
+
+		reader := bufio.NewReader(conn)
+
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		if line != "+OK\r\n" {
+			t.Fatalf("SET response = %q", line)
+		}
+
+		if _, err := io.WriteString(
+			conn,
+			"*2\r\n$6\r\nSTRLEN\r\n$8\r\nboundary\r\n",
+		); err != nil {
+			t.Fatal(err)
+		}
+
+		line, err = reader.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		want := fmt.Sprintf(":%d\r\n", maxBulk)
+		if line != want {
+			t.Fatalf("STRLEN response = %q, want %q", line, want)
+		}
+	})
+
+	t.Run("rejects one byte above maximum", func(t *testing.T) {
+		conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+
+		if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+			t.Fatal(err)
+		}
+
+		// The decoder must reject the declared bulk length before attempting
+		// to read or allocate the payload.
+		wire := fmt.Sprintf(
+			"*3\r\n$3\r\nSET\r\n$9\r\ntoo-large\r\n$%d\r\n",
+			maxBulk+1,
+		)
+
+		if _, err := io.WriteString(conn, wire); err != nil {
+			t.Fatal(err)
+		}
+
+		got, err := io.ReadAll(conn)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if string(got) != "-ERR invalid RESP\r\n" {
+			t.Fatalf("oversized response = %q", got)
+		}
+	})
+
+	t.Run("server remains alive after rejection", func(t *testing.T) {
+		conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+
+		if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := io.WriteString(
+			conn,
+			"*1\r\n$4\r\nPING\r\n",
+		); err != nil {
+			t.Fatal(err)
+		}
+
+		reply := make([]byte, len("+PONG\r\n"))
+		if _, err := io.ReadFull(conn, reply); err != nil {
+			t.Fatal(err)
+		}
+
+		if string(reply) != "+PONG\r\n" {
+			t.Fatalf("PING response = %q", reply)
+		}
+	})
 }
