@@ -247,7 +247,7 @@ func Decode(schema *Schema, data []byte, max int) ([]byte, error) {
 				return nil, errors.New("missing dictionary")
 			}
 			var ok bool
-			slot, ok = schema.dictionary.Lookup(n)
+			slot, ok = schema.dictionary.LookupView(n)
 			if !ok {
 				return nil, errors.New("missing dictionary entry")
 			}

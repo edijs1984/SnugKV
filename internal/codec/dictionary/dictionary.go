@@ -15,7 +15,7 @@ type item struct {
 	cost  int
 }
 type Store struct {
-	mu        sync.Mutex
+	mu        sync.RWMutex
 	byValue   map[string]*item
 	byID      map[uint64]*item
 	sketch    [256]uint8
@@ -77,13 +77,32 @@ func (s *Store) Candidate(value []byte) (uint64, bool) {
 	return entry.id, true
 }
 func (s *Store) Lookup(id uint64) ([]byte, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	entry := s.byID[id]
 	if entry == nil {
 		return nil, false
 	}
+
 	return bytes.Clone(entry.value), true
+}
+
+// LookupView returns an immutable view of a dictionary value.
+//
+// Callers must not modify the returned bytes. Dictionary entries are immutable
+// after insertion, so this avoids an allocation on hot decode paths while
+// allowing concurrent readers.
+func (s *Store) LookupView(id uint64) ([]byte, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	entry := s.byID[id]
+	if entry == nil {
+		return nil, false
+	}
+
+	return entry.value, true
 }
 func (s *Store) Retain(ids []uint64) bool {
 	s.mu.Lock()
