@@ -5,7 +5,6 @@ import (
 	"flag"
 	"log"
 	"net/http"
-	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"snugkv/internal/config"
@@ -18,10 +17,6 @@ import (
 )
 
 func main() {
-	go func() {
-		log.Println(http.ListenAndServe("127.0.0.1:6060", nil))
-	}()
-
 	path := ""
 	for i, arg := range os.Args[1:] {
 		arg = strings.TrimPrefix(arg, "-")
