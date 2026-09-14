@@ -33,8 +33,11 @@ redis-cli -p 6380 get example
 ```
 
 See [operations](docs/operations.md) for configuration, persistence, metrics,
-and administration details. Contributions should follow
-[CONTRIBUTING.md](CONTRIBUTING.md).
+and administration details. See [COMPATIBILITY.md](COMPATIBILITY.md) for tested
+clients, [KNOWN-LIMITATIONS.md](KNOWN-LIMITATIONS.md) for alpha limitations,
+and [SECURITY.md](SECURITY.md) for security guidance. Contributions should
+follow [CONTRIBUTING.md](CONTRIBUTING.md). Release changes are tracked in
+[CHANGELOG.md](CHANGELOG.md).
 
 Supported commands:
 
