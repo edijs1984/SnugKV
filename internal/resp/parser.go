@@ -87,10 +87,11 @@ func (d *Decoder) bulk() ([]byte, error) {
 	if d.remaining < 2 || n > d.remaining-2 {
 		return nil, errors.New("request exceeds byte limit")
 	}
-	// Grow only as bytes actually arrive, rather than allocating the declared
-	// length for a client that never sends its payload.
-	var out bytes.Buffer
-	if _, err = io.CopyN(&out, d.reader, int64(n)); err != nil {
+	// The declared bulk length has already been validated against the
+	// per-request and per-bulk limits. Allocate the payload once and read
+	// directly into it instead of growing a bytes.Buffer incrementally.
+	payload := make([]byte, n)
+	if _, err = io.ReadFull(d.reader, payload); err != nil {
 		return nil, err
 	}
 	d.remaining -= n
@@ -104,10 +105,6 @@ func (d *Decoder) bulk() ([]byte, error) {
 	}
 	if a != '\r' || b != '\n' {
 		return nil, errors.New("invalid bulk terminator")
-	}
-	payload := out.Bytes()
-	if payload == nil {
-		payload = []byte{}
 	}
 	return payload, nil
 }

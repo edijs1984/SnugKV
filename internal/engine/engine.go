@@ -12,15 +12,15 @@ import (
 )
 
 type entry struct {
-	ref                                arena.Ref
-	schema                             *jsonshape.Schema
-	version                            uint64
-	expiresAt                          stamp
-	lastRewrite, lastAccess, lastWrite stamp
-	rawLength                          uint32
-	reads, writes                      uint8
-	codecID                            codec.ID
-	valueType                          ValueType
+	ref                                              arena.Ref
+	schema                                           *jsonshape.Schema
+	version                                          uint64
+	expiresAt                                        stamp
+	lastRewrite, lastOptimize, lastAccess, lastWrite stamp
+	rawLength                                        uint32
+	reads, writes                                    uint8
+	codecID                                          codec.ID
+	valueType                                        ValueType
 }
 
 type preparedEntry struct {

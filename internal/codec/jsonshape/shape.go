@@ -92,11 +92,15 @@ func Split(src []byte) ([][]byte, [][]byte, bool) {
 		if len(slots) >= MaxSlots {
 			return nil, nil, false
 		}
-		literals = append(literals, bytes.Clone(src[last:start]))
-		slots = append(slots, bytes.Clone(src[start:i]))
+		// Candidate parsing only needs immutable views into src.
+		// Avoid cloning every literal and slot on every optimizer pass.
+		// A schema that is actually admitted takes ownership of its
+		// literals separately below.
+		literals = append(literals, src[last:start])
+		slots = append(slots, src[start:i])
 		last = i
 	}
-	literals = append(literals, bytes.Clone(src[last:]))
+	literals = append(literals, src[last:])
 	return literals, slots, true
 }
 func templateKey(literals [][]byte) string {

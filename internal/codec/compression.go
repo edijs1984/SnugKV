@@ -86,6 +86,48 @@ func alreadyCompressed(src []byte) bool {
 	return false
 }
 
+type CompressionCandidate struct {
+	Name  string
+	Bytes int
+	ID    ID
+}
+
+// CompressionCandidates evaluates physical compression representations for
+// diagnostics. It does not decide policy; the engine reports whether a codec
+// is eligible for the key's current heat class.
+func (r *Registry) CompressionCandidates(src []byte) []CompressionCandidate {
+	if len(src) < 256 || alreadyCompressed(src) {
+		return nil
+	}
+
+	out := make([]CompressionCandidate, 0, 2)
+
+	for _, id := range []ID{LZ4, Zstandard} {
+		c := r.codecs[id]
+		if c == nil {
+			continue
+		}
+
+		data, ok := c.Encode(src)
+		if !ok {
+			continue
+		}
+
+		decoded, err := c.Decode(data, len(src))
+		if err != nil || !bytes.Equal(decoded, src) {
+			continue
+		}
+
+		out = append(out, CompressionCandidate{
+			Name:  c.Name(),
+			Bytes: len(data),
+			ID:    id,
+		})
+	}
+
+	return out
+}
+
 // EncodeGeneral is called only by the optimizer, never ordinary SET.
 func (r *Registry) EncodeGeneral(src []byte, cold bool) Record {
 	best := Record{ID: Raw, RawLength: len(src), Data: bytes.Clone(src)}

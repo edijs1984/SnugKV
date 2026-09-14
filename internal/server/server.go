@@ -38,6 +38,7 @@ var commandTable = map[string]commandInfo{
 	"SNUG.AOFREWRITE": {1, 1, 0, 0, 0, false},
 	"SNUG.COMPACT":    {1, 2, 0, 0, 0, false},
 	"SNUG.ENCODING":   {2, 2, 1, 1, 1, false},
+	"SNUG.CANDIDATES": {2, 2, 1, 1, 1, false},
 	"SNUG.TYPE":       {2, 2, 1, 1, 1, false},
 	"SNUG.MEMORY":     {2, 2, 1, 1, 1, false},
 	"SNUG.STATS":      {1, 1, 0, 0, 0, false},
@@ -530,6 +531,43 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		}
 		return formatBulkString([]byte(valueType.String())), nil
 
+	case "SNUG.CANDIDATES":
+		report, found := s.store.CandidateDiagnostics(key)
+		if !found {
+			return nullBulk(), nil
+		}
+
+		var b strings.Builder
+
+		fmt.Fprintf(
+			&b,
+			"logical_bytes:%d\ncurrent_codec:%s\ncurrent_bytes:%d\nheat_class:%s\n",
+			report.LogicalBytes,
+			report.CurrentName,
+			report.CurrentBytes,
+			report.Heat,
+		)
+
+		for _, candidate := range report.Candidates {
+			fmt.Fprintf(
+				&b,
+				"candidate:%s bytes:%d eligible:%t reason:%s\n",
+				candidate.Name,
+				candidate.Bytes,
+				candidate.Eligible,
+				candidate.Reason,
+			)
+		}
+
+		fmt.Fprintf(
+			&b,
+			"winner:%s\nwinner_bytes:%d\n",
+			report.WinnerName,
+			report.WinnerBytes,
+		)
+
+		return formatBulkString([]byte(b.String())), nil
+
 	case "SNUG.ENCODING", "SNUG.MEMORY", "SNUG.POLICY":
 		name, raw, encoded, found := s.store.Encoding(key)
 		if !found {
@@ -624,6 +662,12 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 
 		if !applied {
 			return nullBulk(), nil
+		}
+
+		// Newly written values are the highest-priority optimization candidates.
+		// Queueing is non-blocking; periodic sampling remains the fallback.
+		if s.optimizer != nil {
+			s.optimizer.Queue(key)
 		}
 
 		return []byte("+OK\r\n"), nil

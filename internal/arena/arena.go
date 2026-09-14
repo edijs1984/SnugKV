@@ -101,26 +101,33 @@ func class(n int) (int, int) {
 		return 12 + (block-320)/64, block
 
 	case size <= 1024:
-		block := (size + 127) &^ 127
-		return 16 + (block-640)/128, block
+		// Medium-small values are extremely common for JSON/API payloads.
+		// Use 32-byte classes here to avoid excessive internal fragmentation.
+		//
+		// Example:
+		//   777-byte payload + 8-byte arena header = 785 bytes
+		//   old 128-byte classes -> 896-byte block
+		//   new 32-byte classes  -> 800-byte block
+		block := (size + 31) &^ 31
+		return 16 + (block-544)/32, block
 
 	case size <= 2048:
 		block := (size + 255) &^ 255
-		return 20 + (block-1280)/256, block
+		return 32 + (block-1280)/256, block
 
 	case size <= 4096:
 		block := (size + 511) &^ 511
-		return 24 + (block-2560)/512, block
+		return 36 + (block-2560)/512, block
 
 	case size <= 8192:
 		block := (size + 1023) &^ 1023
-		return 28 + (block-5120)/1024, block
+		return 40 + (block-5120)/1024, block
 	}
 
 	// Large allocations use ~12.5% size classes instead of powers of two.
 	// This keeps worst-case internal fragmentation much lower.
 	block := 8192
-	bucket := 32
+	bucket := 44
 
 	for block < size {
 		step := block / 8

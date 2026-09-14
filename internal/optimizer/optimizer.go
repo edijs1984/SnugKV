@@ -13,10 +13,19 @@ import (
 type Config struct {
 	Workers, QueueDepth, MaxScratchBytes, MaxBytesPerSecond, CPUPercent int
 	MinRewriteInterval                                                  time.Duration
+	MinAttemptInterval                                                  time.Duration
 }
 
 func Default() Config {
-	return Config{Workers: 1, QueueDepth: 256, MaxScratchBytes: 128 << 20, MaxBytesPerSecond: 8 << 20, CPUPercent: 10, MinRewriteInterval: 5 * time.Minute}
+	return Config{
+		Workers:            2,
+		QueueDepth:         4096,
+		MaxScratchBytes:    128 << 20,
+		MaxBytesPerSecond:  64 << 20,
+		CPUPercent:         50,
+		MinRewriteInterval: 5 * time.Minute,
+		MinAttemptInterval: 30 * time.Second,
+	}
 }
 
 type Stats struct {
@@ -37,7 +46,7 @@ type Optimizer struct {
 }
 
 func New(store *engine.Store, c Config) (*Optimizer, error) {
-	if c.Workers < 1 || c.Workers > 64 || c.QueueDepth < 1 || c.MaxScratchBytes < 16<<20 || c.MaxBytesPerSecond < 1 || c.CPUPercent < 1 || c.CPUPercent > 100 || c.MinRewriteInterval < 0 {
+	if c.Workers < 1 || c.Workers > 64 || c.QueueDepth < 1 || c.MaxScratchBytes < 16<<20 || c.MaxBytesPerSecond < 1 || c.CPUPercent < 1 || c.CPUPercent > 100 || c.MinRewriteInterval < 0 || c.MinAttemptInterval < 0 {
 		return nil, errors.New("invalid optimizer configuration")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -105,6 +114,12 @@ func (o *Optimizer) maintenance() {
 			return
 
 		case <-ticker.C:
+			// During initial catch-up, prioritize representation rewrites.
+			// Compaction copies arena data and competes for CPU/memory bandwidth.
+			if len(o.queue) != 0 {
+				continue
+			}
+
 			m := o.store.Memory()
 
 			if m.ArenaBytes == 0 || m.ArenaBytes <= m.ArenaLiveBlockBytes {
@@ -132,15 +147,36 @@ func (o *Optimizer) worker() {
 			return
 		case key := <-o.queue:
 			start := time.Now()
-			_, size, _, found := o.store.Encoding(key)
-			if !found || !o.reserve(size) {
+
+			rawBytes, eligible := o.store.OptimizationEligible(
+				key,
+				o.config.MinRewriteInterval,
+				o.config.MinAttemptInterval,
+			)
+			if !eligible {
 				atomic.AddUint64(&o.skipped, 1)
 				continue
 			}
-			candidate, ok := o.store.Candidate(key, size)
-			if !ok || candidate.Heat == "write-heavy" || time.Since(candidate.LastRewrite) < o.config.MinRewriteInterval {
+
+			if !o.reserve(rawBytes) {
 				atomic.AddUint64(&o.skipped, 1)
-				o.release(size)
+				continue
+			}
+
+			if !o.store.MarkOptimizationAttempt(
+				key,
+				o.config.MinRewriteInterval,
+				o.config.MinAttemptInterval,
+			) {
+				o.release(rawBytes)
+				atomic.AddUint64(&o.skipped, 1)
+				continue
+			}
+
+			candidate, ok := o.store.Candidate(key, rawBytes)
+			if !ok {
+				atomic.AddUint64(&o.skipped, 1)
+				o.release(rawBytes)
 				continue
 			}
 
@@ -149,7 +185,7 @@ func (o *Optimizer) worker() {
 			// 16 bytes, no possible codec can satisfy that requirement.
 			if candidate.EncodedBytes < 16 {
 				atomic.AddUint64(&o.skipped, 1)
-				o.release(size)
+				o.release(rawBytes)
 				continue
 			}
 
@@ -163,7 +199,7 @@ func (o *Optimizer) worker() {
 			} else {
 				atomic.AddUint64(&o.stale, 1)
 			}
-			o.release(size)
+			o.release(rawBytes)
 			// Duty-cycle throttling bounds worker activity by wall-clock work time.
 			pause := time.Since(start) * time.Duration(100-o.config.CPUPercent) / time.Duration(o.config.CPUPercent)
 			timer := time.NewTimer(pause)

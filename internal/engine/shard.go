@@ -34,9 +34,15 @@ func (sh *shard) entryCapacityFor(additional int) int {
 	capacity := cap(sh.entries)
 
 	for target > capacity {
-		growth := capacity / 8
-		if growth < 256 {
-			growth = 256
+		// Grow entry storage in smaller per-shard increments.
+		//
+		// With 256 shards, large minimum growth steps multiply into
+		// substantial unused capacity. A 25% geometric step with a
+		// 64-entry floor keeps insertion growth bounded while avoiding
+		// hundreds of unused entry slots per shard.
+		growth := capacity / 4
+		if growth < 64 {
+			growth = 64
 		}
 		capacity += growth
 	}

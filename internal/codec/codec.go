@@ -79,6 +79,15 @@ func (r *Registry) Name(id ID) string {
 }
 func (r *Registry) Encode(src []byte) Record {
 	best := Record{ID: Raw, RawLength: len(src), Data: bytes.Clone(src)}
+
+	// JSON objects and arrays cannot be represented by the cheap scalar
+	// codecs below. Avoid feeding them through integer/float/UUID/timestamp
+	// parsers just to reject them. JSON-shape and compression are evaluated
+	// separately by the background optimizer.
+	if len(src) != 0 && (src[0] == '{' || src[0] == '[') {
+		return best
+	}
+
 	for _, c := range r.order {
 		if c.ID() == Raw || c.ID() == 5 || c.ID() >= 9 {
 			continue
