@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"runtime/debug"
 	"snugkv/internal/config"
 	"snugkv/internal/engine"
 	"snugkv/internal/optimizer"
@@ -100,11 +101,32 @@ func (s *TCPServer) serve() {
 		s.mu.Unlock()
 		go func() {
 			defer s.wg.Done()
-			defer func() { conn.Close(); s.mu.Lock(); delete(s.connections, conn); s.mu.Unlock() }()
-			s.handleConn(countedConn{Conn: conn, input: &s.inputBytes, output: &s.outputBytes})
+			defer func() {
+				conn.Close()
+				s.mu.Lock()
+				delete(s.connections, conn)
+				s.mu.Unlock()
+			}()
+			defer recoverConnectionPanic()
+
+			s.handleConn(countedConn{
+				Conn:   conn,
+				input:  &s.inputBytes,
+				output: &s.outputBytes,
+			})
 		}()
 	}
 }
+func recoverConnectionPanic() {
+	if recovered := recover(); recovered != nil {
+		log.Printf(
+			"recovered panic while handling client connection: %v\n%s",
+			recovered,
+			debug.Stack(),
+		)
+	}
+}
+
 func (s *TCPServer) handleConn(conn net.Conn) {
 	decoder, _ := resp.NewDecoder(bufio.NewReader(conn), s.config.Limits())
 	for {

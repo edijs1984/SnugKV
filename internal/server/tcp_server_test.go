@@ -279,3 +279,20 @@ func TestMetricsListener(t *testing.T) {
 		t.Fatal("metrics accepted a non-loopback address")
 	}
 }
+
+func TestConnectionPanicRecovery(t *testing.T) {
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		defer recoverConnectionPanic()
+
+		panic("test connection panic")
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("connection panic was not recovered")
+	}
+}
