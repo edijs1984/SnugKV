@@ -79,7 +79,7 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 		}
 		e := s.makeEntry(record.Value)
 
-		if record.ValueType > uint8(TypeJSON) {
+		if record.ValueType > uint8(TypeHash) {
 			return errors.New("ERR recovered value has unknown type")
 		}
 
