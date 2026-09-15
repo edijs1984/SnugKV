@@ -8,10 +8,8 @@ only at milestone level; `PROGRESS.md` contains verification evidence and
 
 The single-node RESP2 engine, persistence, memory accounting, optimizer,
 observability, packaging, and the main Redis-style native container types are
-implemented. HASH, SET, and LIST v1 are functionally complete for the intended
-single-node scope. ZSET storage, range queries, lex queries, algebra, pop/random/
-scan operations, and range-store operations are implemented; blocking ZSET pops
-remain separate follow-up work.
+implemented. HASH, SET, LIST, and the intended ZSET v1 command/storage surface are
+implemented, including non-polling blocking pop operations for LIST and ZSET.
 
 The packed storage formats for HASH, SET, LIST, and ZSET are frozen for v1. The
 next memory work should target shared per-key overhead rather than adding more
@@ -75,17 +73,19 @@ container-specific encodings.
 - [x] `ZUNION`, `ZINTER`, `ZDIFF` and STORE variants, including mixed SET/ZSET sources.
 - [x] `WEIGHTS`, `AGGREGATE SUM|MIN|MAX|COUNT`, `ZINTERCARD`.
 - [x] `ZPOPMIN`, `ZPOPMAX`, `ZMPOP`, `ZMSCORE`, `ZRANDMEMBER`, `ZSCAN`, `ZRANGESTORE`.
+- [x] `BZPOPMIN`, `BZPOPMAX`, `BZMPOP` with per-key waiter/wakeup handling.
+- [x] Blocking ZSET waits execute the eventual pop through the normal durable path without holding `durableMu` while sleeping.
 - [x] Dynamic durability key discovery for `ZMPOP` and destination-as-source safety for stores.
 - [x] TTL, OOM rollback, persistence, race, RESP, and benchmark coverage.
 
 ## Remaining work / TODO
 
-### P0 — finish the current Redis-compatible datatype surface
+### P0 — harden compatibility of the completed datatype surface
 
-- [ ] Add blocking ZSET commands: `BZPOPMIN`, `BZPOPMAX`, `BZMPOP` using a real waiter/wakeup path, not polling.
 - [ ] Audit all older scalar/numeric/bit commands for strict WRONGTYPE behavior against native HASH/SET/LIST/ZSET values.
 - [ ] Harden infinite blocking client-disconnect detection so a disconnected client is released without waiting for another wakeup or server shutdown.
 - [ ] Review scan compatibility edge cases (`MATCH`, `COUNT`, glob character classes, cursor semantics) across `SCAN`, `HSCAN`, `SSCAN`, and `ZSCAN`.
+- [ ] Add targeted cross-datatype command-matrix tests so future native datatypes cannot accidentally be interpreted as scalar bytes.
 
 ### P1 — shared memory overhead
 

@@ -116,7 +116,8 @@ ZRANK ZREVRANK ZRANGE ZREVRANGE
 ZRANGEBYSCORE ZREVRANGEBYSCORE ZRANGEBYLEX ZREVRANGEBYLEX
 ZREMRANGEBYRANK ZREMRANGEBYSCORE ZREMRANGEBYLEX
 ZUNION ZINTER ZDIFF ZUNIONSTORE ZINTERSTORE ZDIFFSTORE ZINTERCARD
-ZPOPMIN ZPOPMAX ZMPOP ZRANDMEMBER ZSCAN ZRANGESTORE
+ZPOPMIN ZPOPMAX ZMPOP BZPOPMIN BZPOPMAX BZMPOP
+ZRANDMEMBER ZSCAN ZRANGESTORE
 ```
 
 `ZRANGE` supports rank mode plus `BYSCORE`, `BYLEX`, `REV`, `LIMIT`, and
@@ -124,11 +125,10 @@ ZPOPMIN ZPOPMAX ZMPOP ZRANDMEMBER ZSCAN ZRANGESTORE
 plain SET members contribute score 1 before weights. `ZUNION`/`ZINTER` support
 `WEIGHTS` and `AGGREGATE SUM|MIN|MAX|COUNT`.
 
-Blocking ZSET commands are not implemented yet:
-
-```text
-BZPOPMIN BZPOPMAX BZMPOP
-```
+`BZPOPMIN`, `BZPOPMAX`, and `BZMPOP` use per-key waiter/wakeup signaling rather
+than polling. Waits are registered before readiness checks to avoid lost wakeups,
+and sleeping blockers do not hold the AOF durability mutex. A successful wakeup
+executes the corresponding non-blocking pop through the normal durable path.
 
 Lex-range behavior follows Redis's same-score use case; applications should not
 rely on lex semantics across members with different scores.
@@ -176,6 +176,11 @@ for older scalar/numeric/bit commands to ensure every access to a native contain
 returns Redis-style WRONGTYPE rather than interpreting native bytes as a scalar.
 Until that audit is closed, applications should not intentionally mix scalar
 commands with native container keys.
+
+Blocking LIST and ZSET commands are canceled during server shutdown. Proactive
+client-disconnect detection while a connection is infinitely blocked remains a
+hardening item; a disconnected blocker can otherwise remain registered until a
+relevant key is signaled or the server shuts down.
 
 `SCAN`, `HSCAN`, `SSCAN`, and `ZSCAN` implement the useful cursor/MATCH/COUNT
 surface, but exact cursor progression and every Redis glob edge case should not be

@@ -4,13 +4,14 @@
 
 SnugKV now has a broad single-node RESP2 command surface with native HASH, SET,
 LIST, and ZSET types, logical durability, memory accounting, adaptive scalar
-encoding, observability, and operational tooling. The current branch also includes
-the operational ZSET tranche (`ZPOPMIN`, `ZPOPMAX`, `ZMPOP`, `ZMSCORE`,
-`ZRANDMEMBER`, `ZSCAN`, `ZRANGESTORE`).
+encoding, observability, and operational tooling. The current branch includes the
+operational ZSET tranche plus blocking ZSET commands (`BZPOPMIN`, `BZPOPMAX`,
+`BZMPOP`).
 
 The immediate engineering focus is no longer datatype storage design. HASH, SET,
-LIST, and ZSET packed formats are frozen for v1. Remaining work is blocking ZSET,
-compatibility hardening, shared small-key overhead, and release-scale validation.
+LIST, and ZSET packed formats are frozen for v1. Remaining work is compatibility
+hardening, shared small-key overhead, blocking-client disconnect cleanup, and
+release-scale validation.
 
 ## Completed
 
@@ -26,8 +27,10 @@ compatibility hardening, shared small-key overhead, and release-scale validation
 - Native LIST with packed ordered storage, compatibility mutations, cross-key
   moves, and blocking waiter/wakeup commands.
 - Native ZSET with adaptive score/member packing, score/lex/rank ranges, algebra,
-  pop/random/scan operations, and range-store operations.
+  pop/random/scan/range-store operations, and blocking pop commands.
 - Mixed SET/ZSET algebra with `WEIGHTS` and `AGGREGATE SUM|MIN|MAX|COUNT`.
+- Blocking LIST and ZSET waits register before readiness checks, use per-key wakeup
+  signaling, and do not hold the AOF durability mutex while sleeping.
 - Logical AOF and snapshot persistence with checksums, restart recovery,
   truncated-final-frame handling, corruption rejection, and online AOF rewrite.
 - Prometheus metrics and a separate loopback-only administration listener.
@@ -37,14 +40,18 @@ compatibility hardening, shared small-key overhead, and release-scale validation
 ## Current verification
 
 - Go 1.27.1 is used locally and in CI.
-- `go test -race -count=1 ./...` is green for the operational ZSET branch.
-- `go vet ./...` is green.
-- RESP fuzz is green after the ZMPOP arity correction.
+- `go test -race -count=1 ./...` is green for the blocking ZSET implementation.
+- `go vet ./...` and RESP fuzz remain part of the required CI gate.
+- Blocking ZSET tests cover immediate replies, fractional timeout, key priority,
+  wake-on-`ZADD`, `BZMPOP COUNT`, nested RESP2 replies, shutdown cancellation, and
+  validation errors.
+- A dedicated durability test verifies a sleeping `BZPOPMIN` does not retain
+  `durableMu`; only the producer write and eventual pop append durable state.
 - AOF restart tests cover generic recovery plus native HASH/SET/LIST/ZSET writes.
 - Atomic OOM rollback tests cover multi-key LIST moves, ZSET algebra stores, and
   ZSET range-store/multi-pop paths.
 - Local redis-cli smoke tests have validated LIST blocking behavior, ZSET core,
-  score ranges, lex ranges, and ZSET algebra/store behavior.
+  score ranges, lex ranges, ZSET algebra/store behavior, and non-blocking ZSET pops.
 
 ## Native datatype benchmark results
 
@@ -124,7 +131,6 @@ with LZ4. Random and already-compressed inputs stayed raw. See
 
 ## Remaining engineering work
 
-- Blocking ZSET commands: `BZPOPMIN`, `BZPOPMAX`, `BZMPOP`.
 - Strict WRONGTYPE audit for legacy scalar/numeric/bit commands against native containers.
 - Infinite blocking client-disconnect detection hardening.
 - Scan/glob compatibility audit.

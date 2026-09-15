@@ -17,11 +17,14 @@ All notable changes to SnugKV will be documented in this file.
   `BRPOPLPUSH` waiter/wakeup support.
 - Native ZSET datatype with adaptive integer score delta encoding, member front
   coding, rank/score/lex ranges, algebra/store commands, pop/random/scan commands,
-  and `ZRANGESTORE`.
+  `ZRANGESTORE`, and blocking pop operations.
 - Mixed SET/ZSET `ZUNION`/`ZINTER` inputs with `WEIGHTS` and
   `AGGREGATE SUM|MIN|MAX|COUNT`.
 - `ZPOPMIN`, `ZPOPMAX`, `ZMPOP`, `ZMSCORE`, `ZRANDMEMBER`, `ZSCAN`, and
   `ZRANGESTORE`, including dynamic durability-key handling for multi-key pops.
+- `BZPOPMIN`, `BZPOPMAX`, and `BZMPOP` with fractional timeouts, per-key
+  waiter/wakeup signaling, Redis-compatible RESP2 reply shapes, and shutdown
+  cancellation for infinite waits.
 - Dedicated HASH, SET, LIST, and ZSET benchmark harnesses and documented 100k-key
   memory comparison matrices.
 - RESP2 TCP server with bounded protocol parsing.
@@ -48,7 +51,8 @@ All notable changes to SnugKV will be documented in this file.
 
 - Atomic max-memory rollback for native container mutations and multi-key stores.
 - AOF restart coverage for HASH, SET, LIST, and ZSET mutations.
-- Blocking LIST commands wait outside the durability mutex.
+- Blocking LIST and ZSET commands wait outside the durability mutex.
+- Blocking ZSET waits register before readiness checks to avoid lost wakeups.
 - Dynamic durability snapshots for `ZMPOP` candidate keys.
 - Large arena allocations up to the RESP bulk-size boundary.
 - Connection-level panic recovery.
@@ -58,7 +62,9 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Verified
 
-- Full race suite, `go vet`, and RESP fuzz are green for the operational ZSET branch.
+- Full race suite, `go vet`, and RESP fuzz are green for the native datatype work.
+- Blocking ZSET tests cover immediate/wakeup/timeout behavior, key priority,
+  `BZMPOP COUNT`, shutdown cancellation, and the AOF durability-lock invariant.
 - Local redis-cli smoke tests validated LIST blocking behavior and ZSET core, range,
   lex, algebra, and store semantics.
 - 100k-key native datatype benchmark matrices are recorded in
