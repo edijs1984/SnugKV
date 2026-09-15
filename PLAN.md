@@ -13,10 +13,12 @@ implemented, including non-polling blocking operations for LIST and ZSET.
 
 The packed storage formats for HASH, SET, LIST, and ZSET are frozen for v1. The
 legacy scalar/native-container WRONGTYPE audit is complete for the current command
-surface. Linux TCP builds now proactively cancel blocked LIST/ZSET waiters when a
-client disconnects without consuming queued protocol bytes. The next compatibility
-item is scan/glob behavior; the next memory work should target shared per-key
-overhead rather than adding more container-specific encodings.
+surface. Linux TCP builds proactively cancel blocked LIST/ZSET waiters when a
+client disconnects without consuming queued protocol bytes. The SCAN-family audit
+is also complete for v1: matching is binary-safe, COUNT is a work hint, global
+SCAN supports TYPE, and cursor tokens remain explicitly opaque snapshot indexes.
+The next memory work should target shared per-key overhead rather than adding more
+container-specific encodings.
 
 ## Completed milestones
 
@@ -86,11 +88,19 @@ overhead rather than adding more container-specific encodings.
 - [x] Dynamic durability key discovery for `ZMPOP` and destination-as-source safety for stores.
 - [x] TTL, OOM rollback, persistence, race, RESP, and benchmark coverage.
 
+### SCAN family compatibility
+
+- [x] Shared binary-safe MATCH implementation for keyspace/HASH/SET/ZSET scans.
+- [x] Redis-style `*`, `?`, character classes/ranges, negation, and escaping.
+- [x] Explicit empty MATCH pattern semantics.
+- [x] COUNT-as-work-hint behavior, including empty pages with non-zero cursors.
+- [x] Global `SCAN ... TYPE` filtering.
+- [x] Regression matrix for keyspace, HSCAN, SSCAN, and ZSCAN behavior.
+
 ## Remaining work / TODO
 
 ### P0 — harden compatibility of the completed datatype surface
 
-- [ ] Review scan compatibility edge cases (`MATCH`, `COUNT`, glob character classes, cursor semantics) across `SCAN`, `HSCAN`, `SSCAN`, and `ZSCAN`.
 - [ ] Add equivalent proactive blocked-client disconnect detection for non-Linux server builds if cross-platform server parity is required for v1.
 
 ### P1 — shared memory overhead
