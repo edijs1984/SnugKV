@@ -164,10 +164,19 @@ func (s *Store) makeEntryForShard(sh *shard, value []byte) preparedEntry {
 }
 
 func (s *Store) decode(sh *shard, e entry) []byte {
+	encoded := sh.encoded(e)
+	if e.valueType == TypeHash && isShapedHash(encoded) {
+		out, err := s.decodeShapedHash(encoded, int(e.rawLength))
+		if err != nil {
+			panic(err)
+		}
+		return out
+	}
+
 	out, err := s.codecs.Decode(codec.Record{
 		ID:        e.codecID,
 		RawLength: int(e.rawLength),
-		Data:      sh.encoded(e),
+		Data:      encoded,
 		Schema:    e.schema,
 	}, int(e.rawLength))
 	// Only verified immutable records are published. A failure is an internal

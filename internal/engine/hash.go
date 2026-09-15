@@ -24,6 +24,8 @@ type HashStats struct {
 	FieldBytes  int
 	ValueBytes  int
 	PackedBytes int
+	StoredBytes int
+	Encoding    string
 }
 
 func hashWrongType() error {
@@ -204,18 +206,26 @@ func packedHashLookup(data, target []byte) ([]byte, bool, error) {
 	return nil, false, nil
 }
 
-func hashEntry(data []byte) preparedEntry {
+func (s *Store) hashEntry(pairs []HashPair, packed []byte) preparedEntry {
+	stored := packed
+	if shapeID, ok := s.hashShapeID(pairs, len(packed)); ok {
+		shaped := encodeShapedHash(shapeID, pairs)
+		if len(shaped)+hashShapeMinSavings <= len(packed) {
+			stored = shaped
+		}
+	}
 	return preparedEntry{
 		entry: entry{
 			valueType: TypeHash,
-			rawLength: uint32(len(data)),
+			rawLength: uint32(len(packed)),
 		},
-		data: append([]byte(nil), data...),
+		data: append([]byte(nil), stored...),
 	}
 }
 
 // HashSet updates one or more field/value pairs and returns the number of newly
-// inserted fields. The stored representation remains one packed arena value.
+// inserted fields. The logical representation remains canonical packed HASH;
+// repeated field layouts may use a smaller shared-shape physical representation.
 func (s *Store) HashSet(key string, fields, values [][]byte) (int64, error) {
 	if len(fields) == 0 || len(fields) != len(values) {
 		return 0, errors.New("ERR invalid hash field/value count")
@@ -274,7 +284,7 @@ func (s *Store) HashSet(key string, fields, values [][]byte) (int64, error) {
 		return 0, err
 	}
 
-	updated := hashEntry(packed)
+	updated := s.hashEntry(pairs, packed)
 	updated.expiresAt = expiresAt
 	if err := s.publish(sh, key, updated); err != nil {
 		return 0, err
@@ -384,7 +394,7 @@ func (s *Store) HashDel(key string, fields [][]byte) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	updated := hashEntry(packed)
+	updated := s.hashEntry(kept, packed)
 	updated.expiresAt = e.expiresAt
 	if err := s.publish(sh, key, updated); err != nil {
 		return 0, err
@@ -406,15 +416,22 @@ func (s *Store) HashStorageStats(key string) (HashStats, bool, error) {
 		return HashStats{}, false, hashWrongType()
 	}
 
+	physical := sh.encoded(e)
 	packed := s.decode(sh, e)
 	pairs, err := decodePackedHash(packed)
 	if err != nil {
 		return HashStats{}, false, err
 	}
 
+	encoding := "packed"
+	if isShapedHash(physical) {
+		encoding = "shape"
+	}
 	stats := HashStats{
 		Fields:      len(pairs),
 		PackedBytes: len(packed),
+		StoredBytes: len(physical),
+		Encoding:    encoding,
 	}
 	for _, pair := range pairs {
 		stats.FieldBytes += len(pair.Field)

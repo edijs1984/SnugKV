@@ -64,6 +64,9 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 		if len(record.Value) > 32<<20 {
 			return errors.New("ERR recovered value exceeds 32 MiB limit")
 		}
+		if record.ValueType > uint8(TypeHash) {
+			return errors.New("ERR recovered value has unknown type")
+		}
 	}
 	unlock := s.lockAll()
 	defer unlock()
@@ -77,16 +80,22 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 			delete(updates, key)
 			continue
 		}
-		e := s.makeEntry(record.Value)
 
-		if record.ValueType > uint8(TypeHash) {
-			return errors.New("ERR recovered value has unknown type")
-		}
+		var e preparedEntry
+		if record.ValueType == uint8(TypeHash) {
+			pairs, err := decodePackedHash(record.Value)
+			if err != nil {
+				return errors.New("ERR recovered HASH value is invalid")
+			}
+			e = s.hashEntry(pairs, record.Value)
+		} else {
+			e = s.makeEntry(record.Value)
 
-		// Zero is TypeString and also keeps old persistence files compatible.
-		// Non-zero types are restored exactly from persisted metadata.
-		if record.ValueType != 0 {
-			e.valueType = ValueType(record.ValueType)
+			// Zero is TypeString and also keeps old persistence files compatible.
+			// Non-zero types are restored exactly from persisted metadata.
+			if record.ValueType != 0 {
+				e.valueType = ValueType(record.ValueType)
+			}
 		}
 
 		if record.ExpiresAtMS != 0 {
@@ -153,9 +162,12 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 		}
 
 		// Restore runs with all shards locked. Rebuild ephemeral JSON-shape
-		// admission state from the restored logical value.
-		if current, ok := sh.get(key); ok {
-			s.observeJSONShapeLocked(sh, s.decode(sh, current))
+		// admission state from restored logical string/JSON values. HASH shapes
+		// are rebuilt earlier while constructing TypeHash prepared entries.
+		if e.valueType != TypeHash {
+			if current, ok := sh.get(key); ok {
+				s.observeJSONShapeLocked(sh, s.decode(sh, current))
+			}
 		}
 	}
 	return nil
@@ -188,6 +200,7 @@ func (s *Store) resetForRecovery() {
 	}
 
 	s.dropGlobalShapeStoreLocked()
+	s.dropGlobalHashShapeStoreLocked()
 }
 func (s *Store) FlushDB() {
 	s.resetForRecovery()
