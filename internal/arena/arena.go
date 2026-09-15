@@ -206,23 +206,20 @@ func segmentSizeForBlock(block int) int {
 
 // segmentSizeForAllocation stages small-value growth so sparse shards reserve
 // only what they are likely to use: roughly 256 bytes for the first segment,
-// roughly 1 KiB for the second, then the normal dense 8 KiB policy. Each staged
-// segment is rounded down to an exact multiple of the block class.
+// roughly 1 KiB for the second, then the normal dense segment policy. Only the
+// two sparse stages are rounded to exact block multiples.
 func segmentSizeForAllocation(block, existingSegments int) int {
-	if block > 1024 {
+	if block > 1024 || existingSegments >= 2 {
 		return segmentSizeForBlock(block)
 	}
 
-	target := SegmentBytes
-	switch existingSegments {
-	case 0:
-		target = firstSmallSegmentBytes
-	case 1:
+	target := firstSmallSegmentBytes
+	if existingSegments == 1 {
 		target = secondSmallSegmentBytes
 	}
 
 	if target < block {
-		target = block
+		return block
 	}
 
 	blocks := target / block
