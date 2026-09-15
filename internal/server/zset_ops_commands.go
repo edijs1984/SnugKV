@@ -9,12 +9,12 @@ import (
 )
 
 var zsetOpsCommands = map[string]commandInfo{
-	"ZPOPMIN":    {2, 3, 1, 1, 1, true},
-	"ZPOPMAX":    {2, 3, 1, 1, 1, true},
-	"ZMPOP":      {5, 0, 0, 0, 0, true},
-	"ZMSCORE":    {3, 0, 1, 1, 1, false},
+	"ZPOPMIN":     {2, 3, 1, 1, 1, true},
+	"ZPOPMAX":     {2, 3, 1, 1, 1, true},
+	"ZMPOP":       {5, 0, 0, 0, 0, true},
+	"ZMSCORE":     {3, 0, 1, 1, 1, false},
 	"ZRANDMEMBER": {2, 4, 1, 1, 1, false},
-	"ZSCAN":      {3, 0, 1, 1, 1, false},
+	"ZSCAN":       {3, 0, 1, 1, 1, false},
 	"ZRANGESTORE": {5, 0, 1, 1, 1, true},
 }
 
@@ -183,34 +183,11 @@ func (s *Server) executeZSetOps(args [][]byte) ([]byte, error) {
 		if err != nil {
 			return nil, errors.New("ERR invalid cursor")
 		}
-		pattern := "*"
-		count := 10
-		seenMatch, seenCount := false, false
-		for i := 3; i < len(args); {
-			switch strings.ToUpper(string(args[i])) {
-			case "MATCH":
-				if seenMatch || i+1 >= len(args) {
-					return nil, errors.New("ERR syntax error")
-				}
-				pattern = string(args[i+1])
-				seenMatch = true
-				i += 2
-			case "COUNT":
-				if seenCount || i+1 >= len(args) {
-					return nil, errors.New("ERR syntax error")
-				}
-				value, err := strconv.Atoi(string(args[i+1]))
-				if err != nil || value <= 0 {
-					return nil, errors.New("ERR syntax error")
-				}
-				count = value
-				seenCount = true
-				i += 2
-			default:
-				return nil, errors.New("ERR syntax error")
-			}
+		options, err := parseScanOptions(args[3:], false, false)
+		if err != nil {
+			return nil, err
 		}
-		next, items, err := s.store.ZSetScan(string(args[1]), cursor, count, pattern)
+		next, items, err := s.store.ZSetScanCompat(string(args[1]), cursor, options.Count, options.Pattern)
 		if err != nil {
 			return nil, err
 		}
@@ -224,22 +201,38 @@ func (s *Server) executeZSetOps(args [][]byte) ([]byte, error) {
 		for i := 5; i < len(args); {
 			switch strings.ToUpper(string(args[i])) {
 			case "BYSCORE":
-				if byScore || byLex { return nil, errors.New("ERR syntax error") }
-				byScore = true; i++
+				if byScore || byLex {
+					return nil, errors.New("ERR syntax error")
+				}
+				byScore = true
+				i++
 			case "BYLEX":
-				if byScore || byLex { return nil, errors.New("ERR syntax error") }
-				byLex = true; i++
+				if byScore || byLex {
+					return nil, errors.New("ERR syntax error")
+				}
+				byLex = true
+				i++
 			case "REV":
-				if reverse { return nil, errors.New("ERR syntax error") }
-				reverse = true; i++
+				if reverse {
+					return nil, errors.New("ERR syntax error")
+				}
+				reverse = true
+				i++
 			case "LIMIT":
-				if hasLimit || i+2 >= len(args) { return nil, errors.New("ERR syntax error") }
+				if hasLimit || i+2 >= len(args) {
+					return nil, errors.New("ERR syntax error")
+				}
 				var err error
 				offset, err = strconv.ParseInt(string(args[i+1]), 10, 64)
-				if err != nil { return nil, errors.New("ERR value is not an integer or out of range") }
+				if err != nil {
+					return nil, errors.New("ERR value is not an integer or out of range")
+				}
 				count, err = strconv.ParseInt(string(args[i+2]), 10, 64)
-				if err != nil { return nil, errors.New("ERR value is not an integer or out of range") }
-				hasLimit = true; i += 3
+				if err != nil {
+					return nil, errors.New("ERR value is not an integer or out of range")
+				}
+				hasLimit = true
+				i += 3
 			default:
 				return nil, errors.New("ERR syntax error")
 			}
@@ -248,37 +241,63 @@ func (s *Server) executeZSetOps(args [][]byte) ([]byte, error) {
 			var min, max engine.ZSetScoreBound
 			var err error
 			if reverse {
-				max, err = parseZSetScoreBound(args[3]); if err == nil { min, err = parseZSetScoreBound(args[4]) }
+				max, err = parseZSetScoreBound(args[3])
+				if err == nil {
+					min, err = parseZSetScoreBound(args[4])
+				}
 			} else {
-				min, err = parseZSetScoreBound(args[3]); if err == nil { max, err = parseZSetScoreBound(args[4]) }
+				min, err = parseZSetScoreBound(args[3])
+				if err == nil {
+					max, err = parseZSetScoreBound(args[4])
+				}
 			}
-			if err != nil { return nil, err }
+			if err != nil {
+				return nil, err
+			}
 			stored, err := s.store.ZSetRangeStoreByScore(destination, source, min, max, reverse, offset, count)
-			if err != nil { return nil, err }
+			if err != nil {
+				return nil, err
+			}
 			return integer(stored), nil
 		}
 		if byLex {
 			var min, max engine.ZSetLexBound
 			var err error
 			if reverse {
-				max, err = parseZSetLexBound(args[3]); if err == nil { min, err = parseZSetLexBound(args[4]) }
+				max, err = parseZSetLexBound(args[3])
+				if err == nil {
+					min, err = parseZSetLexBound(args[4])
+				}
 			} else {
-				min, err = parseZSetLexBound(args[3]); if err == nil { max, err = parseZSetLexBound(args[4]) }
+				min, err = parseZSetLexBound(args[3])
+				if err == nil {
+					max, err = parseZSetLexBound(args[4])
+				}
 			}
-			if err != nil { return nil, err }
+			if err != nil {
+				return nil, err
+			}
 			stored, err := s.store.ZSetRangeStoreByLex(destination, source, min, max, reverse, offset, count)
-			if err != nil { return nil, err }
+			if err != nil {
+				return nil, err
+			}
 			return integer(stored), nil
 		}
 		if hasLimit {
 			return nil, errors.New("ERR syntax error")
 		}
 		start, err := strconv.ParseInt(string(args[3]), 10, 64)
-		if err != nil { return nil, errors.New("ERR value is not an integer or out of range") }
+		if err != nil {
+			return nil, errors.New("ERR value is not an integer or out of range")
+		}
 		stop, err := strconv.ParseInt(string(args[4]), 10, 64)
-		if err != nil { return nil, errors.New("ERR value is not an integer or out of range") }
+		if err != nil {
+			return nil, errors.New("ERR value is not an integer or out of range")
+		}
 		stored, err := s.store.ZSetRangeStoreByRank(destination, source, start, stop, reverse)
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 		return integer(stored), nil
 	}
 	return nil, fmt.Errorf("ERR unknown command '%s'", cmd)
