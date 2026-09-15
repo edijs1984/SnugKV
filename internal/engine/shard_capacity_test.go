@@ -2,7 +2,7 @@ package engine
 
 import "testing"
 
-func TestEntryCapacityRampsSmallShardsBeforeQuarterGrowth(t *testing.T) {
+func TestEntryCapacityUsesSparseRampThenDenseGrowthFloor(t *testing.T) {
 	var sh shard
 
 	if got := sh.entryCapacityFor(1); got != 8 {
@@ -15,9 +15,12 @@ func TestEntryCapacityRampsSmallShardsBeforeQuarterGrowth(t *testing.T) {
 		{8, 8, 16},
 		{16, 16, 32},
 		{32, 32, 64},
-		{64, 64, 80},
-		{80, 80, 100},
-		{100, 100, 125},
+		{64, 64, 128},
+		{128, 128, 192},
+		{192, 192, 256},
+		{256, 256, 320},
+		{320, 320, 400},
+		{400, 400, 500},
 	} {
 		sh.entries = make([]entry, tc.length, tc.capacity)
 		sh.freeIDs = nil
@@ -45,7 +48,23 @@ func TestEntryCapacityCanPlanBatchGrowth(t *testing.T) {
 	if got := sh.entryCapacityFor(63); got != 64 {
 		t.Fatalf("batch capacity = %d, want 64", got)
 	}
-	if got := sh.entryCapacityFor(65); got != 80 {
-		t.Fatalf("batch capacity crossing 64 = %d, want 80", got)
+	if got := sh.entryCapacityFor(65); got != 128 {
+		t.Fatalf("batch capacity crossing 64 = %d, want 128", got)
+	}
+	if got := sh.entryCapacityFor(390); got != 400 {
+		t.Fatalf("dense shard capacity = %d, want 400", got)
+	}
+}
+
+func TestEntryCapacityPreservesSparseEightSlotFloor(t *testing.T) {
+	var sh shard
+	for i := 0; i < 8; i++ {
+		if len(sh.entries) == cap(sh.entries) {
+			sh.entries = make([]entry, len(sh.entries), sh.entryCapacityFor(1))
+		}
+		sh.entries = append(sh.entries, entry{})
+	}
+	if cap(sh.entries) != 8 {
+		t.Fatalf("sparse shard capacity = %d, want 8", cap(sh.entries))
 	}
 }
