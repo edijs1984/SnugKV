@@ -6,7 +6,6 @@ import (
 	"math/bits"
 	"sort"
 	"strconv"
-	"sync/atomic"
 	"time"
 )
 
@@ -147,7 +146,11 @@ func (s *Store) MSet(keys []string, values [][]byte) error {
 	defer unlock()
 	replacements := make(map[string]preparedEntry)
 	for i, k := range keys {
-		replacements[k] = s.makeEntry(values[i])
+		e := s.makeEntry(values[i])
+		if s.shouldTrackActivity(e.entry) {
+			e.entryMeta = &entryMeta{}
+		}
+		replacements[k] = e
 	}
 	ordered := make([]string, 0, len(replacements))
 	for key := range replacements {
@@ -156,6 +159,7 @@ func (s *Store) MSet(keys []string, values [][]byte) error {
 	sort.Strings(ordered)
 	var before, after, extra, extraEntries, extraArena uint64
 	var oldPayload, oldLiveBlocks uint64
+	var oldMetaBytes, newMetaBytes uint64
 	var newPayload uint64
 
 	allocations := make(map[*shard][]int)
@@ -167,6 +171,7 @@ func (s *Store) MSet(keys []string, values [][]byte) error {
 
 		if old, ok := sh.get(k); ok {
 			before += entryCharge(k, old)
+			oldMetaBytes += metadataCharge(old)
 			oldPayload += uint64(len(sh.encoded(old)))
 			oldLiveBlocks += sh.arena.AllocationBytes(old.ref)
 		} else {
@@ -174,6 +179,7 @@ func (s *Store) MSet(keys []string, values [][]byte) error {
 		}
 
 		after += entryCharge(k, e)
+		newMetaBytes += metadataCharge(e.entry)
 		newPayload += uint64(len(e.data))
 		allocations[sh] = append(allocations[sh], len(e.data))
 	}
@@ -186,13 +192,14 @@ func (s *Store) MSet(keys []string, values [][]byte) error {
 	}
 	s.memory.mu.Lock()
 	defer s.memory.mu.Unlock()
-	next := s.memory.used - before + after + extra + extraEntries + extraArena
+	next := s.memory.used - before - oldMetaBytes + after + newMetaBytes + extra + extraEntries + extraArena
 	if s.memory.max > 0 && next > s.memory.max {
 		return ErrOOM
 	}
 	s.memory.used = next
 	s.memory.entries =
 		s.memory.entries - before + after + extraEntries
+	s.memory.metas = s.memory.metas - oldMetaBytes + newMetaBytes
 	s.memory.index += extra
 	s.memory.arenas += extraArena
 	var newLiveBlocks uint64
@@ -214,15 +221,17 @@ func (s *Store) MSet(keys []string, values [][]byte) error {
 		s.memory.arenaLiveBlocks - oldLiveBlocks + newLiveBlocks
 	for _, k := range ordered {
 		e := replacements[k]
-		e.version = atomic.AddUint64(&s.version, 1)
 		sh := s.shardFor(k)
 		old, exists := sh.get(k)
-		if exists && old.schema != nil {
-			sh.shapes.ReleaseRecord(old.schema, sh.encoded(old))
+		if exists && old.entryMeta != nil && old.entryMeta.schema != nil {
+			sh.shapes.ReleaseRecord(old.entryMeta.schema, sh.encoded(old))
 		}
-		e.lastWrite = activityStampOf(s.now())
-		e.lastAccess = e.lastWrite
-		e.writes = 1
+		if s.shouldTrackActivity(e.entry) {
+			meta := e.ensureMeta()
+			meta.lastWrite = activityStampOf(s.now())
+			meta.lastAccess = meta.lastWrite
+			meta.writes = 1
+		}
 		sh.set(k, e.entry)
 		if exists {
 			sh.arena.Free(old.ref)
@@ -276,7 +285,11 @@ func (s *Store) MSetNX(keys []string, values [][]byte) (bool, error) {
 	replacements := make(map[string]preparedEntry, len(keys))
 
 	for i, key := range keys {
-		replacements[key] = s.makeEntry(values[i])
+		e := s.makeEntry(values[i])
+		if s.shouldTrackActivity(e.entry) {
+			e.entryMeta = &entryMeta{}
+		}
+		replacements[key] = e
 	}
 
 	ordered := make([]string, 0, len(replacements))
@@ -288,6 +301,7 @@ func (s *Store) MSetNX(keys []string, values [][]byte) (bool, error) {
 	sort.Strings(ordered)
 
 	var entryBytes uint64
+	var metaBytes uint64
 	var extraIndex uint64
 	var extraEntries uint64
 	var extraArena uint64
@@ -301,6 +315,7 @@ func (s *Store) MSetNX(keys []string, values [][]byte) (bool, error) {
 		sh := s.shardFor(key)
 
 		entryBytes += entryCharge(key, e)
+		metaBytes += metadataCharge(e.entry)
 		newPayload += uint64(len(e.data))
 
 		growth[sh]++
@@ -321,6 +336,7 @@ func (s *Store) MSetNX(keys []string, values [][]byte) (bool, error) {
 
 	next := s.memory.used +
 		entryBytes +
+		metaBytes +
 		extraIndex +
 		extraEntries +
 		extraArena
@@ -331,6 +347,7 @@ func (s *Store) MSetNX(keys []string, values [][]byte) (bool, error) {
 
 	s.memory.used = next
 	s.memory.entries += entryBytes + extraEntries
+	s.memory.metas += metaBytes
 	s.memory.index += extraIndex
 	s.memory.arenas += extraArena
 
@@ -353,10 +370,12 @@ func (s *Store) MSetNX(keys []string, values [][]byte) (bool, error) {
 		e := replacements[key]
 		sh := s.shardFor(key)
 
-		e.version = atomic.AddUint64(&s.version, 1)
-		e.lastWrite = activityStampOf(now)
-		e.lastAccess = e.lastWrite
-		e.writes = 1
+		if s.shouldTrackActivity(e.entry) {
+			meta := e.ensureMeta()
+			meta.lastWrite = activityStampOf(now)
+			meta.lastAccess = meta.lastWrite
+			meta.writes = 1
+		}
 
 		sh.set(key, e.entry)
 		sh.schedule(key, e.expiresAt)
@@ -383,17 +402,20 @@ func (s *Store) MGet(keys []string) ([][]byte, []bool) {
 
 		values[i] = s.decode(sh, e)
 
-		if now.Sub(e.lastAccess.Time()) > time.Minute {
-			e.reads = 0
+		if s.shouldTrackActivity(e) {
+			meta := e.ensureMeta()
+			if now.Sub(meta.lastAccess.Time()) > time.Minute {
+				meta.reads = 0
+			}
+
+			meta.lastAccess = activityStampOf(now)
+
+			if meta.reads < ^uint8(0) {
+				meta.reads++
+			}
+
+			sh.set(key, e)
 		}
-
-		e.lastAccess = activityStampOf(now)
-
-		if e.reads < ^uint8(0) {
-			e.reads++
-		}
-
-		sh.set(key, e)
 		found[i] = true
 	}
 
@@ -500,7 +522,6 @@ func (s *Store) expireAtConditional(
 	}
 
 	e.expiresAt = stampOf(when)
-	e.version = atomic.AddUint64(&s.version, 1)
 
 	sh.set(key, e)
 	sh.schedule(key, e.expiresAt)
@@ -521,7 +542,6 @@ func (s *Store) Persist(key string) bool {
 		return false
 	}
 	e.expiresAt = 0
-	e.version = atomic.AddUint64(&s.version, 1)
 	sh.set(key, e)
 	sh.schedule(key, e.expiresAt)
 	return true
@@ -1392,7 +1412,6 @@ func (s *Store) GetEx(
 
 	if persist {
 		e.expiresAt = 0
-		e.version = atomic.AddUint64(&s.version, 1)
 
 		sh.set(key, e)
 		sh.schedule(key, e.expiresAt)
@@ -1409,7 +1428,6 @@ func (s *Store) GetEx(
 		}
 
 		e.expiresAt = stampOf(*expireAt)
-		e.version = atomic.AddUint64(&s.version, 1)
 
 		sh.set(key, e)
 		sh.schedule(key, e.expiresAt)
