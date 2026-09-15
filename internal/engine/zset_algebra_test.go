@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"math"
 	"strings"
 	"testing"
 	"time"
