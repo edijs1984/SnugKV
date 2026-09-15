@@ -16,7 +16,7 @@ type entry struct {
 	schema                                           *jsonshape.Schema
 	version                                          uint64
 	expiresAt                                        stamp
-	lastRewrite, lastOptimize, lastAccess, lastWrite stamp
+	lastRewrite, lastOptimize, lastAccess, lastWrite activityStamp
 	rawLength                                        uint32
 	reads, writes                                    uint8
 	codecID                                          codec.ID
@@ -108,7 +108,7 @@ func (s *Store) Get(key string) ([]byte, bool) {
 	if s.now().Sub(e.lastAccess.Time()) > time.Minute {
 		e.reads = 0
 	}
-	e.lastAccess = stampOf(s.now())
+	e.lastAccess = activityStampOf(s.now())
 	if e.reads < ^uint8(0) {
 		e.reads++
 	}
