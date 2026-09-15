@@ -30,15 +30,29 @@ the affected key set from command arguments before mutation.
 
 ## Blocking commands
 
-`BLPOP`, `BRPOP`, `BLMOVE`, and `BRPOPLPUSH` use a waiter/wakeup registry rather
-than polling. A blocking wait does not hold the AOF durability mutex. Once a key is
-signaled, the actual pop/move is retried through the normal durable mutation path.
-This avoids a sleeping client stalling unrelated durable writes and closes the
-register/check/sleep lost-wakeup race.
+LIST blocking commands (`BLPOP`, `BRPOP`, `BLMOVE`, `BRPOPLPUSH`) and ZSET
+blocking commands (`BZPOPMIN`, `BZPOPMAX`, `BZMPOP`) use per-key waiter/wakeup
+registries rather than polling.
 
-A timeout of `0` means an infinite wait. Server shutdown cancels infinite LIST
-waiters. Proactive cancellation when an infinitely blocked client disconnects is a
-remaining hardening item. Blocking ZSET commands are not implemented yet.
+The waiter is registered before the read-only readiness check. This closes the
+register/check/sleep lost-wakeup race: a producer either makes the value visible to
+the readiness check or closes the waiter's channel after the check. Multiple
+waiters can wake on the same write and race through the normal atomic mutation
+path; losers re-register and continue waiting.
+
+A sleeping blocker does not hold the AOF durability mutex. Once a relevant key is
+signaled, the actual `LPOP`/`RPOP`/`LMOVE`, `ZPOPMIN`/`ZPOPMAX`, or `ZMPOP`
+operation is executed through the same durable path as the corresponding
+non-blocking command. Empty readiness checks are read-only and do not append no-op
+AOF state.
+
+Blocking ZSET commands preserve Redis RESP2 reply shapes: `BZPOPMIN`/`BZPOPMAX`
+return `[key, member, score]`; `BZMPOP` returns `[key, [[member, score], ...]]`.
+A timeout produces a nil array reply. Timeouts accept fractional seconds and `0`
+means an infinite wait.
+
+Server shutdown cancels infinite LIST and ZSET waiters. Proactive cancellation
+when an infinitely blocked client disconnects is a remaining hardening item.
 
 ## RESP version
 
