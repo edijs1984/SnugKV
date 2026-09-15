@@ -39,7 +39,11 @@ func (s *Server) Execute(args [][]byte) (response []byte, resultErr error) {
 
 func (s *Server) executeDurable(args [][]byte) ([]byte, error) {
 	if s.journal == nil {
-		return s.executePressure(args)
+		result, err := s.executePressure(args)
+		if err == nil {
+			s.signalListAvailability(args, result)
+		}
+		return result, err
 	}
 	s.durableMu.Lock()
 	defer s.durableMu.Unlock()
@@ -77,6 +81,7 @@ func (s *Server) executeDurable(args [][]byte) ([]byte, error) {
 			return nil, errors.New("ERR persistence append failed")
 		}
 
+		s.signalListAvailability(args, result)
 		return result, nil
 	}
 
@@ -105,5 +110,6 @@ func (s *Server) executeDurable(args [][]byte) ([]byte, error) {
 		}
 		return nil, errors.New("ERR persistence append failed")
 	}
+	s.signalListAvailability(args, result)
 	return result, nil
 }
