@@ -66,6 +66,7 @@ func (s *TCPServer) Close() error {
 		s.mu.Lock()
 		s.closing = true
 		child := s.admin
+		s.server.CancelBlocking()
 		s.listener.Close()
 		for conn := range s.connections {
 			conn.Close()

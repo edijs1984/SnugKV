@@ -15,6 +15,7 @@ type Journal interface {
 // SetJournal is a startup-only operation. Durable commands are serialized so
 // clients cannot observe a mutation whose journal append later fails.
 func (s *Server) SetJournal(j Journal) { s.journal = j }
+
 func (s *Server) Execute(args [][]byte) (response []byte, resultErr error) {
 	atomic.AddUint64(&s.commands, 1)
 	start := time.Now()
@@ -26,8 +27,23 @@ func (s *Server) Execute(args [][]byte) (response []byte, resultErr error) {
 		}
 	}
 	defer func() { s.metrics.Observe(name, time.Since(start), resultErr != nil) }()
+
+	// Blocking LIST commands must not retain durableMu while sleeping. They wait
+	// outside the persistence critical section, then execute the eventual LPOP /
+	// RPOP / LMOVE mutation through executeDurable below.
+	if isBlockingListCommand(args) {
+		return s.executeBlockingList(args)
+	}
+	return s.executeDurable(args)
+}
+
+func (s *Server) executeDurable(args [][]byte) ([]byte, error) {
 	if s.journal == nil {
-		return s.executePressure(args)
+		result, err := s.executePressure(args)
+		if err == nil {
+			s.signalListAvailability(args, result)
+		}
+		return result, err
 	}
 	s.durableMu.Lock()
 	defer s.durableMu.Unlock()
@@ -65,6 +81,7 @@ func (s *Server) Execute(args [][]byte) (response []byte, resultErr error) {
 			return nil, errors.New("ERR persistence append failed")
 		}
 
+		s.signalListAvailability(args, result)
 		return result, nil
 	}
 
@@ -93,5 +110,6 @@ func (s *Server) Execute(args [][]byte) (response []byte, resultErr error) {
 		}
 		return nil, errors.New("ERR persistence append failed")
 	}
+	s.signalListAvailability(args, result)
 	return result, nil
 }
