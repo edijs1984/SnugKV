@@ -1,35 +1,120 @@
 # In-memory value representations
 
-The engine stores encoded values in generation-checked, power-of-two blocks within
-8 KiB segmented byte arenas. Entry metadata retains the codec ID, original length,
-arena reference, absolute expiration milliseconds, version, and bounded heat
-counters. The record is immutable after publication; shard locks protect arena
-views, and client reads return decoded copies.
+SnugKV separates logical Redis-compatible values from their physical in-memory
+representation. Scalar values may use adaptive codecs; HASH, SET, LIST, and ZSET
+are native semantic types with dedicated packed formats. Native container formats
+are excluded from the generic scalar optimizer.
 
-IDs follow the specification: 0 raw, 1 canonical signed integer (Go signed varint,
-zigzag), 3 lowercase hyphenated UUID (16 bytes), 4 UTC timestamp with exactly
-second precision (`2006-01-02T15:04:05Z`, signed Unix seconds in little-endian 8 bytes).
-ID 5 is exact JSON shape encoding, 6 is reserved for standalone dictionary values,
-9 is LZ4, and 10 is Zstandard. IDs 2, 7–8, and 11–31 remain reserved; unknown IDs
-fail decoding. Dictionary IDs are currently nested inside JSON shape slots.
+## Common entry and index layout
 
-The raw representation accepts all bytes. Noncanonical numerical strings, UUID
-case variants, timestamp offsets and fractional formatting stay raw. A candidate
-is selected only if smaller and exact reconstruction has been verified. Decoder
-output length is checked against both the record and caller-supplied limit.
-General decompression is limited to the stored original length. Registry
-construction precedes concurrent use; registration is not a runtime API.
+The current common `entry` is 40 bytes on the supported amd64 build. Optional
+activity/schema metadata lives in a sidecar and is normally absent for native
+containers. The open-addressed key index stores `string key`, a compact value
+handle, and slot state; `slot[uint32]` is 24 bytes. Index capacity grows in powers
+of two and keeps live load at or below 80%.
 
-The open-addressed index stores a stable FNV-1a hash and the complete key, so hash
-collisions cannot substitute another key. Capacity is explicit and uses a maximum
-70% load factor. Keys remain Go strings with a conservative entry charge.
+Values are stored in generation-checked segmented byte arenas. Arena allocation
+uses small exact/tight size classes plus geometric classes for larger values.
+Current segments are 8 KiB. Entry/index/arena reservations are explicitly charged
+to engine memory accounting.
 
-Memory reporting separates logical bytes, encoded payload bytes, arena capacity,
-index capacity, entry/key charges, and bounded schema/dictionary reservations.
-Arena and index compaction rebuild a shard under its write lock. Process RSS can
-differ because of allocator state, goroutine stacks, code, persistence buffers,
-network buffers, and benchmark-owned values.
+Because index and entry reservations are shared by every datatype, tiny values can
+be dominated by fixed per-key overhead. The 100k-key native-container benchmarks
+currently show roughly 31.5 B/key of index reservation and 54–55 B/key of
+entry/key accounting before payload. Sparse datasets can pay more because active
+shards reserve initial entry/arena capacity.
 
-Persistence uses `MCLOG001`, little-endian payload length, CRC32, and JSON logical
-records containing base64 key/value bytes and absolute expiration milliseconds.
-It stores logical state rather than this in-memory representation.
+## Scalar codecs
+
+Raw scalar storage accepts arbitrary bytes. Optional encoding can select only an
+exact, verified representation that is smaller than raw input.
+
+Codec IDs currently include:
+
+- `0`: raw;
+- `1`: canonical signed integer;
+- `3`: lowercase hyphenated UUID;
+- `4`: UTC second-precision timestamp;
+- `5`: exact JSON-shape representation;
+- `6`: reserved for standalone dictionary values; dictionary IDs are currently nested in JSON-shape slots;
+- `9`: LZ4;
+- `10`: Zstandard.
+
+Unknown codec IDs fail decoding. Decoder output is length-bounded and every
+selected candidate is reconstructed and compared before publication.
+
+## Native HASH
+
+Logical HASH values use canonical SH1 encoding: a versioned header followed by
+sorted binary-safe field/value pairs with varint lengths.
+
+A physical SH2 representation can reference a bounded in-memory shared field-shape
+catalog when repeated field layouts save enough memory. SH2 is an in-memory
+optimization only; export/persistence reconstructs canonical SH1. Tiny or unique
+hashes remain SH1. HASH mutations preserve TTL while the key survives.
+
+## Native SET
+
+Canonical SET state is SS1: a versioned header plus sorted unique binary-safe
+members with varint lengths.
+
+Physical storage is adaptive:
+
+- `singleton`: one-member raw physical form when safe;
+- `prefix`: compact fixed/structured member representation using front coding;
+- `packed`: canonical SS1 fallback.
+
+Logical persistence exports SS1 regardless of physical representation. SET
+mutations preserve TTL while the key survives.
+
+## Native LIST
+
+LIST uses canonical SL1 storage: a versioned header, element count, then ordered
+binary-safe elements with varint lengths. Duplicates and order are preserved.
+
+SL1 is intentionally the only v1 physical LIST representation. Benchmarks showed
+that small-list memory deficits are dominated by shared per-key overhead rather
+than list payload, so no datatype-specific adaptive LIST format is planned unless
+new evidence changes that conclusion.
+
+## Native ZSET
+
+ZSET values are always sorted by `(score, member)` and use versioned SZ formats.
+The decoder remains compatible with earlier physical versions.
+
+Current adaptive choices are:
+
+- raw float64 scores when integer-delta encoding is not applicable or not smaller;
+- exact int64 score encoding with delta varints when the full score stream is
+  smaller than raw float64;
+- raw member lengths/bytes when front coding is not smaller;
+- member prefix/front coding when the complete encoded representation shrinks.
+
+The current adaptive header can combine integer score deltas and member front
+coding. Fractional scores, infinities, dispersed members, or large integer gaps
+fall back automatically rather than paying a larger representation.
+
+ZSET deliberately has no permanent skiplist/tree or member hash index in v1.
+Member lookup/update and many queries decode the packed representation and operate
+in memory temporarily. Lex commands build a temporary lexicographic view instead
+of retaining a second index.
+
+## Persistence boundary
+
+Persistence stores logical state rather than depending on transient physical
+optimizations. Native container export validates/reconstructs their canonical
+logical representation before writing persistence records. In-memory shape IDs
+and adaptive physical choices therefore do not become durable compatibility
+requirements.
+
+AOF/snapshot frames use checksummed logical records with key/value bytes and
+expiration metadata. Restart tests cover native datatype recovery, truncated final
+AOF frames, and checksum-corruption rejection.
+
+## Memory reporting
+
+`SNUG.STATS`, `INFO memory`, and benchmark layout statistics separate key/index,
+entry reservation, arena reservation, live allocation, payload, schema, and
+metadata accounting. Engine-accounted memory is not process RSS; Go runtime state,
+network buffers, stacks, persistence buffers, allocator state, and benchmark-owned
+objects can make RSS materially different.

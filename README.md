@@ -1,8 +1,9 @@
 # SnugKV
 
-SnugKV is a single-node RESP2 in-memory store with exact byte round trips,
-bounded protocol handling, sharded concurrency, expiration, memory limits,
-optional adaptive encoding, eviction, and logical persistence.
+SnugKV is a single-node RESP2 in-memory datastore written in Go. It focuses on
+Redis-compatible application workloads, memory-efficient native containers,
+exact byte round trips, bounded protocol handling, sharded concurrency,
+expiration, memory limits, eviction, and logical persistence.
 
 Use Go 1.27 or newer:
 
@@ -23,8 +24,8 @@ Run it with Docker Compose:
 docker compose up --build
 ```
 
-The server then listens on `127.0.0.1:6380`. For a quick check, use a RESP2
-client such as `redis-cli`:
+The server then listens on `127.0.0.1:6380`. A RESP2 client such as
+`redis-cli` can be used directly:
 
 ```sh
 redis-cli -p 6380 ping
@@ -34,12 +35,12 @@ redis-cli -p 6380 get example
 
 See [operations](docs/operations.md) for configuration, persistence, metrics,
 and administration details. See [COMPATIBILITY.md](COMPATIBILITY.md) for tested
-clients, [KNOWN-LIMITATIONS.md](KNOWN-LIMITATIONS.md) for alpha limitations,
-and [SECURITY.md](SECURITY.md) for security guidance. Contributions should
-follow [CONTRIBUTING.md](CONTRIBUTING.md). Release changes are tracked in
-[CHANGELOG.md](CHANGELOG.md).
+clients and command caveats, [KNOWN-LIMITATIONS.md](KNOWN-LIMITATIONS.md) for
+current boundaries, [PLAN.md](PLAN.md) for the remaining roadmap, and
+[PROGRESS.md](PROGRESS.md) for current implementation evidence. Benchmark details
+are in [benchmarks/README.md](benchmarks/README.md).
 
-Supported commands:
+## Supported command surface
 
 - Connection: `PING`, `ECHO`, `QUIT`, `SELECT 0`, `HELLO 2`, `INFO`, `DBSIZE`, `COMMAND`.
 - Keys: `DEL`, `UNLINK`, `EXISTS`, `TYPE`, `TOUCH`, `KEYS`, `SCAN`, `RANDOMKEY`, `RENAME`, `RENAMENX`.
@@ -47,41 +48,66 @@ Supported commands:
 - Numeric: `INCR`, `INCRBY`, `DECR`, `DECRBY`, `INCRBYFLOAT`.
 - Bit operations: `GETBIT`, `SETBIT`, `BITCOUNT`, `BITPOS`, `BITOP`.
 - Expiration: `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT`, `EXPIRETIME`, `PEXPIRETIME`, `TTL`, `PTTL`, `PERSIST`.
+- HASH: `HSET`, `HGET`, `HDEL`, `HLEN`, `HEXISTS`, `HMGET`, `HGETALL`, `HKEYS`, `HVALS`, `HSETNX`, `HSTRLEN`, `HINCRBY`, `HINCRBYFLOAT`, `HSCAN`, `HMSET`, `HRANDFIELD`.
+- SET: `SADD`, `SREM`, `SISMEMBER`, `SMISMEMBER`, `SCARD`, `SMEMBERS`, `SSCAN`, `SUNION`, `SINTER`, `SDIFF`, `SUNIONSTORE`, `SINTERSTORE`, `SDIFFSTORE`, `SMOVE`, `SPOP`, `SRANDMEMBER`.
+- LIST: `LPUSH`, `RPUSH`, `LPUSHX`, `RPUSHX`, `LPOP`, `RPOP`, `LLEN`, `LINDEX`, `LRANGE`, `LSET`, `LTRIM`, `LREM`, `LINSERT`, `LPOS`, `LMOVE`, `RPOPLPUSH`, `BLPOP`, `BRPOP`, `BLMOVE`, `BRPOPLPUSH`.
+- ZSET: `ZADD`, `ZREM`, `ZINCRBY`, `ZSCORE`, `ZMSCORE`, `ZCARD`, `ZCOUNT`, `ZLEXCOUNT`, `ZRANK`, `ZREVRANK`, `ZRANGE`, `ZREVRANGE`, `ZRANGEBYSCORE`, `ZREVRANGEBYSCORE`, `ZRANGEBYLEX`, `ZREVRANGEBYLEX`, `ZREMRANGEBYRANK`, `ZREMRANGEBYSCORE`, `ZREMRANGEBYLEX`, `ZUNION`, `ZINTER`, `ZDIFF`, `ZUNIONSTORE`, `ZINTERSTORE`, `ZDIFFSTORE`, `ZINTERCARD`, `ZPOPMIN`, `ZPOPMAX`, `ZMPOP`, `ZRANDMEMBER`, `ZSCAN`, `ZRANGESTORE`.
 - JSON: `JSON.SET`, `JSON.GET`, `JSON.TYPE`, `JSON.DEL`.
-- Administration: `FLUSHDB`, `FLUSHALL`, `MEMORY`, `SNUG.ENCODING`, `SNUG.MEMORY`, `SNUG.STATS`, `SNUG.COMPACT`, `SNUG.POLICY`, `SNUG.AOFREWRITE`.
+- Administration: `FLUSHDB`, `FLUSHALL`, `MEMORY`, `SNUG.ENCODING`, `SNUG.MEMORY`, `SNUG.STATS`, `SNUG.COMPACT`, `SNUG.POLICY`, `SNUG.AOFREWRITE`, `SNUG.SHAPES`, `SNUG.CANDIDATES`, `SNUG.TYPE`.
 
-The admin listener defaults to loopback and accepts diagnostics only. When it is
-active, `SNUG.*` commands are rejected on the public listener. Metrics are also
-loopback-only. See [protocol](docs/protocol.md), [operations](docs/operations.md),
-and [memory format](docs/memory-format.md).
+LIST blocking commands use a waiter/wakeup path rather than polling. ZSET
+blocking pop commands (`BZPOPMIN`, `BZPOPMAX`, `BZMPOP`) are not implemented yet.
+RESP3 and Redis transactions are also not implemented; see
+[COMPATIBILITY.md](COMPATIBILITY.md).
 
-Raw storage is the default. `-encoding` enables verified canonical integer, UUID,
-and timestamp storage. `-json-shape` and `-compression` require `-encoding` and add
-background shape/dictionary, LZ4, and Zstandard candidates. Every selected codec
-is decoded and compared before publication; clients receive the exact input bytes.
+## Native container storage
+
+HASH, SET, LIST, and ZSET are native semantic types rather than strings carrying
+Redis-like payloads. Their packed formats are excluded from the generic scalar
+optimizer and are persisted as logical container state.
+
+- HASH uses canonical packed SH1 and an adaptive shared-field-shape SH2 physical representation.
+- SET uses canonical SS1 plus adaptive singleton and prefix-coded physical forms.
+- LIST uses canonical ordered SL1 storage.
+- ZSET uses adaptive packed SZ formats with integer score delta-varints and member front coding when they reduce size, with float64/raw-member fallback otherwise.
+
+The native format designs are intentionally frozen for v1 unless new benchmark or
+correctness evidence justifies a change. Current optimization work should target
+shared engine overhead before adding more datatype-specific special cases.
+
+## Memory and benchmarks
 
 The memory limit covers engine-accounted index capacity, arena capacity, entry/key
-charges, and reserved bounded schema/dictionary state. It is not process RSS.
-Network buffers, stacks, persistence buffers, and optimizer scratch have separate
-bounds. Benchmark results are measurements on one machine, not general claims.
+charges, and bounded schema/dictionary state. It is not process RSS. Network
+buffers, stacks, persistence buffers, Go runtime state, and optimizer scratch can
+add additional RSS.
 
-`cmd/snugsoak` supplies the release soak workload. It sends 90% of reads to 10%
-of keys while performing periodic writes, counter increments, TTL churn, cleanup,
-and background optimization. It verifies every read and reports start, peak, and
-end accounted memory as JSON. `make soak` defaults to 24 hours; override `DURATION`
-for a smoke run.
+On the recorded 100,000-key datatype benchmarks with 16-byte members/elements,
+SnugKV's measured engine-accounted memory versus Redis `used_memory` delta was:
+
+- SET sequential members: about 15.8% lower at 8 members, 34.2% at 16, 44.8% at 32, and 52.1% at 64.
+- LIST: approximately tied at 16 elements, then about 3.2% lower at 32 and 7.0% at 64.
+- ZSET structured members after score delta + prefix coding: about 17.8% lower at 8 members, 34.1% at 16, 45.5% at 32, and 51.2% at 64.
+- HASH shared schemas: about 13.2% lower at 8 fields, 22.8% at 16, 21.8% at 32, and 22.1% at 64.
+
+Tiny containers can still lose to Redis because SnugKV currently pays substantial
+fixed per-key index/entry overhead. The benchmark page records the exact workload
+and caveats; these figures are engineering measurements, not universal claims.
+
+Raw storage is the default for ordinary scalar values. `-encoding` enables
+verified canonical integer, UUID, and timestamp storage. `-json-shape` and
+`-compression` require `-encoding` and add background shape/dictionary, LZ4, and
+Zstandard candidates. Every selected scalar codec is decoded and compared before
+publication so clients receive exact input bytes.
 
 ## License
 
 SnugKV is available under the
 [GNU Affero General Public License v3.0](LICENSE).
 
-For organizations that require proprietary use, embedding, redistribution,
-or hosted-service terms that are not compatible with the AGPL-3.0,
-separate commercial licensing is available.
+For organizations that require proprietary use, embedding, redistribution, or
+hosted-service terms incompatible with AGPL-3.0, separate commercial licensing is
+available. See [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md).
 
-See [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md) for details.
-
-SnugKV is an independent project and is not affiliated with or endorsed by
-Redis. Redis and related marks are trademarks of their respective owners.
-
+SnugKV is an independent project and is not affiliated with or endorsed by Redis.
+Redis and related marks are trademarks of their respective owners.
