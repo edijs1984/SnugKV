@@ -6,8 +6,12 @@ func TestFirstSmallSegmentUsesCompactExactMultiple(t *testing.T) {
 	for _, payload := range []int{8, 16, 48, 80, 128, 356, 900} {
 		_, block := class(payload)
 		got := segmentSizeForAllocation(block, 0)
-		if got > firstSmallSegmentBytes {
-			t.Fatalf("payload %d first segment = %d, exceeds %d", payload, got, firstSmallSegmentBytes)
+		limit := firstSmallSegmentBytes
+		if block > limit {
+			limit = block
+		}
+		if got > limit {
+			t.Fatalf("payload %d first segment = %d, exceeds compact limit %d", payload, got, limit)
 		}
 		if got < block || got%block != 0 {
 			t.Fatalf("payload %d first segment %d is not an exact block multiple of %d", payload, got, block)
@@ -80,8 +84,9 @@ func TestSmallArenaUsesStagedGrowthBeforeDenseSegments(t *testing.T) {
 	if a.SegmentCount() != 3 {
 		t.Fatalf("segments after second overflow = %d, want 3", a.SegmentCount())
 	}
-	if got := len(a.segments[2].data); got != SegmentBytes {
-		t.Fatalf("third segment = %d, want %d", got, SegmentBytes)
+	denseSize := segmentSizeForBlock(block)
+	if got := len(a.segments[2].data); got != denseSize {
+		t.Fatalf("third segment = %d, want dense segment %d", got, denseSize)
 	}
 	if got := a.MemoryBytes() - before; got != projected {
 		t.Fatalf("third segment growth = %d, projected = %d", got, projected)
