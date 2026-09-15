@@ -14,6 +14,9 @@ func (s *Server) executePressureCommand(args [][]byte) ([]byte, error) {
 	if err := s.validateLegacyScalarTypes(args); err != nil {
 		return nil, err
 	}
+	if isKeyspaceScanCommand(args) {
+		return s.executeKeyspaceScan(args)
+	}
 	if isZSetAlgebraCommand(args) {
 		return s.executeZSetAlgebra(args)
 	}
