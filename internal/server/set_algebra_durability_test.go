@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"path/filepath"
 	"testing"
 
@@ -52,7 +53,7 @@ func TestSetAlgebraStoreAOFRestartRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertSetMembersEqual(t, dest, "a", "b", "c", "d")
+	assertServerSetMembers(t, dest, "a", "b", "c", "d")
 	if ttl := restarted.TTL("dest", true); ttl != -1 {
 		t.Fatalf("destination TTL after restart=%d want -1", ttl)
 	}
@@ -61,5 +62,17 @@ func TestSetAlgebraStoreAOFRestartRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertSetMembersEqual(t, diff, "a")
+	assertServerSetMembers(t, diff, "a")
+}
+
+func assertServerSetMembers(t *testing.T, got [][]byte, want ...string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("len=%d want %d", len(got), len(want))
+	}
+	for i := range want {
+		if !bytes.Equal(got[i], []byte(want[i])) {
+			t.Fatalf("member[%d]=%q want %q", i, got[i], want[i])
+		}
+	}
 }
