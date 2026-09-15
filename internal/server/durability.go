@@ -90,12 +90,16 @@ func (s *Server) executeDurable(args [][]byte) ([]byte, error) {
 		return s.executePressure(args)
 	}
 	var affected []string
-	last := info.last
-	if last < 0 {
-		last = len(args) + last
-	}
-	for i := info.first; i > 0 && i <= last && i < len(args); i += info.step {
-		affected = append(affected, string(args[i]))
+	if cmd == "ZMPOP" {
+		affected = zsetMPopKeys(args)
+	} else {
+		last := info.last
+		if last < 0 {
+			last = len(args) + last
+		}
+		for i := info.first; i > 0 && i <= last && i < len(args); i += info.step {
+			affected = append(affected, string(args[i]))
+		}
 	}
 	before := s.store.Export(affected)
 	result, err := s.executePressure(args)
