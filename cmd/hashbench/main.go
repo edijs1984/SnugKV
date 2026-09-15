@@ -16,10 +16,14 @@ import (
 	"snugkv/internal/engine"
 )
 
+const uniqueFieldSpace = uint64(101559956668416) // 36^9
+
 func main() {
 	keys := flag.Int("keys", 100000, "number of hash keys")
 	fields := flag.Int("fields", 8, "fields per hash")
 	valueBytes := flag.Int("value-bytes", 32, "bytes per hash value")
+	mode := flag.String("mode", "shared", "field-layout mode: shared, unique, or mixed")
+	mixedSharedPct := flag.Int("mixed-shared-pct", 80, "percentage of hashes using the shared field layout in mixed mode")
 	shards := flag.Int("shards", 256, "SnugKV shard count")
 	redisAddr := flag.String("redis-addr", "127.0.0.1:6379", "Redis address")
 	redisDB := flag.Int("redis-db", 15, "Redis DB used for the benchmark")
@@ -36,8 +40,20 @@ func main() {
 	if *valueBytes < 0 {
 		fatalf("value-bytes must be non-negative")
 	}
+	if *mode != "shared" && *mode != "unique" && *mode != "mixed" {
+		fatalf("mode must be shared, unique, or mixed")
+	}
+	if *mixedSharedPct < 0 || *mixedSharedPct > 100 {
+		fatalf("mixed-shared-pct must be between 0 and 100")
+	}
+	if *mode != "shared" {
+		combinations := uint64(*keys) * uint64(*fields)
+		if combinations >= uniqueFieldSpace {
+			fatalf("keys*fields exceeds fixed-width unique field namespace")
+		}
+	}
 
-	hashFields, hashValues := dataset(*fields, *valueBytes)
+	sharedFields, hashValues := dataset(*fields, *valueBytes)
 
 	store, err := engine.NewWithOptions(engine.Options{Shards: *shards})
 	if err != nil {
@@ -49,6 +65,7 @@ func main() {
 	loadStart := time.Now()
 	for i := 0; i < *keys; i++ {
 		key := hashKey(i)
+		hashFields := fieldsForKey(*mode, i, *fields, sharedFields, *mixedSharedPct)
 		if _, err := store.HashSet(key, hashFields, hashValues); err != nil {
 			fatalf("SnugKV HashSet %q: %v", key, err)
 		}
@@ -63,6 +80,7 @@ func main() {
 	arenaPayloadDelta := snugAfter.ArenaPayloadBytes - snugBefore.ArenaPayloadBytes
 	arenaLiveBlockDelta := snugAfter.ArenaLiveBlockBytes - snugBefore.ArenaLiveBlockBytes
 	schemaDelta := snugAfter.SchemaBytes - snugBefore.SchemaBytes
+	metaDelta := snugAfter.MetaBytes - snugBefore.MetaBytes
 
 	sample, ok, err := store.HashStorageStats(hashKey(0))
 	if err != nil || !ok {
@@ -94,7 +112,7 @@ func main() {
 	}
 
 	redisStart := time.Now()
-	if err := redis.LoadHashes(*keys, hashFields, hashValues); err != nil {
+	if err := redis.LoadHashes(*keys, *fields, sharedFields, hashValues, *mode, *mixedSharedPct); err != nil {
 		fatalf("Redis HSET load: %v", err)
 	}
 	redisLoad := time.Since(redisStart)
@@ -113,6 +131,10 @@ func main() {
 	redisDelta := redisAfter - redisBefore
 
 	fmt.Printf("HASH benchmark\n")
+	fmt.Printf("mode: %s\n", *mode)
+	if *mode == "mixed" {
+		fmt.Printf("mixed_shared_pct: %d\n", *mixedSharedPct)
+	}
 	fmt.Printf("keys: %d\n", *keys)
 	fmt.Printf("fields_per_hash: %d\n", *fields)
 	fmt.Printf("value_bytes: %d\n", *valueBytes)
@@ -136,6 +158,8 @@ func main() {
 	fmt.Printf("arena_live_block_bytes_per_hash: %.2f\n", perHash(arenaLiveBlockDelta, *keys))
 	fmt.Printf("schema_delta: %d\n", schemaDelta)
 	fmt.Printf("schema_bytes_per_hash: %.2f\n", perHash(schemaDelta, *keys))
+	fmt.Printf("meta_delta: %d\n", metaDelta)
+	fmt.Printf("meta_bytes_per_hash: %.2f\n", perHash(metaDelta, *keys))
 	fmt.Printf("entry_struct_bytes: %d\n", layoutAfter.EntryStructBytes)
 	fmt.Printf("index_slot_bytes: %d\n", layoutAfter.IndexSlotBytes)
 	fmt.Printf("entry_capacity_before: %d\n", layoutBefore.EntryCapacity)
@@ -185,6 +209,29 @@ func dataset(fields, valueBytes int) ([][]byte, [][]byte) {
 		values[i] = value
 	}
 	return names, values
+}
+
+func fieldsForKey(mode string, keyIndex, fieldCount int, shared [][]byte, mixedSharedPct int) [][]byte {
+	if mode == "shared" || mode == "mixed" && keyIndex%100 < mixedSharedPct {
+		return shared
+	}
+	return uniqueFields(keyIndex, fieldCount)
+}
+
+func uniqueFields(keyIndex, fieldCount int) [][]byte {
+	fields := make([][]byte, fieldCount)
+	base := uint64(keyIndex) * uint64(fieldCount)
+	for i := 0; i < fieldCount; i++ {
+		token := strconv.FormatUint(base+uint64(i), 36)
+		name := make([]byte, 10)
+		name[0] = 'u'
+		for j := 1; j < len(name); j++ {
+			name[j] = '0'
+		}
+		copy(name[len(name)-len(token):], token)
+		fields[i] = name
+	}
+	return fields
 }
 
 func hashKey(i int) string {
@@ -255,7 +302,7 @@ func (c *redisClient) UsedMemory() (uint64, error) {
 	return 0, errors.New("used_memory missing from INFO memory")
 }
 
-func (c *redisClient) LoadHashes(keys int, fields, values [][]byte) error {
+func (c *redisClient) LoadHashes(keys, fieldCount int, sharedFields, values [][]byte, mode string, mixedSharedPct int) error {
 	const batchSize = 512
 	for start := 0; start < keys; start += batchSize {
 		end := start + batchSize
@@ -264,6 +311,7 @@ func (c *redisClient) LoadHashes(keys int, fields, values [][]byte) error {
 		}
 
 		for i := start; i < end; i++ {
+			fields := fieldsForKey(mode, i, fieldCount, sharedFields, mixedSharedPct)
 			args := make([][]byte, 0, 2+2*len(fields))
 			args = append(args, []byte("HSET"), []byte(hashKey(i)))
 			for j := range fields {
