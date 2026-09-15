@@ -18,7 +18,7 @@ const segmentMetadata = 32
 //	13 bits offset
 //	26 bits length
 //
-// Normal arena segments are 8 KiB, so 13 offset bits are sufficient.
+// Normal arena segments are at most 8 KiB, so 13 offset bits are sufficient.
 // 26 length bits support values up to just under 64 MiB, above SnugKV's
 // 32 MiB RESP bulk limit. Generation remains a full 64 bits.
 type Ref struct {
@@ -145,6 +145,27 @@ func class(n int) (int, int) {
 
 	return bucket, block
 }
+
+// segmentSizeForBlock keeps small allocations on 8 KiB segments, where packing
+// many values amortizes segment metadata well. For medium blocks, it sizes a new
+// segment to an exact multiple of the block class so a segment cannot end with a
+// large permanently unusable tail. Allocations larger than 8 KiB keep their
+// dedicated block-sized segment.
+func segmentSizeForBlock(block int) int {
+	if block > SegmentBytes {
+		return block
+	}
+	if block <= 1024 {
+		return SegmentBytes
+	}
+
+	blocks := SegmentBytes / block
+	if blocks < 1 {
+		return block
+	}
+	return blocks * block
+}
+
 func (a *Arena) MemoryBytes() uint64 {
 	total := uint64(cap(a.segments) * segmentMetadata)
 	for _, s := range a.segments {
@@ -177,10 +198,7 @@ func (a *Arena) GrowthFor(lengths []int) uint64 {
 			continue
 		}
 		if size-used < block {
-			size = SegmentBytes
-			if block > size {
-				size = block
-			}
+			size = segmentSizeForBlock(block)
 			used = 0
 			growth += uint64(size)
 			if count == capacity {
@@ -210,10 +228,7 @@ func (a *Arena) Alloc(value []byte) Ref {
 	} else {
 		seg = len(a.segments) - 1
 		if seg < 0 || len(a.segments[seg].data)-int(a.segments[seg].used) < block {
-			size := SegmentBytes
-			if block > size {
-				size = block
-			}
+			size := segmentSizeForBlock(block)
 			if len(a.segments) == cap(a.segments) {
 				capacity := 2 * cap(a.segments)
 				if capacity == 0 {
