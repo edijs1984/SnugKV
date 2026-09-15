@@ -28,6 +28,7 @@ const (
 	TypeHash
 	TypeSet
 	TypeList
+	TypeZSet
 )
 
 func (t ValueType) String() string {
@@ -52,6 +53,8 @@ func (t ValueType) String() string {
 		return "SET"
 	case TypeList:
 		return "LIST"
+	case TypeZSet:
+		return "ZSET"
 	default:
 		return "UNKNOWN"
 	}

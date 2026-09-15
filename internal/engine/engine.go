@@ -77,7 +77,7 @@ func nextEntryRevision(old entry) uint32 {
 }
 
 func isNativeContainerType(t ValueType) bool {
-	return t == TypeHash || t == TypeSet || t == TypeList
+	return t == TypeHash || t == TypeSet || t == TypeList || t == TypeZSet
 }
 
 func (s *Store) shouldTrackActivity(e entry) bool {
