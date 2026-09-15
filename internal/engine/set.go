@@ -10,6 +10,7 @@ import (
 const maxPackedSetBytes = 32 << 20
 
 var packedSetHeader = [...]byte{'S', 'S', 1}
+var tinySetHeader = [...]byte{'S', 'T', 1}
 
 // SetStats exposes storage measurements for datatype benchmarks.
 type SetStats struct {
@@ -114,6 +115,99 @@ func decodePackedSet(data []byte) ([][]byte, error) {
 	return members, nil
 }
 
+func commonSetPrefix(a, b []byte) int {
+	limit := len(a)
+	if len(b) < limit {
+		limit = len(b)
+	}
+	for i := 0; i < limit; i++ {
+		if a[i] != b[i] {
+			return i
+		}
+	}
+	return limit
+}
+
+// encodeTinyFixedSet front-codes sorted fixed-width members. The width is stored
+// once and each member after the first stores only its common-prefix length and
+// suffix. This is especially effective for IDs and names with shared prefixes.
+func encodeTinyFixedSet(members [][]byte) ([]byte, bool) {
+	if len(members) < 2 {
+		return nil, false
+	}
+	width := len(members[0])
+	for i := 1; i < len(members); i++ {
+		if len(members[i]) != width {
+			return nil, false
+		}
+	}
+
+	out := make([]byte, 0, len(packedSetHeader)+2*binary.MaxVarintLen64+len(members)*width)
+	out = append(out, tinySetHeader[:]...)
+	out = appendSetUvarint(out, uint64(len(members)))
+	out = appendSetUvarint(out, uint64(width))
+	out = append(out, members[0]...)
+
+	previous := members[0]
+	for i := 1; i < len(members); i++ {
+		prefix := commonSetPrefix(previous, members[i])
+		out = appendSetUvarint(out, uint64(prefix))
+		out = append(out, members[i][prefix:]...)
+		previous = members[i]
+	}
+	return out, true
+}
+
+func decodeTinyFixedSet(data []byte) ([][]byte, error) {
+	if len(data) < len(tinySetHeader) || !bytes.Equal(data[:len(tinySetHeader)], tinySetHeader[:]) {
+		return nil, errors.New("invalid tiny set")
+	}
+	offset := len(tinySetHeader)
+	count64, err := readSetUvarint(data, &offset)
+	if err != nil || count64 < 2 || count64 > uint64(maxPackedSetBytes) {
+		return nil, errors.New("invalid tiny set")
+	}
+	width64, err := readSetUvarint(data, &offset)
+	if err != nil || width64 > uint64(maxPackedSetBytes) {
+		return nil, errors.New("invalid tiny set")
+	}
+	count, width := int(count64), int(width64)
+	if width > len(data)-offset {
+		return nil, errors.New("invalid tiny set")
+	}
+
+	members := make([][]byte, 0, count)
+	first := append([]byte(nil), data[offset:offset+width]...)
+	members = append(members, first)
+	offset += width
+	previous := first
+
+	for i := 1; i < count; i++ {
+		prefix64, err := readSetUvarint(data, &offset)
+		if err != nil || prefix64 > uint64(width) {
+			return nil, errors.New("invalid tiny set")
+		}
+		prefix := int(prefix64)
+		suffixLen := width - prefix
+		if suffixLen > len(data)-offset {
+			return nil, errors.New("invalid tiny set")
+		}
+		member := make([]byte, width)
+		copy(member, previous[:prefix])
+		copy(member[prefix:], data[offset:offset+suffixLen])
+		offset += suffixLen
+		if bytes.Compare(previous, member) >= 0 {
+			return nil, errors.New("invalid tiny set order")
+		}
+		members = append(members, member)
+		previous = member
+	}
+	if offset != len(data) {
+		return nil, errors.New("invalid tiny set trailing data")
+	}
+	return members, nil
+}
+
 func packedSetContains(data, target []byte) (bool, error) {
 	members, err := decodePackedSet(data)
 	if err != nil {
@@ -124,10 +218,50 @@ func packedSetContains(data, target []byte) (bool, error) {
 }
 
 func setPreparedEntry(packed []byte) preparedEntry {
+	stored := append([]byte(nil), packed...)
+	if members, err := decodePackedSet(packed); err == nil {
+		switch len(members) {
+		case 1:
+			// Raw singleton storage has no framing overhead. Avoid the tiny-set
+			// magic prefix so decoding remains unambiguous for arbitrary bytes.
+			if !bytes.HasPrefix(members[0], tinySetHeader[:]) {
+				stored = append([]byte(nil), members[0]...)
+			}
+		default:
+			if tiny, ok := encodeTinyFixedSet(members); ok && len(tiny) < len(stored) {
+				stored = tiny
+			}
+		}
+	}
 	return preparedEntry{
 		entry: entry{valueType: TypeSet, rawLength: uint32(len(packed))},
-		data:  append([]byte(nil), packed...),
+		data:  stored,
 	}
+}
+
+func (s *Store) setMembersFromEntry(sh *shard, e entry) ([][]byte, error) {
+	physical := sh.encoded(e)
+	if len(physical) == int(e.rawLength) {
+		return decodePackedSet(physical)
+	}
+	if bytes.HasPrefix(physical, tinySetHeader[:]) {
+		return decodeTinyFixedSet(physical)
+	}
+	// The only unframed SET representation is a singleton. Reconstructing its
+	// canonical SS1 value also validates rawLength and avoids magic collisions.
+	packed, err := encodePackedSet([][]byte{physical})
+	if err != nil || len(packed) != int(e.rawLength) {
+		return nil, errors.New("invalid singleton set")
+	}
+	return [][]byte{append([]byte(nil), physical...)}, nil
+}
+
+func (s *Store) setLogicalValue(sh *shard, e entry) ([]byte, error) {
+	members, err := s.setMembersFromEntry(sh, e)
+	if err != nil {
+		return nil, err
+	}
+	return encodePackedSet(members)
 }
 
 // SetAdd inserts binary-safe members and returns the number of newly added members.
@@ -154,7 +288,7 @@ func (s *Store) SetAdd(key string, members [][]byte) (int64, error) {
 			return 0, setWrongType()
 		}
 		var err error
-		current, err = decodePackedSet(s.decode(sh, old))
+		current, err = s.setMembersFromEntry(sh, old)
 		if err != nil {
 			return 0, err
 		}
@@ -206,7 +340,7 @@ func (s *Store) SetRemove(key string, members [][]byte) (int64, error) {
 	if e.valueType != TypeSet {
 		return 0, setWrongType()
 	}
-	current, err := decodePackedSet(s.decode(sh, e))
+	current, err := s.setMembersFromEntry(sh, e)
 	if err != nil {
 		return 0, err
 	}
@@ -253,7 +387,12 @@ func (s *Store) SetContains(key string, member []byte) (bool, error) {
 	if e.valueType != TypeSet {
 		return false, setWrongType()
 	}
-	return packedSetContains(s.decode(sh, e), member)
+	members, err := s.setMembersFromEntry(sh, e)
+	if err != nil {
+		return false, err
+	}
+	idx := sort.Search(len(members), func(i int) bool { return bytes.Compare(members[i], member) >= 0 })
+	return idx < len(members) && bytes.Equal(members[idx], member), nil
 }
 
 func (s *Store) SetLen(key string) (int64, error) {
@@ -267,8 +406,8 @@ func (s *Store) SetLen(key string) (int64, error) {
 	if e.valueType != TypeSet {
 		return 0, setWrongType()
 	}
-	count, err := packedSetCount(s.decode(sh, e))
-	return int64(count), err
+	members, err := s.setMembersFromEntry(sh, e)
+	return int64(len(members)), err
 }
 
 func (s *Store) SetMembers(key string) ([][]byte, error) {
@@ -282,7 +421,7 @@ func (s *Store) SetMembers(key string) ([][]byte, error) {
 	if e.valueType != TypeSet {
 		return nil, setWrongType()
 	}
-	return decodePackedSet(s.decode(sh, e))
+	return s.setMembersFromEntry(sh, e)
 }
 
 func (s *Store) SetStorageStats(key string) (SetStats, bool, error) {
@@ -296,12 +435,18 @@ func (s *Store) SetStorageStats(key string) (SetStats, bool, error) {
 	if e.valueType != TypeSet {
 		return SetStats{}, false, setWrongType()
 	}
-	packed := s.decode(sh, e)
-	members, err := decodePackedSet(packed)
+	members, err := s.setMembersFromEntry(sh, e)
 	if err != nil {
 		return SetStats{}, false, err
 	}
-	stats := SetStats{Members: len(members), PackedBytes: len(packed), StoredBytes: len(sh.encoded(e)), Encoding: "packed"}
+	physical := sh.encoded(e)
+	encoding := "packed"
+	if len(members) == 1 && len(physical) != int(e.rawLength) {
+		encoding = "singleton"
+	} else if bytes.HasPrefix(physical, tinySetHeader[:]) {
+		encoding = "prefix"
+	}
+	stats := SetStats{Members: len(members), PackedBytes: int(e.rawLength), StoredBytes: len(physical), Encoding: encoding}
 	for _, member := range members {
 		stats.MemberBytes += len(member)
 	}
