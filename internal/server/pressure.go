@@ -11,6 +11,9 @@ func (s *Server) executePressureCommand(args [][]byte) ([]byte, error) {
 	if isZSetAlgebraCommand(args) {
 		return s.executeZSetAlgebra(args)
 	}
+	if isZSetOpsCommand(args) {
+		return s.executeZSetOps(args)
+	}
 	return s.executeRoutedCommand(args)
 }
 
@@ -25,6 +28,20 @@ func (s *Server) executePressure(args [][]byte) ([]byte, error) {
 	if isZSetAlgebraCommand(args) {
 		for _, key := range zsetAlgebraInputKeys(args) {
 			excluded[key] = true
+		}
+	} else if isZSetOpsCommand(args) {
+		if keys := zsetOpsPressureKeys(args); len(keys) > 0 {
+			for _, key := range keys {
+				excluded[key] = true
+			}
+		} else {
+			last := info.last
+			if last < 0 {
+				last = len(args) + last
+			}
+			for i := info.first; i > 0 && i <= last && i < len(args); i += info.step {
+				excluded[string(args[i])] = true
+			}
 		}
 	} else {
 		last := info.last
