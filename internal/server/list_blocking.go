@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -87,6 +88,13 @@ func (s *Server) signalListKey(key string) {
 	registry.mu.Unlock()
 }
 
+func (s *Server) blockingStopped() bool {
+	registry := registryForServer(s)
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+	return registry.stopped
+}
+
 // CancelBlocking releases all blocking LIST commands. It is idempotent and is
 // used by the TCP server during shutdown so an infinite timeout cannot retain a
 // connection goroutine forever.
@@ -142,7 +150,7 @@ func (s *Server) executeBlockingList(args [][]byte) ([]byte, error) {
 	cmd := strings.ToUpper(string(args[0]))
 	info, ok := listCommands[cmd]
 	if !ok || len(args) < info.min || info.max > 0 && len(args) > info.max {
-		return nil, errors.New("ERR wrong number of arguments for blocking list command")
+		return nil, fmt.Errorf("ERR wrong number of arguments for '%s' command", strings.ToLower(cmd))
 	}
 
 	switch cmd {
@@ -201,6 +209,15 @@ func (s *Server) blockingPop(keys []string, left bool, timeout time.Duration) ([
 		}
 
 		for _, key := range keys {
+			length, err := s.store.ListLen(key)
+			if err != nil {
+				s.unregisterListWaiter(waiter)
+				return nil, err
+			}
+			if length == 0 {
+				continue
+			}
+
 			op := "RPOP"
 			if left {
 				op = "LPOP"
@@ -219,11 +236,7 @@ func (s *Server) blockingPop(keys []string, left bool, timeout time.Duration) ([
 		select {
 		case <-waiter.ch:
 			s.unregisterListWaiter(waiter)
-			registry := registryForServer(s)
-			registry.mu.Lock()
-			stopped := registry.stopped
-			registry.mu.Unlock()
-			if stopped {
+			if s.blockingStopped() {
 				return nil, errBlockingCanceled
 			}
 		case <-timeoutC:
@@ -245,30 +258,33 @@ func (s *Server) blockingMove(source, destination, sourceSide, destinationSide s
 			return nil, errBlockingCanceled
 		}
 
-		var command [][]byte
-		if legacy {
-			command = [][]byte{[]byte("RPOPLPUSH"), []byte(source), []byte(destination)}
-		} else {
-			command = [][]byte{[]byte("LMOVE"), []byte(source), []byte(destination), []byte(sourceSide), []byte(destinationSide)}
-		}
-		response, err := s.executeDurable(command)
+		length, err := s.store.ListLen(source)
 		if err != nil {
 			s.unregisterListWaiter(waiter)
 			return nil, err
 		}
-		if string(response) != "$-1\r\n" {
-			s.unregisterListWaiter(waiter)
-			return response, nil
+		if length > 0 {
+			var command [][]byte
+			if legacy {
+				command = [][]byte{[]byte("RPOPLPUSH"), []byte(source), []byte(destination)}
+			} else {
+				command = [][]byte{[]byte("LMOVE"), []byte(source), []byte(destination), []byte(sourceSide), []byte(destinationSide)}
+			}
+			response, err := s.executeDurable(command)
+			if err != nil {
+				s.unregisterListWaiter(waiter)
+				return nil, err
+			}
+			if string(response) != "$-1\r\n" {
+				s.unregisterListWaiter(waiter)
+				return response, nil
+			}
 		}
 
 		select {
 		case <-waiter.ch:
 			s.unregisterListWaiter(waiter)
-			registry := registryForServer(s)
-			registry.mu.Lock()
-			stopped := registry.stopped
-			registry.mu.Unlock()
-			if stopped {
+			if s.blockingStopped() {
 				return nil, errBlockingCanceled
 			}
 		case <-timeoutC:
