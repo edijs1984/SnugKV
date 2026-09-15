@@ -71,7 +71,7 @@ func (s *Store) SetWithOptions(
 		return false, previous, hadPrevious, nil
 	}
 
-	e := s.makeEntry(value)
+	e := s.makeEntryForShard(sh, value)
 
 	switch {
 	case options.KeepTTL && exists:
@@ -87,6 +87,10 @@ func (s *Store) SetWithOptions(
 	if err := s.publish(sh, key, e); err != nil {
 		return false, nil, false, err
 	}
+
+	// Real engine writes train JSON shape admission while the shard
+	// lock is already held.
+	s.observeJSONShapeLocked(sh, value)
 
 	// Absolute expiration in the past means SET succeeds but
 	// the resulting key is immediately expired.

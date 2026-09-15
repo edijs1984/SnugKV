@@ -139,6 +139,19 @@ func (o *Optimizer) maintenance() {
 	}
 }
 
+func (o *Optimizer) retrySoon(key string) {
+	const delay = time.Second
+
+	time.AfterFunc(delay, func() {
+		select {
+		case <-o.ctx.Done():
+			return
+		default:
+			o.Queue(key)
+		}
+	})
+}
+
 func (o *Optimizer) worker() {
 	defer o.wg.Done()
 	for {
@@ -163,6 +176,25 @@ func (o *Optimizer) worker() {
 				continue
 			}
 
+			candidate, ok := o.store.Candidate(key, rawBytes)
+			if !ok {
+				atomic.AddUint64(&o.skipped, 1)
+				o.release(rawBytes)
+				continue
+			}
+
+			// Give recently-written structured JSON a very short opportunity
+			// to learn its shared schema before falling back to LZ4.
+			//
+			// Crucially, this happens before MarkOptimizationAttempt, so the
+			// normal 30-second attempt cooldown does not block the retry.
+			if o.store.JSONShapeWarmupPending(candidate, 3*time.Second) {
+				o.release(rawBytes)
+				o.retrySoon(key)
+				atomic.AddUint64(&o.skipped, 1)
+				continue
+			}
+
 			if !o.store.MarkOptimizationAttempt(
 				key,
 				o.config.MinRewriteInterval,
@@ -170,13 +202,6 @@ func (o *Optimizer) worker() {
 			) {
 				o.release(rawBytes)
 				atomic.AddUint64(&o.skipped, 1)
-				continue
-			}
-
-			candidate, ok := o.store.Candidate(key, rawBytes)
-			if !ok {
-				atomic.AddUint64(&o.skipped, 1)
-				o.release(rawBytes)
 				continue
 			}
 

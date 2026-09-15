@@ -53,3 +53,4 @@ tmp/
 
 .venv/
 venv/
+/startingScripts.md

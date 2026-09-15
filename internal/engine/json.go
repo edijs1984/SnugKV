@@ -53,6 +53,8 @@ func (s *Store) JSONSet(
 			return false, err
 		}
 
+		s.observeJSONShapeLocked(sh, encoded)
+
 		return true, nil
 	}
 

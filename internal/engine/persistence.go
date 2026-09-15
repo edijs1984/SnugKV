@@ -146,8 +146,16 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 	// All shards remain locked, so no concurrent reservation can change admission.
 	for _, key := range ordered {
 		e := updates[key]
-		if err := s.publishRecord(s.shardFor(key), key, e, false); err != nil {
+		sh := s.shardFor(key)
+
+		if err := s.publishRecord(sh, key, e, false); err != nil {
 			return err
+		}
+
+		// Restore runs with all shards locked. Rebuild ephemeral JSON-shape
+		// admission state from the restored logical value.
+		if current, ok := sh.get(key); ok {
+			s.observeJSONShapeLocked(sh, s.decode(sh, current))
 		}
 	}
 	return nil

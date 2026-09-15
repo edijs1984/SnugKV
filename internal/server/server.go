@@ -654,6 +654,14 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			return nil, err
 		}
 
+		if applied {
+			// Newly written values are the highest-priority optimization candidates.
+			// Shape admission is trained inside the engine write path.
+			if s.optimizer != nil {
+				s.optimizer.Queue(key)
+			}
+		}
+
 		// Redis SET ... GET returns the previous value regardless of
 		// whether NX/XX allowed the write to happen.
 		if options.Get {
@@ -662,12 +670,6 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 
 		if !applied {
 			return nullBulk(), nil
-		}
-
-		// Newly written values are the highest-priority optimization candidates.
-		// Queueing is non-blocking; periodic sampling remains the fallback.
-		if s.optimizer != nil {
-			s.optimizer.Queue(key)
 		}
 
 		return []byte("+OK\r\n"), nil

@@ -19,8 +19,17 @@ func TestExactShapes(t *testing.T) {
 			t.Fatalf("%q %v", got, err)
 		}
 		s.Release(schema)
-		if n, _ := s.Stats(); n != 0 {
-			t.Fatal("schema retained")
+
+		n, used := s.Stats()
+		if n < 1 || used == 0 {
+			t.Fatalf("released schema was not cached: count=%d used=%d", n, used)
+		}
+
+		// Cached zero-reference schema must remain immediately reusable
+		// without going through the admission threshold again.
+		cached, _, ok := s.Lookup([]byte(value))
+		if !ok || cached != schema {
+			t.Fatal("released schema was not reusable from cache")
 		}
 	}
 }

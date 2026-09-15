@@ -2,6 +2,7 @@ package engine
 
 import (
 	"bytes"
+	"fmt"
 	"snugkv/internal/codec"
 	"snugkv/internal/codec/jsonshape"
 	"sync/atomic"
@@ -14,6 +15,7 @@ type Candidate struct {
 	Value        []byte
 	EncodedBytes int
 	LastRewrite  time.Time
+	LastWrite    time.Time
 	Heat         string
 }
 
@@ -101,7 +103,15 @@ func (s *Store) Candidate(key string, maxBytes int) (Candidate, bool) {
 	if !ok || e.expired(s.now()) || int(e.rawLength) > maxBytes {
 		return Candidate{}, false
 	}
-	return Candidate{key, e.version, s.decode(sh, e), len(sh.encoded(e)), e.lastRewrite.Time(), heat(e, s.now())}, true
+	return Candidate{
+		Key:          key,
+		Version:      e.version,
+		Value:        s.decode(sh, e),
+		EncodedBytes: len(sh.encoded(e)),
+		LastRewrite:  e.lastRewrite.Time(),
+		LastWrite:    e.lastWrite.Time(),
+		Heat:         heat(e, s.now()),
+	}, true
 }
 func heat(e entry, now time.Time) string {
 	if now.Sub(e.lastWrite.Time()) < time.Minute && e.writes >= 10 {
@@ -128,13 +138,10 @@ func (s *Store) Policy(key string) (string, bool) {
 	}
 	return heat(e, s.now()), true
 }
-func (s *Store) ensureShapeStore(sh *shard) *jsonshape.Store {
+func (s *Store) ensureShapeStoreLocked(sh *shard) *jsonshape.Store {
 	if !s.shapeEncoding {
 		return nil
 	}
-
-	sh.mu.Lock()
-	defer sh.mu.Unlock()
 
 	if sh.shapes != nil {
 		return sh.shapes
@@ -148,11 +155,22 @@ func (s *Store) ensureShapeStore(sh *shard) *jsonshape.Store {
 		return nil
 	}
 
-	sh.shapes = jsonshape.New(16<<10, 8)
+	sh.shapes = jsonshape.New(16<<10, 4)
 	s.memory.used = next
 	s.memory.schemas += shapeStoreBaseBytes
 
 	return sh.shapes
+}
+
+func (s *Store) ensureShapeStore(sh *shard) *jsonshape.Store {
+	if !s.shapeEncoding {
+		return nil
+	}
+
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	return s.ensureShapeStoreLocked(sh)
 }
 
 func structuredJSONCandidate(src []byte) bool {
@@ -170,13 +188,72 @@ func structuredJSONCandidate(src []byte) bool {
 	return false
 }
 
+// ObserveJSONShape records a real write observation.
+//
+// Schema admission should be driven by actual writes, not optimizer retries or
+// diagnostic commands. Repeated same-shape JSON values therefore mature the
+// shape store naturally as they are written.
+func (s *Store) observeJSONShapeLocked(sh *shard, value []byte) {
+	if !s.shapeEncoding || !structuredJSONCandidate(value) {
+		return
+	}
+
+	shapes := s.ensureShapeStoreLocked(sh)
+	if shapes == nil {
+		return
+	}
+
+	// Candidate() is intentionally the mutating admission path.
+	// Real writes train the schema store.
+	_, _, _ = shapes.Candidate(value)
+}
+
+// ObserveJSONShape is the externally safe form for callers that do not
+// already hold the shard lock.
+func (s *Store) ObserveJSONShape(key string, value []byte) {
+	if !s.shapeEncoding || !structuredJSONCandidate(value) {
+		return
+	}
+
+	sh := s.shardFor(key)
+
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	s.observeJSONShapeLocked(sh, value)
+}
+
+// JSONShapeWarmupPending reports whether a recently-written structured JSON
+// value is still waiting for its schema to be admitted.
+//
+// This lets the optimizer briefly defer generic compression instead of locking
+// the value into LZ4 immediately before a much smaller JSON-shape representation
+// becomes available.
+func (s *Store) JSONShapeWarmupPending(candidate Candidate, window time.Duration) bool {
+	if !s.shapeEncoding ||
+		!structuredJSONCandidate(candidate.Value) ||
+		candidate.LastWrite.IsZero() ||
+		time.Since(candidate.LastWrite) >= window {
+		return false
+	}
+
+	sh := s.shardFor(candidate.Key)
+	shapes := s.ensureShapeStore(sh)
+	if shapes == nil {
+		return false
+	}
+
+	_, _, ready := shapes.Lookup(candidate.Value)
+	return !ready
+}
+
 func (s *Store) EncodeCandidate(candidate Candidate) codec.Record {
 	best := s.codecs.Encode(candidate.Value)
 	sh := s.shardFor(candidate.Key)
 	if structuredJSONCandidate(candidate.Value) {
 		shapes := s.ensureShapeStore(sh)
 		if shapes != nil {
-			schema, slots, ok := shapes.Candidate(candidate.Value)
+			schema, slots, ok := shapes.Lookup(candidate.Value)
 			if ok {
 				data := shapes.EncodeSlots(slots)
 				if len(data)+16 < len(best.Data) {
@@ -257,7 +334,24 @@ func (s *Store) CandidateDiagnostics(key string) (CandidateDiagnosticReport, boo
 		shapes := s.ensureShapeStore(sh)
 
 		if shapes != nil {
-			schema, slots, shapeOK := shapes.Candidate(candidate.Value)
+			status := shapes.Admission(candidate.Value)
+			schema, slots, shapeOK := shapes.Lookup(candidate.Value)
+
+			if !shapeOK {
+				report.Candidates = append(report.Candidates, CandidateDiagnostic{
+					Name:     "json-shape",
+					Bytes:    0,
+					Eligible: false,
+					Reason: fmt.Sprintf(
+						"not admitted observed:%d threshold:%d schemas:%d used:%d",
+						status.Observed,
+						status.Threshold,
+						status.SchemaCount,
+						status.UsedBytes,
+					),
+				})
+			}
+
 			if shapeOK {
 				data := shapes.EncodeSlots(slots)
 

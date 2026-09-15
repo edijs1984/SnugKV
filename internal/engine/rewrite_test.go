@@ -76,9 +76,17 @@ func TestShapeSharingAndReclamation(t *testing.T) {
 		s.Delete(fmt.Sprint(i))
 	}
 	count, used := s.shards[0].shapes.Stats()
-	if count != 0 || used != 0 {
-		t.Fatalf("leaked schemas %d %d", count, used)
+	if count != 1 || used == 0 {
+		t.Fatalf("learned schema was not cached: count=%d used=%d", count, used)
 	}
+
+	// The cached schema is bounded metadata. It should remain available
+	// after all live records using it have been deleted.
+	value := []byte(`{"country":"LV","status":"active","plan":"free","user":999,"long_repeated_property_name":true}`)
+	if _, _, ok := s.shards[0].shapes.Lookup(value); !ok {
+		t.Fatal("cached schema disappeared after last live record")
+	}
+
 	auditMemory(t, s)
 }
 func TestRewriteRejectsChangedBytes(t *testing.T) {
@@ -155,7 +163,7 @@ func TestShapeEncodingSkipsPrimitiveValues(t *testing.T) {
 
 func TestShapeStoreAllocatesLazily(t *testing.T) {
 	s, err := NewWithOptions(Options{
-		Shards:        16,
+		Shards:        1,
 		Encoding:      true,
 		ShapeEncoding: true,
 	})
@@ -174,6 +182,19 @@ func TestShapeStoreAllocatesLazily(t *testing.T) {
 		}
 	}
 
+	// Non-JSON values must not allocate shape state.
+	if err := s.Set("plain", []byte("hello"), 0); err != nil {
+		t.Fatal(err)
+	}
+
+	afterPlain := s.Memory()
+	if afterPlain.SchemaBytes != 0 {
+		t.Fatalf(
+			"non-JSON SET unexpectedly charged %d schema bytes",
+			afterPlain.SchemaBytes,
+		)
+	}
+
 	key := "json-key"
 	value := []byte(`{"country":"LV","status":"active","plan":"free","user":12345,"long_repeated_property_name":true}`)
 
@@ -181,32 +202,33 @@ func TestShapeStoreAllocatesLazily(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	candidate, ok := s.Candidate(key, 4096)
-	if !ok {
-		t.Fatal("missing JSON candidate")
-	}
-
-	before := s.Memory()
-	if before.SchemaBytes != 0 {
-		t.Fatalf("SET unexpectedly charged %d schema bytes", before.SchemaBytes)
-	}
-
-	_ = s.EncodeCandidate(candidate)
-
 	sh := s.shardFor(key)
 	if sh.shapes == nil {
-		t.Fatal("JSON candidate did not create shape store")
+		t.Fatal("JSON write did not create shape store")
 	}
 
-	after := s.Memory()
-	if after.SchemaBytes != shapeStoreBaseBytes {
-		t.Fatalf("schema bytes = %d, want %d", after.SchemaBytes, shapeStoreBaseBytes)
-	}
+	afterJSON := s.Memory()
 
-	if after.AccountedBytes-before.AccountedBytes != shapeStoreBaseBytes {
+	if afterJSON.SchemaBytes != shapeStoreBaseBytes {
 		t.Fatalf(
-			"accounted growth = %d, want %d",
-			after.AccountedBytes-before.AccountedBytes,
+			"schema bytes = %d, want %d",
+			afterJSON.SchemaBytes,
+			shapeStoreBaseBytes,
+		)
+	}
+
+	// Additional JSON writes on the same shard must reuse the existing store
+	// instead of charging the base cost again.
+	if err := s.Set("json-key-2", value, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	afterSecond := s.Memory()
+
+	if afterSecond.SchemaBytes != shapeStoreBaseBytes {
+		t.Fatalf(
+			"second JSON write charged schema base twice: got %d want %d",
+			afterSecond.SchemaBytes,
 			shapeStoreBaseBytes,
 		)
 	}

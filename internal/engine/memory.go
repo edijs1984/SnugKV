@@ -1,8 +1,10 @@
 package engine
 
 import (
+	"bytes"
 	"errors"
 	"snugkv/internal/codec"
+	"snugkv/internal/codec/jsonshape"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -113,6 +115,52 @@ func (s *Store) makeEntry(value []byte) preparedEntry {
 		},
 		data: rec.Data,
 	}
+}
+
+// makeEntryForShard uses an already-admitted JSON shape immediately.
+//
+// The caller must hold sh.mu. This avoids the normal codec/compression path
+// when the shard already knows a strongly beneficial JSON representation.
+func (s *Store) makeEntryForShard(sh *shard, value []byte) preparedEntry {
+	if s.encoding &&
+		s.shapeEncoding &&
+		sh.shapes != nil &&
+		structuredJSONCandidate(value) {
+
+		schema, slots, ok := sh.shapes.Lookup(value)
+		if ok {
+			data := sh.shapes.EncodeSlots(slots)
+
+			// Only take the direct path when JSON-shape is substantially
+			// smaller than the logical value. This prevents a known but
+			// weak shape from bypassing a potentially better compression
+			// representation.
+			//
+			// Our current workload is ~397 B from 1002 B, so it easily
+			// qualifies.
+			if len(data)+16 < len(value)*3/4 {
+				decoded, err := jsonshape.Decode(
+					schema,
+					data,
+					len(value),
+				)
+
+				if err == nil && bytes.Equal(decoded, value) {
+					return preparedEntry{
+						entry: entry{
+							codecID:   5, // JSON-shape physical codec
+							schema:    schema,
+							valueType: classifyValue(value),
+							rawLength: uint32(len(value)),
+						},
+						data: data,
+					}
+				}
+			}
+		}
+	}
+
+	return s.makeEntry(value)
 }
 
 func (s *Store) decode(sh *shard, e entry) []byte {

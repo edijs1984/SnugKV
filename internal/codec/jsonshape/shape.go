@@ -8,6 +8,7 @@ import (
 	"errors"
 	"hash/fnv"
 	"snugkv/internal/codec/dictionary"
+	"strconv"
 	"sync"
 )
 
@@ -114,6 +115,60 @@ func templateKey(literals [][]byte) string {
 	return b.String()
 }
 
+type AdmissionStatus struct {
+	Valid       bool
+	Observed    uint8
+	Threshold   uint8
+	Admitted    bool
+	SchemaCount int
+	UsedBytes   int
+}
+
+func (s *Store) Admission(src []byte) AdmissionStatus {
+	literals, slots, ok := Split(src)
+	if !ok || len(slots) == 0 {
+		return AdmissionStatus{}
+	}
+
+	key := templateKey(literals)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, admitted := s.schemas[key]
+
+	return AdmissionStatus{
+		Valid:       true,
+		Observed:    s.observed[key],
+		Threshold:   s.threshold,
+		Admitted:    admitted,
+		SchemaCount: len(s.schemas),
+		UsedBytes:   s.used,
+	}
+}
+
+// Lookup returns an already-admitted schema without changing observation
+// counters or admitting a new schema. Diagnostics and optimizer evaluation
+// must use this path so merely inspecting a value cannot train the store.
+func (s *Store) Lookup(src []byte) (*Schema, [][]byte, bool) {
+	literals, slots, ok := Split(src)
+	if !ok || len(slots) == 0 {
+		return nil, nil, false
+	}
+
+	key := templateKey(literals)
+
+	s.mu.Lock()
+	schema := s.schemas[key]
+	s.mu.Unlock()
+
+	if schema == nil {
+		return nil, nil, false
+	}
+
+	return schema, slots, true
+}
+
 // Candidate observes a shape and returns a template after bounded admission.
 // Merely considering a candidate does not add a live reference.
 func (s *Store) Candidate(src []byte) (*Schema, [][]byte, bool) {
@@ -190,18 +245,24 @@ func (s *Store) Release(schema *Schema) {
 	if schema == nil {
 		return
 	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	schema.refs--
-	if schema.refs == 0 {
-		if s.schemas[schema.Key] == schema {
-			delete(s.schemas, schema.Key)
-			s.used -= schema.Bytes
-		}
-	}
+
 	if schema.refs < 0 {
 		panic("negative schema references")
 	}
+
+	// Keep zero-reference schemas admitted.
+	//
+	// They are learned metadata and may immediately be useful for another
+	// record with the same JSON shape. Candidate admission already performs
+	// bounded eviction of zero-reference schemas when the store needs space.
+	//
+	// Deleting here causes schema thrashing:
+	// JSON-shape -> overwrite -> refs 0 -> schema forgotten -> relearn.
 }
 func (s *Store) Stats() (int, int) { s.mu.Lock(); defer s.mu.Unlock(); return len(s.schemas), s.used }
 func EncodeSlots(slots [][]byte) []byte {
@@ -219,53 +280,95 @@ func Decode(schema *Schema, data []byte, max int) ([]byte, error) {
 	if schema == nil || max < 0 {
 		return nil, errors.New("missing schema or invalid bound")
 	}
+
 	out := make([]byte, 0, max)
+
 	for i, literal := range schema.Literal {
 		if len(literal) > max-len(out) {
 			return nil, errors.New("shape output exceeds limit")
 		}
+
 		out = append(out, literal...)
+
 		if i == len(schema.Literal)-1 {
 			break
 		}
+
 		if len(data) == 0 {
 			return nil, errors.New("missing shape slot")
 		}
+
 		tag := data[0]
 		data = data[1:]
-		n, used := binary.Uvarint(data)
-		if used <= 0 {
-			return nil, errors.New("invalid shape slot")
-		}
-		data = data[used:]
+
 		var slot []byte
+
 		switch tag {
-		case 0:
+		case slotRaw:
+			n, used := binary.Uvarint(data)
+			if used <= 0 {
+				return nil, errors.New("invalid raw shape slot")
+			}
+
+			data = data[used:]
+
 			if n > uint64(len(data)) {
 				return nil, errors.New("truncated raw slot")
 			}
+
 			slot = data[:int(n)]
 			data = data[int(n):]
-		case 1:
+
+		case slotDictionary:
 			if schema.dictionary == nil {
 				return nil, errors.New("missing dictionary")
 			}
+
+			id, used := binary.Uvarint(data)
+			if used <= 0 {
+				return nil, errors.New("invalid dictionary slot")
+			}
+
+			data = data[used:]
+
 			var ok bool
-			slot, ok = schema.dictionary.LookupView(n)
+			slot, ok = schema.dictionary.LookupView(id)
 			if !ok {
 				return nil, errors.New("missing dictionary entry")
 			}
+
+		case slotInt:
+			value, used := binary.Varint(data)
+			if used <= 0 {
+				return nil, errors.New("invalid integer slot")
+			}
+
+			data = data[used:]
+			slot = []byte(strconv.FormatInt(value, 10))
+
+		case slotTrue:
+			slot = []byte("true")
+
+		case slotFalse:
+			slot = []byte("false")
+
+		case slotNull:
+			slot = []byte("null")
+
 		default:
 			return nil, errors.New("invalid slot tag")
 		}
+
 		if len(slot) > max-len(out) {
 			return nil, errors.New("shape output exceeds limit")
 		}
-		out = append(out, slot...)
 
+		out = append(out, slot...)
 	}
+
 	if len(data) != 0 {
 		return nil, errors.New("trailing shape data")
 	}
+
 	return out, nil
 }
