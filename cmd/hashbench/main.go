@@ -45,6 +45,7 @@ func main() {
 	}
 
 	snugBefore := store.Memory()
+	layoutBefore := store.Layout()
 	loadStart := time.Now()
 	for i := 0; i < *keys; i++ {
 		key := hashKey(i)
@@ -54,7 +55,14 @@ func main() {
 	}
 	snugLoad := time.Since(loadStart)
 	snugAfter := store.Memory()
+	layoutAfter := store.Layout()
 	snugDelta := snugAfter.AccountedBytes - snugBefore.AccountedBytes
+	indexDelta := snugAfter.IndexReservedBytes - snugBefore.IndexReservedBytes
+	entryDelta := snugAfter.EntryBytes - snugBefore.EntryBytes
+	arenaDelta := snugAfter.ArenaBytes - snugBefore.ArenaBytes
+	arenaPayloadDelta := snugAfter.ArenaPayloadBytes - snugBefore.ArenaPayloadBytes
+	arenaLiveBlockDelta := snugAfter.ArenaLiveBlockBytes - snugBefore.ArenaLiveBlockBytes
+	schemaDelta := snugAfter.SchemaBytes - snugBefore.SchemaBytes
 
 	sample, ok, err := store.HashStorageStats(hashKey(0))
 	if err != nil || !ok {
@@ -115,7 +123,25 @@ func main() {
 	fmt.Printf("accounted_before: %d\n", snugBefore.AccountedBytes)
 	fmt.Printf("accounted_after: %d\n", snugAfter.AccountedBytes)
 	fmt.Printf("accounted_delta: %d\n", snugDelta)
-	fmt.Printf("bytes_per_hash_delta: %.2f\n", float64(snugDelta)/float64(*keys))
+	fmt.Printf("bytes_per_hash_delta: %.2f\n", perHash(snugDelta, *keys))
+	fmt.Printf("index_delta: %d\n", indexDelta)
+	fmt.Printf("index_bytes_per_hash: %.2f\n", perHash(indexDelta, *keys))
+	fmt.Printf("entry_delta: %d\n", entryDelta)
+	fmt.Printf("entry_bytes_per_hash: %.2f\n", perHash(entryDelta, *keys))
+	fmt.Printf("arena_delta: %d\n", arenaDelta)
+	fmt.Printf("arena_bytes_per_hash: %.2f\n", perHash(arenaDelta, *keys))
+	fmt.Printf("arena_payload_delta: %d\n", arenaPayloadDelta)
+	fmt.Printf("arena_payload_bytes_per_hash: %.2f\n", perHash(arenaPayloadDelta, *keys))
+	fmt.Printf("arena_live_block_delta: %d\n", arenaLiveBlockDelta)
+	fmt.Printf("arena_live_block_bytes_per_hash: %.2f\n", perHash(arenaLiveBlockDelta, *keys))
+	fmt.Printf("schema_delta: %d\n", schemaDelta)
+	fmt.Printf("schema_bytes_per_hash: %.2f\n", perHash(schemaDelta, *keys))
+	fmt.Printf("entry_struct_bytes: %d\n", layoutAfter.EntryStructBytes)
+	fmt.Printf("index_slot_bytes: %d\n", layoutAfter.IndexSlotBytes)
+	fmt.Printf("entry_capacity_before: %d\n", layoutBefore.EntryCapacity)
+	fmt.Printf("entry_capacity_after: %d\n", layoutAfter.EntryCapacity)
+	fmt.Printf("entry_storage_delta: %d\n", layoutAfter.EntryStorageBytes-layoutBefore.EntryStorageBytes)
+	fmt.Printf("entry_storage_bytes_per_hash: %.2f\n", perHash(layoutAfter.EntryStorageBytes-layoutBefore.EntryStorageBytes, *keys))
 	fmt.Printf("load_time: %s\n", snugLoad)
 	fmt.Printf("\nRedis\n")
 	fmt.Printf("db: %d\n", *redisDB)
@@ -123,7 +149,7 @@ func main() {
 	fmt.Printf("used_memory_before: %d\n", redisBefore)
 	fmt.Printf("used_memory_after: %d\n", redisAfter)
 	fmt.Printf("used_memory_delta: %d\n", redisDelta)
-	fmt.Printf("bytes_per_hash_delta: %.2f\n", float64(redisDelta)/float64(*keys))
+	fmt.Printf("bytes_per_hash_delta: %.2f\n", perHash(redisDelta, *keys))
 	fmt.Printf("load_time: %s\n", redisLoad)
 
 	fmt.Printf("\nResult\n")
@@ -139,6 +165,10 @@ func main() {
 			fatalf("Redis cleanup FLUSHDB: %v", err)
 		}
 	}
+}
+
+func perHash(bytes uint64, keys int) float64 {
+	return float64(bytes) / float64(keys)
 }
 
 func dataset(fields, valueBytes int) ([][]byte, [][]byte) {
