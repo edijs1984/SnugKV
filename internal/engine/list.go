@@ -163,9 +163,6 @@ func (s *Store) listPop(key string, count int, left bool) ([][]byte, error) {
 	if count < 0 {
 		return nil, errors.New("ERR count must be non-negative")
 	}
-	if count == 0 {
-		return [][]byte{}, nil
-	}
 	sh := s.shardFor(key)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
@@ -182,6 +179,9 @@ func (s *Store) listPop(key string, count int, left bool) ([][]byte, error) {
 	elements, err := s.listElementsFromEntry(sh, e)
 	if err != nil {
 		return nil, err
+	}
+	if count == 0 {
+		return [][]byte{}, nil
 	}
 	if count > len(elements) {
 		count = len(elements)
