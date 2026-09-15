@@ -96,7 +96,7 @@ func TestZSetMutationPreservesTTLAndDeleteLast(t *testing.T) {
 	if _, _, _, err := s.ZSetAdd("z", []ZSetItem{zitem(1, "a"), zitem(2, "b")}, ZSetAddOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if !s.Expire("z", time.Minute, ExpireOptions{}) {
+	if !s.Expire("z", time.Minute) {
 		t.Fatal("expire failed")
 	}
 	if _, _, _, err := s.ZSetAdd("z", []ZSetItem{zitem(3, "a")}, ZSetAddOptions{}); err != nil {
