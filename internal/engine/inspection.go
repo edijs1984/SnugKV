@@ -22,16 +22,18 @@ func (s *Store) Inspect() Inspection {
 				out.Codecs[s.codecs.Name(e.codecID)]++
 			}
 		}
-		if sh.shapes != nil {
-			n, b := sh.shapes.Stats()
-			out.Schemas += n
-			out.SchemaBytes += b
-			n, b = sh.shapes.DictionaryStats()
-			out.DictionaryEntries += n
-			out.DictionaryBytes += b
-		}
 		sh.mu.RUnlock()
 	}
+	if shapes := s.loadShapeStore(); shapes != nil {
+		n, b := shapes.Stats()
+		out.Schemas = n
+		out.SchemaBytes = b
+
+		n, b = shapes.DictionaryStats()
+		out.DictionaryEntries = n
+		out.DictionaryBytes = b
+	}
+
 	return out
 }
 func (s *Store) Evict(key string) bool {

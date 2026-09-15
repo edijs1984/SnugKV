@@ -41,6 +41,7 @@ var commandTable = map[string]commandInfo{
 	"SNUG.CANDIDATES": {2, 2, 1, 1, 1, false},
 	"SNUG.TYPE":       {2, 2, 1, 1, 1, false},
 	"SNUG.MEMORY":     {2, 2, 1, 1, 1, false},
+	"SNUG.SHAPES":     {1, 2, 0, 0, 0, false},
 	"SNUG.STATS":      {1, 1, 0, 0, 0, false},
 	"SNUG.POLICY":     {2, 2, 1, 1, 1, false},
 	"PING":            {1, 2, 0, 0, 0, false}, "ECHO": {2, 2, 0, 0, 0, false}, "QUIT": {1, 1, 0, 0, 0, false},
@@ -581,6 +582,48 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		}
 		heat, _ := s.store.Policy(key)
 		return formatBulkString([]byte(fmt.Sprintf("heat_class:%s\ncurrent_codec:%s\nraw_bytes:%d\nencoded_bytes:%d\nreason:smallest verified eligible cheap representation\n", heat, name, raw, encoded))), nil
+	case "SNUG.SHAPES":
+		limit := 200
+
+		if len(args) == 2 {
+			n, err := strconv.Atoi(string(args[1]))
+			if err != nil || n <= 0 || n > 10000 {
+				return nil, errors.New("ERR limit must be between 1 and 10000")
+			}
+			limit = n
+		}
+
+		shapes, total := s.store.JSONShapes(limit)
+
+		var b strings.Builder
+
+		fmt.Fprintf(
+			&b,
+			"total_shapes:%d\nreturned:%d\n",
+			total,
+			len(shapes),
+		)
+
+		for _, shape := range shapes {
+			key := shape.Key
+
+			// Shape keys may be large. Keep the command readable while
+			// preserving enough of the template for identification.
+			if len(key) > 200 {
+				key = key[:200] + "..."
+			}
+
+			fmt.Fprintf(
+				&b,
+				"refs:%d bytes:%d key:%q\n",
+				shape.Refs,
+				shape.Bytes,
+				key,
+			)
+		}
+
+		return formatBulkString([]byte(b.String())), nil
+
 	case "SNUG.STATS":
 		m := s.store.Memory()
 		arenaWaste := uint64(0)

@@ -147,19 +147,15 @@ func (s *Store) ensureShapeStoreLocked(sh *shard) *jsonshape.Store {
 		return sh.shapes
 	}
 
-	s.memory.mu.Lock()
-	defer s.memory.mu.Unlock()
-
-	next := s.memory.used + shapeStoreBaseBytes
-	if s.memory.max > 0 && next > s.memory.max {
+	shapes := s.ensureGlobalShapeStore()
+	if shapes == nil {
 		return nil
 	}
 
-	sh.shapes = jsonshape.New(16<<10, 4)
-	s.memory.used = next
-	s.memory.schemas += shapeStoreBaseBytes
+	// Alias only. Ownership belongs to Store.shapeCatalog.
+	sh.shapes = shapes
 
-	return sh.shapes
+	return shapes
 }
 
 func (s *Store) ensureShapeStore(sh *shard) *jsonshape.Store {

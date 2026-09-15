@@ -186,6 +186,8 @@ func (s *Store) resetForRecovery() {
 		sh.freeIDs = nil
 		sh.expiration = expirationQueue{}
 	}
+
+	s.dropGlobalShapeStoreLocked()
 }
 func (s *Store) FlushDB() {
 	s.resetForRecovery()

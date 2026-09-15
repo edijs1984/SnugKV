@@ -55,6 +55,7 @@ type Store struct {
 	memory           accounting
 	version          uint64
 	sampleCursor     uint64
+	shapeCatalog     globalShapeCatalog
 }
 
 func New() *Store                             { s, _ := NewWithShards(256); return s }

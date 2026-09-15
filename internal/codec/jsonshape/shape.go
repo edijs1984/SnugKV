@@ -185,9 +185,31 @@ func (s *Store) Candidate(src []byte) (*Schema, [][]byte, bool) {
 	if s.frequency[index] < 255 {
 		s.frequency[index]++
 	}
-	if len(s.observed) >= 128 {
-		clear(s.observed)
+	// Keep admission bounded without destroying all accumulated evidence.
+	// This lets a global store learn many thousands of recurring shapes.
+	if _, exists := s.observed[key]; !exists && len(s.observed) >= 65536 {
+		for observedKey, count := range s.observed {
+			if count <= 1 {
+				delete(s.observed, observedKey)
+				continue
+			}
+
+			s.observed[observedKey] = count / 2
+		}
+
+		// Pathological streams of one-off shapes can still leave the map
+		// full. Bound it deterministically enough for memory safety.
+		if len(s.observed) >= 65536 {
+			target := 32768
+			for observedKey := range s.observed {
+				delete(s.observed, observedKey)
+				if len(s.observed) <= target {
+					break
+				}
+			}
+		}
 	}
+
 	if s.observed[key] < 255 {
 		s.observed[key]++
 	}
@@ -216,8 +238,19 @@ func (s *Store) Candidate(src []byte) (*Schema, [][]byte, bool) {
 	if s.used+cost > s.max {
 		return nil, nil, false
 	}
-	schema := &Schema{dictionary: s.dictionary, Literal: literals, Key: key, Bytes: cost}
+	ownedLiterals := make([][]byte, len(literals))
+	for i := range literals {
+		ownedLiterals[i] = bytes.Clone(literals[i])
+	}
+
+	schema := &Schema{
+		dictionary: s.dictionary,
+		Literal:    ownedLiterals,
+		Key:        key,
+		Bytes:      cost,
+	}
 	s.schemas[key] = schema
+	delete(s.observed, key)
 	s.used += cost
 	return schema, slots, true
 }
