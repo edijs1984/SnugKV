@@ -67,6 +67,13 @@ Supported application primitives include `SET`/`GET`, conditional and expiring
 SET variants, multi-key string operations, counters, range operations, bit
 operations, expiration/TTL commands, key inspection, rename, scan, and delete.
 
+Legacy string/numeric/bitmap commands are type-guarded against native HASH, SET,
+LIST, and ZSET values. Commands that require a string return Redis-style
+`WRONGTYPE` instead of decoding native packed bytes. Redis exceptions are retained:
+`MGET` returns nil for a non-string slot, `GETDEL` returns nil without deleting a
+non-string key, plain `SET` may replace any existing type, and `BITOP` may replace
+its destination while still requiring string-compatible source keys.
+
 ### HASH
 
 Supported commands:
@@ -170,12 +177,6 @@ Modules
 ```
 
 ## Compatibility caveats under active audit
-
-Native HASH/SET/LIST/ZSET commands enforce typed behavior. A focused audit remains
-for older scalar/numeric/bit commands to ensure every access to a native container
-returns Redis-style WRONGTYPE rather than interpreting native bytes as a scalar.
-Until that audit is closed, applications should not intentionally mix scalar
-commands with native container keys.
 
 Blocking LIST and ZSET commands are canceled during server shutdown. Proactive
 client-disconnect detection while a connection is infinitely blocked remains a
