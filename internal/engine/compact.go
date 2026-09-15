@@ -12,7 +12,7 @@ func (s *Store) Compact(scratch uint64) int {
 	for i := range s.shards {
 		sh := &s.shards[i]
 		sh.mu.Lock()
-		oldArena, oldIndex := sh.arena.MemoryBytes(), sh.data.CapacityBytes()
+		oldArena, oldIndex := sh.arena.TotalMemoryBytes(), sh.data.CapacityBytes()
 		if oldArena+oldIndex == 0 || (oldArena+oldIndex)*3 > scratch {
 			sh.mu.Unlock()
 			continue
@@ -59,7 +59,7 @@ func (s *Store) Compact(scratch uint64) int {
 			sh.set(item.key, item.value)
 		}
 		sh.data.Compact()
-		newArena, newIndex := sh.arena.MemoryBytes(), sh.data.CapacityBytes()
+		newArena, newIndex := sh.arena.TotalMemoryBytes(), sh.data.CapacityBytes()
 		s.memory.used = s.memory.used - oldArena - oldIndex + newArena + newIndex
 		s.memory.arenas = s.memory.arenas - oldArena + newArena
 		s.memory.index = s.memory.index - oldIndex + newIndex
