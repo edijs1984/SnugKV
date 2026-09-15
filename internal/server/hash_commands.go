@@ -6,20 +6,22 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"snugkv/internal/engine"
 )
 
 var hashCommands = map[string]commandInfo{
-	"HSET":     {4, 0, 1, 1, 1, true},
-	"HGET":     {3, 3, 1, 1, 1, false},
-	"HDEL":     {3, 0, 1, 1, 1, true},
-	"HLEN":     {2, 2, 1, 1, 1, false},
-	"HEXISTS":  {3, 3, 1, 1, 1, false},
-	"HMGET":    {3, 0, 1, 1, 1, false},
-	"HGETALL":  {2, 2, 1, 1, 1, false},
-	"HKEYS":    {2, 2, 1, 1, 1, false},
-	"HVALS":    {2, 2, 1, 1, 1, false},
-	"HSETNX":   {4, 4, 1, 1, 1, true},
-	"HSTRLEN":  {3, 3, 1, 1, 1, false},
+	"HSET":    {4, 0, 1, 1, 1, true},
+	"HGET":    {3, 3, 1, 1, 1, false},
+	"HDEL":    {3, 0, 1, 1, 1, true},
+	"HLEN":    {2, 2, 1, 1, 1, false},
+	"HEXISTS": {3, 3, 1, 1, 1, false},
+	"HMGET":   {3, 0, 1, 1, 1, false},
+	"HGETALL": {2, 2, 1, 1, 1, false},
+	"HKEYS":   {2, 2, 1, 1, 1, false},
+	"HVALS":   {2, 2, 1, 1, 1, false},
+	"HSETNX":  {4, 4, 1, 1, 1, true},
+	"HSTRLEN": {3, 3, 1, 1, 1, false},
 }
 
 func init() {
@@ -179,7 +181,7 @@ func (s *Server) executeHash(args [][]byte) ([]byte, error) {
 	return nil, fmt.Errorf("ERR unknown command '%s'", cmd)
 }
 
-func hashPairLookup(pairs []engineHashPair, field []byte) ([]byte, bool) {
+func hashPairLookup(pairs []engine.HashPair, field []byte) ([]byte, bool) {
 	index := sort.Search(len(pairs), func(i int) bool {
 		return bytes.Compare(pairs[i].Field, field) >= 0
 	})
@@ -187,9 +189,4 @@ func hashPairLookup(pairs []engineHashPair, field []byte) ([]byte, bool) {
 		return nil, false
 	}
 	return pairs[index].Value, true
-}
-
-type engineHashPair = struct {
-	Field []byte
-	Value []byte
 }
