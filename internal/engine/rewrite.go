@@ -21,9 +21,9 @@ type Candidate struct {
 }
 
 // OptimizationEligible performs the cheap read-only eligibility check before
-// the optimizer reserves scratch/bandwidth resources. HASH values have their
-// own packed/shape representation and are intentionally excluded from the
-// generic scalar/compression optimizer.
+// the optimizer reserves scratch/bandwidth resources. Native container values
+// have their own packed representations and are intentionally excluded from
+// the generic scalar/compression optimizer.
 func (s *Store) OptimizationEligible(
 	key string,
 	rewriteInterval time.Duration,
@@ -36,7 +36,7 @@ func (s *Store) OptimizationEligible(
 
 	now := s.now()
 	e, ok := sh.get(key)
-	if !ok || e.expired(now) || e.valueType == TypeHash {
+	if !ok || e.expired(now) || isNativeContainerType(e.valueType) {
 		return 0, false
 	}
 
@@ -73,7 +73,7 @@ func (s *Store) MarkOptimizationAttempt(
 
 	now := s.now()
 	e, ok := sh.get(key)
-	if !ok || e.expired(now) || e.valueType == TypeHash {
+	if !ok || e.expired(now) || isNativeContainerType(e.valueType) {
 		return false
 	}
 
@@ -104,7 +104,7 @@ func (s *Store) Candidate(key string, maxBytes int) (Candidate, bool) {
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) || e.valueType == TypeHash || int(e.rawLength) > maxBytes {
+	if !ok || e.expired(s.now()) || isNativeContainerType(e.valueType) || int(e.rawLength) > maxBytes {
 		return Candidate{}, false
 	}
 	meta := e.entryMeta
@@ -150,8 +150,11 @@ func (s *Store) Policy(key string) (string, bool) {
 	if !s.encoding {
 		return "disabled", true
 	}
-	if e.valueType == TypeHash {
+	switch e.valueType {
+	case TypeHash:
 		return "hash-native", true
+	case TypeSet:
+		return "set-native", true
 	}
 	return heat(e.entryMeta, s.now()), true
 }
@@ -439,7 +442,7 @@ func (s *Store) Rewrite(candidate Candidate, record codec.Record) bool {
 	e, ok := sh.get(candidate.Key)
 	if !ok ||
 		e.expired(s.now()) ||
-		e.valueType == TypeHash ||
+		isNativeContainerType(e.valueType) ||
 		e.ref.Generation() != candidate.Version ||
 		e.expiresAt != candidate.expiresAt ||
 		len(record.Data) >= len(sh.encoded(e)) {
