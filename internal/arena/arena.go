@@ -88,37 +88,47 @@ func class(n int) (int, int) {
 	}
 
 	switch {
-	case size <= 128:
+	case size <= 48:
 		block := (size + 15) &^ 15
 		return block/16 - 1, block
 
+	case size <= 56:
+		// A 48-byte logical value needs 56 bytes including the arena header.
+		// Keep an exact class here instead of rounding to 64 bytes. This is a
+		// common packed single-field HASH size.
+		return 3, 56
+
+	case size <= 128:
+		block := (size + 15) &^ 15
+		return 4 + (block-64)/16, block
+
 	case size <= 256:
 		block := (size + 31) &^ 31
-		return 8 + (block-160)/32, block
+		return 9 + (block-160)/32, block
+
+	case size <= 384:
+		// Tight 16-byte classes in the range containing small packed HASHes.
+		// A 356-byte HASH needs 364 bytes including the arena header and now
+		// lands in a 368-byte block rather than a 384-byte block.
+		block := (size + 15) &^ 15
+		return 13 + (block-272)/16, block
 
 	case size <= 512:
 		block := (size + 63) &^ 63
-		return 12 + (block-320)/64, block
+		return 21 + (block-448)/64, block
 
 	case size <= 1024:
 		// Medium-small values are extremely common for JSON/API payloads.
 		// Use 32-byte classes here to avoid excessive internal fragmentation.
-		//
-		// Example:
-		//   777-byte payload + 8-byte arena header = 785 bytes
-		//   old 128-byte classes -> 896-byte block
-		//   new 32-byte classes  -> 800-byte block
 		block := (size + 31) &^ 31
-		return 16 + (block-544)/32, block
+		return 23 + (block-544)/32, block
 
 	case size <= 8192:
-		// Medium values use ~12.5% geometric classes. The previous 256/512/
-		// 1024-byte steps created large internal slack for packed HASH values
-		// around 1.4 KiB, 2.8 KiB, and 5.6 KiB. Starting from the existing
-		// 1024-byte class keeps bucket numbering stable below 1 KiB while only
-		// adding six buckets through 8 KiB.
+		// Medium values use ~12.5% geometric classes. Starting from 1024 keeps
+		// the class progression compact while leaving enough buckets for the
+		// full 32 MiB value range.
 		block := 1024
-		bucket := 31
+		bucket := 38
 
 		for block < size {
 			step := block / 8
@@ -138,10 +148,10 @@ func class(n int) (int, int) {
 	}
 
 	// Large allocations continue using ~12.5% size classes. Medium classes
-	// end at bucket 49, leaving enough of the fixed 128-bucket freelist to
-	// support values beyond SnugKV's 32 MiB RESP bulk limit.
+	// end at bucket 56; a 32 MiB value reaches bucket 127, exactly within the
+	// fixed 128-bucket freelist.
 	block := 8192
-	bucket := 49
+	bucket := 56
 
 	for block < size {
 		step := block / 8
