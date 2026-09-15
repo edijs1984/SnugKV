@@ -76,8 +76,12 @@ func nextEntryRevision(old entry) uint32 {
 	return revision
 }
 
+func isNativeContainerType(t ValueType) bool {
+	return t == TypeHash || t == TypeSet
+}
+
 func (s *Store) shouldTrackActivity(e entry) bool {
-	return s.encoding && e.valueType != TypeHash
+	return s.encoding && !isNativeContainerType(e.valueType)
 }
 
 func (sh *shard) encoded(e entry) []byte {

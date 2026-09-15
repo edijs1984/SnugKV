@@ -61,9 +61,13 @@ func (s *Store) Type(key string) string {
 	}
 
 	// Semantic string subtypes and physical codecs remain Redis STRING values.
-	// Native container datatypes must expose their Redis-visible type.
-	if e.valueType == TypeHash {
+	// Native container datatypes expose their Redis-visible type.
+	switch e.valueType {
+	case TypeHash:
 		return "hash"
+	case TypeSet:
+		return "set"
+	default:
+		return "string"
 	}
-	return "string"
 }

@@ -64,7 +64,7 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 		if len(record.Value) > 32<<20 {
 			return errors.New("ERR recovered value exceeds 32 MiB limit")
 		}
-		if record.ValueType > uint8(TypeHash) {
+		if record.ValueType > uint8(TypeSet) {
 			return errors.New("ERR recovered value has unknown type")
 		}
 	}
@@ -82,13 +82,19 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 		}
 
 		var e preparedEntry
-		if record.ValueType == uint8(TypeHash) {
+		switch ValueType(record.ValueType) {
+		case TypeHash:
 			pairs, err := decodePackedHash(record.Value)
 			if err != nil {
 				return errors.New("ERR recovered HASH value is invalid")
 			}
 			e = s.hashEntry(pairs, record.Value)
-		} else {
+		case TypeSet:
+			if _, err := decodePackedSet(record.Value); err != nil {
+				return errors.New("ERR recovered SET value is invalid")
+			}
+			e = setPreparedEntry(record.Value)
+		default:
 			e = s.makeEntry(record.Value)
 
 			// Zero is TypeString and also keeps old persistence files compatible.
@@ -171,9 +177,8 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 		}
 
 		// Restore runs with all shards locked. Rebuild ephemeral JSON-shape
-		// admission state from restored logical string/JSON values. HASH shapes
-		// are rebuilt earlier while constructing TypeHash prepared entries.
-		if e.valueType != TypeHash {
+		// admission state only from restored logical scalar/string values.
+		if !isNativeContainerType(e.valueType) {
 			if current, ok := sh.get(key); ok {
 				s.observeJSONShapeLocked(sh, s.decode(sh, current))
 			}
