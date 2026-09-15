@@ -8,7 +8,8 @@ import (
 )
 
 const SegmentBytes = 8 << 10
-const firstSmallSegmentBytes = 1 << 10
+const firstSmallSegmentBytes = 256
+const secondSmallSegmentBytes = 1 << 10
 const segmentMetadata = 32
 
 // Ref is an opaque allocation identity. Generation prevents aliasing after reuse.
@@ -184,10 +185,10 @@ func class(n int) (int, int) {
 }
 
 // segmentSizeForBlock keeps small allocations on 8 KiB segments after the
-// first segment, where packing many values amortizes metadata well. For medium
-// blocks it sizes a segment to an exact multiple of the block class so a segment
-// cannot end with a large permanently unusable tail. Allocations larger than
-// 8 KiB keep their dedicated block-sized segment.
+// sparse-growth stages, where packing many values amortizes metadata well. For
+// medium blocks it sizes a segment to an exact multiple of the block class so a
+// segment cannot end with a large permanently unusable tail. Allocations larger
+// than 8 KiB keep their dedicated block-sized segment.
 func segmentSizeForBlock(block int) int {
 	if block > SegmentBytes {
 		return block
@@ -203,16 +204,28 @@ func segmentSizeForBlock(block int) int {
 	return blocks * block
 }
 
-// segmentSizeForAllocation uses a compact first segment for small values. A
-// sparse shard with only a few keys therefore reserves roughly 1 KiB instead of
-// 8 KiB. Once the first segment fills, subsequent small-value segments retain
-// the 8 KiB policy used by dense workloads.
+// segmentSizeForAllocation stages small-value growth so sparse shards reserve
+// only what they are likely to use: roughly 256 bytes for the first segment,
+// roughly 1 KiB for the second, then the normal dense 8 KiB policy. Each staged
+// segment is rounded down to an exact multiple of the block class.
 func segmentSizeForAllocation(block, existingSegments int) int {
-	if existingSegments != 0 || block > 1024 {
+	if block > 1024 {
 		return segmentSizeForBlock(block)
 	}
 
-	blocks := firstSmallSegmentBytes / block
+	target := SegmentBytes
+	switch existingSegments {
+	case 0:
+		target = firstSmallSegmentBytes
+	case 1:
+		target = secondSmallSegmentBytes
+	}
+
+	if target < block {
+		target = block
+	}
+
+	blocks := target / block
 	if blocks < 1 {
 		return block
 	}
