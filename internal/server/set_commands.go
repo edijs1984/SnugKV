@@ -3,15 +3,18 @@ package server
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
 var setCommands = map[string]commandInfo{
-	"SADD":      {3, 0, 1, 1, 1, true},
-	"SREM":      {3, 0, 1, 1, 1, true},
-	"SISMEMBER": {3, 3, 1, 1, 1, false},
-	"SCARD":     {2, 2, 1, 1, 1, false},
-	"SMEMBERS":  {2, 2, 1, 1, 1, false},
+	"SADD":       {3, 0, 1, 1, 1, true},
+	"SREM":       {3, 0, 1, 1, 1, true},
+	"SISMEMBER":  {3, 3, 1, 1, 1, false},
+	"SMISMEMBER": {3, 0, 1, 1, 1, false},
+	"SCARD":      {2, 2, 1, 1, 1, false},
+	"SMEMBERS":   {2, 2, 1, 1, 1, false},
+	"SSCAN":      {3, 0, 1, 1, 1, false},
 }
 
 func init() {
@@ -89,6 +92,21 @@ func (s *Server) executeSet(args [][]byte) ([]byte, error) {
 		}
 		return boolean(found), nil
 
+	case "SMISMEMBER":
+		found, err := s.store.SetMultiContains(key, args[2:])
+		if err != nil {
+			return nil, err
+		}
+		items := make([][]byte, 0, len(found))
+		for _, present := range found {
+			if present {
+				items = append(items, integer(1))
+			} else {
+				items = append(items, integer(0))
+			}
+		}
+		return array(items...), nil
+
 	case "SCARD":
 		count, err := s.store.SetLen(key)
 		if err != nil {
@@ -106,6 +124,55 @@ func (s *Server) executeSet(args [][]byte) ([]byte, error) {
 			items = append(items, formatBulkString(member))
 		}
 		return array(items...), nil
+
+	case "SSCAN":
+		cursor, err := strconv.ParseUint(string(args[2]), 10, 64)
+		if err != nil {
+			return nil, errors.New("ERR invalid cursor")
+		}
+
+		count := 10
+		var pattern []byte
+		for i := 3; i < len(args); {
+			switch strings.ToUpper(string(args[i])) {
+			case "MATCH":
+				if i+1 >= len(args) {
+					return nil, errors.New("ERR syntax error")
+				}
+				pattern = args[i+1]
+				i += 2
+
+			case "COUNT":
+				if i+1 >= len(args) {
+					return nil, errors.New("ERR syntax error")
+				}
+				n, err := strconv.Atoi(string(args[i+1]))
+				if err != nil || n <= 0 {
+					return nil, errors.New("ERR syntax error")
+				}
+				if n > 10000 {
+					n = 10000
+				}
+				count = n
+				i += 2
+
+			default:
+				return nil, errors.New("ERR syntax error")
+			}
+		}
+
+		next, members, err := s.store.SetScan(key, cursor, count, pattern)
+		if err != nil {
+			return nil, err
+		}
+		items := make([][]byte, 0, len(members))
+		for _, member := range members {
+			items = append(items, formatBulkString(member))
+		}
+		return array(
+			formatBulkString([]byte(strconv.FormatUint(next, 10))),
+			array(items...),
+		), nil
 	}
 
 	return nil, fmt.Errorf("ERR unknown command '%s'", cmd)
