@@ -1,211 +1,138 @@
 # SnugKV Delivery Plan
 
-This plan is the implementation roadmap for taking the current prototype to a completion-ready single-node in-memory store aligned with the product specification in SNUGKV_AGENT_SPEC.md.
+This document is the current implementation roadmap. Completed work is kept here
+only at milestone level; `PROGRESS.md` contains verification evidence and
+`COMPATIBILITY.md` contains the public command/protocol boundary.
 
-## Phase 0: Foundations and working rules
+## Current status
+
+The single-node RESP2 engine, persistence, memory accounting, optimizer,
+observability, packaging, and the main Redis-style native container types are
+implemented. HASH, SET, and LIST v1 are functionally complete for the intended
+single-node scope. ZSET storage, range queries, lex queries, algebra, pop/random/
+scan operations, and range-store operations are implemented; blocking ZSET pops
+remain separate follow-up work.
 
-### Completed
+The packed storage formats for HASH, SET, LIST, and ZSET are frozen for v1. The
+next memory work should target shared per-key overhead rather than adding more
+container-specific encodings.
+
+## Completed milestones
+
+### Core engine and protocol
 
-- Created the Go module and local toolchain usage path.
-- Added initial spec-driven engine tests for exact round-trip, TTL expiry, and counter increment behavior.
-- Implemented a minimal in-memory engine with exact byte preservation and TTL expiration.
-- Implemented a minimal command dispatcher for `PING`, `ECHO`, `SET`, `GET`, `DEL`, `INCR`, and `TTL`.
-- Implemented a RESP parser and a basic TCP server loop.
-- Added configuration defaults and power-of-two shard validation.
-- Added the `cmd/snugkv` entry point.
+- [x] Go module, TCP server, bounded streaming RESP2 parser, pipelining, binary-safe values.
+- [x] Sharded open-addressed key index and segmented arenas.
+- [x] Exact byte round trips, lazy/active expiration, TTL mutation semantics.
+- [x] Cross-key atomic paths for multi-key writes and datatype move/store operations.
+- [x] Memory accounting, max-memory admission, rollback on OOM, compaction, sampled LRU eviction.
+- [x] Graceful shutdown, connection limits, read/write bounds, panic recovery.
 
-### Remaining
+### Scalar storage and optimizer
 
-- Review and formalize the current design against the spec, especially around concurrency and server lifecycle.
-- Add a clear ADR for the chosen config format and runtime lifecycle.
-- Maintain `PROGRESS.md` as the living status file for completed and current work.
+- [x] Raw scalar storage and codec registry.
+- [x] Canonical integer, UUID, timestamp, JSON-shape, dictionary, LZ4, and Zstandard candidates.
+- [x] Exact reconstruction verification and raw fallback.
+- [x] Budgeted background optimizer with stale-rewrite rejection and hysteresis.
+
+### Persistence and operations
+
+- [x] Checksummed logical AOF and snapshot persistence.
+- [x] AOF restart recovery, truncated-final-frame handling, corruption rejection.
+- [x] Online AOF rewrite and append-failure rollback.
+- [x] Prometheus metrics and loopback-only administration listener.
+- [x] Docker/Compose, Make targets, CI, soak and benchmark harnesses.
+
+### Native HASH
+
+- [x] Canonical SH1 packed hashes.
+- [x] Adaptive shared field-shape physical representation (SH2) with logical SH1 persistence.
+- [x] Core, numeric, random, and scan command coverage.
+- [x] TTL, rename, persistence, race, and benchmark coverage.
+
+### Native SET
+
+- [x] Canonical SS1 packed sets.
+- [x] Adaptive singleton and prefix-coded physical storage.
+- [x] Membership, scan, algebra/store, move, pop, and random-member commands.
+- [x] TTL, persistence, atomicity, race, and benchmark coverage.
+
+### Native LIST
+
+- [x] Canonical ordered SL1 packed lists.
+- [x] Push/pop/index/range and compatibility mutation commands.
+- [x] `LMOVE` / `RPOPLPUSH` atomic cross-key operations.
+- [x] `BLPOP`, `BRPOP`, `BLMOVE`, `BRPOPLPUSH` waiter/wakeup architecture.
+- [x] AOF-safe blocking behavior: waits do not hold the durability mutex.
+- [x] TTL, OOM rollback, restart, race, and benchmark coverage.
+
+### Native ZSET
+
+- [x] Canonical score/member ordering with packed adaptive storage.
+- [x] Integer score delta-varints with float64 fallback.
+- [x] Adaptive member prefix/front coding with raw-member fallback.
+- [x] Rank, score-range, lex-range, removal, and modern `ZRANGE` modes.
+- [x] `ZUNION`, `ZINTER`, `ZDIFF` and STORE variants, including mixed SET/ZSET sources.
+- [x] `WEIGHTS`, `AGGREGATE SUM|MIN|MAX|COUNT`, `ZINTERCARD`.
+- [x] `ZPOPMIN`, `ZPOPMAX`, `ZMPOP`, `ZMSCORE`, `ZRANDMEMBER`, `ZSCAN`, `ZRANGESTORE`.
+- [x] Dynamic durability key discovery for `ZMPOP` and destination-as-source safety for stores.
+- [x] TTL, OOM rollback, persistence, race, RESP, and benchmark coverage.
+
+## Remaining work / TODO
+
+### P0 — finish the current Redis-compatible datatype surface
+
+- [ ] Add blocking ZSET commands: `BZPOPMIN`, `BZPOPMAX`, `BZMPOP` using a real waiter/wakeup path, not polling.
+- [ ] Audit all older scalar/numeric/bit commands for strict WRONGTYPE behavior against native HASH/SET/LIST/ZSET values.
+- [ ] Harden infinite blocking client-disconnect detection so a disconnected client is released without waiting for another wakeup or server shutdown.
+- [ ] Review scan compatibility edge cases (`MATCH`, `COUNT`, glob character classes, cursor semantics) across `SCAN`, `HSCAN`, `SSCAN`, and `ZSCAN`.
+
+### P1 — shared memory overhead
+
+Current 100k-key container benchmarks show roughly 31.5 B/key of index reservation
+plus roughly 54–55 B/key of entry/key accounting before the container payload.
+Tiny containers therefore remain weaker than Redis even when the packed payload is
+smaller.
+
+- [ ] Evaluate reducing the 24-byte index slot while preserving collision safety.
+- [ ] Evaluate reducing the 40-byte common entry representation or moving more fields into optional sidecars.
+- [ ] Reduce reserved entry capacity overhead without harming mutation throughput.
+- [ ] Improve sparse/small-dataset behavior: 256 shards, per-shard entry floors, and 8 KiB first arena segments dominate 1k-key tests.
+- [ ] Evaluate lazy/shared arena segment pools or smaller initial segments.
+- [ ] Re-run STRING/HASH/SET/LIST/ZSET benchmarks after each engine-wide change.
+
+### P2 — release validation
 
----
+- [ ] Run fresh dedicated Redis baselines for public comparison claims.
+- [ ] Run multi-run variance rather than single-run memory/latency snapshots.
+- [ ] Run million-record datasets on dedicated hardware.
+- [ ] Retain evidence from a 24-hour mixed workload soak.
+- [ ] Expand third-party client compatibility tests beyond the current smoke matrix.
+- [ ] Publish a versioned container image when registry/credentials are chosen.
 
-## Phase 1: Correctness baseline for single-node engine
+### P3 — protocol/application compatibility beyond v1
 
-### Goal
+- [ ] RESP3.
+- [ ] Transactions: `MULTI`, `EXEC`, `WATCH`, `UNWATCH`, `DISCARD`.
+- [ ] Streams.
+- [ ] Pub/Sub.
+- [ ] Lua scripting / Redis Functions or an explicitly different extension model.
 
-Produce a correct, stable engine that passes the spec’s invariants before optimization or codec work begins.
+### P4 — distributed features (not part of current single-node v1)
 
-### Must do
+- [ ] Replication.
+- [ ] Automatic failover / Sentinel-like behavior.
+- [ ] Cluster/sharding protocol.
+- [ ] Multi-node consistency and recovery model.
 
-1. Replace the single `map[string]entry` with a shard-aware engine model.
-2. Ensure `SET`/`GET` are exact byte round-trips.
-3. Ensure `INCR` and `DECR` match Redis-style integer semantics and overflow behavior.
-4. Implement lazy expiration and active cleanup.
-5. Add tests for overwrite, delete, expiration boundary, and stale read safety.
-6. Add race tests for concurrent reads/writes.
-7. Add a clear memory-accounting model for logical vs physical bytes.
+## Release discipline
 
-### Expected deliverables
+Before treating a feature as complete:
 
-- `internal/engine/shard.go`
-- `internal/engine/engine.go` refactored to shard-based operations
-- tests for concurrency, overwrite, and TTL transitions
-
----
-
-## Phase 2: Full command compliance for the supported subset
-
-### Goal
-
-Match the minimum supported command set from the specification.
-
-### Must do
-
-1. Implement all commands in Section 7.2 for the supported subset.
-2. Implement correct RESP2 error semantics.
-3. Add command arity validation and integer parsing errors.
-4. Add `SELECT 0`, `HELLO 2`, `INFO`, `DBSIZE`, `COMMAND`, `EXISTS`, `MGET`, `SETNX`, `MSET`, `STRLEN`, `EXPIRE`, `PEXPIRE`, `PERSIST`, and the administrative `SNUG.*` commands.
-5. Add tests for supported commands and unsupported-command behavior.
-
-### Expected deliverables
-
-- command dispatcher coverage for the supported Redis-compatible subset
-- RESP error/response validation tests
-
----
-
-## Phase 3: Storage and value representation
-
-### Goal
-
-Add the internal value model and codec infrastructure promised by the spec.
-
-### Must do
-
-1. Define the internal encoded record format and metadata envelope.
-2. Implement a codec registry with a raw fallback.
-3. Add canonical integer codec support.
-4. Add UUID, timestamp, and JSON-shape codec stubs with exact round-trip verification.
-5. Add dictionary and schema admission rules.
-6. Document memory format and codec IDs in `docs/memory-format.md` and ADRs under `docs/decisions/`.
-
-### Expected deliverables
-
-- `internal/codec/*` package structure
-- codec `ID` registry and common interfaces
-- docs and ADRs for the chosen format decisions
-
----
-
-## Phase 4: Policy engine and background optimizer
-
-### Goal
-
-Implement the adaptive policy logic behind workload-aware encoding without breaking correctness.
-
-### Must do
-
-1. Define value heat classes and score model.
-2. Implement optimizer sampling and safe rewrite protocol.
-3. Add stale rewrite rejection logic using version checks.
-4. Add budget enforcement for CPU, scratch memory, and bytes encoded per second.
-5. Add anti-thrashing and hysteresis for codec switching.
-
-### Expected deliverables
-
-- optimizer package and policy scoring logic
-- tests covering stale rewrite protection and rewrite rejection
-
----
-
-## Phase 5: Persistence and crash safety
-
-### Goal
-
-Support AOF and snapshots only after the in-memory engine is stable.
-
-### Must do
-
-1. Add AOF writer for logical mutations.
-2. Implement snapshot format with versioning and checksums.
-3. Add corruption and truncation recovery tests.
-4. Document recovery order and failure modes.
-
-### Expected deliverables
-
-- `internal/persistence/*`
-- AOF/snapshot golden tests and recovery validation
-
----
-
-## Phase 6: Observability, metrics, and operational readiness
-
-### Goal
-
-Make SnugKV operable and diagnosable under load.
-
-### Must do
-
-1. Add metrics for commands, latency, memory, codec usage, queue depth, and expiration/eviction counters.
-2. Implement `INFO memory` and `SNUG.*` admin commands.
-3. Add structured logging with safe redaction.
-4. Ensure metrics and admin interfaces are isolated and secure.
-
-### Expected deliverables
-
-- `internal/stats/*` and observability hooks
-- admin command output and docs
-
----
-
-## Phase 7: Benchmarking and product validation
-
-### Goal
-
-Demonstrate the product hypothesis with reproducible data and measured memory gains.
-
-### Must do
-
-1. Add benchmark datasets for session JSON, API responses, telemetry, random values, and hot counters.
-2. Run benchmarks against raw baseline and Redis-compatible subset.
-3. Measure p50/p95/p99 latency and memory footprint.
-4. Publish results with machine details and exact config.
-5. Only document memory or performance improvements with reproducible benchmark numbers.
-
-### Expected deliverables
-
-- `benchmarks/` and benchmark scripts
-- benchmark results file or markdown summary
-
----
-
-## Phase 8: Final production hardening
-
-### Goal
-
-Prepare the project for final review and handoff.
-
-### Must do
-
-1. Run required verification commands:
-   - `gofmt ./...`
-   - `go vet ./...`
-   - `go test ./...`
-   - `go test -race ./...`
-2. Review all docs and ADRs.
-3. Verify concurrency safety, expiration correctness, and AOF/snapshot failures.
-4. Confirm the user-facing product behavior matches the spec’s compatibility promise.
-5. Ensure no unsupported claim is documented without benchmark evidence.
-
-### Final exit criteria
-
-- code compiles cleanly
-- all targeted tests pass
-- race tests pass for concurrency changes
-- public behavior is documented
-- memory ownership is clear
-- failure paths are covered
-- benchmarks exist for performance-sensitive work
-- no unverified claims are published
-
----
-
-## Implementation status
-
-Phases 0 through 8 are implemented for the repository's single-node scope. The
-remaining work is release validation: million-record comparative benchmarks,
-multi-run variance, third-party client matrices, and a 24-hour soak. See
-`PROGRESS.md` for current verification evidence and environment constraints.
+- run `go test -race -count=1 ./...`;
+- run `go vet ./...`;
+- keep RESP fuzz green;
+- add persistence/restart coverage for durable writes;
+- add OOM/rollback coverage for atomic multi-key writes;
+- document observable compatibility differences;
+- publish performance or memory claims only with reproducible benchmark details.
