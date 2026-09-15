@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/binary"
 	"math"
 	"testing"
 	"time"
@@ -159,7 +160,83 @@ func TestZSetStorageStats(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("found=%v err=%v", found, err)
 	}
-	if stats.Members != 2 || stats.MemberBytes != 32 || stats.PackedBytes != 54 || stats.StoredBytes != 54 || stats.Encoding != "packed" {
+	if stats.Members != 2 || stats.MemberBytes != 32 || stats.PackedBytes != 40 || stats.StoredBytes != 40 || stats.Encoding != "packed-int-delta" {
 		t.Fatalf("stats=%+v", stats)
+	}
+}
+
+func TestZSetFloatScoresKeepRawSize(t *testing.T) {
+	items := []ZSetItem{
+		zitem(1.25, "aaaaaaaaaaaaaaaa"),
+		zitem(2.5, "bbbbbbbbbbbbbbbb"),
+	}
+	packed, err := encodePackedZSet(items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Same size as SZ1: 3-byte header + count + 2*(8-byte score + len + 16-byte member).
+	if len(packed) != 54 {
+		t.Fatalf("packed bytes=%d want=54", len(packed))
+	}
+	if got := zsetEncodingName(packed); got != "packed-float64" {
+		t.Fatalf("encoding=%q", got)
+	}
+	decoded, err := decodePackedZSet(packed)
+	if err != nil || len(decoded) != 2 || decoded[0].Score != 1.25 || decoded[1].Score != 2.5 {
+		t.Fatalf("decoded=%v err=%v", decoded, err)
+	}
+}
+
+func TestZSetIntegerDeltaHandlesLargeTimestampScores(t *testing.T) {
+	items := []ZSetItem{
+		zitem(1789490000000, "aaaaaaaaaaaaaaaa"),
+		zitem(1789490001000, "bbbbbbbbbbbbbbbb"),
+		zitem(1789490002000, "cccccccccccccccc"),
+	}
+	packed, err := encodePackedZSet(items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := zsetEncodingName(packed); got != "packed-int-delta" {
+		t.Fatalf("encoding=%q", got)
+	}
+	if len(packed) >= 79 { // old SZ1 size: 4 + 3*(8+1+16)
+		t.Fatalf("integer-delta encoding did not save space: %d", len(packed))
+	}
+	decoded, err := decodePackedZSet(packed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range items {
+		if decoded[i].Score != items[i].Score || string(decoded[i].Member) != string(items[i].Member) {
+			t.Fatalf("decoded[%d]=%v want=%v", i, decoded[i], items[i])
+		}
+	}
+}
+
+func TestZSetReadsLegacySZ1(t *testing.T) {
+	items := []ZSetItem{zitem(-2, "a"), zitem(3.5, "b")}
+	legacy := append([]byte(nil), packedZSetHeaderV1[:]...)
+	legacy = appendZSetUvarint(legacy, uint64(len(items)))
+	var scoreBytes [8]byte
+	for _, item := range items {
+		binary.LittleEndian.PutUint64(scoreBytes[:], math.Float64bits(item.Score))
+		legacy = append(legacy, scoreBytes[:]...)
+		legacy = appendZSetUvarint(legacy, uint64(len(item.Member)))
+		legacy = append(legacy, item.Member...)
+	}
+	decoded, err := decodePackedZSet(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded) != 2 || decoded[0].Score != -2 || decoded[1].Score != 3.5 {
+		t.Fatalf("decoded=%v", decoded)
+	}
+	canonical, err := encodePackedZSet(decoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if canonical[2] == packedZSetHeaderV1[2] {
+		t.Fatal("legacy encoding was not canonicalized")
 	}
 }
