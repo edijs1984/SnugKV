@@ -40,7 +40,9 @@ func (s *Store) SetMultiContains(key string, targets [][]byte) ([]bool, error) {
 
 // SetScan incrementally iterates the sorted logical SET. Cursor is the next
 // member index to inspect. COUNT is a work hint: at most count source members
-// are inspected, so MATCH may return fewer than count results.
+// are inspected, so MATCH may return fewer than count results. A nil pattern
+// means MATCH was omitted; a non-nil empty pattern is a real empty glob and only
+// matches an empty member.
 func (s *Store) SetScan(key string, cursor uint64, count int, pattern []byte) (uint64, [][]byte, error) {
 	if count <= 0 {
 		count = 10
@@ -74,7 +76,7 @@ func (s *Store) SetScan(key string, cursor uint64, count int, pattern []byte) (u
 
 	out := make([][]byte, 0, end-start)
 	for i := start; i < end; i++ {
-		if len(pattern) != 0 && !hashGlobMatch(pattern, members[i]) {
+		if pattern != nil && !redisGlobMatch(pattern, members[i]) {
 			continue
 		}
 		out = append(out, append([]byte(nil), members[i]...))
