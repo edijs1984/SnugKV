@@ -69,6 +69,8 @@ func (s *Store) Type(key string) string {
 		return "set"
 	case TypeList:
 		return "list"
+	case TypeZSet:
+		return "zset"
 	default:
 		return "string"
 	}
