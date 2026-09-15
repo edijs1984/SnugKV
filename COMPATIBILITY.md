@@ -139,6 +139,24 @@ executes the corresponding non-blocking pop through the normal durable path.
 Lex-range behavior follows Redis's same-score use case; applications should not
 rely on lex semantics across members with different scores.
 
+## SCAN family
+
+`SCAN`, `HSCAN`, `SSCAN`, and `ZSCAN` support cursor iteration, `MATCH`, and
+`COUNT`. Global `SCAN` also supports `TYPE` filtering. MATCH is binary-safe and
+supports Redis-style `*`, `?`, bracket classes/ranges, negated classes, and
+backslash escaping. An explicit empty MATCH pattern is distinct from omitting
+MATCH.
+
+COUNT is treated as a work hint rather than a guarantee on returned matches. A
+selective MATCH/TYPE filter can therefore return an empty page with a non-zero
+cursor. HSCAN/SSCAN/ZSCAN likewise advance over inspected source entries rather
+than only over entries that passed MATCH.
+
+SnugKV's cursor token is based on a stable sorted snapshot/index traversal, not
+Redis's internal hash-table cursor algorithm. Applications should treat cursors
+as opaque and continue until cursor `0`; they should not expect SnugKV cursor
+numbers or page boundaries to match Redis byte-for-byte.
+
 ## Blocking client disconnects
 
 Blocking LIST and ZSET commands are always canceled during server shutdown. On
@@ -186,12 +204,6 @@ Sentinel-style failover
 Cluster mode
 Modules
 ```
-
-## Compatibility caveats under active audit
-
-`SCAN`, `HSCAN`, `SSCAN`, and `ZSCAN` implement the useful cursor/MATCH/COUNT
-surface, but exact cursor progression and every Redis glob edge case should not be
-assumed identical.
 
 ## Compatibility philosophy
 
