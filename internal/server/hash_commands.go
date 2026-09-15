@@ -4,24 +4,29 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
+	"strconv"
 	"strings"
 
 	"snugkv/internal/engine"
 )
 
 var hashCommands = map[string]commandInfo{
-	"HSET":    {4, 0, 1, 1, 1, true},
-	"HGET":    {3, 3, 1, 1, 1, false},
-	"HDEL":    {3, 0, 1, 1, 1, true},
-	"HLEN":    {2, 2, 1, 1, 1, false},
-	"HEXISTS": {3, 3, 1, 1, 1, false},
-	"HMGET":   {3, 0, 1, 1, 1, false},
-	"HGETALL": {2, 2, 1, 1, 1, false},
-	"HKEYS":   {2, 2, 1, 1, 1, false},
-	"HVALS":   {2, 2, 1, 1, 1, false},
-	"HSETNX":  {4, 4, 1, 1, 1, true},
-	"HSTRLEN": {3, 3, 1, 1, 1, false},
+	"HSET":         {4, 0, 1, 1, 1, true},
+	"HGET":         {3, 3, 1, 1, 1, false},
+	"HDEL":         {3, 0, 1, 1, 1, true},
+	"HLEN":         {2, 2, 1, 1, 1, false},
+	"HEXISTS":      {3, 3, 1, 1, 1, false},
+	"HMGET":        {3, 0, 1, 1, 1, false},
+	"HGETALL":      {2, 2, 1, 1, 1, false},
+	"HKEYS":        {2, 2, 1, 1, 1, false},
+	"HVALS":        {2, 2, 1, 1, 1, false},
+	"HSETNX":       {4, 4, 1, 1, 1, true},
+	"HSTRLEN":      {3, 3, 1, 1, 1, false},
+	"HINCRBY":      {4, 4, 1, 1, 1, true},
+	"HINCRBYFLOAT": {4, 4, 1, 1, 1, true},
+	"HSCAN":        {3, 0, 1, 1, 1, false},
 }
 
 func init() {
@@ -176,6 +181,88 @@ func (s *Server) executeHash(args [][]byte) ([]byte, error) {
 			return integer(0), nil
 		}
 		return integer(int64(len(value))), nil
+
+	case "HINCRBY":
+		increment, err := strconv.ParseInt(string(args[3]), 10, 64)
+		if err != nil {
+			return nil, errors.New("ERR value is not an integer or out of range")
+		}
+		result, err := s.store.HashIncrBy(key, args[2], increment)
+		if err != nil {
+			return nil, err
+		}
+		return integer(result), nil
+
+	case "HINCRBYFLOAT":
+		increment, err := strconv.ParseFloat(string(args[3]), 64)
+		if err != nil || math.IsNaN(increment) || math.IsInf(increment, 0) {
+			return nil, errors.New("ERR value is not a valid float")
+		}
+		result, err := s.store.HashIncrByFloat(key, args[2], increment)
+		if err != nil {
+			return nil, err
+		}
+		return formatBulkString([]byte(result)), nil
+
+	case "HSCAN":
+		cursor, err := strconv.ParseUint(string(args[2]), 10, 64)
+		if err != nil {
+			return nil, errors.New("ERR invalid cursor")
+		}
+
+		count := 10
+		var pattern []byte
+		hasPattern := false
+		noValues := false
+
+		for i := 3; i < len(args); {
+			switch strings.ToUpper(string(args[i])) {
+			case "MATCH":
+				if i+1 >= len(args) {
+					return nil, errors.New("ERR syntax error")
+				}
+				pattern = args[i+1]
+				hasPattern = true
+				i += 2
+
+			case "COUNT":
+				if i+1 >= len(args) {
+					return nil, errors.New("ERR syntax error")
+				}
+				n, err := strconv.Atoi(string(args[i+1]))
+				if err != nil || n <= 0 {
+					return nil, errors.New("ERR syntax error")
+				}
+				if n > 10000 {
+					n = 10000
+				}
+				count = n
+				i += 2
+
+			case "NOVALUES":
+				noValues = true
+				i++
+
+			default:
+				return nil, errors.New("ERR syntax error")
+			}
+		}
+
+		next, pairs, err := s.store.HashScan(key, cursor, count, pattern, hasPattern)
+		if err != nil {
+			return nil, err
+		}
+		items := make([][]byte, 0, 2*len(pairs))
+		for _, pair := range pairs {
+			items = append(items, formatBulkString(pair.Field))
+			if !noValues {
+				items = append(items, formatBulkString(pair.Value))
+			}
+		}
+		return array(
+			formatBulkString([]byte(strconv.FormatUint(next, 10))),
+			array(items...),
+		), nil
 	}
 
 	return nil, fmt.Errorf("ERR unknown command '%s'", cmd)
