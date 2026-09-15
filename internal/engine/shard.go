@@ -34,17 +34,26 @@ func (sh *shard) entryCapacityFor(additional int) int {
 	capacity := cap(sh.entries)
 
 	for target > capacity {
-		// Grow entry storage in smaller per-shard increments.
-		//
-		// With 256 shards, large minimum growth steps multiply into
-		// substantial unused capacity. A 25% geometric step with a
-		// 64-entry floor keeps insertion growth bounded while avoiding
-		// hundreds of unused entry slots per shard.
-		growth := capacity / 4
-		if growth < 64 {
-			growth = 64
+		// Sparse stores commonly have only a handful of keys in each of 256
+		// shards. Reserving 64 entry structs on the first insertion multiplied
+		// a 40-byte slot into ~640 KiB of mostly empty entry arrays. Ramp small
+		// shards geometrically first, then return to the existing 25% growth
+		// policy once a shard is established.
+		switch {
+		case capacity == 0:
+			capacity = 8
+		case capacity < 64:
+			capacity *= 2
+			if capacity > 64 {
+				capacity = 64
+			}
+		default:
+			growth := capacity / 4
+			if growth < 16 {
+				growth = 16
+			}
+			capacity += growth
 		}
-		capacity += growth
 	}
 
 	return capacity

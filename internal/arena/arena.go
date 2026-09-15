@@ -8,6 +8,7 @@ import (
 )
 
 const SegmentBytes = 8 << 10
+const firstSmallSegmentBytes = 1 << 10
 const segmentMetadata = 32
 
 // Ref is an opaque allocation identity. Generation prevents aliasing after reuse.
@@ -75,7 +76,7 @@ type segment struct {
 	used uint32
 }
 type Arena struct {
-	segments   []segment
+	segments []segment
 	// Buckets 128 and 129 are reserved for exact 24- and 88-byte blocks used
 	// by tiny native-container payloads. Large 32 MiB values top out at 127.
 	free       [130]uint64
@@ -182,11 +183,11 @@ func class(n int) (int, int) {
 	return bucket, block
 }
 
-// segmentSizeForBlock keeps small allocations on 8 KiB segments, where packing
-// many values amortizes segment metadata well. For medium blocks, it sizes a new
-// segment to an exact multiple of the block class so a segment cannot end with a
-// large permanently unusable tail. Allocations larger than 8 KiB keep their
-// dedicated block-sized segment.
+// segmentSizeForBlock keeps small allocations on 8 KiB segments after the
+// first segment, where packing many values amortizes metadata well. For medium
+// blocks it sizes a segment to an exact multiple of the block class so a segment
+// cannot end with a large permanently unusable tail. Allocations larger than
+// 8 KiB keep their dedicated block-sized segment.
 func segmentSizeForBlock(block int) int {
 	if block > SegmentBytes {
 		return block
@@ -202,6 +203,22 @@ func segmentSizeForBlock(block int) int {
 	return blocks * block
 }
 
+// segmentSizeForAllocation uses a compact first segment for small values. A
+// sparse shard with only a few keys therefore reserves roughly 1 KiB instead of
+// 8 KiB. Once the first segment fills, subsequent small-value segments retain
+// the 8 KiB policy used by dense workloads.
+func segmentSizeForAllocation(block, existingSegments int) int {
+	if existingSegments != 0 || block > 1024 {
+		return segmentSizeForBlock(block)
+	}
+
+	blocks := firstSmallSegmentBytes / block
+	if blocks < 1 {
+		return block
+	}
+	return blocks * block
+}
+
 func (a *Arena) MemoryBytes() uint64 {
 	total := uint64(cap(a.segments) * segmentMetadata)
 	for _, s := range a.segments {
@@ -209,6 +226,9 @@ func (a *Arena) MemoryBytes() uint64 {
 	}
 	return total
 }
+
+// SegmentCount exposes the number of physical arena segments for diagnostics.
+func (a *Arena) SegmentCount() int { return len(a.segments) }
 
 // GrowthFor simulates allocation without changing state. Old allocations remain
 // live during planning, bounding peak old/new storage during publication.
@@ -234,7 +254,7 @@ func (a *Arena) GrowthFor(lengths []int) uint64 {
 			continue
 		}
 		if size-used < block {
-			size = segmentSizeForBlock(block)
+			size = segmentSizeForAllocation(block, count)
 			used = 0
 			growth += uint64(size)
 			if count == capacity {
@@ -264,7 +284,7 @@ func (a *Arena) Alloc(value []byte) Ref {
 	} else {
 		seg = len(a.segments) - 1
 		if seg < 0 || len(a.segments[seg].data)-int(a.segments[seg].used) < block {
-			size := segmentSizeForBlock(block)
+			size := segmentSizeForAllocation(block, len(a.segments))
 			if len(a.segments) == cap(a.segments) {
 				capacity := 2 * cap(a.segments)
 				if capacity == 0 {
@@ -327,6 +347,5 @@ func (a *Arena) AllocationBytes(ref Ref) uint64 {
 	}
 
 	_, block := class(int(ref.length()))
-
 	return uint64(block)
 }
