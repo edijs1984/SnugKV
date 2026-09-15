@@ -12,8 +12,9 @@ implemented. HASH, SET, LIST, and the intended ZSET v1 command/storage surface a
 implemented, including non-polling blocking pop operations for LIST and ZSET.
 
 The packed storage formats for HASH, SET, LIST, and ZSET are frozen for v1. The
-next memory work should target shared per-key overhead rather than adding more
-container-specific encodings.
+legacy scalar/native-container WRONGTYPE audit is complete for the current command
+surface. The next memory work should target shared per-key overhead rather than
+adding more container-specific encodings.
 
 ## Completed milestones
 
@@ -32,6 +33,9 @@ container-specific encodings.
 - [x] Canonical integer, UUID, timestamp, JSON-shape, dictionary, LZ4, and Zstandard candidates.
 - [x] Exact reconstruction verification and raw fallback.
 - [x] Budgeted background optimizer with stale-rewrite rejection and hysteresis.
+- [x] Strict native-container type guards across legacy string/numeric/bitmap commands.
+- [x] Redis-compatible non-string exceptions for `MGET` and `GETDEL`.
+- [x] RESP `-WRONGTYPE` prefix preservation and cross-datatype regression coverage.
 
 ### Persistence and operations
 
@@ -82,10 +86,8 @@ container-specific encodings.
 
 ### P0 — harden compatibility of the completed datatype surface
 
-- [ ] Audit all older scalar/numeric/bit commands for strict WRONGTYPE behavior against native HASH/SET/LIST/ZSET values.
 - [ ] Harden infinite blocking client-disconnect detection so a disconnected client is released without waiting for another wakeup or server shutdown.
 - [ ] Review scan compatibility edge cases (`MATCH`, `COUNT`, glob character classes, cursor semantics) across `SCAN`, `HSCAN`, `SSCAN`, and `ZSCAN`.
-- [ ] Add targeted cross-datatype command-matrix tests so future native datatypes cannot accidentally be interpreted as scalar bytes.
 
 ### P1 — shared memory overhead
 

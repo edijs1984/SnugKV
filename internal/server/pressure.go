@@ -8,6 +8,12 @@ import (
 )
 
 func (s *Server) executePressureCommand(args [][]byte) ([]byte, error) {
+	if isTypedScalarSpecial(args) {
+		return s.executeTypedScalarSpecial(args)
+	}
+	if err := s.validateLegacyScalarTypes(args); err != nil {
+		return nil, err
+	}
 	if isZSetAlgebraCommand(args) {
 		return s.executeZSetAlgebra(args)
 	}
