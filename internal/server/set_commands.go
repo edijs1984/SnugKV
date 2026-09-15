@@ -70,6 +70,17 @@ func (s *Server) executeRoutedCommand(args [][]byte) ([]byte, error) {
 				}
 				return []byte("+OK\r\n"), nil
 			}
+
+			handled, renamed, err = s.store.RenameZSet(string(args[1]), string(args[2]), cmd == "RENAMENX")
+			if handled {
+				if err != nil {
+					return nil, err
+				}
+				if cmd == "RENAMENX" {
+					return boolean(renamed), nil
+				}
+				return []byte("+OK\r\n"), nil
+			}
 		}
 	}
 	if isSetCommand(args) {
@@ -77,6 +88,9 @@ func (s *Server) executeRoutedCommand(args [][]byte) ([]byte, error) {
 	}
 	if isListCommand(args) {
 		return s.executeList(args)
+	}
+	if isZSetCommand(args) {
+		return s.executeZSet(args)
 	}
 	return s.executeCommand(args)
 }
