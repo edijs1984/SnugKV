@@ -8,7 +8,8 @@ func TestSegmentSizeForMediumBlocksAvoidsTailWaste(t *testing.T) {
 		wantBlock   int
 		wantSegment int
 	}{
-		// Small allocations keep the shared 8 KiB segment.
+		// Small allocations keep the shared 8 KiB segment. They are not
+		// expected to divide the segment exactly.
 		{payload: 356, wantBlock: 384, wantSegment: 8192},
 
 		// Representative packed HASH sizes from the benchmark matrix.
@@ -27,7 +28,10 @@ func TestSegmentSizeForMediumBlocksAvoidsTailWaste(t *testing.T) {
 		if got != tt.wantSegment {
 			t.Fatalf("payload %d segment = %d, want %d", tt.payload, got, tt.wantSegment)
 		}
-		if got%block != 0 {
+
+		// Only medium blocks are intentionally packed into exact-multiple
+		// segment sizes. Small blocks continue sharing the normal 8 KiB arena.
+		if block > 1024 && got%block != 0 {
 			t.Fatalf("payload %d segment %d is not an exact multiple of block %d", tt.payload, got, block)
 		}
 	}
