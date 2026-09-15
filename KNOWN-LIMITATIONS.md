@@ -17,11 +17,11 @@ See [COMPATIBILITY.md](COMPATIBILITY.md).
 
 HASH, SET, LIST, and ZSET are implemented as native datatypes with broad command
 coverage. Strings, counters, expiration, bit operations, key inspection, basic
-JSON, memory inspection, and administration are also implemented.
+JSON, memory inspection, and administration are also implemented. LIST and ZSET
+blocking pop/move operations use waiter/wakeup paths rather than polling.
 
 Not yet implemented as general Redis-compatible features:
 
-- blocking ZSET commands (`BZPOPMIN`, `BZPOPMAX`, `BZMPOP`);
 - streams;
 - Pub/Sub;
 - Lua scripting;
@@ -40,9 +40,9 @@ The current JSON commands are not a complete RedisJSON implementation.
   native HASH/SET/LIST/ZSET keys.
 - `SCAN`, `HSCAN`, `SSCAN`, and `ZSCAN` support cursor/MATCH/COUNT behavior, but
   exact Redis cursor progression and every glob edge case are not guaranteed.
-- Blocking LIST waiters are released on server shutdown. An infinitely blocked
-  client that disconnects is not yet proactively detected until another wakeup or
-  shutdown occurs.
+- Blocking LIST/ZSET waiters are released on server shutdown. An infinitely
+  blocked client that disconnects is not yet proactively detected until another
+  wakeup or shutdown occurs.
 
 ## Deployment topology
 
