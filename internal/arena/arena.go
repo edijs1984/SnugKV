@@ -111,23 +111,37 @@ func class(n int) (int, int) {
 		block := (size + 31) &^ 31
 		return 16 + (block-544)/32, block
 
-	case size <= 2048:
-		block := (size + 255) &^ 255
-		return 32 + (block-1280)/256, block
-
-	case size <= 4096:
-		block := (size + 511) &^ 511
-		return 36 + (block-2560)/512, block
-
 	case size <= 8192:
-		block := (size + 1023) &^ 1023
-		return 40 + (block-5120)/1024, block
+		// Medium values use ~12.5% geometric classes. The previous 256/512/
+		// 1024-byte steps created large internal slack for packed HASH values
+		// around 1.4 KiB, 2.8 KiB, and 5.6 KiB. Starting from the existing
+		// 1024-byte class keeps bucket numbering stable below 1 KiB while only
+		// adding six buckets through 8 KiB.
+		block := 1024
+		bucket := 31
+
+		for block < size {
+			step := block / 8
+			if step < 128 {
+				step = 128
+			}
+
+			block += step
+			bucket++
+
+			if block > 8192 {
+				block = 8192
+			}
+		}
+
+		return bucket, block
 	}
 
-	// Large allocations use ~12.5% size classes instead of powers of two.
-	// This keeps worst-case internal fragmentation much lower.
+	// Large allocations continue using ~12.5% size classes. Medium classes
+	// end at bucket 49, leaving enough of the fixed 128-bucket freelist to
+	// support values beyond SnugKV's 32 MiB RESP bulk limit.
 	block := 8192
-	bucket := 44
+	bucket := 49
 
 	for block < size {
 		step := block / 8
