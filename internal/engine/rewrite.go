@@ -17,6 +17,7 @@ type Candidate struct {
 	LastRewrite  time.Time
 	LastWrite    time.Time
 	Heat         string
+	expiresAt    stamp
 }
 
 // OptimizationEligible performs the cheap read-only eligibility check before
@@ -120,6 +121,7 @@ func (s *Store) Candidate(key string, maxBytes int) (Candidate, bool) {
 		LastRewrite:  lastRewrite,
 		LastWrite:    lastWrite,
 		Heat:         heat(meta, s.now()),
+		expiresAt:    e.expiresAt,
 	}, true
 }
 func heat(meta *entryMeta, now time.Time) string {
@@ -421,8 +423,8 @@ func (s *Store) CandidateDiagnostics(key string) (CandidateDiagnosticReport, boo
 	return report, true
 }
 
-// Rewrite commits only the exact arena generation observed. It verifies logical
-// bytes, keeps TTL/access metadata, and rejects stale optimizer jobs.
+// Rewrite commits only the exact arena generation and TTL observed. It verifies
+// logical bytes, keeps access metadata, and rejects stale optimizer jobs.
 func (s *Store) Rewrite(candidate Candidate, record codec.Record) bool {
 	if !s.encoding {
 		return false
@@ -439,6 +441,7 @@ func (s *Store) Rewrite(candidate Candidate, record codec.Record) bool {
 		e.expired(s.now()) ||
 		e.valueType == TypeHash ||
 		e.ref.Generation() != candidate.Version ||
+		e.expiresAt != candidate.expiresAt ||
 		len(record.Data) >= len(sh.encoded(e)) {
 		return false
 	}
