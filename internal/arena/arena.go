@@ -76,7 +76,9 @@ type segment struct {
 }
 type Arena struct {
 	segments   []segment
-	free       [128]uint64
+	// Buckets 128 and 129 are reserved for exact 24- and 88-byte blocks used
+	// by tiny native-container payloads. Large 32 MiB values top out at 127.
+	free       [130]uint64
 	generation uint64
 }
 
@@ -85,6 +87,16 @@ func class(n int) (int, int) {
 
 	if size < 16 {
 		size = 16
+	}
+
+	// Targeted exact classes avoid 33% overhead for raw 16-byte singleton SETs
+	// and trim the common ~80-byte front-coded SET range without disturbing the
+	// established HASH/general-purpose class numbering.
+	if size > 16 && size <= 24 {
+		return 128, 24
+	}
+	if size > 80 && size <= 88 {
+		return 129, 88
 	}
 
 	switch {
@@ -148,8 +160,8 @@ func class(n int) (int, int) {
 	}
 
 	// Large allocations continue using ~12.5% size classes. Medium classes
-	// end at bucket 56; a 32 MiB value reaches bucket 127, exactly within the
-	// fixed 128-bucket freelist.
+	// end at bucket 56; a 32 MiB value reaches bucket 127. Buckets above that
+	// are intentionally reserved for the targeted tiny classes above.
 	block := 8192
 	bucket := 56
 
@@ -162,7 +174,7 @@ func class(n int) (int, int) {
 		block += step
 		bucket++
 
-		if bucket >= len(Arena{}.free) {
+		if bucket >= 128 {
 			panic("arena allocation too large")
 		}
 	}
