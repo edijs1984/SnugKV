@@ -13,9 +13,9 @@ func TestSegmentSizeForMediumBlocksAvoidsTailWaste(t *testing.T) {
 		{payload: 356, wantBlock: 384, wantSegment: 8192},
 
 		// Representative packed HASH sizes from the benchmark matrix.
-		{payload: 1412, wantBlock: 1536, wantSegment: 7680},
-		{payload: 2820, wantBlock: 3072, wantSegment: 6144},
-		{payload: 5637, wantBlock: 6144, wantSegment: 6144},
+		{payload: 1412, wantBlock: 1458, wantSegment: 7290},
+		{payload: 2820, wantBlock: 2953, wantSegment: 5906},
+		{payload: 5637, wantBlock: 5985, wantSegment: 5985},
 	}
 
 	for _, tt := range tests {
@@ -37,13 +37,41 @@ func TestSegmentSizeForMediumBlocksAvoidsTailWaste(t *testing.T) {
 	}
 }
 
+func TestMediumGeometricClassesStayWithinFreelist(t *testing.T) {
+	previousBucket := 31
+	previousBlock := 1024
+
+	for payload := 1017; payload <= 8184; payload += 17 {
+		bucket, block := class(payload)
+		if bucket < previousBucket {
+			t.Fatalf("payload %d bucket regressed: %d < %d", payload, bucket, previousBucket)
+		}
+		if block < previousBlock {
+			t.Fatalf("payload %d block regressed: %d < %d", payload, block, previousBlock)
+		}
+		if block < payload+8 {
+			t.Fatalf("payload %d block %d is too small", payload, block)
+		}
+		if bucket >= len(Arena{}.free) {
+			t.Fatalf("payload %d bucket %d exceeds freelist", payload, bucket)
+		}
+		previousBucket = bucket
+		previousBlock = block
+	}
+
+	bucket, block := class(8184)
+	if bucket != 49 || block != 8192 {
+		t.Fatalf("8 KiB boundary = bucket %d block %d, want bucket 49 block 8192", bucket, block)
+	}
+}
+
 func TestMediumBlocksFillAdaptiveSegmentExactly(t *testing.T) {
 	var a Arena
 
 	const payload = 2820
 	_, block := class(payload)
-	if block != 3072 {
-		t.Fatalf("block = %d, want 3072", block)
+	if block != 2953 {
+		t.Fatalf("block = %d, want 2953", block)
 	}
 
 	growth := a.GrowthFor([]int{payload, payload})
@@ -53,11 +81,11 @@ func TestMediumBlocksFillAdaptiveSegmentExactly(t *testing.T) {
 	if len(a.segments) != 1 {
 		t.Fatalf("segments = %d, want 1", len(a.segments))
 	}
-	if got := len(a.segments[0].data); got != 6144 {
-		t.Fatalf("segment bytes = %d, want 6144", got)
+	if got := len(a.segments[0].data); got != 5906 {
+		t.Fatalf("segment bytes = %d, want 5906", got)
 	}
-	if got := int(a.segments[0].used); got != 6144 {
-		t.Fatalf("used bytes = %d, want 6144", got)
+	if got := int(a.segments[0].used); got != 5906 {
+		t.Fatalf("used bytes = %d, want 5906", got)
 	}
 	if got := a.MemoryBytes(); got != growth {
 		t.Fatalf("memory bytes = %d, projected growth %d", got, growth)
