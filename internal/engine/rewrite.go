@@ -89,7 +89,7 @@ func (s *Store) MarkOptimizationAttempt(
 		return false
 	}
 
-	e.lastOptimize = stampOf(now)
+	e.lastOptimize = activityStampOf(now)
 	sh.set(key, e)
 
 	return true
@@ -445,7 +445,7 @@ func (s *Store) Rewrite(candidate Candidate, record codec.Record) bool {
 	prepared.codecID = record.ID
 	prepared.schema = record.Schema
 	prepared.rawLength = uint32(record.RawLength)
-	prepared.lastRewrite = stampOf(s.now())
+	prepared.lastRewrite = activityStampOf(s.now())
 
 	return s.publish(sh, candidate.Key, prepared) == nil
 }

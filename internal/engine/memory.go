@@ -248,7 +248,7 @@ func (s *Store) publishRecord(
 	s.memory.arenaPayload += uint64(len(e.data))
 
 	if e.lastWrite.IsZero() {
-		e.lastWrite = stampOf(s.now())
+		e.lastWrite = activityStampOf(s.now())
 		e.lastAccess = e.lastWrite
 		e.writes = 1
 
