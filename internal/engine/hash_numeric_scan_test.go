@@ -105,7 +105,7 @@ func TestHashScanCursorMatchAndGlob(t *testing.T) {
 		{"b[0-9]", "b7", true},
 		{"b[0-9]", "ba", false},
 	} {
-		if got := hashGlobMatch([]byte(tc.pattern), []byte(tc.value)); got != tc.want {
+		if got := redisGlobMatch([]byte(tc.pattern), []byte(tc.value)); got != tc.want {
 			t.Fatalf("glob %q %q got=%t want=%t", tc.pattern, tc.value, got, tc.want)
 		}
 	}

@@ -135,7 +135,7 @@ func (s *Store) HashIncrByFloat(key string, field []byte, increment float64) (st
 		return "", errors.New("ERR increment would produce NaN or Infinity")
 	}
 	if result == 0 {
-		result = 0 // normalize negative zero
+		result = 0
 	}
 	formatted := strconv.FormatFloat(result, 'f', -1, 64)
 	value := []byte(formatted)
@@ -166,7 +166,8 @@ func (s *Store) HashIncrByFloat(key string, field []byte, increment float64) (st
 
 // HashScan incrementally iterates sorted HASH fields. Cursor is the next field
 // index to inspect. COUNT is a work hint: at most count source fields are
-// inspected on a call, so MATCH may return fewer than count results.
+// inspected on a call, so MATCH may return fewer than count results. A nil
+// pattern means MATCH was omitted; a non-nil empty pattern is a real empty glob.
 func (s *Store) HashScan(key string, cursor uint64, count int, pattern []byte) (uint64, []HashPair, error) {
 	if count <= 0 {
 		count = 10
@@ -200,7 +201,7 @@ func (s *Store) HashScan(key string, cursor uint64, count int, pattern []byte) (
 
 	out := make([]HashPair, 0, end-start)
 	for i := start; i < end; i++ {
-		if len(pattern) != 0 && !hashGlobMatch(pattern, pairs[i].Field) {
+		if pattern != nil && !redisGlobMatch(pattern, pairs[i].Field) {
 			continue
 		}
 		out = append(out, HashPair{
@@ -213,115 +214,4 @@ func (s *Store) HashScan(key string, cursor uint64, count int, pattern []byte) (
 		return 0, out, nil
 	}
 	return uint64(end), out, nil
-}
-
-// hashGlobMatch implements the Redis-style byte glob subset used by MATCH:
-// '*', '?', bracket classes/ranges, negated classes, and backslash escaping.
-func hashGlobMatch(pattern, value []byte) bool {
-	var match func(pi, vi int) bool
-	match = func(pi, vi int) bool {
-		for pi < len(pattern) {
-			switch pattern[pi] {
-			case '*':
-				for pi < len(pattern) && pattern[pi] == '*' {
-					pi++
-				}
-				if pi == len(pattern) {
-					return true
-				}
-				for k := vi; k <= len(value); k++ {
-					if match(pi, k) {
-						return true
-					}
-				}
-				return false
-
-			case '?':
-				if vi >= len(value) {
-					return false
-				}
-				pi++
-				vi++
-
-			case '\\':
-				pi++
-				if pi >= len(pattern) {
-					if vi >= len(value) || value[vi] != '\\' {
-						return false
-					}
-					vi++
-					continue
-				}
-				if vi >= len(value) || value[vi] != pattern[pi] {
-					return false
-				}
-				pi++
-				vi++
-
-			case '[':
-				if vi >= len(value) {
-					return false
-				}
-				classStart := pi
-				pi++
-				negate := false
-				if pi < len(pattern) && (pattern[pi] == '^' || pattern[pi] == '!') {
-					negate = true
-					pi++
-				}
-				matched := false
-				closed := false
-				for pi < len(pattern) {
-					if pattern[pi] == ']' {
-						closed = true
-						pi++
-						break
-					}
-					lo := pattern[pi]
-					if lo == '\\' && pi+1 < len(pattern) {
-						pi++
-						lo = pattern[pi]
-					}
-					pi++
-					if pi+1 < len(pattern) && pattern[pi] == '-' && pattern[pi+1] != ']' {
-						pi++
-						hi := pattern[pi]
-						if hi == '\\' && pi+1 < len(pattern) {
-							pi++
-							hi = pattern[pi]
-						}
-						pi++
-						if lo <= value[vi] && value[vi] <= hi {
-							matched = true
-						}
-					} else if value[vi] == lo {
-						matched = true
-					}
-				}
-				if !closed {
-					// Treat an unterminated class as a literal '['.
-					pi = classStart + 1
-					if value[vi] != '[' {
-						return false
-					}
-					vi++
-					continue
-				}
-				if matched == negate {
-					return false
-				}
-				vi++
-
-			default:
-				if vi >= len(value) || value[vi] != pattern[pi] {
-					return false
-				}
-				pi++
-				vi++
-			}
-		}
-		return vi == len(value)
-	}
-
-	return match(0, 0)
 }
