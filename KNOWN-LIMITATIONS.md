@@ -36,13 +36,16 @@ The current JSON commands are not a complete RedisJSON implementation.
 
 ## Compatibility hardening still in progress
 
-- Older scalar/numeric/bit paths still need a complete WRONGTYPE audit against
-  native HASH/SET/LIST/ZSET keys.
 - `SCAN`, `HSCAN`, `SSCAN`, and `ZSCAN` support cursor/MATCH/COUNT behavior, but
   exact Redis cursor progression and every glob edge case are not guaranteed.
 - Blocking LIST/ZSET waiters are released on server shutdown. An infinitely
   blocked client that disconnects is not yet proactively detected until another
   wakeup or shutdown occurs.
+
+Legacy string/numeric/bitmap commands now guard native HASH/SET/LIST/ZSET values
+instead of decoding packed container bytes. Redis-specific exceptions such as
+`MGET` nil slots, non-destructive `GETDEL` on non-string keys, and destination
+overwrite behavior for `SET`/`BITOP` are covered by regression tests.
 
 ## Deployment topology
 
