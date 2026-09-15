@@ -8,13 +8,20 @@ import (
 )
 
 var listCommands = map[string]commandInfo{
-	"LPUSH":  {3, 0, 1, 1, 1, true},
-	"RPUSH":  {3, 0, 1, 1, 1, true},
-	"LPOP":   {2, 3, 1, 1, 1, true},
-	"RPOP":   {2, 3, 1, 1, 1, true},
-	"LLEN":   {2, 2, 1, 1, 1, false},
-	"LINDEX": {3, 3, 1, 1, 1, false},
-	"LRANGE": {4, 4, 1, 1, 1, false},
+	"LPUSH":   {3, 0, 1, 1, 1, true},
+	"RPUSH":   {3, 0, 1, 1, 1, true},
+	"LPUSHX":  {3, 0, 1, 1, 1, true},
+	"RPUSHX":  {3, 0, 1, 1, 1, true},
+	"LPOP":    {2, 3, 1, 1, 1, true},
+	"RPOP":    {2, 3, 1, 1, 1, true},
+	"LLEN":    {2, 2, 1, 1, 1, false},
+	"LINDEX":  {3, 3, 1, 1, 1, false},
+	"LRANGE":  {4, 4, 1, 1, 1, false},
+	"LSET":    {4, 4, 1, 1, 1, true},
+	"LTRIM":   {4, 4, 1, 1, 1, true},
+	"LREM":    {4, 4, 1, 1, 1, true},
+	"LINSERT": {5, 5, 1, 1, 1, true},
+	"LPOS":    {3, 0, 1, 1, 1, false},
 }
 
 func init() {
@@ -46,15 +53,27 @@ func (s *Server) executeList(args [][]byte) ([]byte, error) {
 
 	key := string(args[1])
 	switch cmd {
-	case "LPUSH":
-		length, err := s.store.ListPushLeft(key, args[2:])
+	case "LPUSH", "LPUSHX":
+		var length int64
+		var err error
+		if cmd == "LPUSH" {
+			length, err = s.store.ListPushLeft(key, args[2:])
+		} else {
+			length, err = s.store.ListPushLeftX(key, args[2:])
+		}
 		if err != nil {
 			return nil, err
 		}
 		return integer(length), nil
 
-	case "RPUSH":
-		length, err := s.store.ListPushRight(key, args[2:])
+	case "RPUSH", "RPUSHX":
+		var length int64
+		var err error
+		if cmd == "RPUSH" {
+			length, err = s.store.ListPushRight(key, args[2:])
+		} else {
+			length, err = s.store.ListPushRightX(key, args[2:])
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -121,6 +140,118 @@ func (s *Server) executeList(args [][]byte) ([]byte, error) {
 			return nil, err
 		}
 		return listElementsResponse(elements), nil
+
+	case "LSET":
+		index, err := strconv.ParseInt(string(args[2]), 10, 64)
+		if err != nil {
+			return nil, errors.New("ERR value is not an integer or out of range")
+		}
+		if err := s.store.ListSet(key, index, args[3]); err != nil {
+			return nil, err
+		}
+		return []byte("+OK\r\n"), nil
+
+	case "LTRIM":
+		start, err := strconv.ParseInt(string(args[2]), 10, 64)
+		if err != nil {
+			return nil, errors.New("ERR value is not an integer or out of range")
+		}
+		stop, err := strconv.ParseInt(string(args[3]), 10, 64)
+		if err != nil {
+			return nil, errors.New("ERR value is not an integer or out of range")
+		}
+		if err := s.store.ListTrim(key, start, stop); err != nil {
+			return nil, err
+		}
+		return []byte("+OK\r\n"), nil
+
+	case "LREM":
+		count, err := strconv.ParseInt(string(args[2]), 10, 64)
+		if err != nil {
+			return nil, errors.New("ERR value is not an integer or out of range")
+		}
+		removed, err := s.store.ListRemove(key, count, args[3])
+		if err != nil {
+			return nil, err
+		}
+		return integer(removed), nil
+
+	case "LINSERT":
+		position := strings.ToUpper(string(args[2]))
+		if position != "BEFORE" && position != "AFTER" {
+			return nil, errors.New("ERR syntax error")
+		}
+		length, err := s.store.ListInsert(key, position == "BEFORE", args[3], args[4])
+		if err != nil {
+			return nil, err
+		}
+		return integer(length), nil
+
+	case "LPOS":
+		rank := int64(1)
+		count := int64(1)
+		maxLen := int64(0)
+		withCount := false
+
+		for i := 3; i < len(args); {
+			switch strings.ToUpper(string(args[i])) {
+			case "RANK":
+				if i+1 >= len(args) {
+					return nil, errors.New("ERR syntax error")
+				}
+				n, err := strconv.ParseInt(string(args[i+1]), 10, 64)
+				if err != nil {
+					return nil, errors.New("ERR value is not an integer or out of range")
+				}
+				if n == 0 {
+					return nil, errors.New("ERR RANK can't be zero")
+				}
+				rank = n
+				i += 2
+
+			case "COUNT":
+				if i+1 >= len(args) {
+					return nil, errors.New("ERR syntax error")
+				}
+				n, err := strconv.ParseInt(string(args[i+1]), 10, 64)
+				if err != nil || n < 0 {
+					return nil, errors.New("ERR COUNT can't be negative")
+				}
+				count = n
+				withCount = true
+				i += 2
+
+			case "MAXLEN":
+				if i+1 >= len(args) {
+					return nil, errors.New("ERR syntax error")
+				}
+				n, err := strconv.ParseInt(string(args[i+1]), 10, 64)
+				if err != nil || n < 0 {
+					return nil, errors.New("ERR MAXLEN can't be negative")
+				}
+				maxLen = n
+				i += 2
+
+			default:
+				return nil, errors.New("ERR syntax error")
+			}
+		}
+
+		positions, err := s.store.ListPos(key, args[2], rank, count, maxLen, withCount)
+		if err != nil {
+			return nil, err
+		}
+		if !withCount {
+			if len(positions) == 0 {
+				return nullBulk(), nil
+			}
+			return integer(positions[0]), nil
+		}
+		items := make([][]byte, 0, len(positions))
+		for _, position := range positions {
+			items = append(items, integer(position))
+		}
+		return array(items...), nil
 	}
 
 	return nil, fmt.Errorf("ERR unknown command '%s'", cmd)
