@@ -50,7 +50,7 @@ func TestHashCommandsWrongTypeAndArity(t *testing.T) {
 	s := New(engine.New())
 	execute(t, s, "SET", "plain", "value")
 
-	for _, args := range [][]byte{
+	for _, args := range [][][]byte{
 		{[]byte("HGET"), []byte("plain"), []byte("field")},
 		{[]byte("HSET"), []byte("plain"), []byte("field"), []byte("value")},
 		{[]byte("HDEL"), []byte("plain"), []byte("field")},
