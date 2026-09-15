@@ -109,13 +109,14 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 		ordered = append(ordered, key)
 	}
 	sort.Strings(ordered)
-	var before, after, extra, extraEntries, extraArena uint64
+	var before, after, beforeMeta, afterMeta, extra, extraEntries, extraArena uint64
 	allocations := make(map[*shard][]int)
 	growth := make(map[*shard]int)
 	for key := range deletions {
 		sh := s.shardFor(key)
 		if old, ok := sh.get(key); ok {
 			before += entryCharge(key, old)
+			beforeMeta += metadataCharge(old)
 			growth[sh]--
 		}
 	}
@@ -124,10 +125,16 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 		sh := s.shardFor(key)
 		if old, ok := sh.get(key); ok {
 			before += entryCharge(key, old)
+			beforeMeta += metadataCharge(old)
 		} else {
 			growth[sh]++
 		}
 		after += entryCharge(key, e)
+		if s.shouldTrackActivity(e.entry) {
+			afterMeta += entryMetaBytes
+		} else {
+			afterMeta += metadataCharge(e.entry)
+		}
 		allocations[sh] = append(allocations[sh], len(e.data))
 	}
 	for sh, n := range growth {
@@ -139,8 +146,10 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 	}
 	s.memory.mu.Lock()
 	next := s.memory.used -
-		before +
+		before -
+		beforeMeta +
 		after +
+		afterMeta +
 		extra +
 		extraEntries +
 		extraArena
