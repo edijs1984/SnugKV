@@ -14,9 +14,10 @@ implemented, including non-polling blocking operations for LIST and ZSET.
 The packed storage formats for HASH, SET, LIST, and ZSET are frozen for v1. The
 legacy scalar/native-container WRONGTYPE audit is complete for the current command
 surface. Linux TCP builds now proactively cancel blocked LIST/ZSET waiters when a
-client disconnects without consuming queued protocol bytes. The next compatibility
-item is scan/glob behavior; the next memory work should target shared per-key
-overhead rather than adding more container-specific encodings.
+client disconnects without consuming queued protocol bytes. Shared-memory work is
+now targeting engine-wide fixed overhead: sparse shards use small adaptive entry
+pools and compact first arena segments before scaling to the existing dense-store
+policies.
 
 ## Completed milestones
 
@@ -98,14 +99,18 @@ overhead rather than adding more container-specific encodings.
 Current 100k-key container benchmarks show roughly 31.5 B/key of index reservation
 plus roughly 54–55 B/key of entry/key accounting before the container payload.
 Tiny containers therefore remain weaker than Redis even when the packed payload is
-smaller.
+smaller. Sparse 1k-key workloads previously paid an additional multiplier from a
+64-entry first reservation and an 8 KiB first arena segment in every active shard.
 
+- [x] Replace the 64-entry first reservation with an adaptive 8→16→32→64 entry-pool ramp, then 25% growth.
+- [x] Use a roughly 1 KiB exact-multiple first arena segment for small allocations; retain 8 KiB subsequent segments for dense workloads.
+- [x] Add sparse-layout diagnostics and a dedicated `cmd/sparsebench` harness.
 - [ ] Evaluate reducing the 24-byte index slot while preserving collision safety.
 - [ ] Evaluate reducing the 40-byte common entry representation or moving more fields into optional sidecars.
-- [ ] Reduce reserved entry capacity overhead without harming mutation throughput.
-- [ ] Improve sparse/small-dataset behavior: 256 shards, per-shard entry floors, and 8 KiB first arena segments dominate 1k-key tests.
-- [ ] Evaluate lazy/shared arena segment pools or smaller initial segments.
-- [ ] Re-run STRING/HASH/SET/LIST/ZSET benchmarks after each engine-wide change.
+- [ ] Measure mutation throughput/reallocation cost after the adaptive entry-pool change and tune thresholds only with evidence.
+- [ ] Evaluate lazy/shared arena segment pools if the smaller first segment does not sufficiently address very sparse stores.
+- [ ] Re-run STRING/HASH/SET/LIST/ZSET 100k-key benchmarks to verify dense-workload memory remains stable.
+- [ ] Re-run 1k/10k sparse matrices with `cmd/sparsebench` and record before/after deltas.
 
 ### P2 — release validation
 
