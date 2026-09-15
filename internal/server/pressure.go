@@ -8,7 +8,7 @@ import (
 )
 
 func (s *Server) executePressure(args [][]byte) ([]byte, error) {
-	result, err := s.execute(args)
+	result, err := s.executeCommand(args)
 	if !errors.Is(err, engine.ErrOOM) || s.eviction == "" || s.eviction == "noeviction" {
 		return result, err
 	}
@@ -24,7 +24,7 @@ func (s *Server) executePressure(args [][]byte) ([]byte, error) {
 	}
 	s.store.CleanupExpiredLimit(1024)
 	s.store.Compact(64 << 20)
-	result, err = s.execute(args)
+	result, err = s.executeCommand(args)
 	for n := 0; n < 128 && errors.Is(err, engine.ErrOOM); n++ {
 		key, ok := s.store.Victim(excluded, s.eviction == "volatile-lru")
 		if !ok {
@@ -40,7 +40,7 @@ func (s *Server) executePressure(args [][]byte) ([]byte, error) {
 		}
 		s.store.Evict(key)
 		s.store.Compact(64 << 20)
-		result, err = s.execute(args)
+		result, err = s.executeCommand(args)
 	}
 	return result, err
 }
