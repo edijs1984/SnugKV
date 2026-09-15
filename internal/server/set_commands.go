@@ -11,22 +11,22 @@ import (
 const maxSetRandomCount = int64(1_000_000)
 
 var setCommands = map[string]commandInfo{
-	"SADD":           {3, 0, 1, 1, 1, true},
-	"SREM":           {3, 0, 1, 1, 1, true},
-	"SISMEMBER":      {3, 3, 1, 1, 1, false},
-	"SMISMEMBER":     {3, 0, 1, 1, 1, false},
-	"SCARD":          {2, 2, 1, 1, 1, false},
-	"SMEMBERS":       {2, 2, 1, 1, 1, false},
-	"SSCAN":          {3, 0, 1, 1, 1, false},
-	"SUNION":         {2, 0, 1, -1, 1, false},
-	"SINTER":         {2, 0, 1, -1, 1, false},
-	"SDIFF":          {2, 0, 1, -1, 1, false},
-	"SUNIONSTORE":    {3, 0, 1, -1, 1, true},
-	"SINTERSTORE":    {3, 0, 1, -1, 1, true},
-	"SDIFFSTORE":     {3, 0, 1, -1, 1, true},
-	"SMOVE":          {4, 4, 1, 2, 1, true},
-	"SPOP":           {2, 3, 1, 1, 1, true},
-	"SRANDMEMBER":    {2, 3, 1, 1, 1, false},
+	"SADD":        {3, 0, 1, 1, 1, true},
+	"SREM":        {3, 0, 1, 1, 1, true},
+	"SISMEMBER":   {3, 3, 1, 1, 1, false},
+	"SMISMEMBER":  {3, 0, 1, 1, 1, false},
+	"SCARD":       {2, 2, 1, 1, 1, false},
+	"SMEMBERS":    {2, 2, 1, 1, 1, false},
+	"SSCAN":       {3, 0, 1, 1, 1, false},
+	"SUNION":      {2, 0, 1, -1, 1, false},
+	"SINTER":      {2, 0, 1, -1, 1, false},
+	"SDIFF":       {2, 0, 1, -1, 1, false},
+	"SUNIONSTORE": {3, 0, 1, -1, 1, true},
+	"SINTERSTORE": {3, 0, 1, -1, 1, true},
+	"SDIFFSTORE":  {3, 0, 1, -1, 1, true},
+	"SMOVE":       {4, 4, 1, 2, 1, true},
+	"SPOP":        {2, 3, 1, 1, 1, true},
+	"SRANDMEMBER": {2, 3, 1, 1, 1, false},
 }
 
 func init() {
@@ -44,8 +44,7 @@ func isSetCommand(args [][]byte) bool {
 }
 
 // executeRoutedCommand is the datatype-aware dispatcher used by the pressure
-// layer. HASH routing remains in executeCommand; SET routing is layered here so
-// new native datatypes do not expand the monolithic server switch.
+// layer. Container-specific routing stays outside the monolithic server switch.
 func (s *Server) executeRoutedCommand(args [][]byte) ([]byte, error) {
 	if len(args) > 0 {
 		cmd := strings.ToUpper(string(args[0]))
@@ -60,10 +59,24 @@ func (s *Server) executeRoutedCommand(args [][]byte) ([]byte, error) {
 				}
 				return []byte("+OK\r\n"), nil
 			}
+
+			handled, renamed, err = s.store.RenameList(string(args[1]), string(args[2]), cmd == "RENAMENX")
+			if handled {
+				if err != nil {
+					return nil, err
+				}
+				if cmd == "RENAMENX" {
+					return boolean(renamed), nil
+				}
+				return []byte("+OK\r\n"), nil
+			}
 		}
 	}
 	if isSetCommand(args) {
 		return s.executeSet(args)
+	}
+	if isListCommand(args) {
+		return s.executeList(args)
 	}
 	return s.executeCommand(args)
 }
