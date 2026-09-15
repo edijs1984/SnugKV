@@ -25,6 +25,8 @@ All notable changes to SnugKV will be documented in this file.
 - `BZPOPMIN`, `BZPOPMAX`, and `BZMPOP` with fractional timeouts, per-key
   waiter/wakeup signaling, Redis-compatible RESP2 reply shapes, and shutdown
   cancellation for infinite waits.
+- Per-connection cancellation plumbing for blocking LIST/ZSET commands and Linux
+  TCP peer-disconnect detection that does not consume queued RESP bytes.
 - Dedicated HASH, SET, LIST, and ZSET benchmark harnesses and documented 100k-key
   memory comparison matrices.
 - RESP2 TCP server with bounded protocol parsing.
@@ -53,6 +55,8 @@ All notable changes to SnugKV will be documented in this file.
 - AOF restart coverage for HASH, SET, LIST, and ZSET mutations.
 - Blocking LIST and ZSET commands wait outside the durability mutex.
 - Blocking ZSET waits register before readiness checks to avoid lost wakeups.
+- Linux blocked clients are removed when the TCP peer half-closes/hangs up, even
+  when pipelined bytes are already queued behind the blocking command.
 - Dynamic durability snapshots for `ZMPOP` candidate keys.
 - Legacy string/numeric/bitmap commands now reject native HASH/SET/LIST/ZSET keys
   with Redis-style WRONGTYPE instead of decoding packed container bytes.
@@ -72,6 +76,8 @@ All notable changes to SnugKV will be documented in this file.
   numeric, bitmap, `SET ... GET`, `MGET`, `GETDEL`, and `BITOP` behavior.
 - Blocking ZSET tests cover immediate/wakeup/timeout behavior, key priority,
   `BZMPOP COUNT`, shutdown cancellation, and the AOF durability-lock invariant.
+- Blocking disconnect tests verify LIST/ZSET waiter cleanup and real Linux TCP
+  connection cleanup, including a pipelined command behind an infinite `BLPOP`.
 - Local redis-cli smoke tests validated LIST blocking behavior and ZSET core, range,
   lex, algebra, and store semantics.
 - 100k-key native datatype benchmark matrices are recorded in

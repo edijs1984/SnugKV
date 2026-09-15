@@ -109,9 +109,8 @@ BLPOP BRPOP BLMOVE BRPOPLPUSH
 ```
 
 Blocking LIST commands use waiter/wakeup signaling rather than polling and do not
-hold the AOF durability mutex while sleeping. Infinite blockers are released on
-server shutdown. Proactive detection of a client disconnect while infinitely
-blocked is still a hardening item.
+hold the AOF durability mutex while sleeping. Waiters are registered before
+readiness checks to avoid lost wakeups.
 
 ### ZSET
 
@@ -139,6 +138,18 @@ executes the corresponding non-blocking pop through the normal durable path.
 
 Lex-range behavior follows Redis's same-score use case; applications should not
 rely on lex semantics across members with different scores.
+
+## Blocking client disconnects
+
+Blocking LIST and ZSET commands are always canceled during server shutdown. On
+Linux server builds, SnugKV also detects TCP peer half-close/hangup while a command
+is blocked and cancels that connection's waiter immediately. The detector uses a
+non-consuming socket poll, so queued/pipelined RESP bytes are not read or discarded
+just to notice the disconnect.
+
+On non-Linux builds the same per-command cancellation plumbing exists, but
+proactive TCP peer-disconnect detection is not yet implemented; finite command
+timeouts and server shutdown still release waiters there.
 
 ## JSON
 
@@ -177,11 +188,6 @@ Modules
 ```
 
 ## Compatibility caveats under active audit
-
-Blocking LIST and ZSET commands are canceled during server shutdown. Proactive
-client-disconnect detection while a connection is infinitely blocked remains a
-hardening item; a disconnected blocker can otherwise remain registered until a
-relevant key is signaled or the server shuts down.
 
 `SCAN`, `HSCAN`, `SSCAN`, and `ZSCAN` implement the useful cursor/MATCH/COUNT
 surface, but exact cursor progression and every Redis glob edge case should not be

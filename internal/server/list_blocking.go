@@ -11,6 +11,7 @@ import (
 )
 
 var errBlockingCanceled = errors.New("ERR server is shutting down")
+var errBlockingClientGone = errors.New("ERR client disconnected")
 
 type listWaiter struct {
 	ch   chan struct{}
@@ -146,7 +147,7 @@ func parseBlockingTimeout(arg []byte) (time.Duration, error) {
 	return time.Duration(nanos), nil
 }
 
-func (s *Server) executeBlockingList(args [][]byte) ([]byte, error) {
+func (s *Server) executeBlockingList(args [][]byte, cancel <-chan struct{}) ([]byte, error) {
 	cmd := strings.ToUpper(string(args[0]))
 	info, ok := listCommands[cmd]
 	if !ok || len(args) < info.min || info.max > 0 && len(args) > info.max {
@@ -163,7 +164,7 @@ func (s *Server) executeBlockingList(args [][]byte) ([]byte, error) {
 		for _, arg := range args[1 : len(args)-1] {
 			keys = append(keys, string(arg))
 		}
-		return s.blockingPop(keys, cmd == "BLPOP", timeout)
+		return s.blockingPop(keys, cmd == "BLPOP", timeout, cancel)
 
 	case "BLMOVE":
 		timeout, err := parseBlockingTimeout(args[5])
@@ -175,14 +176,14 @@ func (s *Server) executeBlockingList(args [][]byte) ([]byte, error) {
 		if (sourceSide != "LEFT" && sourceSide != "RIGHT") || (destinationSide != "LEFT" && destinationSide != "RIGHT") {
 			return nil, errors.New("ERR syntax error")
 		}
-		return s.blockingMove(string(args[1]), string(args[2]), sourceSide, destinationSide, timeout, false)
+		return s.blockingMove(string(args[1]), string(args[2]), sourceSide, destinationSide, timeout, false, cancel)
 
 	case "BRPOPLPUSH":
 		timeout, err := parseBlockingTimeout(args[3])
 		if err != nil {
 			return nil, err
 		}
-		return s.blockingMove(string(args[1]), string(args[2]), "RIGHT", "LEFT", timeout, true)
+		return s.blockingMove(string(args[1]), string(args[2]), "RIGHT", "LEFT", timeout, true, cancel)
 	}
 
 	return nil, errors.New("ERR unknown blocking list command")
@@ -196,7 +197,7 @@ func blockingTimer(timeout time.Duration) (*time.Timer, <-chan time.Time) {
 	return timer, timer.C
 }
 
-func (s *Server) blockingPop(keys []string, left bool, timeout time.Duration) ([]byte, error) {
+func (s *Server) blockingPop(keys []string, left bool, timeout time.Duration, cancel <-chan struct{}) ([]byte, error) {
 	timer, timeoutC := blockingTimer(timeout)
 	if timer != nil {
 		defer timer.Stop()
@@ -242,11 +243,14 @@ func (s *Server) blockingPop(keys []string, left bool, timeout time.Duration) ([
 		case <-timeoutC:
 			s.unregisterListWaiter(waiter)
 			return []byte("*-1\r\n"), nil
+		case <-cancel:
+			s.unregisterListWaiter(waiter)
+			return nil, errBlockingClientGone
 		}
 	}
 }
 
-func (s *Server) blockingMove(source, destination, sourceSide, destinationSide string, timeout time.Duration, legacy bool) ([]byte, error) {
+func (s *Server) blockingMove(source, destination, sourceSide, destinationSide string, timeout time.Duration, legacy bool, cancel <-chan struct{}) ([]byte, error) {
 	timer, timeoutC := blockingTimer(timeout)
 	if timer != nil {
 		defer timer.Stop()
@@ -290,6 +294,9 @@ func (s *Server) blockingMove(source, destination, sourceSide, destinationSide s
 		case <-timeoutC:
 			s.unregisterListWaiter(waiter)
 			return nullBulk(), nil
+		case <-cancel:
+			s.unregisterListWaiter(waiter)
+			return nil, errBlockingClientGone
 		}
 	}
 }

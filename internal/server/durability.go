@@ -16,7 +16,15 @@ type Journal interface {
 // clients cannot observe a mutation whose journal append later fails.
 func (s *Server) SetJournal(j Journal) { s.journal = j }
 
-func (s *Server) Execute(args [][]byte) (response []byte, resultErr error) {
+func (s *Server) Execute(args [][]byte) ([]byte, error) {
+	return s.ExecuteWithCancel(args, nil)
+}
+
+// ExecuteWithCancel is identical to Execute except that blocking commands also
+// stop when cancel is closed. Non-blocking commands intentionally ignore cancel.
+// The TCP server uses this to release per-connection waiters when a peer goes
+// away without changing the behavior of direct/in-process callers.
+func (s *Server) ExecuteWithCancel(args [][]byte, cancel <-chan struct{}) (response []byte, resultErr error) {
 	atomic.AddUint64(&s.commands, 1)
 	start := time.Now()
 	name := "unknown"
@@ -32,10 +40,10 @@ func (s *Server) Execute(args [][]byte) (response []byte, resultErr error) {
 	// outside the persistence critical section, then execute the eventual
 	// non-blocking mutation through executeDurable below.
 	if isBlockingListCommand(args) {
-		return s.executeBlockingList(args)
+		return s.executeBlockingList(args, cancel)
 	}
 	if isBlockingZSetCommand(args) {
-		return s.executeBlockingZSet(args)
+		return s.executeBlockingZSet(args, cancel)
 	}
 	return s.executeDurable(args)
 }

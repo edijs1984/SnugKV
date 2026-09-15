@@ -9,10 +9,11 @@ ZSET command/storage surface is implemented, including blocking LIST and ZSET
 operations.
 
 The immediate engineering focus is no longer datatype storage design. HASH, SET,
-LIST, and ZSET packed formats are frozen for v1, and the legacy scalar/native-
-container WRONGTYPE audit is complete for the current command surface. Remaining
-work is blocking-client disconnect cleanup, scan compatibility hardening, shared
-small-key overhead, and release-scale validation.
+LIST, and ZSET packed formats are frozen for v1, the legacy scalar/native-
+container WRONGTYPE audit is complete for the current command surface, and Linux
+TCP builds now proactively release blocked LIST/ZSET waiters when clients
+disconnect. Remaining work is scan compatibility hardening, shared small-key
+overhead, non-Linux disconnect parity if required, and release-scale validation.
 
 ## Completed
 
@@ -32,6 +33,8 @@ small-key overhead, and release-scale validation.
 - Mixed SET/ZSET algebra with `WEIGHTS` and `AGGREGATE SUM|MIN|MAX|COUNT`.
 - Blocking LIST and ZSET waits register before readiness checks, use per-key wakeup
   signaling, and do not hold the AOF durability mutex while sleeping.
+- Linux TCP peer-disconnect polling cancels the specific blocked command without
+  consuming queued RESP bytes; server shutdown still releases all blockers on all platforms.
 - Legacy scalar/numeric/bitmap commands reject native HASH/SET/LIST/ZSET keys with
   Redis-style WRONGTYPE where required instead of decoding packed container bytes.
 - Redis-specific string exceptions are preserved: `MGET` returns nil for non-string
@@ -53,6 +56,11 @@ small-key overhead, and release-scale validation.
 - Blocking ZSET tests cover immediate replies, fractional timeout, key priority,
   wake-on-`ZADD`, `BZMPOP COUNT`, nested RESP2 replies, shutdown cancellation, and
   validation errors.
+- Per-connection cancellation tests verify both LIST and ZSET waiters unregister
+  promptly when their cancel channel closes.
+- Linux TCP integration tests close real blocked clients and require waiter and
+  connection cleanup; the LIST case includes a pipelined `PING` behind `BLPOP` to
+  prove disconnect detection does not consume queued protocol bytes.
 - A dedicated durability test verifies a sleeping `BZPOPMIN` does not retain
   `durableMu`; only the producer write and eventual pop append durable state.
 - AOF restart tests cover generic recovery plus native HASH/SET/LIST/ZSET writes.
@@ -139,8 +147,8 @@ with LZ4. Random and already-compressed inputs stayed raw. See
 
 ## Remaining engineering work
 
-- Infinite blocking client-disconnect detection hardening.
 - Scan/glob compatibility audit.
+- Optional non-Linux proactive blocked-client disconnect detection parity.
 - Shared per-key overhead reduction: 24-byte index slots, 40-byte common entries,
   reservation growth, sparse-shard entry floors, and first arena-segment cost.
 - Fresh dedicated Redis benchmark baselines, multi-run variance, million-record

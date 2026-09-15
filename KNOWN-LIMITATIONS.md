@@ -38,11 +38,13 @@ The current JSON commands are not a complete RedisJSON implementation.
 
 - `SCAN`, `HSCAN`, `SSCAN`, and `ZSCAN` support cursor/MATCH/COUNT behavior, but
   exact Redis cursor progression and every glob edge case are not guaranteed.
-- Blocking LIST/ZSET waiters are released on server shutdown. An infinitely
-  blocked client that disconnects is not yet proactively detected until another
-  wakeup or shutdown occurs.
+- Blocking LIST/ZSET waiters are released on server shutdown on all platforms.
+  Linux builds additionally detect TCP peer disconnects while blocked and release
+  the connection-specific waiter without consuming queued protocol bytes. The
+  equivalent proactive socket-disconnect monitor is not yet implemented on
+  non-Linux builds.
 
-Legacy string/numeric/bitmap commands now guard native HASH/SET/LIST/ZSET values
+Legacy string/numeric/bitmap commands guard native HASH/SET/LIST/ZSET values
 instead of decoding packed container bytes. Redis-specific exceptions such as
 `MGET` nil slots, non-destructive `GETDEL` on non-string keys, and destination
 overwrite behavior for `SET`/`BITOP` are covered by regression tests.
