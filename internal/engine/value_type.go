@@ -25,6 +25,7 @@ const (
 	TypeBool
 	TypeBytes
 	TypeJSON
+	TypeHash
 )
 
 func (t ValueType) String() string {
@@ -43,6 +44,8 @@ func (t ValueType) String() string {
 		return "BYTES"
 	case TypeJSON:
 		return "JSON"
+	case TypeHash:
+		return "HASH"
 	default:
 		return "UNKNOWN"
 	}
