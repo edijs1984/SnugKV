@@ -22,7 +22,7 @@ func auditMemory(t *testing.T, s *Store) {
 		sh := &s.shards[i]
 
 		index += sh.data.CapacityBytes()
-		arenaBytes += sh.arena.MemoryBytes()
+		arenaBytes += sh.arena.TotalMemoryBytes()
 
 		// EntryBytes includes the physical reserved []entry pool plus
 		// live key bytes. Deleted/free entry slots remain allocated
