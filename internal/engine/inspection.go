@@ -67,6 +67,8 @@ func (s *Store) Type(key string) string {
 		return "hash"
 	case TypeSet:
 		return "set"
+	case TypeList:
+		return "list"
 	default:
 		return "string"
 	}
