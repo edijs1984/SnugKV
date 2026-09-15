@@ -6,8 +6,11 @@ import (
 )
 
 func TestEntryLayoutStaysCompact(t *testing.T) {
-	if got, want := entryStructBytes, uint64(64); got != want {
+	if got, want := entryStructBytes, uint64(40); got != want {
 		t.Fatalf("entry struct size = %d, want %d", got, want)
+	}
+	if got, want := entryMetaBytes, uint64(32); got != want {
+		t.Fatalf("entry metadata size = %d, want %d", got, want)
 	}
 }
 
