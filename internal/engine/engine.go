@@ -11,21 +11,43 @@ import (
 	"time"
 )
 
-type entry struct {
-	ref                                              arena.Ref
+type entryMeta struct {
 	schema                                           *jsonshape.Schema
-	version                                          uint64
-	expiresAt                                        stamp
 	lastRewrite, lastOptimize, lastAccess, lastWrite activityStamp
-	rawLength                                        uint32
 	reads, writes                                    uint8
-	codecID                                          codec.ID
-	valueType                                        ValueType
+}
+
+type entry struct {
+	ref       arena.Ref
+	expiresAt stamp
+	*entryMeta
+	rawLength uint32
+	codecID   codec.ID
+	valueType ValueType
 }
 
 type preparedEntry struct {
 	entry
 	data []byte
+}
+
+func (e *entry) ensureMeta() *entryMeta {
+	if e.entryMeta == nil {
+		e.entryMeta = &entryMeta{}
+	}
+	return e.entryMeta
+}
+
+func cloneEntryMeta(meta *entryMeta) *entryMeta {
+	if meta == nil {
+		return nil
+	}
+	clone := *meta
+	return &clone
+}
+
+func (s *Store) shouldTrackActivity(e entry) bool {
+	return s.encoding && e.valueType != TypeHash
 }
 
 func (sh *shard) encoded(e entry) []byte {
@@ -53,7 +75,6 @@ type Store struct {
 	shapeEncoding    bool
 	compression      bool
 	memory           accounting
-	version          uint64
 	sampleCursor     uint64
 	shapeCatalog     globalShapeCatalog
 	hashShapes       hashShapeCatalog
@@ -106,14 +127,18 @@ func (s *Store) Get(key string) ([]byte, bool) {
 	if !ok || e.expired(s.now()) {
 		return nil, false
 	}
-	if s.now().Sub(e.lastAccess.Time()) > time.Minute {
-		e.reads = 0
+	if s.shouldTrackActivity(e) {
+		now := s.now()
+		meta := e.ensureMeta()
+		if now.Sub(meta.lastAccess.Time()) > time.Minute {
+			meta.reads = 0
+		}
+		meta.lastAccess = activityStampOf(now)
+		if meta.reads < ^uint8(0) {
+			meta.reads++
+		}
+		sh.set(key, e)
 	}
-	e.lastAccess = activityStampOf(s.now())
-	if e.reads < ^uint8(0) {
-		e.reads++
-	}
-	sh.set(key, e)
 	return s.decode(sh, e), true
 }
 func (s *Store) Delete(key string) bool {
