@@ -9,12 +9,14 @@ only at milestone level; `PROGRESS.md` contains verification evidence and
 The single-node RESP2 engine, persistence, memory accounting, optimizer,
 observability, packaging, and the main Redis-style native container types are
 implemented. HASH, SET, LIST, and the intended ZSET v1 command/storage surface are
-implemented, including non-polling blocking pop operations for LIST and ZSET.
+implemented, including non-polling blocking operations for LIST and ZSET.
 
 The packed storage formats for HASH, SET, LIST, and ZSET are frozen for v1. The
 legacy scalar/native-container WRONGTYPE audit is complete for the current command
-surface. The next memory work should target shared per-key overhead rather than
-adding more container-specific encodings.
+surface. Linux TCP builds now proactively cancel blocked LIST/ZSET waiters when a
+client disconnects without consuming queued protocol bytes. The next compatibility
+item is scan/glob behavior; the next memory work should target shared per-key
+overhead rather than adding more container-specific encodings.
 
 ## Completed milestones
 
@@ -26,6 +28,8 @@ adding more container-specific encodings.
 - [x] Cross-key atomic paths for multi-key writes and datatype move/store operations.
 - [x] Memory accounting, max-memory admission, rollback on OOM, compaction, sampled LRU eviction.
 - [x] Graceful shutdown, connection limits, read/write bounds, panic recovery.
+- [x] Per-connection cancellation for blocking LIST/ZSET commands.
+- [x] Linux TCP peer-disconnect detection for blocked clients using non-consuming socket hangup polling.
 
 ### Scalar storage and optimizer
 
@@ -86,8 +90,8 @@ adding more container-specific encodings.
 
 ### P0 — harden compatibility of the completed datatype surface
 
-- [ ] Harden infinite blocking client-disconnect detection so a disconnected client is released without waiting for another wakeup or server shutdown.
 - [ ] Review scan compatibility edge cases (`MATCH`, `COUNT`, glob character classes, cursor semantics) across `SCAN`, `HSCAN`, `SSCAN`, and `ZSCAN`.
+- [ ] Add equivalent proactive blocked-client disconnect detection for non-Linux server builds if cross-platform server parity is required for v1.
 
 ### P1 — shared memory overhead
 
