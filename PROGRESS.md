@@ -4,14 +4,15 @@
 
 SnugKV now has a broad single-node RESP2 command surface with native HASH, SET,
 LIST, and ZSET types, logical durability, memory accounting, adaptive scalar
-encoding, observability, and operational tooling. The current branch includes the
-operational ZSET tranche plus blocking ZSET commands (`BZPOPMIN`, `BZPOPMAX`,
-`BZMPOP`).
+encoding, observability, and operational tooling. The intended v1 HASH/SET/LIST/
+ZSET command/storage surface is implemented, including blocking LIST and ZSET
+operations.
 
 The immediate engineering focus is no longer datatype storage design. HASH, SET,
-LIST, and ZSET packed formats are frozen for v1. Remaining work is compatibility
-hardening, shared small-key overhead, blocking-client disconnect cleanup, and
-release-scale validation.
+LIST, and ZSET packed formats are frozen for v1, and the legacy scalar/native-
+container WRONGTYPE audit is complete for the current command surface. Remaining
+work is blocking-client disconnect cleanup, scan compatibility hardening, shared
+small-key overhead, and release-scale validation.
 
 ## Completed
 
@@ -31,6 +32,12 @@ release-scale validation.
 - Mixed SET/ZSET algebra with `WEIGHTS` and `AGGREGATE SUM|MIN|MAX|COUNT`.
 - Blocking LIST and ZSET waits register before readiness checks, use per-key wakeup
   signaling, and do not hold the AOF durability mutex while sleeping.
+- Legacy scalar/numeric/bitmap commands reject native HASH/SET/LIST/ZSET keys with
+  Redis-style WRONGTYPE where required instead of decoding packed container bytes.
+- Redis-specific string exceptions are preserved: `MGET` returns nil for non-string
+  slots, `GETDEL` returns nil without deleting non-string keys, plain `SET` may
+  replace any type, and `BITOP` validates sources while allowing destination overwrite.
+- TCP error framing preserves the `-WRONGTYPE` prefix.
 - Logical AOF and snapshot persistence with checksums, restart recovery,
   truncated-final-frame handling, corruption rejection, and online AOF rewrite.
 - Prometheus metrics and a separate loopback-only administration listener.
@@ -40,8 +47,9 @@ release-scale validation.
 ## Current verification
 
 - Go 1.27.1 is used locally and in CI.
-- `go test -race -count=1 ./...` is green for the blocking ZSET implementation.
-- `go vet ./...` and RESP fuzz remain part of the required CI gate.
+- `go test -race -count=1 ./...`, `go vet ./...`, and RESP fuzz are required for every feature branch.
+- Cross-datatype scalar tests exercise GET/GETSET/GETEX, append/range, numeric,
+  bitmap, `SET ... GET`, `MGET`, `GETDEL`, and `BITOP` against native HASH/SET/LIST/ZSET keys.
 - Blocking ZSET tests cover immediate replies, fractional timeout, key priority,
   wake-on-`ZADD`, `BZMPOP COUNT`, nested RESP2 replies, shutdown cancellation, and
   validation errors.
@@ -51,7 +59,7 @@ release-scale validation.
 - Atomic OOM rollback tests cover multi-key LIST moves, ZSET algebra stores, and
   ZSET range-store/multi-pop paths.
 - Local redis-cli smoke tests have validated LIST blocking behavior, ZSET core,
-  score ranges, lex ranges, ZSET algebra/store behavior, and non-blocking ZSET pops.
+  score ranges, lex ranges, ZSET algebra/store behavior, and blocking/non-blocking ZSET pops.
 
 ## Native datatype benchmark results
 
@@ -131,7 +139,6 @@ with LZ4. Random and already-compressed inputs stayed raw. See
 
 ## Remaining engineering work
 
-- Strict WRONGTYPE audit for legacy scalar/numeric/bit commands against native containers.
 - Infinite blocking client-disconnect detection hardening.
 - Scan/glob compatibility audit.
 - Shared per-key overhead reduction: 24-byte index slots, 40-byte common entries,
