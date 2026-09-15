@@ -14,6 +14,7 @@ import (
 type entryMeta struct {
 	schema                                           *jsonshape.Schema
 	lastRewrite, lastOptimize, lastAccess, lastWrite activityStamp
+	revision                                         uint32
 	reads, writes                                    uint8
 }
 
@@ -44,6 +45,35 @@ func cloneEntryMeta(meta *entryMeta) *entryMeta {
 	}
 	clone := *meta
 	return &clone
+}
+
+func entryRevision(e entry) uint32 {
+	if e.entryMeta == nil {
+		return 0
+	}
+	return e.entryMeta.revision
+}
+
+// bumpEntryRevision invalidates optimizer candidates for metadata-only logical
+// mutations such as EXPIRE/PERSIST. Optimizer candidates are short-lived; a
+// 32-bit per-key revision keeps the optional sidecar at 32 bytes while allowing
+// more than four billion mutations before wraparound.
+func bumpEntryRevision(e *entry) {
+	if e.entryMeta == nil {
+		return
+	}
+	e.entryMeta.revision++
+	if e.entryMeta.revision == 0 {
+		e.entryMeta.revision = 1
+	}
+}
+
+func nextEntryRevision(old entry) uint32 {
+	revision := entryRevision(old) + 1
+	if revision == 0 {
+		revision = 1
+	}
+	return revision
 }
 
 func (s *Store) shouldTrackActivity(e entry) bool {
