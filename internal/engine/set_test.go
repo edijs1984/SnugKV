@@ -50,6 +50,72 @@ func TestPackedSetCoreSemantics(t *testing.T) {
 	}
 }
 
+func TestSetAdaptivePhysicalEncodings(t *testing.T) {
+	s, err := NewWithOptions(Options{Shards: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	single := []byte("member:000000001")
+	if _, err := s.SetAdd("single", [][]byte{single}); err != nil {
+		t.Fatal(err)
+	}
+	stats, ok, err := s.SetStorageStats("single")
+	if err != nil || !ok {
+		t.Fatalf("single stats ok=%v err=%v", ok, err)
+	}
+	if stats.Encoding != "singleton" || stats.StoredBytes != len(single) || stats.PackedBytes <= stats.StoredBytes {
+		t.Fatalf("single stats=%+v", stats)
+	}
+
+	prefixMembers := [][]byte{
+		[]byte("member:000000001"),
+		[]byte("member:000000002"),
+		[]byte("member:000000003"),
+		[]byte("member:000000004"),
+	}
+	if _, err := s.SetAdd("prefix", prefixMembers); err != nil {
+		t.Fatal(err)
+	}
+	stats, ok, err = s.SetStorageStats("prefix")
+	if err != nil || !ok {
+		t.Fatalf("prefix stats ok=%v err=%v", ok, err)
+	}
+	if stats.Encoding != "prefix" || stats.StoredBytes >= stats.PackedBytes {
+		t.Fatalf("prefix stats=%+v", stats)
+	}
+
+	// Fixed-width members with no shared leading byte should remain canonical
+	// packed SS1 because front-coding provides no physical saving.
+	dispersed := [][]byte{
+		append([]byte{0x10}, bytes.Repeat([]byte{1}, 15)...),
+		append([]byte{0x40}, bytes.Repeat([]byte{2}, 15)...),
+		append([]byte{0x80}, bytes.Repeat([]byte{3}, 15)...),
+		append([]byte{0xc0}, bytes.Repeat([]byte{4}, 15)...),
+	}
+	if _, err := s.SetAdd("packed", dispersed); err != nil {
+		t.Fatal(err)
+	}
+	stats, ok, err = s.SetStorageStats("packed")
+	if err != nil || !ok {
+		t.Fatalf("packed stats ok=%v err=%v", ok, err)
+	}
+	if stats.Encoding != "packed" || stats.StoredBytes != stats.PackedBytes {
+		t.Fatalf("packed stats=%+v", stats)
+	}
+
+	// Export/AOF always sees canonical SS1 regardless of the physical encoding.
+	records := s.Export([]string{"single", "prefix"})
+	if len(records) != 2 {
+		t.Fatalf("export records=%d", len(records))
+	}
+	for _, record := range records {
+		if _, err := decodePackedSet(record.Value); err != nil {
+			t.Fatalf("exported %q is not canonical SS1: %v", record.Key, err)
+		}
+	}
+}
+
 func TestSetMutationPreservesTTLAndDeletesEmptyKey(t *testing.T) {
 	s := New()
 	if _, err := s.SetAdd("set", [][]byte{[]byte("a")}); err != nil {

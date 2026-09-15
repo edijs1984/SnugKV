@@ -46,11 +46,10 @@ func (s *Store) RenameSet(source, destination string, nx bool) (handled bool, re
 		return true, false, nil
 	}
 
-	packed := s.decode(sourceShard, sourceEntry)
-	if _, decodeErr := decodePackedSet(packed); decodeErr != nil {
+	packed, decodeErr := s.setLogicalValue(sourceShard, sourceEntry)
+	if decodeErr != nil {
 		return true, false, decodeErr
 	}
-
 	replacement := setPreparedEntry(packed)
 	replacement.expiresAt = sourceEntry.expiresAt
 	if publishErr := s.publish(destinationShard, destination, replacement); publishErr != nil {

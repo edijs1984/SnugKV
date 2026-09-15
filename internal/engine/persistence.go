@@ -39,7 +39,15 @@ func (s *Store) Export(keys []string) []persistence.Record {
 			}
 			record.Deleted = true
 		} else {
-			record.Value = s.decode(sh, e)
+			if e.valueType == TypeSet {
+				logical, err := s.setLogicalValue(sh, e)
+				if err != nil {
+					panic(err)
+				}
+				record.Value = logical
+			} else {
+				record.Value = s.decode(sh, e)
+			}
 			record.ValueType = uint8(e.valueType)
 			if !e.expiresAt.IsZero() {
 				record.ExpiresAtMS = e.expiresAt.UnixMilli()
