@@ -8,5 +8,6 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - run: make check
+      - run: go test -race -count=1 ./...
+      - run: go vet ./...
       - run: go test ./internal/resp -run '^$' -fuzz FuzzReadCommand -fuzztime=10s
