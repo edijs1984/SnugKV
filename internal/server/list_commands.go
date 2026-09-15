@@ -8,20 +8,22 @@ import (
 )
 
 var listCommands = map[string]commandInfo{
-	"LPUSH":   {3, 0, 1, 1, 1, true},
-	"RPUSH":   {3, 0, 1, 1, 1, true},
-	"LPUSHX":  {3, 0, 1, 1, 1, true},
-	"RPUSHX":  {3, 0, 1, 1, 1, true},
-	"LPOP":    {2, 3, 1, 1, 1, true},
-	"RPOP":    {2, 3, 1, 1, 1, true},
-	"LLEN":    {2, 2, 1, 1, 1, false},
-	"LINDEX":  {3, 3, 1, 1, 1, false},
-	"LRANGE":  {4, 4, 1, 1, 1, false},
-	"LSET":    {4, 4, 1, 1, 1, true},
-	"LTRIM":   {4, 4, 1, 1, 1, true},
-	"LREM":    {4, 4, 1, 1, 1, true},
-	"LINSERT": {5, 5, 1, 1, 1, true},
-	"LPOS":    {3, 0, 1, 1, 1, false},
+	"LPUSH":      {3, 0, 1, 1, 1, true},
+	"RPUSH":      {3, 0, 1, 1, 1, true},
+	"LPUSHX":     {3, 0, 1, 1, 1, true},
+	"RPUSHX":     {3, 0, 1, 1, 1, true},
+	"LPOP":       {2, 3, 1, 1, 1, true},
+	"RPOP":       {2, 3, 1, 1, 1, true},
+	"LLEN":       {2, 2, 1, 1, 1, false},
+	"LINDEX":     {3, 3, 1, 1, 1, false},
+	"LRANGE":     {4, 4, 1, 1, 1, false},
+	"LSET":       {4, 4, 1, 1, 1, true},
+	"LTRIM":      {4, 4, 1, 1, 1, true},
+	"LREM":       {4, 4, 1, 1, 1, true},
+	"LINSERT":    {5, 5, 1, 1, 1, true},
+	"LPOS":       {3, 0, 1, 1, 1, false},
+	"LMOVE":      {5, 5, 1, 2, 1, true},
+	"RPOPLPUSH":  {3, 3, 1, 2, 1, true},
 }
 
 func init() {
@@ -107,6 +109,27 @@ func (s *Server) executeList(args [][]byte) ([]byte, error) {
 			return formatBulkString(elements[0]), nil
 		}
 		return listElementsResponse(elements), nil
+
+	case "LMOVE", "RPOPLPUSH":
+		sourceLeft := false
+		destinationLeft := true
+		if cmd == "LMOVE" {
+			sourceSide := strings.ToUpper(string(args[3]))
+			destinationSide := strings.ToUpper(string(args[4]))
+			if sourceSide != "LEFT" && sourceSide != "RIGHT" {
+				return nil, errors.New("ERR syntax error")
+			}
+			if destinationSide != "LEFT" && destinationSide != "RIGHT" {
+				return nil, errors.New("ERR syntax error")
+			}
+			sourceLeft = sourceSide == "LEFT"
+			destinationLeft = destinationSide == "LEFT"
+		}
+		value, found, err := s.store.ListMove(string(args[1]), string(args[2]), sourceLeft, destinationLeft)
+		if err != nil {
+			return nil, err
+		}
+		return optionalBulk(value, found), nil
 
 	case "LLEN":
 		length, err := s.store.ListLen(key)
