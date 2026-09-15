@@ -28,11 +28,14 @@ func (s *Server) Execute(args [][]byte) (response []byte, resultErr error) {
 	}
 	defer func() { s.metrics.Observe(name, time.Since(start), resultErr != nil) }()
 
-	// Blocking LIST commands must not retain durableMu while sleeping. They wait
-	// outside the persistence critical section, then execute the eventual LPOP /
-	// RPOP / LMOVE mutation through executeDurable below.
+	// Blocking commands must not retain durableMu while sleeping. They wait
+	// outside the persistence critical section, then execute the eventual
+	// non-blocking mutation through executeDurable below.
 	if isBlockingListCommand(args) {
 		return s.executeBlockingList(args)
+	}
+	if isBlockingZSetCommand(args) {
+		return s.executeBlockingZSet(args)
 	}
 	return s.executeDurable(args)
 }
@@ -42,6 +45,7 @@ func (s *Server) executeDurable(args [][]byte) ([]byte, error) {
 		result, err := s.executePressure(args)
 		if err == nil {
 			s.signalListAvailability(args, result)
+			s.signalZSetAvailability(args, result)
 		}
 		return result, err
 	}
@@ -82,6 +86,7 @@ func (s *Server) executeDurable(args [][]byte) ([]byte, error) {
 		}
 
 		s.signalListAvailability(args, result)
+		s.signalZSetAvailability(args, result)
 		return result, nil
 	}
 
@@ -115,5 +120,6 @@ func (s *Server) executeDurable(args [][]byte) ([]byte, error) {
 		return nil, errors.New("ERR persistence append failed")
 	}
 	s.signalListAvailability(args, result)
+	s.signalZSetAvailability(args, result)
 	return result, nil
 }
