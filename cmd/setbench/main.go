@@ -19,6 +19,7 @@ func main() {
 	keys := flag.Int("keys", 100000, "number of set keys")
 	members := flag.Int("members", 8, "members per set")
 	memberBytes := flag.Int("member-bytes", 16, "bytes per set member")
+	pattern := flag.String("pattern", "sequential", "member pattern: sequential or dispersed")
 	shards := flag.Int("shards", 256, "SnugKV shard count")
 	redisAddr := flag.String("redis-addr", "127.0.0.1:6379", "Redis address")
 	redisDB := flag.Int("redis-db", 15, "Redis DB used for the benchmark")
@@ -29,8 +30,11 @@ func main() {
 	if *keys <= 0 || *members <= 0 || *memberBytes < 0 {
 		fatalf("keys and members must be positive; member-bytes must be non-negative")
 	}
+	if *pattern != "sequential" && *pattern != "dispersed" {
+		fatalf("pattern must be sequential or dispersed")
+	}
 
-	setMembers := dataset(*members, *memberBytes)
+	setMembers := dataset(*members, *memberBytes, *pattern)
 	store, err := engine.NewWithOptions(engine.Options{Shards: *shards})
 	if err != nil {
 		fatalf("create SnugKV store: %v", err)
@@ -102,11 +106,14 @@ func main() {
 	redisDelta := redisAfter - redisBefore
 
 	fmt.Printf("SET benchmark\n")
+	fmt.Printf("pattern: %s\n", *pattern)
 	fmt.Printf("keys: %d\n", *keys)
 	fmt.Printf("members_per_set: %d\n", *members)
 	fmt.Printf("member_bytes: %d\n", *memberBytes)
 	fmt.Printf("member_bytes_total_per_set: %d\n", sample.MemberBytes)
 	fmt.Printf("snug_packed_bytes_per_set: %d\n", sample.PackedBytes)
+	fmt.Printf("snug_stored_bytes_per_set: %d\n", sample.StoredBytes)
+	fmt.Printf("snug_storage_encoding: %s\n", sample.Encoding)
 	fmt.Printf("\nSnugKV\n")
 	fmt.Printf("accounted_before: %d\n", snugBefore.AccountedBytes)
 	fmt.Printf("accounted_after: %d\n", snugAfter.AccountedBytes)
@@ -154,15 +161,27 @@ func main() {
 	}
 }
 
-func dataset(count, memberBytes int) [][]byte {
+func dataset(count, memberBytes int, pattern string) [][]byte {
 	members := make([][]byte, count)
 	for i := 0; i < count; i++ {
 		member := make([]byte, memberBytes)
-		for j := range member {
-			member[j] = 'x'
+		if pattern == "sequential" {
+			for j := range member {
+				member[j] = 'x'
+			}
+			prefix := []byte(fmt.Sprintf("m:%08d", i))
+			copy(member, prefix)
+		} else {
+			seed := uint64(i+1) * 0x9e3779b97f4a7c15
+			for j := range member {
+				seed += 0x9e3779b97f4a7c15
+				z := seed
+				z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9
+				z = (z ^ (z >> 27)) * 0x94d049bb133111eb
+				z ^= z >> 31
+				member[j] = byte(z >> 56)
+			}
 		}
-		prefix := []byte(fmt.Sprintf("m:%08d", i))
-		copy(member, prefix)
 		members[i] = member
 	}
 	return members
