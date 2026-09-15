@@ -8,13 +8,19 @@ import (
 )
 
 var setCommands = map[string]commandInfo{
-	"SADD":       {3, 0, 1, 1, 1, true},
-	"SREM":       {3, 0, 1, 1, 1, true},
-	"SISMEMBER":  {3, 3, 1, 1, 1, false},
-	"SMISMEMBER": {3, 0, 1, 1, 1, false},
-	"SCARD":      {2, 2, 1, 1, 1, false},
-	"SMEMBERS":   {2, 2, 1, 1, 1, false},
-	"SSCAN":      {3, 0, 1, 1, 1, false},
+	"SADD":           {3, 0, 1, 1, 1, true},
+	"SREM":           {3, 0, 1, 1, 1, true},
+	"SISMEMBER":      {3, 3, 1, 1, 1, false},
+	"SMISMEMBER":     {3, 0, 1, 1, 1, false},
+	"SCARD":          {2, 2, 1, 1, 1, false},
+	"SMEMBERS":       {2, 2, 1, 1, 1, false},
+	"SSCAN":          {3, 0, 1, 1, 1, false},
+	"SUNION":         {2, 0, 1, -1, 1, false},
+	"SINTER":         {2, 0, 1, -1, 1, false},
+	"SDIFF":          {2, 0, 1, -1, 1, false},
+	"SUNIONSTORE":    {3, 0, 1, -1, 1, true},
+	"SINTERSTORE":    {3, 0, 1, -1, 1, true},
+	"SDIFFSTORE":     {3, 0, 1, -1, 1, true},
 }
 
 func init() {
@@ -119,11 +125,48 @@ func (s *Server) executeSet(args [][]byte) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		items := make([][]byte, 0, len(members))
-		for _, member := range members {
-			items = append(items, formatBulkString(member))
+		return setMembersResponse(members), nil
+
+	case "SUNION", "SINTER", "SDIFF":
+		keys := make([]string, len(args)-1)
+		for i := 1; i < len(args); i++ {
+			keys[i-1] = string(args[i])
 		}
-		return array(items...), nil
+		var members [][]byte
+		var err error
+		switch cmd {
+		case "SUNION":
+			members, err = s.store.SetUnion(keys)
+		case "SINTER":
+			members, err = s.store.SetIntersect(keys)
+		case "SDIFF":
+			members, err = s.store.SetDiff(keys)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return setMembersResponse(members), nil
+
+	case "SUNIONSTORE", "SINTERSTORE", "SDIFFSTORE":
+		destination := string(args[1])
+		keys := make([]string, len(args)-2)
+		for i := 2; i < len(args); i++ {
+			keys[i-2] = string(args[i])
+		}
+		var count int64
+		var err error
+		switch cmd {
+		case "SUNIONSTORE":
+			count, err = s.store.SetUnionStore(destination, keys)
+		case "SINTERSTORE":
+			count, err = s.store.SetIntersectStore(destination, keys)
+		case "SDIFFSTORE":
+			count, err = s.store.SetDiffStore(destination, keys)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return integer(count), nil
 
 	case "SSCAN":
 		cursor, err := strconv.ParseUint(string(args[2]), 10, 64)
@@ -176,4 +219,12 @@ func (s *Server) executeSet(args [][]byte) ([]byte, error) {
 	}
 
 	return nil, fmt.Errorf("ERR unknown command '%s'", cmd)
+}
+
+func setMembersResponse(members [][]byte) []byte {
+	items := make([][]byte, 0, len(members))
+	for _, member := range members {
+		items = append(items, formatBulkString(member))
+	}
+	return array(items...)
 }
