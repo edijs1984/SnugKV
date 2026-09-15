@@ -60,8 +60,10 @@ func (s *Store) Type(key string) string {
 		return "none"
 	}
 
-	// At the moment all public Redis values in SnugKV are strings.
-	// Internal codecs such as integer/json-shape are storage optimizations
-	// and must not change Redis TYPE semantics.
+	// Semantic string subtypes and physical codecs remain Redis STRING values.
+	// Native container datatypes must expose their Redis-visible type.
+	if e.valueType == TypeHash {
+		return "hash"
+	}
 	return "string"
 }

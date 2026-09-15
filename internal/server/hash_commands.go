@@ -14,6 +14,7 @@ import (
 
 var hashCommands = map[string]commandInfo{
 	"HSET":         {4, 0, 1, 1, 1, true},
+	"HMSET":        {4, 0, 1, 1, 1, true},
 	"HGET":         {3, 3, 1, 1, 1, false},
 	"HDEL":         {3, 0, 1, 1, 1, true},
 	"HLEN":         {2, 2, 1, 1, 1, false},
@@ -27,6 +28,7 @@ var hashCommands = map[string]commandInfo{
 	"HINCRBY":      {4, 4, 1, 1, 1, true},
 	"HINCRBYFLOAT": {4, 4, 1, 1, 1, true},
 	"HSCAN":        {3, 0, 1, 1, 1, false},
+	"HRANDFIELD":   {2, 4, 1, 1, 1, false},
 }
 
 func init() {
@@ -45,8 +47,24 @@ func isHashCommand(args [][]byte) bool {
 
 // executeCommand is the common command dispatcher used by the pressure/eviction
 // layer. HASH commands live in a separate file so the main server switch does
-// not keep growing indefinitely.
+// not keep growing indefinitely. It also intercepts HASH RENAME/RENAMENX so the
+// datatype is preserved instead of being republished as a string.
 func (s *Server) executeCommand(args [][]byte) ([]byte, error) {
+	if len(args) > 0 {
+		cmd := strings.ToUpper(string(args[0]))
+		if (cmd == "RENAME" || cmd == "RENAMENX") && len(args) == 3 {
+			handled, renamed, err := s.store.RenameHash(string(args[1]), string(args[2]), cmd == "RENAMENX")
+			if handled {
+				if err != nil {
+					return nil, err
+				}
+				if cmd == "RENAMENX" {
+					return boolean(renamed), nil
+				}
+				return []byte("+OK\r\n"), nil
+			}
+		}
+	}
 	if isHashCommand(args) {
 		return s.executeHash(args)
 	}
@@ -70,9 +88,9 @@ func (s *Server) executeHash(args [][]byte) ([]byte, error) {
 	key := string(args[1])
 
 	switch cmd {
-	case "HSET":
+	case "HSET", "HMSET":
 		if len(args)%2 != 0 {
-			return nil, errors.New("ERR wrong number of arguments for 'hset' command")
+			return nil, fmt.Errorf("ERR wrong number of arguments for '%s' command", strings.ToLower(cmd))
 		}
 		fields := make([][]byte, 0, (len(args)-2)/2)
 		values := make([][]byte, 0, (len(args)-2)/2)
@@ -83,6 +101,9 @@ func (s *Server) executeHash(args [][]byte) ([]byte, error) {
 		added, err := s.store.HashSet(key, fields, values)
 		if err != nil {
 			return nil, err
+		}
+		if cmd == "HMSET" {
+			return []byte("+OK\r\n"), nil
 		}
 		return integer(added), nil
 
@@ -203,6 +224,9 @@ func (s *Server) executeHash(args [][]byte) ([]byte, error) {
 			return nil, err
 		}
 		return formatBulkString([]byte(result)), nil
+
+	case "HRANDFIELD":
+		return s.executeHRandField(args)
 
 	case "HSCAN":
 		cursor, err := strconv.ParseUint(string(args[2]), 10, 64)
