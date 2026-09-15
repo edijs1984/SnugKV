@@ -256,6 +256,7 @@ func (s *Store) Stats() DatasetStats {
 				result.KeyBytes += uint64(len(k))
 				result.ValueBytes += uint64(e.rawLength)
 			}
+		}
 		sh.mu.RUnlock()
 	}
 	return result
