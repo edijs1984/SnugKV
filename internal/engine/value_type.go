@@ -27,6 +27,7 @@ const (
 	TypeJSON
 	TypeHash
 	TypeSet
+	TypeList
 )
 
 func (t ValueType) String() string {
@@ -49,6 +50,8 @@ func (t ValueType) String() string {
 		return "HASH"
 	case TypeSet:
 		return "SET"
+	case TypeList:
+		return "LIST"
 	default:
 		return "UNKNOWN"
 	}

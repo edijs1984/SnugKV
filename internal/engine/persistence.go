@@ -39,13 +39,20 @@ func (s *Store) Export(keys []string) []persistence.Record {
 			}
 			record.Deleted = true
 		} else {
-			if e.valueType == TypeSet {
+			switch e.valueType {
+			case TypeSet:
 				logical, err := s.setLogicalValue(sh, e)
 				if err != nil {
 					panic(err)
 				}
 				record.Value = logical
-			} else {
+			case TypeList:
+				logical, err := s.listLogicalValue(sh, e)
+				if err != nil {
+					panic(err)
+				}
+				record.Value = logical
+			default:
 				record.Value = s.decode(sh, e)
 			}
 			record.ValueType = uint8(e.valueType)
@@ -72,7 +79,7 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 		if len(record.Value) > 32<<20 {
 			return errors.New("ERR recovered value exceeds 32 MiB limit")
 		}
-		if record.ValueType > uint8(TypeSet) {
+		if record.ValueType > uint8(TypeList) {
 			return errors.New("ERR recovered value has unknown type")
 		}
 	}
@@ -102,6 +109,11 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 				return errors.New("ERR recovered SET value is invalid")
 			}
 			e = setPreparedEntry(record.Value)
+		case TypeList:
+			if _, err := decodePackedList(record.Value); err != nil {
+				return errors.New("ERR recovered LIST value is invalid")
+			}
+			e = listPreparedEntry(record.Value)
 		default:
 			e = s.makeEntry(record.Value)
 
@@ -159,14 +171,7 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 		extraArena += sh.arena.GrowthFor(lengths)
 	}
 	s.memory.mu.Lock()
-	next := s.memory.used -
-		before -
-		beforeMeta +
-		after +
-		afterMeta +
-		extra +
-		extraEntries +
-		extraArena
+	next := s.memory.used - before - beforeMeta + after + afterMeta + extra + extraEntries + extraArena
 	if !force && s.memory.max > 0 && next > s.memory.max {
 		s.memory.mu.Unlock()
 		return ErrOOM
@@ -175,17 +180,12 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 	for key := range deletions {
 		s.remove(s.shardFor(key), key)
 	}
-	// All shards remain locked, so no concurrent reservation can change admission.
 	for _, key := range ordered {
 		e := updates[key]
 		sh := s.shardFor(key)
-
 		if err := s.publishRecord(sh, key, e, false); err != nil {
 			return err
 		}
-
-		// Restore runs with all shards locked. Rebuild ephemeral JSON-shape
-		// admission state only from restored logical scalar/string values.
 		if !isNativeContainerType(e.valueType) {
 			if current, ok := sh.get(key); ok {
 				s.observeJSONShapeLocked(sh, s.decode(sh, current))
