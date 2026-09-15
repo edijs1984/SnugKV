@@ -10,14 +10,20 @@ import (
 )
 
 var zsetCommands = map[string]commandInfo{
-	"ZADD":      {4, 0, 1, 1, 1, true},
-	"ZREM":      {3, 0, 1, 1, 1, true},
-	"ZSCORE":    {3, 3, 1, 1, 1, false},
-	"ZCARD":     {2, 2, 1, 1, 1, false},
-	"ZRANK":     {3, 4, 1, 1, 1, false},
-	"ZREVRANK":  {3, 4, 1, 1, 1, false},
-	"ZRANGE":    {4, 5, 1, 1, 1, false},
-	"ZREVRANGE": {4, 5, 1, 1, 1, false},
+	"ZADD":              {4, 0, 1, 1, 1, true},
+	"ZREM":              {3, 0, 1, 1, 1, true},
+	"ZINCRBY":           {4, 4, 1, 1, 1, true},
+	"ZSCORE":            {3, 3, 1, 1, 1, false},
+	"ZCARD":             {2, 2, 1, 1, 1, false},
+	"ZCOUNT":            {4, 4, 1, 1, 1, false},
+	"ZRANK":             {3, 4, 1, 1, 1, false},
+	"ZREVRANK":          {3, 4, 1, 1, 1, false},
+	"ZRANGE":            {4, 0, 1, 1, 1, false},
+	"ZREVRANGE":         {4, 5, 1, 1, 1, false},
+	"ZRANGEBYSCORE":     {4, 0, 1, 1, 1, false},
+	"ZREVRANGEBYSCORE":  {4, 0, 1, 1, 1, false},
+	"ZREMRANGEBYRANK":   {4, 4, 1, 1, 1, true},
+	"ZREMRANGEBYSCORE":  {4, 4, 1, 1, 1, true},
 }
 
 func init() {
@@ -35,14 +41,45 @@ func isZSetCommand(args [][]byte) bool {
 }
 
 func parseZSetScore(arg []byte) (float64, error) {
-	score, err := strconv.ParseFloat(string(arg), 64)
-	if err != nil || math.IsNaN(score) {
+	text := strings.ToLower(string(arg))
+	var score float64
+	var err error
+	switch text {
+	case "+inf", "inf":
+		score = math.Inf(1)
+	case "-inf":
+		score = math.Inf(-1)
+	default:
+		score, err = strconv.ParseFloat(string(arg), 64)
+		if err != nil {
+			return 0, errors.New("ERR value is not a valid float")
+		}
+	}
+	if math.IsNaN(score) {
 		return 0, errors.New("ERR value is not a valid float")
 	}
 	if score == 0 {
 		score = 0
 	}
 	return score, nil
+}
+
+func parseZSetScoreBound(arg []byte) (engine.ZSetScoreBound, error) {
+	if len(arg) == 0 {
+		return engine.ZSetScoreBound{}, errors.New("ERR min or max is not a float")
+	}
+	exclusive := arg[0] == '('
+	if exclusive {
+		arg = arg[1:]
+		if len(arg) == 0 {
+			return engine.ZSetScoreBound{}, errors.New("ERR min or max is not a float")
+		}
+	}
+	score, err := parseZSetScore(arg)
+	if err != nil {
+		return engine.ZSetScoreBound{}, errors.New("ERR min or max is not a float")
+	}
+	return engine.ZSetScoreBound{Score: score, Exclusive: exclusive}, nil
 }
 
 func formatZSetScore(score float64) []byte {
@@ -53,6 +90,49 @@ func formatZSetScore(score float64) []byte {
 		return []byte("-inf")
 	}
 	return []byte(strconv.FormatFloat(score, 'g', -1, 64))
+}
+
+func zsetItemsResponse(items []engine.ZSetItem, withScores bool) []byte {
+	response := make([][]byte, 0, len(items)*2)
+	for _, item := range items {
+		response = append(response, formatBulkString(item.Member))
+		if withScores {
+			response = append(response, formatBulkString(formatZSetScore(item.Score)))
+		}
+	}
+	return array(response...)
+}
+
+func parseZSetScoreRangeOptions(args [][]byte, start int) (withScores bool, offset, count int64, err error) {
+	count = -1
+	seenLimit := false
+	for i := start; i < len(args); {
+		switch strings.ToUpper(string(args[i])) {
+		case "WITHSCORES":
+			if withScores {
+				return false, 0, 0, errors.New("ERR syntax error")
+			}
+			withScores = true
+			i++
+		case "LIMIT":
+			if seenLimit || i+2 >= len(args) {
+				return false, 0, 0, errors.New("ERR syntax error")
+			}
+			offset, err = strconv.ParseInt(string(args[i+1]), 10, 64)
+			if err != nil {
+				return false, 0, 0, errors.New("ERR value is not an integer or out of range")
+			}
+			count, err = strconv.ParseInt(string(args[i+2]), 10, 64)
+			if err != nil {
+				return false, 0, 0, errors.New("ERR value is not an integer or out of range")
+			}
+			seenLimit = true
+			i += 3
+		default:
+			return false, 0, 0, errors.New("ERR syntax error")
+		}
+	}
+	return withScores, offset, count, nil
 }
 
 func (s *Server) executeZSet(args [][]byte) ([]byte, error) {
@@ -116,6 +196,20 @@ func (s *Server) executeZSet(args [][]byte) ([]byte, error) {
 		}
 		return integer(count), nil
 
+	case "ZINCRBY":
+		increment, err := parseZSetScore(args[2])
+		if err != nil {
+			return nil, err
+		}
+		_, incremented, score, err := s.store.ZSetAdd(key, []engine.ZSetItem{{Score: increment, Member: args[3]}}, engine.ZSetAddOptions{INCR: true})
+		if err != nil {
+			return nil, err
+		}
+		if !incremented {
+			return nullBulk(), nil
+		}
+		return formatBulkString(formatZSetScore(score)), nil
+
 	case "ZREM":
 		removed, err := s.store.ZSetRemove(key, args[2:])
 		if err != nil {
@@ -135,6 +229,21 @@ func (s *Server) executeZSet(args [][]byte) ([]byte, error) {
 
 	case "ZCARD":
 		count, err := s.store.ZSetCard(key)
+		if err != nil {
+			return nil, err
+		}
+		return integer(count), nil
+
+	case "ZCOUNT":
+		min, err := parseZSetScoreBound(args[2])
+		if err != nil {
+			return nil, err
+		}
+		max, err := parseZSetScoreBound(args[3])
+		if err != nil {
+			return nil, err
+		}
+		count, err := s.store.ZSetCount(key, min, max)
 		if err != nil {
 			return nil, err
 		}
@@ -164,7 +273,123 @@ func (s *Server) executeZSet(args [][]byte) ([]byte, error) {
 		}
 		return array(integer(rank), formatBulkString(formatZSetScore(score))), nil
 
-	case "ZRANGE", "ZREVRANGE":
+	case "ZRANGEBYSCORE", "ZREVRANGEBYSCORE":
+		var min, max engine.ZSetScoreBound
+		var err error
+		reverse := cmd == "ZREVRANGEBYSCORE"
+		if !reverse {
+			min, err = parseZSetScoreBound(args[2])
+			if err == nil {
+				max, err = parseZSetScoreBound(args[3])
+			}
+		} else {
+			max, err = parseZSetScoreBound(args[2])
+			if err == nil {
+				min, err = parseZSetScoreBound(args[3])
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
+		withScores, offset, count, err := parseZSetScoreRangeOptions(args, 4)
+		if err != nil {
+			return nil, err
+		}
+		items, err := s.store.ZSetRangeByScore(key, min, max, reverse, offset, count)
+		if err != nil {
+			return nil, err
+		}
+		return zsetItemsResponse(items, withScores), nil
+
+	case "ZRANGE":
+		byScore := false
+		reverse := false
+		withScores := false
+		hasLimit := false
+		var offset int64
+		count := int64(-1)
+		for i := 4; i < len(args); {
+			switch strings.ToUpper(string(args[i])) {
+			case "BYSCORE":
+				if byScore {
+					return nil, errors.New("ERR syntax error")
+				}
+				byScore = true
+				i++
+			case "BYLEX":
+				return nil, errors.New("ERR syntax error")
+			case "REV":
+				if reverse {
+					return nil, errors.New("ERR syntax error")
+				}
+				reverse = true
+				i++
+			case "WITHSCORES":
+				if withScores {
+					return nil, errors.New("ERR syntax error")
+				}
+				withScores = true
+				i++
+			case "LIMIT":
+				if hasLimit || i+2 >= len(args) {
+					return nil, errors.New("ERR syntax error")
+				}
+				var err error
+				offset, err = strconv.ParseInt(string(args[i+1]), 10, 64)
+				if err != nil {
+					return nil, errors.New("ERR value is not an integer or out of range")
+				}
+				count, err = strconv.ParseInt(string(args[i+2]), 10, 64)
+				if err != nil {
+					return nil, errors.New("ERR value is not an integer or out of range")
+				}
+				hasLimit = true
+				i += 3
+			default:
+				return nil, errors.New("ERR syntax error")
+			}
+		}
+		if byScore {
+			var min, max engine.ZSetScoreBound
+			var err error
+			if !reverse {
+				min, err = parseZSetScoreBound(args[2])
+				if err == nil {
+					max, err = parseZSetScoreBound(args[3])
+				}
+			} else {
+				max, err = parseZSetScoreBound(args[2])
+				if err == nil {
+					min, err = parseZSetScoreBound(args[3])
+				}
+			}
+			if err != nil {
+				return nil, err
+			}
+			items, err := s.store.ZSetRangeByScore(key, min, max, reverse, offset, count)
+			if err != nil {
+				return nil, err
+			}
+			return zsetItemsResponse(items, withScores), nil
+		}
+		if hasLimit {
+			return nil, errors.New("ERR syntax error")
+		}
+		start, err := strconv.ParseInt(string(args[2]), 10, 64)
+		if err != nil {
+			return nil, errors.New("ERR value is not an integer or out of range")
+		}
+		stop, err := strconv.ParseInt(string(args[3]), 10, 64)
+		if err != nil {
+			return nil, errors.New("ERR value is not an integer or out of range")
+		}
+		items, err := s.store.ZSetRange(key, start, stop, reverse)
+		if err != nil {
+			return nil, err
+		}
+		return zsetItemsResponse(items, withScores), nil
+
+	case "ZREVRANGE":
 		start, err := strconv.ParseInt(string(args[2]), 10, 64)
 		if err != nil {
 			return nil, errors.New("ERR value is not an integer or out of range")
@@ -180,18 +405,41 @@ func (s *Server) executeZSet(args [][]byte) ([]byte, error) {
 			}
 			withScores = true
 		}
-		items, err := s.store.ZSetRange(key, start, stop, cmd == "ZREVRANGE")
+		items, err := s.store.ZSetRange(key, start, stop, true)
 		if err != nil {
 			return nil, err
 		}
-		response := make([][]byte, 0, len(items)*2)
-		for _, item := range items {
-			response = append(response, formatBulkString(item.Member))
-			if withScores {
-				response = append(response, formatBulkString(formatZSetScore(item.Score)))
-			}
+		return zsetItemsResponse(items, withScores), nil
+
+	case "ZREMRANGEBYRANK":
+		start, err := strconv.ParseInt(string(args[2]), 10, 64)
+		if err != nil {
+			return nil, errors.New("ERR value is not an integer or out of range")
 		}
-		return array(response...), nil
+		stop, err := strconv.ParseInt(string(args[3]), 10, 64)
+		if err != nil {
+			return nil, errors.New("ERR value is not an integer or out of range")
+		}
+		removed, err := s.store.ZSetRemoveRangeByRank(key, start, stop)
+		if err != nil {
+			return nil, err
+		}
+		return integer(removed), nil
+
+	case "ZREMRANGEBYSCORE":
+		min, err := parseZSetScoreBound(args[2])
+		if err != nil {
+			return nil, err
+		}
+		max, err := parseZSetScoreBound(args[3])
+		if err != nil {
+			return nil, err
+		}
+		removed, err := s.store.ZSetRemoveRangeByScore(key, min, max)
+		if err != nil {
+			return nil, err
+		}
+		return integer(removed), nil
 	}
 
 	return nil, fmt.Errorf("ERR unknown command '%s'", cmd)
