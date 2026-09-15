@@ -67,6 +67,7 @@ func (s *TCPServer) Close() error {
 		s.closing = true
 		child := s.admin
 		s.server.CancelBlocking()
+		s.server.CancelBlockingZSets()
 		s.listener.Close()
 		for conn := range s.connections {
 			conn.Close()
