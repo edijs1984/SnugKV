@@ -134,7 +134,7 @@ func isBlockingZSetCommand(args [][]byte) bool {
 	return ok
 }
 
-func (s *Server) executeBlockingZSet(args [][]byte) ([]byte, error) {
+func (s *Server) executeBlockingZSet(args [][]byte, cancel <-chan struct{}) ([]byte, error) {
 	cmd := strings.ToUpper(string(args[0]))
 	info, ok := zsetBlockingCommands[cmd]
 	if !ok || len(args) < info.min || info.max > 0 && len(args) > info.max {
@@ -151,7 +151,7 @@ func (s *Server) executeBlockingZSet(args [][]byte) ([]byte, error) {
 		for _, arg := range args[1 : len(args)-1] {
 			keys = append(keys, string(arg))
 		}
-		return s.blockingZPop(keys, cmd == "BZPOPMAX", timeout)
+		return s.blockingZPop(keys, cmd == "BZPOPMAX", timeout, cancel)
 
 	case "BZMPOP":
 		timeout, err := parseBlockingTimeout(args[1])
@@ -183,13 +183,13 @@ func (s *Server) executeBlockingZSet(args [][]byte) ([]byte, error) {
 				return nil, errors.New("ERR count should be greater than 0")
 			}
 		}
-		return s.blockingZMPop(args, keys, timeout)
+		return s.blockingZMPop(args, keys, timeout, cancel)
 	}
 
 	return nil, errors.New("ERR unknown blocking zset command")
 }
 
-func (s *Server) waitForZSetSignal(waiter *zsetWaiter, timeoutC <-chan time.Time) error {
+func (s *Server) waitForZSetSignal(waiter *zsetWaiter, timeoutC <-chan time.Time, cancel <-chan struct{}) error {
 	select {
 	case <-waiter.ch:
 		s.unregisterZSetWaiter(waiter)
@@ -200,12 +200,15 @@ func (s *Server) waitForZSetSignal(waiter *zsetWaiter, timeoutC <-chan time.Time
 	case <-timeoutC:
 		s.unregisterZSetWaiter(waiter)
 		return errBlockingTimeout
+	case <-cancel:
+		s.unregisterZSetWaiter(waiter)
+		return errBlockingClientGone
 	}
 }
 
 var errBlockingTimeout = errors.New("blocking timeout")
 
-func (s *Server) blockingZPop(keys []string, max bool, timeout time.Duration) ([]byte, error) {
+func (s *Server) blockingZPop(keys []string, max bool, timeout time.Duration, cancel <-chan struct{}) ([]byte, error) {
 	timer, timeoutC := blockingTimer(timeout)
 	if timer != nil {
 		defer timer.Stop()
@@ -251,7 +254,7 @@ func (s *Server) blockingZPop(keys []string, max bool, timeout time.Duration) ([
 			return out, nil
 		}
 
-		if err := s.waitForZSetSignal(waiter, timeoutC); err != nil {
+		if err := s.waitForZSetSignal(waiter, timeoutC, cancel); err != nil {
 			if errors.Is(err, errBlockingTimeout) {
 				return []byte("*-1\r\n"), nil
 			}
@@ -260,7 +263,7 @@ func (s *Server) blockingZPop(keys []string, max bool, timeout time.Duration) ([
 	}
 }
 
-func (s *Server) blockingZMPop(original [][]byte, keys []string, timeout time.Duration) ([]byte, error) {
+func (s *Server) blockingZMPop(original [][]byte, keys []string, timeout time.Duration, cancel <-chan struct{}) ([]byte, error) {
 	timer, timeoutC := blockingTimer(timeout)
 	if timer != nil {
 		defer timer.Stop()
@@ -300,7 +303,7 @@ func (s *Server) blockingZMPop(original [][]byte, keys []string, timeout time.Du
 			}
 		}
 
-		if err := s.waitForZSetSignal(waiter, timeoutC); err != nil {
+		if err := s.waitForZSetSignal(waiter, timeoutC, cancel); err != nil {
 			if errors.Is(err, errBlockingTimeout) {
 				return []byte("*-1\r\n"), nil
 			}
