@@ -54,6 +54,11 @@ All notable changes to SnugKV will be documented in this file.
 - Blocking LIST and ZSET commands wait outside the durability mutex.
 - Blocking ZSET waits register before readiness checks to avoid lost wakeups.
 - Dynamic durability snapshots for `ZMPOP` candidate keys.
+- Legacy string/numeric/bitmap commands now reject native HASH/SET/LIST/ZSET keys
+  with Redis-style WRONGTYPE instead of decoding packed container bytes.
+- Redis-specific scalar exceptions are preserved for `MGET`, `GETDEL`, plain
+  `SET`, and `BITOP` destination overwrite behavior.
+- TCP error framing preserves the `-WRONGTYPE` RESP error prefix.
 - Large arena allocations up to the RESP bulk-size boundary.
 - Connection-level panic recovery.
 - Exact RESP maximum-bulk boundary behavior.
@@ -63,6 +68,8 @@ All notable changes to SnugKV will be documented in this file.
 ### Verified
 
 - Full race suite, `go vet`, and RESP fuzz are green for the native datatype work.
+- Cross-datatype scalar regression tests cover GET/GETSET/GETEX, append/range,
+  numeric, bitmap, `SET ... GET`, `MGET`, `GETDEL`, and `BITOP` behavior.
 - Blocking ZSET tests cover immediate/wakeup/timeout behavior, key priority,
   `BZMPOP COUNT`, shutdown cancellation, and the AOF durability-lock invariant.
 - Local redis-cli smoke tests validated LIST blocking behavior and ZSET core, range,
