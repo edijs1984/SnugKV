@@ -256,6 +256,9 @@ func (s *Store) publishRecord(
 	defer s.memory.mu.Unlock()
 
 	extraArena := sh.arena.GrowthFor([]int{len(e.data)})
+	if exists {
+		extraArena += sh.arena.FreeGrowth(old.ref)
+	}
 	next := s.memory.used -
 		oldCost -
 		oldMetaCost +
@@ -344,6 +347,7 @@ func (s *Store) remove(sh *shard, key string) {
 		if e.expired(s.now()) {
 			atomic.AddUint64(&s.expired, 1)
 		}
+		freeGrowth := sh.arena.FreeGrowth(e.ref)
 		s.memory.mu.Lock()
 		if e.entryMeta != nil && e.entryMeta.schema != nil {
 			sh.shapes.ReleaseRecord(e.entryMeta.schema, sh.encoded(e))
@@ -351,8 +355,10 @@ func (s *Store) remove(sh *shard, key string) {
 		cost := entryCharge(key, e)
 		metaCost := metadataCharge(e)
 		s.memory.used -= cost + metaCost
+		s.memory.used += freeGrowth
 		s.memory.entries -= cost
 		s.memory.metas -= metaCost
+		s.memory.arenas += freeGrowth
 		s.memory.arenaPayload -= uint64(len(sh.encoded(e)))
 		s.memory.arenaLiveBlocks -= sh.arena.AllocationBytes(e.ref)
 		s.memory.mu.Unlock()
