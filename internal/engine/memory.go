@@ -226,6 +226,14 @@ func (s *Store) publishRecord(
 	if s.shouldTrackActivity(e.entry) && e.entryMeta == nil {
 		e.entryMeta = &entryMeta{}
 	}
+	if s.shouldTrackActivity(e.entry) {
+		meta := e.ensureMeta()
+		if exists {
+			meta.revision = nextEntryRevision(old)
+		} else {
+			meta.revision = 1
+		}
+	}
 
 	var oldCost uint64
 	if exists {
