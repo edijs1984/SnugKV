@@ -52,6 +52,33 @@ func TestBatchProjection(t *testing.T) {
 	}
 }
 
+func TestTinySetSizeClasses(t *testing.T) {
+	var a Arena
+
+	single := a.Alloc(bytes.Repeat([]byte{'s'}, 16))
+	if got := a.AllocationBytes(single); got != 24 {
+		t.Fatalf("16-byte payload allocation=%d want 24", got)
+	}
+
+	prefix := a.Alloc(bytes.Repeat([]byte{'p'}, 77))
+	if got := a.AllocationBytes(prefix); got != 88 {
+		t.Fatalf("77-byte payload allocation=%d want 88", got)
+	}
+
+	a.Free(single)
+	a.Free(prefix)
+
+	// Targeted buckets must remain safely reusable.
+	single2 := a.Alloc(bytes.Repeat([]byte{'x'}, 16))
+	prefix2 := a.Alloc(bytes.Repeat([]byte{'y'}, 77))
+	if got := a.AllocationBytes(single2); got != 24 {
+		t.Fatalf("reused singleton allocation=%d want 24", got)
+	}
+	if got := a.AllocationBytes(prefix2); got != 88 {
+		t.Fatalf("reused prefix allocation=%d want 88", got)
+	}
+}
+
 func TestRefPacking(t *testing.T) {
 	ref := newRef(
 		(1<<refSegmentBits)-1,
