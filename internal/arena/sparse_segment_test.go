@@ -27,39 +27,64 @@ func TestFirstArenaGrowthProjectionMatchesAllocation(t *testing.T) {
 	if a.SegmentCount() != 1 {
 		t.Fatalf("segments = %d, want 1", a.SegmentCount())
 	}
-	if len(a.segments[0].data) >= SegmentBytes {
-		t.Fatalf("first sparse segment = %d, expected smaller than %d", len(a.segments[0].data), SegmentBytes)
+	if len(a.segments[0].data) >= secondSmallSegmentBytes {
+		t.Fatalf("first sparse segment = %d, expected smaller than %d", len(a.segments[0].data), secondSmallSegmentBytes)
 	}
 	if _, err := a.View(ref); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestSmallArenaFallsBackToNormalSegmentAfterFirstFills(t *testing.T) {
+func TestSmallArenaUsesStagedGrowthBeforeDenseSegments(t *testing.T) {
 	var a Arena
 	payload := make([]byte, 16)
 	_, block := class(len(payload))
+
 	firstSize := segmentSizeForAllocation(block, 0)
 	firstSlots := firstSize / block
-
 	for i := 0; i < firstSlots; i++ {
 		a.Alloc(payload)
 	}
 	if a.SegmentCount() != 1 {
-		t.Fatalf("segments before overflow = %d, want 1", a.SegmentCount())
+		t.Fatalf("segments before first overflow = %d, want 1", a.SegmentCount())
+	}
+	if got := len(a.segments[0].data); got != firstSize {
+		t.Fatalf("first segment = %d, want %d", got, firstSize)
 	}
 
 	before := a.MemoryBytes()
 	projected := a.GrowthFor([]int{len(payload)})
 	a.Alloc(payload)
 	if a.SegmentCount() != 2 {
-		t.Fatalf("segments after overflow = %d, want 2", a.SegmentCount())
+		t.Fatalf("segments after first overflow = %d, want 2", a.SegmentCount())
 	}
-	if got := len(a.segments[1].data); got != SegmentBytes {
-		t.Fatalf("second segment = %d, want %d", got, SegmentBytes)
+	secondSize := segmentSizeForAllocation(block, 1)
+	if got := len(a.segments[1].data); got != secondSize {
+		t.Fatalf("second segment = %d, want %d", got, secondSize)
 	}
 	if got := a.MemoryBytes() - before; got != projected {
 		t.Fatalf("second segment growth = %d, projected = %d", got, projected)
+	}
+
+	secondSlots := secondSize / block
+	for i := 1; i < secondSlots; i++ {
+		a.Alloc(payload)
+	}
+	if a.SegmentCount() != 2 {
+		t.Fatalf("segments before second overflow = %d, want 2", a.SegmentCount())
+	}
+
+	before = a.MemoryBytes()
+	projected = a.GrowthFor([]int{len(payload)})
+	a.Alloc(payload)
+	if a.SegmentCount() != 3 {
+		t.Fatalf("segments after second overflow = %d, want 3", a.SegmentCount())
+	}
+	if got := len(a.segments[2].data); got != SegmentBytes {
+		t.Fatalf("third segment = %d, want %d", got, SegmentBytes)
+	}
+	if got := a.MemoryBytes() - before; got != projected {
+		t.Fatalf("third segment growth = %d, projected = %d", got, projected)
 	}
 }
 
