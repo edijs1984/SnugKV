@@ -10,7 +10,11 @@ import (
 
 const maxPackedZSetBytes = 32 << 20
 
-var packedZSetHeader = [...]byte{'S', 'Z', 1}
+var (
+	packedZSetHeaderV1       = [...]byte{'S', 'Z', 1} // legacy raw float64 scores
+	packedZSetHeaderIntDelta = [...]byte{'S', 'Z', 2} // exact int64 scores, delta-varint encoded
+	packedZSetHeaderFloat64  = [...]byte{'S', 'Z', 3} // canonical raw float64 fallback
+)
 
 type ZSetItem struct {
 	Member []byte
@@ -51,6 +55,11 @@ func readZSetUvarint(data []byte, offset *int) (uint64, error) {
 	return value, nil
 }
 
+func zsetUvarintLen(value uint64) int {
+	var buf [binary.MaxVarintLen64]byte
+	return binary.PutUvarint(buf[:], value)
+}
+
 func normalizeZSetScore(score float64) float64 {
 	if score == 0 {
 		return 0
@@ -68,24 +77,99 @@ func zsetLess(a, b ZSetItem) bool {
 	return bytes.Compare(a.Member, b.Member) < 0
 }
 
+func zsetExactInt64(score float64) (int64, bool) {
+	score = normalizeZSetScore(score)
+	if math.IsNaN(score) || math.IsInf(score, 0) || math.Trunc(score) != score {
+		return 0, false
+	}
+	// float64(math.MaxInt64) rounds to 2^63, so use an exclusive upper bound.
+	if score < -9223372036854775808.0 || score >= 9223372036854775808.0 {
+		return 0, false
+	}
+	n := int64(score)
+	if float64(n) != score {
+		return 0, false
+	}
+	return n, true
+}
+
+func zsetZigZag(value int64) uint64 {
+	return uint64(value)<<1 ^ uint64(value>>63)
+}
+
+func zsetUnZigZag(value uint64) int64 {
+	return int64(value>>1) ^ -int64(value&1)
+}
+
+func zsetIntegerScoreBytes(items []ZSetItem) (int, bool) {
+	if len(items) == 0 {
+		return 0, false
+	}
+	var previous int64
+	total := 0
+	for i, item := range items {
+		score, ok := zsetExactInt64(item.Score)
+		if !ok {
+			return 0, false
+		}
+		if i == 0 {
+			total += zsetUvarintLen(zsetZigZag(score))
+		} else {
+			if score < previous {
+				return 0, false
+			}
+			delta := uint64(score) - uint64(previous)
+			total += zsetUvarintLen(delta)
+		}
+		previous = score
+	}
+	return total, total < 8*len(items)
+}
+
 func encodePackedZSet(items []ZSetItem) ([]byte, error) {
-	capacity := len(packedZSetHeader) + binary.MaxVarintLen64
 	for _, item := range items {
 		if math.IsNaN(item.Score) {
 			return nil, errors.New("ERR resulting score is not a number (NaN)")
 		}
-		capacity += 8 + binary.MaxVarintLen64 + len(item.Member)
+	}
+
+	integerScoreBytes, useIntegerDelta := zsetIntegerScoreBytes(items)
+	capacity := len(packedZSetHeaderFloat64) + binary.MaxVarintLen64
+	if useIntegerDelta {
+		capacity += integerScoreBytes
+	} else {
+		capacity += 8 * len(items)
+	}
+	for _, item := range items {
+		capacity += binary.MaxVarintLen64 + len(item.Member)
 		if capacity > maxPackedZSetBytes {
 			return nil, errors.New("ERR sorted set exceeds 32 MiB limit")
 		}
 	}
+
 	out := make([]byte, 0, capacity)
-	out = append(out, packedZSetHeader[:]...)
+	if useIntegerDelta {
+		out = append(out, packedZSetHeaderIntDelta[:]...)
+	} else {
+		out = append(out, packedZSetHeaderFloat64[:]...)
+	}
 	out = appendZSetUvarint(out, uint64(len(items)))
+
 	var scoreBytes [8]byte
-	for _, item := range items {
-		binary.LittleEndian.PutUint64(scoreBytes[:], math.Float64bits(normalizeZSetScore(item.Score)))
-		out = append(out, scoreBytes[:]...)
+	var previous int64
+	for i, item := range items {
+		if useIntegerDelta {
+			score, _ := zsetExactInt64(item.Score)
+			if i == 0 {
+				out = appendZSetUvarint(out, zsetZigZag(score))
+			} else {
+				out = appendZSetUvarint(out, uint64(score)-uint64(previous))
+			}
+			previous = score
+		} else {
+			binary.LittleEndian.PutUint64(scoreBytes[:], math.Float64bits(normalizeZSetScore(item.Score)))
+			out = append(out, scoreBytes[:]...)
+		}
 		out = appendZSetUvarint(out, uint64(len(item.Member)))
 		out = append(out, item.Member...)
 	}
@@ -96,30 +180,62 @@ func encodePackedZSet(items []ZSetItem) ([]byte, error) {
 }
 
 func decodePackedZSet(data []byte) ([]ZSetItem, error) {
-	if len(data) < len(packedZSetHeader) || !bytes.Equal(data[:len(packedZSetHeader)], packedZSetHeader[:]) {
+	if len(data) < 3 || data[0] != 'S' || data[1] != 'Z' {
 		return nil, errors.New("invalid packed zset")
 	}
-	offset := len(packedZSetHeader)
+	version := data[2]
+	if version != packedZSetHeaderV1[2] && version != packedZSetHeaderIntDelta[2] && version != packedZSetHeaderFloat64[2] {
+		return nil, errors.New("invalid packed zset")
+	}
+	offset := 3
 	count64, err := readZSetUvarint(data, &offset)
 	if err != nil || count64 > uint64(maxPackedZSetBytes) {
 		return nil, errors.New("invalid packed zset")
 	}
 	items := make([]ZSetItem, 0, int(count64))
+	var previousInt int64
 	for i := 0; i < int(count64); i++ {
-		if len(data)-offset < 8 {
-			return nil, errors.New("invalid packed zset")
+		var score float64
+		switch version {
+		case 1, 3:
+			if len(data)-offset < 8 {
+				return nil, errors.New("invalid packed zset")
+			}
+			score = math.Float64frombits(binary.LittleEndian.Uint64(data[offset : offset+8]))
+			offset += 8
+			if math.IsNaN(score) {
+				return nil, errors.New("invalid packed zset")
+			}
+			score = normalizeZSetScore(score)
+
+		case 2:
+			encoded, err := readZSetUvarint(data, &offset)
+			if err != nil {
+				return nil, errors.New("invalid packed zset")
+			}
+			var scoreInt int64
+			if i == 0 {
+				scoreInt = zsetUnZigZag(encoded)
+			} else {
+				scoreInt = int64(uint64(previousInt) + encoded)
+				if scoreInt < previousInt {
+					return nil, errors.New("invalid packed zset")
+				}
+			}
+			score = float64(scoreInt)
+			roundTrip, ok := zsetExactInt64(score)
+			if !ok || roundTrip != scoreInt {
+				return nil, errors.New("invalid packed zset")
+			}
+			previousInt = scoreInt
 		}
-		score := math.Float64frombits(binary.LittleEndian.Uint64(data[offset : offset+8]))
-		offset += 8
-		if math.IsNaN(score) {
-			return nil, errors.New("invalid packed zset")
-		}
+
 		length64, err := readZSetUvarint(data, &offset)
 		if err != nil || length64 > uint64(len(data)-offset) {
 			return nil, errors.New("invalid packed zset")
 		}
 		end := offset + int(length64)
-		items = append(items, ZSetItem{Member: append([]byte(nil), data[offset:end]...), Score: normalizeZSetScore(score)})
+		items = append(items, ZSetItem{Member: append([]byte(nil), data[offset:end]...), Score: score})
 		offset = end
 	}
 	if offset != len(data) {
@@ -131,6 +247,22 @@ func decodePackedZSet(data []byte) ([]ZSetItem, error) {
 		}
 	}
 	return items, nil
+}
+
+func zsetEncodingName(data []byte) string {
+	if len(data) < 3 || data[0] != 'S' || data[1] != 'Z' {
+		return "unknown"
+	}
+	switch data[2] {
+	case 1:
+		return "packed-v1-float64"
+	case 2:
+		return "packed-int-delta"
+	case 3:
+		return "packed-float64"
+	default:
+		return "unknown"
+	}
 }
 
 func zsetPreparedEntry(packed []byte) preparedEntry {
@@ -451,7 +583,8 @@ func (s *Store) ZSetStorageStats(key string) (ZSetStats, bool, error) {
 	if err != nil {
 		return ZSetStats{}, false, err
 	}
-	stats := ZSetStats{Members: len(items), PackedBytes: len(logical), StoredBytes: len(sh.encoded(e)), Encoding: "packed"}
+	stored := sh.encoded(e)
+	stats := ZSetStats{Members: len(items), PackedBytes: len(logical), StoredBytes: len(stored), Encoding: zsetEncodingName(stored)}
 	for _, item := range items {
 		stats.MemberBytes += len(item.Member)
 	}
