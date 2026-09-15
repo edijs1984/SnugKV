@@ -3,9 +3,12 @@ package server
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
+
+const maxSetRandomCount = int64(1_000_000)
 
 var setCommands = map[string]commandInfo{
 	"SADD":           {3, 0, 1, 1, 1, true},
@@ -21,6 +24,9 @@ var setCommands = map[string]commandInfo{
 	"SUNIONSTORE":    {3, 0, 1, -1, 1, true},
 	"SINTERSTORE":    {3, 0, 1, -1, 1, true},
 	"SDIFFSTORE":     {3, 0, 1, -1, 1, true},
+	"SMOVE":          {4, 4, 1, 2, 1, true},
+	"SPOP":           {2, 3, 1, 1, 1, true},
+	"SRANDMEMBER":    {2, 3, 1, 1, 1, false},
 }
 
 func init() {
@@ -122,6 +128,63 @@ func (s *Server) executeSet(args [][]byte) ([]byte, error) {
 
 	case "SMEMBERS":
 		members, err := s.store.SetMembers(key)
+		if err != nil {
+			return nil, err
+		}
+		return setMembersResponse(members), nil
+
+	case "SMOVE":
+		moved, err := s.store.SetMove(string(args[1]), string(args[2]), args[3])
+		if err != nil {
+			return nil, err
+		}
+		return boolean(moved), nil
+
+	case "SPOP":
+		count := int64(1)
+		withCount := len(args) == 3
+		if withCount {
+			parsed, err := strconv.ParseInt(string(args[2]), 10, 64)
+			if err != nil {
+				return nil, errors.New("ERR value is not an integer or out of range")
+			}
+			if parsed < 0 {
+				return nil, errors.New("ERR value is out of range, must be positive")
+			}
+			count = parsed
+		}
+		members, err := s.store.SetPop(key, count)
+		if err != nil {
+			return nil, err
+		}
+		if !withCount {
+			if len(members) == 0 {
+				return nullBulk(), nil
+			}
+			return formatBulkString(members[0]), nil
+		}
+		return setMembersResponse(members), nil
+
+	case "SRANDMEMBER":
+		if len(args) == 2 {
+			members, err := s.store.SetRandomMembers(key, 1)
+			if err != nil {
+				return nil, err
+			}
+			if len(members) == 0 {
+				return nullBulk(), nil
+			}
+			return formatBulkString(members[0]), nil
+		}
+
+		count, err := strconv.ParseInt(string(args[2]), 10, 64)
+		if err != nil {
+			return nil, errors.New("ERR value is not an integer or out of range")
+		}
+		if count == math.MinInt64 || count < 0 && -count > maxSetRandomCount {
+			return nil, errors.New("ERR count is too large")
+		}
+		members, err := s.store.SetRandomMembers(key, count)
 		if err != nil {
 			return nil, err
 		}
