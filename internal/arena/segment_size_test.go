@@ -10,7 +10,8 @@ func TestSegmentSizeForMediumBlocksAvoidsTailWaste(t *testing.T) {
 	}{
 		// Small allocations keep the shared 8 KiB segment. They are not
 		// expected to divide the segment exactly.
-		{payload: 356, wantBlock: 384, wantSegment: 8192},
+		{payload: 48, wantBlock: 56, wantSegment: 8192},
+		{payload: 356, wantBlock: 368, wantSegment: 8192},
 
 		// Representative packed HASH sizes from the benchmark matrix.
 		{payload: 1412, wantBlock: 1458, wantSegment: 7290},
@@ -38,7 +39,7 @@ func TestSegmentSizeForMediumBlocksAvoidsTailWaste(t *testing.T) {
 }
 
 func TestMediumGeometricClassesStayWithinFreelist(t *testing.T) {
-	previousBucket := 31
+	previousBucket := 38
 	previousBlock := 1024
 
 	for payload := 1017; payload <= 8184; payload += 17 {
@@ -60,8 +61,36 @@ func TestMediumGeometricClassesStayWithinFreelist(t *testing.T) {
 	}
 
 	bucket, block := class(8184)
-	if bucket != 49 || block != 8192 {
-		t.Fatalf("8 KiB boundary = bucket %d block %d, want bucket 49 block 8192", bucket, block)
+	if bucket != 56 || block != 8192 {
+		t.Fatalf("8 KiB boundary = bucket %d block %d, want bucket 56 block 8192", bucket, block)
+	}
+
+	bucket, block = class(32 << 20)
+	if bucket != 127 {
+		t.Fatalf("32 MiB class bucket = %d, want 127", bucket)
+	}
+	if block < (32<<20)+8 {
+		t.Fatalf("32 MiB class block = %d, too small", block)
+	}
+}
+
+func TestSmallHashClassesReduceSlack(t *testing.T) {
+	tests := []struct {
+		payload   int
+		wantBlock int
+	}{
+		{payload: 48, wantBlock: 56},
+		{payload: 356, wantBlock: 368},
+	}
+
+	for _, tt := range tests {
+		bucket, block := class(tt.payload)
+		if bucket < 0 || bucket >= len(Arena{}.free) {
+			t.Fatalf("payload %d bucket %d outside freelist", tt.payload, bucket)
+		}
+		if block != tt.wantBlock {
+			t.Fatalf("payload %d block = %d, want %d", tt.payload, block, tt.wantBlock)
+		}
 	}
 }
 
