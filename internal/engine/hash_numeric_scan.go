@@ -1,0 +1,327 @@
+package engine
+
+import (
+	"bytes"
+	"errors"
+	"math"
+	"sort"
+	"strconv"
+)
+
+// HashIncrBy atomically increments an integer HASH field. Missing fields start
+// at zero and existing key TTL is preserved.
+func (s *Store) HashIncrBy(key string, field []byte, increment int64) (int64, error) {
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	now := s.now()
+	old, exists := sh.get(key)
+	if exists && old.expired(now) {
+		s.remove(sh, key)
+		exists = false
+		old = entry{}
+	}
+
+	var pairs []HashPair
+	var expiresAt stamp
+	if exists {
+		if old.valueType != TypeHash {
+			return 0, hashWrongType()
+		}
+		var err error
+		pairs, err = decodePackedHash(s.decode(sh, old))
+		if err != nil {
+			return 0, err
+		}
+		expiresAt = old.expiresAt
+	}
+
+	index := sort.Search(len(pairs), func(i int) bool {
+		return bytes.Compare(pairs[i].Field, field) >= 0
+	})
+
+	current := int64(0)
+	found := index < len(pairs) && bytes.Equal(pairs[index].Field, field)
+	if found {
+		parsed, err := strconv.ParseInt(string(pairs[index].Value), 10, 64)
+		if err != nil {
+			return 0, errors.New("ERR hash value is not an integer")
+		}
+		current = parsed
+	}
+
+	if increment > 0 && current > math.MaxInt64-increment ||
+		increment < 0 && current < math.MinInt64-increment {
+		return 0, errors.New("ERR increment or decrement would overflow")
+	}
+
+	result := current + increment
+	value := []byte(strconv.FormatInt(result, 10))
+
+	if found {
+		pairs[index].Value = value
+	} else {
+		pairs = append(pairs, HashPair{})
+		copy(pairs[index+1:], pairs[index:])
+		pairs[index] = HashPair{
+			Field: append([]byte(nil), field...),
+			Value: value,
+		}
+	}
+
+	packed, err := encodePackedHash(pairs)
+	if err != nil {
+		return 0, err
+	}
+	updated := s.hashEntry(pairs, packed)
+	updated.expiresAt = expiresAt
+	if err := s.publish(sh, key, updated); err != nil {
+		return 0, err
+	}
+
+	return result, nil
+}
+
+// HashIncrByFloat atomically increments a floating-point HASH field. Missing
+// fields start at zero and existing key TTL is preserved.
+func (s *Store) HashIncrByFloat(key string, field []byte, increment float64) (string, error) {
+	if math.IsNaN(increment) || math.IsInf(increment, 0) {
+		return "", errors.New("ERR value is not a valid float")
+	}
+
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	now := s.now()
+	old, exists := sh.get(key)
+	if exists && old.expired(now) {
+		s.remove(sh, key)
+		exists = false
+		old = entry{}
+	}
+
+	var pairs []HashPair
+	var expiresAt stamp
+	if exists {
+		if old.valueType != TypeHash {
+			return "", hashWrongType()
+		}
+		var err error
+		pairs, err = decodePackedHash(s.decode(sh, old))
+		if err != nil {
+			return "", err
+		}
+		expiresAt = old.expiresAt
+	}
+
+	index := sort.Search(len(pairs), func(i int) bool {
+		return bytes.Compare(pairs[i].Field, field) >= 0
+	})
+
+	current := float64(0)
+	found := index < len(pairs) && bytes.Equal(pairs[index].Field, field)
+	if found {
+		parsed, err := strconv.ParseFloat(string(pairs[index].Value), 64)
+		if err != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) {
+			return "", errors.New("ERR hash value is not a float")
+		}
+		current = parsed
+	}
+
+	result := current + increment
+	if math.IsNaN(result) || math.IsInf(result, 0) {
+		return "", errors.New("ERR increment would produce NaN or Infinity")
+	}
+	if result == 0 {
+		result = 0 // normalize negative zero
+	}
+	formatted := strconv.FormatFloat(result, 'f', -1, 64)
+	value := []byte(formatted)
+
+	if found {
+		pairs[index].Value = value
+	} else {
+		pairs = append(pairs, HashPair{})
+		copy(pairs[index+1:], pairs[index:])
+		pairs[index] = HashPair{
+			Field: append([]byte(nil), field...),
+			Value: value,
+		}
+	}
+
+	packed, err := encodePackedHash(pairs)
+	if err != nil {
+		return "", err
+	}
+	updated := s.hashEntry(pairs, packed)
+	updated.expiresAt = expiresAt
+	if err := s.publish(sh, key, updated); err != nil {
+		return "", err
+	}
+
+	return formatted, nil
+}
+
+// HashScan incrementally iterates sorted HASH fields. Cursor is the next field
+// index to inspect. COUNT is a work hint: at most count source fields are
+// inspected on a call, so MATCH may return fewer than count results.
+func (s *Store) HashScan(key string, cursor uint64, count int, pattern []byte) (uint64, []HashPair, error) {
+	if count <= 0 {
+		count = 10
+	}
+
+	sh := s.shardFor(key)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
+
+	e, ok := sh.get(key)
+	if !ok || e.expired(s.now()) {
+		return 0, nil, nil
+	}
+	if e.valueType != TypeHash {
+		return 0, nil, hashWrongType()
+	}
+
+	pairs, err := decodePackedHash(s.decode(sh, e))
+	if err != nil {
+		return 0, nil, err
+	}
+	if cursor >= uint64(len(pairs)) {
+		return 0, nil, nil
+	}
+
+	start := int(cursor)
+	end := start + count
+	if end > len(pairs) {
+		end = len(pairs)
+	}
+
+	out := make([]HashPair, 0, end-start)
+	for i := start; i < end; i++ {
+		if len(pattern) != 0 && !hashGlobMatch(pattern, pairs[i].Field) {
+			continue
+		}
+		out = append(out, HashPair{
+			Field: append([]byte(nil), pairs[i].Field...),
+			Value: append([]byte(nil), pairs[i].Value...),
+		})
+	}
+
+	if end == len(pairs) {
+		return 0, out, nil
+	}
+	return uint64(end), out, nil
+}
+
+// hashGlobMatch implements the Redis-style byte glob subset used by MATCH:
+// '*', '?', bracket classes/ranges, negated classes, and backslash escaping.
+func hashGlobMatch(pattern, value []byte) bool {
+	var match func(pi, vi int) bool
+	match = func(pi, vi int) bool {
+		for pi < len(pattern) {
+			switch pattern[pi] {
+			case '*':
+				for pi < len(pattern) && pattern[pi] == '*' {
+					pi++
+				}
+				if pi == len(pattern) {
+					return true
+				}
+				for k := vi; k <= len(value); k++ {
+					if match(pi, k) {
+						return true
+					}
+				}
+				return false
+
+			case '?':
+				if vi >= len(value) {
+					return false
+				}
+				pi++
+				vi++
+
+			case '\\':
+				pi++
+				if pi >= len(pattern) {
+					if vi >= len(value) || value[vi] != '\\' {
+						return false
+					}
+					vi++
+					continue
+				}
+				if vi >= len(value) || value[vi] != pattern[pi] {
+					return false
+				}
+				pi++
+				vi++
+
+			case '[':
+				if vi >= len(value) {
+					return false
+				}
+				classStart := pi
+				pi++
+				negate := false
+				if pi < len(pattern) && (pattern[pi] == '^' || pattern[pi] == '!') {
+					negate = true
+					pi++
+				}
+				matched := false
+				closed := false
+				for pi < len(pattern) {
+					if pattern[pi] == ']' {
+						closed = true
+						pi++
+						break
+					}
+					lo := pattern[pi]
+					if lo == '\\' && pi+1 < len(pattern) {
+						pi++
+						lo = pattern[pi]
+					}
+					pi++
+					if pi+1 < len(pattern) && pattern[pi] == '-' && pattern[pi+1] != ']' {
+						pi++
+						hi := pattern[pi]
+						if hi == '\\' && pi+1 < len(pattern) {
+							pi++
+							hi = pattern[pi]
+						}
+						pi++
+						if lo <= value[vi] && value[vi] <= hi {
+							matched = true
+						}
+					} else if value[vi] == lo {
+						matched = true
+					}
+				}
+				if !closed {
+					// Treat an unterminated class as a literal '['.
+					pi = classStart + 1
+					if value[vi] != '[' {
+						return false
+					}
+					vi++
+					continue
+				}
+				if matched == negate {
+					return false
+				}
+				vi++
+
+			default:
+				if vi >= len(value) || value[vi] != pattern[pi] {
+					return false
+				}
+				pi++
+				vi++
+			}
+		}
+		return vi == len(value)
+	}
+
+	return match(0, 0)
+}
