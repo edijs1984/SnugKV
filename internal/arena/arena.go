@@ -11,6 +11,7 @@ const SegmentBytes = 8 << 10
 const firstSmallSegmentBytes = 256
 const secondSmallSegmentBytes = 1 << 10
 const segmentMetadata = 32
+const freeBucketCount = 130
 
 // Ref is an opaque allocation identity. Generation prevents aliasing after reuse.
 //
@@ -80,7 +81,11 @@ type Arena struct {
 	segments []segment
 	// Buckets 128 and 129 are reserved for exact 24- and 88-byte blocks used
 	// by tiny native-container payloads. Large 32 MiB values top out at 127.
-	free       [130]uint64
+	//
+	// Keep the free-head table out of the Arena struct until a shard actually
+	// frees an allocation. Sparse/write-once shards otherwise paid 130 uint64
+	// heads (1040 bytes) even though every head stayed zero.
+	free       *[freeBucketCount]uint64
 	generation uint64
 }
 
@@ -243,7 +248,10 @@ func (a *Arena) SegmentCount() int { return len(a.segments) }
 // GrowthFor simulates allocation without changing state. Old allocations remain
 // live during planning, bounding peak old/new storage during publication.
 func (a *Arena) GrowthFor(lengths []int) uint64 {
-	free := a.free
+	var free [freeBucketCount]uint64
+	if a.free != nil {
+		free = *a.free
+	}
 	count, capacity := len(a.segments), cap(a.segments)
 	used, size := 0, 0
 	if count > 0 {
@@ -287,7 +295,11 @@ func (a *Arena) Alloc(value []byte) Ref {
 	}
 	bucket, block := class(len(value))
 	var seg, offset int
-	if address := a.free[bucket]; address != 0 {
+	var address uint64
+	if a.free != nil {
+		address = a.free[bucket]
+	}
+	if address != 0 {
 		seg = int(address>>32) - 1
 		offset = int(uint32(address))
 		a.free[bucket] = binary.LittleEndian.Uint64(a.segments[seg].data[offset+8:])
@@ -344,6 +356,9 @@ func (a *Arena) Free(ref Ref) {
 		panic(err)
 	}
 	bucket, _ := class(int(ref.length()))
+	if a.free == nil {
+		a.free = new([freeBucketCount]uint64)
+	}
 	data := a.segments[ref.segment()].data
 	binary.LittleEndian.PutUint64(data[ref.offset():], 0)
 	binary.LittleEndian.PutUint64(data[ref.offset()+8:], a.free[bucket])
