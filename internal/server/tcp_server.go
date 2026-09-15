@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"errors"
 	"io"
 	"log"
 	"net"
@@ -111,11 +112,12 @@ func (s *TCPServer) serve() {
 			}()
 			defer recoverConnectionPanic()
 
-			s.handleConn(countedConn{
+			counted := countedConn{
 				Conn:   conn,
 				input:  &s.inputBytes,
 				output: &s.outputBytes,
-			})
+			}
+			s.handleConnRaw(counted, conn)
 		}()
 	}
 }
@@ -130,6 +132,10 @@ func recoverConnectionPanic() {
 }
 
 func (s *TCPServer) handleConn(conn net.Conn) {
+	s.handleConnRaw(conn, conn)
+}
+
+func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 	decoder, _ := resp.NewDecoder(bufio.NewReader(conn), s.config.Limits())
 	for {
 		if err := conn.SetReadDeadline(time.Now().Add(time.Duration(s.config.ReadTimeoutMS) * time.Millisecond)); err != nil {
@@ -174,7 +180,18 @@ func (s *TCPServer) handleConn(conn net.Conn) {
 				continue
 			}
 		}
-		result, err := s.server.Execute(msg)
+
+		var result []byte
+		if isBlockingListCommand(msg) || isBlockingZSetCommand(msg) {
+			disconnected, stopWatch := watchConnectionDisconnect(peer)
+			result, err = s.server.ExecuteWithCancel(msg, disconnected)
+			stopWatch()
+			if errors.Is(err, errBlockingClientGone) {
+				return
+			}
+		} else {
+			result, err = s.server.Execute(msg)
+		}
 		if err != nil {
 			result = errorResponse(err)
 		}
