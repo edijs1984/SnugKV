@@ -2,18 +2,21 @@ package engine
 
 import (
 	"sort"
+	"strings"
 	"time"
 )
 
-// Scan returns up to count live keys starting at cursor.
-// Cursor 0 starts a new scan. Returned cursor 0 means the scan is complete.
-//
-// This implementation snapshots and sorts keys. MATCH is applied while the
-// snapshot is built and COUNT limits the number of returned snapshot entries.
-// The public command layer supplies "*" when MATCH is omitted, which lets an
-// explicit empty MATCH pattern retain its Redis meaning instead of being treated
-// as "no filter".
+// Scan returns live keys using Redis-style cursor/MATCH/COUNT behavior.
 func (s *Store) Scan(cursor uint64, count int, pattern string) (uint64, []string) {
+	return s.ScanTyped(cursor, count, pattern, "")
+}
+
+// ScanTyped is the SCAN implementation including the Redis TYPE filter. Cursor
+// indexes the unfiltered, sorted live-key snapshot. COUNT controls how many
+// source keys are inspected, while MATCH and TYPE are applied afterwards. This
+// deliberately permits an empty result with a non-zero cursor for selective
+// filters, matching Redis SCAN's work-hint semantics.
+func (s *Store) ScanTyped(cursor uint64, count int, pattern, typeFilter string) (uint64, []string) {
 	if count <= 0 {
 		count = 10
 	}
@@ -24,33 +27,42 @@ func (s *Store) Scan(cursor uint64, count int, pattern string) (uint64, []string
 	for i := range s.shards {
 		sh := &s.shards[i]
 		sh.mu.RLock()
-
 		for key, e := range sh.all() {
-			if e.expired(now) {
-				continue
+			if !e.expired(now) {
+				keys = append(keys, key)
 			}
-			if pattern != "*" && !redisGlobMatch([]byte(pattern), []byte(key)) {
-				continue
-			}
-			keys = append(keys, key)
 		}
-
 		sh.mu.RUnlock()
 	}
 
 	sort.Strings(keys)
-
 	if cursor >= uint64(len(keys)) {
 		return 0, nil
 	}
 
-	end := cursor + uint64(count)
-	if end >= uint64(len(keys)) {
-		end = uint64(len(keys))
-		return 0, keys[cursor:end]
+	remaining := uint64(len(keys)) - cursor
+	work := uint64(count)
+	if work > remaining {
+		work = remaining
+	}
+	end := cursor + work
+
+	filterType := strings.ToLower(typeFilter)
+	out := make([]string, 0, int(work))
+	for _, key := range keys[cursor:end] {
+		if pattern != "*" && !redisGlobMatch([]byte(pattern), []byte(key)) {
+			continue
+		}
+		if filterType != "" && strings.ToLower(s.Type(key)) != filterType {
+			continue
+		}
+		out = append(out, key)
 	}
 
-	return end, keys[cursor:end]
+	if end == uint64(len(keys)) {
+		return 0, out
+	}
+	return end, out
 }
 
 func (s *Store) Keys(pattern string) []string {
@@ -60,7 +72,6 @@ func (s *Store) Keys(pattern string) []string {
 	for i := range s.shards {
 		sh := &s.shards[i]
 		sh.mu.RLock()
-
 		for key, e := range sh.all() {
 			if e.expired(now) {
 				continue
@@ -70,7 +81,6 @@ func (s *Store) Keys(pattern string) []string {
 			}
 			keys = append(keys, key)
 		}
-
 		sh.mu.RUnlock()
 	}
 
@@ -78,8 +88,8 @@ func (s *Store) Keys(pattern string) []string {
 	return keys
 }
 
-// globMatch remains as a string adapter for callers that have not yet migrated
-// to the shared binary matcher. MATCH itself is byte-oriented.
+// globMatch remains as a string adapter for legacy internal callers. MATCH
+// itself is byte-oriented through redisGlobMatch.
 func globMatch(pattern, value string) bool {
 	return redisGlobMatch([]byte(pattern), []byte(value))
 }
