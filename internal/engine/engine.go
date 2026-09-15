@@ -157,9 +157,11 @@ func (s *Store) Get(key string) ([]byte, bool) {
 	if !ok || e.expired(s.now()) {
 		return nil, false
 	}
-	if s.shouldTrackActivity(e) {
+	// Metadata is admitted on publication. Do not lazily allocate it from a
+	// read path, because GET has no error channel for max-memory admission.
+	if s.shouldTrackActivity(e) && e.entryMeta != nil {
 		now := s.now()
-		meta := e.ensureMeta()
+		meta := e.entryMeta
 		if now.Sub(meta.lastAccess.Time()) > time.Minute {
 			meta.reads = 0
 		}
