@@ -220,7 +220,7 @@ func (s *Store) MSet(keys []string, values [][]byte) error {
 		if exists && old.schema != nil {
 			sh.shapes.ReleaseRecord(old.schema, sh.encoded(old))
 		}
-		e.lastWrite = stampOf(s.now())
+		e.lastWrite = activityStampOf(s.now())
 		e.lastAccess = e.lastWrite
 		e.writes = 1
 		sh.set(k, e.entry)
@@ -354,7 +354,7 @@ func (s *Store) MSetNX(keys []string, values [][]byte) (bool, error) {
 		sh := s.shardFor(key)
 
 		e.version = atomic.AddUint64(&s.version, 1)
-		e.lastWrite = stampOf(now)
+		e.lastWrite = activityStampOf(now)
 		e.lastAccess = e.lastWrite
 		e.writes = 1
 
@@ -387,7 +387,7 @@ func (s *Store) MGet(keys []string) ([][]byte, []bool) {
 			e.reads = 0
 		}
 
-		e.lastAccess = stampOf(now)
+		e.lastAccess = activityStampOf(now)
 
 		if e.reads < ^uint8(0) {
 			e.reads++
