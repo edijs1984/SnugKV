@@ -212,7 +212,6 @@ func (s *Server) executeHash(args [][]byte) ([]byte, error) {
 
 		count := 10
 		var pattern []byte
-		hasPattern := false
 		noValues := false
 
 		for i := 3; i < len(args); {
@@ -222,7 +221,6 @@ func (s *Server) executeHash(args [][]byte) ([]byte, error) {
 					return nil, errors.New("ERR syntax error")
 				}
 				pattern = args[i+1]
-				hasPattern = true
 				i += 2
 
 			case "COUNT":
@@ -248,7 +246,7 @@ func (s *Server) executeHash(args [][]byte) ([]byte, error) {
 			}
 		}
 
-		next, pairs, err := s.store.HashScan(key, cursor, count, pattern, hasPattern)
+		next, pairs, err := s.store.HashScan(key, cursor, count, pattern)
 		if err != nil {
 			return nil, err
 		}
