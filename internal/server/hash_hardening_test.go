@@ -147,7 +147,7 @@ func TestHashRenamePreservesTypeAndTTL(t *testing.T) {
 }
 
 func TestHashOOMMutationRollsBack(t *testing.T) {
-	store, err := engine.NewWithOptions(engine.Options{Shards: 1, MaxMemory: 64 << 10})
+	store, err := engine.NewWithOptions(engine.Options{Shards: 1, MaxMemory: 32 << 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +156,7 @@ func TestHashOOMMutationRollsBack(t *testing.T) {
 		t.Fatalf("initial HSET = %q", got)
 	}
 
-	large := strings.Repeat("x", 48<<10)
+	large := strings.Repeat("x", 64<<10)
 	_, err = s.Execute([][]byte{[]byte("HSET"), []byte("h"), []byte("f"), []byte(large)})
 	if !errors.Is(err, engine.ErrOOM) {
 		t.Fatalf("large HSET error = %v, want ErrOOM", err)
