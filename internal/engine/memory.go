@@ -15,6 +15,7 @@ var ErrOOM = errors.New("OOM command not allowed when used memory exceeds max_me
 
 // Reservations track owned engine allocations, not total process RSS.
 var entryStructBytes = uint64(unsafe.Sizeof(entry{}))
+var entryMetaBytes = uint64(unsafe.Sizeof(entryMeta{}))
 
 type Options struct {
 	Shards        int
@@ -23,13 +24,24 @@ type Options struct {
 	ShapeEncoding bool
 	Compression   bool
 }
-type MemoryStats struct{ AccountedBytes, MaxBytes, IndexReservedBytes, EntryBytes, ArenaBytes, ArenaPayloadBytes, ArenaLiveBlockBytes, SchemaBytes uint64 }
+type MemoryStats struct {
+	AccountedBytes,
+	MaxBytes,
+	IndexReservedBytes,
+	EntryBytes,
+	ArenaBytes,
+	ArenaPayloadBytes,
+	ArenaLiveBlockBytes,
+	SchemaBytes,
+	MetaBytes uint64
+}
 
 type LayoutStats struct {
-	EntryStructBytes  uint64
-	IndexSlotBytes    uint64
-	EntryCapacity     uint64
-	EntryStorageBytes uint64
+	EntryStructBytes     uint64
+	EntryMetaStructBytes uint64
+	IndexSlotBytes       uint64
+	EntryCapacity        uint64
+	EntryStorageBytes    uint64
 }
 
 func (s *Store) Layout() LayoutStats {
@@ -50,30 +62,32 @@ func (s *Store) Layout() LayoutStats {
 	}
 
 	return LayoutStats{
-		EntryStructBytes:  entryStructBytes,
-		IndexSlotBytes:    indexSlotBytes,
-		EntryCapacity:     entryCapacity,
-		EntryStorageBytes: entryCapacity * entryStructBytes,
+		EntryStructBytes:     entryStructBytes,
+		EntryMetaStructBytes: entryMetaBytes,
+		IndexSlotBytes:       indexSlotBytes,
+		EntryCapacity:        entryCapacity,
+		EntryStorageBytes:    entryCapacity * entryStructBytes,
 	}
 }
 
 type accounting struct {
-	mu                                                                        sync.Mutex
-	used, index, entries, max, arenas, arenaPayload, arenaLiveBlocks, schemas uint64
+	mu                                                                               sync.Mutex
+	used, index, entries, max, arenas, arenaPayload, arenaLiveBlocks, schemas, metas uint64
 }
 
 func (s *Store) Memory() MemoryStats {
 	s.memory.mu.Lock()
 	defer s.memory.mu.Unlock()
 	return MemoryStats{
-		s.memory.used,
-		s.memory.max,
-		s.memory.index,
-		s.memory.entries,
-		s.memory.arenas,
-		s.memory.arenaPayload,
-		s.memory.arenaLiveBlocks,
-		s.memory.schemas,
+		AccountedBytes:       s.memory.used,
+		MaxBytes:             s.memory.max,
+		IndexReservedBytes:   s.memory.index,
+		EntryBytes:           s.memory.entries,
+		ArenaBytes:           s.memory.arenas,
+		ArenaPayloadBytes:    s.memory.arenaPayload,
+		ArenaLiveBlockBytes:  s.memory.arenaLiveBlocks,
+		SchemaBytes:          s.memory.schemas,
+		MetaBytes:            s.memory.metas,
 	}
 }
 
@@ -82,6 +96,13 @@ func (s *Store) Memory() MemoryStats {
 // and reusable.
 func entryCharge(key string, _ any) uint64 {
 	return uint64(len(key))
+}
+
+func metadataCharge(e entry) uint64 {
+	if e.entryMeta == nil {
+		return 0
+	}
+	return entryMetaBytes
 }
 
 func (sh *shard) entryGrowthBytes(additional int) uint64 {
@@ -135,9 +156,6 @@ func (s *Store) makeEntryForShard(sh *shard, value []byte) preparedEntry {
 			// smaller than the logical value. This prevents a known but
 			// weak shape from bypassing a potentially better compression
 			// representation.
-			//
-			// Our current workload is ~397 B from 1002 B, so it easily
-			// qualifies.
 			if len(data)+16 < len(value)*3/4 {
 				decoded, err := jsonshape.Decode(
 					schema,
@@ -148,8 +166,8 @@ func (s *Store) makeEntryForShard(sh *shard, value []byte) preparedEntry {
 				if err == nil && bytes.Equal(decoded, value) {
 					return preparedEntry{
 						entry: entry{
+							entryMeta: &entryMeta{schema: schema},
 							codecID:   5, // JSON-shape physical codec
-							schema:    schema,
 							valueType: classifyValue(value),
 							rawLength: uint32(len(value)),
 						},
@@ -173,11 +191,15 @@ func (s *Store) decode(sh *shard, e entry) []byte {
 		return out
 	}
 
+	var schema *jsonshape.Schema
+	if e.entryMeta != nil {
+		schema = e.entryMeta.schema
+	}
 	out, err := s.codecs.Decode(codec.Record{
 		ID:        e.codecID,
 		RawLength: int(e.rawLength),
 		Data:      encoded,
-		Schema:    e.schema,
+		Schema:    schema,
 	}, int(e.rawLength))
 	// Only verified immutable records are published. A failure is an internal
 	// invariant violation and must never silently return corrupt bytes.
@@ -201,12 +223,26 @@ func (s *Store) publishRecord(
 ) error {
 	old, exists := sh.get(key)
 
+	if s.shouldTrackActivity(e.entry) && e.entryMeta == nil {
+		e.entryMeta = &entryMeta{}
+	}
+	if s.shouldTrackActivity(e.entry) {
+		meta := e.ensureMeta()
+		if exists {
+			meta.revision = nextEntryRevision(old)
+		} else {
+			meta.revision = 1
+		}
+	}
+
 	var oldCost uint64
 	if exists {
 		oldCost = entryCharge(key, old)
 	}
 
 	newCost := entryCharge(key, e)
+	oldMetaCost := metadataCharge(old)
+	newMetaCost := metadataCharge(e.entry)
 
 	extraIndex := uint64(0)
 	extraEntries := uint64(0)
@@ -221,32 +257,39 @@ func (s *Store) publishRecord(
 
 	extraArena := sh.arena.GrowthFor([]int{len(e.data)})
 	next := s.memory.used -
-		oldCost +
+		oldCost -
+		oldMetaCost +
 		newCost +
+		newMetaCost +
 		extraIndex +
 		extraEntries +
 		extraArena
 
-	if e.schema != nil {
-		if sh.shapes == nil || !sh.shapes.RetainRecord(e.schema, e.data) {
+	var newSchema *jsonshape.Schema
+	if e.entryMeta != nil {
+		newSchema = e.entryMeta.schema
+	}
+	if newSchema != nil {
+		if sh.shapes == nil || !sh.shapes.RetainRecord(newSchema, e.data) {
 			return errors.New("ERR schema admission changed")
 		}
 	}
 
 	if enforce && s.memory.max > 0 && next > s.memory.max {
-		if e.schema != nil {
-			sh.shapes.ReleaseRecord(e.schema, e.data)
+		if newSchema != nil {
+			sh.shapes.ReleaseRecord(newSchema, e.data)
 		}
 		return ErrOOM
 	}
 
-	if old.schema != nil {
-		sh.shapes.ReleaseRecord(old.schema, sh.encoded(old))
+	if exists && old.entryMeta != nil && old.entryMeta.schema != nil {
+		sh.shapes.ReleaseRecord(old.entryMeta.schema, sh.encoded(old))
 	}
 
 	s.memory.used = next
 	s.memory.entries =
 		s.memory.entries - oldCost + newCost + extraEntries
+	s.memory.metas = s.memory.metas - oldMetaCost + newMetaCost
 	s.memory.index += extraIndex
 	s.memory.arenas += extraArena
 
@@ -256,21 +299,24 @@ func (s *Store) publishRecord(
 
 	s.memory.arenaPayload += uint64(len(e.data))
 
-	if e.lastWrite.IsZero() {
-		e.lastWrite = activityStampOf(s.now())
-		e.lastAccess = e.lastWrite
-		e.writes = 1
+	if s.shouldTrackActivity(e.entry) {
+		meta := e.ensureMeta()
+		if meta.lastWrite.IsZero() {
+			now := s.now()
+			meta.lastWrite = activityStampOf(now)
+			meta.lastAccess = meta.lastWrite
+			meta.writes = 1
 
-		if exists && s.now().Sub(old.lastWrite.Time()) < time.Minute {
-			if old.writes < ^uint8(0) {
-				e.writes = old.writes + 1
-			} else {
-				e.writes = old.writes
+			if exists && old.entryMeta != nil && now.Sub(old.entryMeta.lastWrite.Time()) < time.Minute {
+				if old.entryMeta.writes < ^uint8(0) {
+					meta.writes = old.entryMeta.writes + 1
+				} else {
+					meta.writes = old.entryMeta.writes
+				}
 			}
 		}
 	}
 
-	e.version = atomic.AddUint64(&s.version, 1)
 	e.ref = sh.arena.Alloc(e.data)
 
 	newBlockBytes := sh.arena.AllocationBytes(e.ref)
@@ -299,19 +345,20 @@ func (s *Store) remove(sh *shard, key string) {
 			atomic.AddUint64(&s.expired, 1)
 		}
 		s.memory.mu.Lock()
-		if e.schema != nil {
-			sh.shapes.ReleaseRecord(e.schema, sh.encoded(e))
+		if e.entryMeta != nil && e.entryMeta.schema != nil {
+			sh.shapes.ReleaseRecord(e.entryMeta.schema, sh.encoded(e))
 		}
 		cost := entryCharge(key, e)
-		s.memory.used -= cost
+		metaCost := metadataCharge(e)
+		s.memory.used -= cost + metaCost
 		s.memory.entries -= cost
+		s.memory.metas -= metaCost
 		s.memory.arenaPayload -= uint64(len(sh.encoded(e)))
 		s.memory.arenaLiveBlocks -= sh.arena.AllocationBytes(e.ref)
 		s.memory.mu.Unlock()
 		sh.delete(key)
 		sh.arena.Free(e.ref)
 		sh.schedule(key, 0)
-		atomic.AddUint64(&s.version, 1)
 	}
 }
 func (s *Store) Encoding(key string) (string, int, int, bool) {
@@ -338,7 +385,7 @@ func (s *Store) MemoryUsage(key string) (uint64, bool) {
 
 	// Per-key usage assigns one entry struct to this key. Global Memory()
 	// additionally accounts for spare reserved entry capacity.
-	entryBytes := entryStructBytes + uint64(len(key))
+	entryBytes := entryStructBytes + uint64(len(key)) + metadataCharge(e)
 	arenaBytes := sh.arena.AllocationBytes(e.ref)
 
 	return entryBytes + arenaBytes, true

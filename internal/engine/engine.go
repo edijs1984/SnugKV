@@ -11,21 +11,73 @@ import (
 	"time"
 )
 
-type entry struct {
-	ref                                              arena.Ref
+type entryMeta struct {
 	schema                                           *jsonshape.Schema
-	version                                          uint64
-	expiresAt                                        stamp
 	lastRewrite, lastOptimize, lastAccess, lastWrite activityStamp
-	rawLength                                        uint32
+	revision                                         uint32
 	reads, writes                                    uint8
-	codecID                                          codec.ID
-	valueType                                        ValueType
+}
+
+type entry struct {
+	ref       arena.Ref
+	expiresAt stamp
+	*entryMeta
+	rawLength uint32
+	codecID   codec.ID
+	valueType ValueType
 }
 
 type preparedEntry struct {
 	entry
 	data []byte
+}
+
+func (e *entry) ensureMeta() *entryMeta {
+	if e.entryMeta == nil {
+		e.entryMeta = &entryMeta{}
+	}
+	return e.entryMeta
+}
+
+func cloneEntryMeta(meta *entryMeta) *entryMeta {
+	if meta == nil {
+		return nil
+	}
+	clone := *meta
+	return &clone
+}
+
+func entryRevision(e entry) uint32 {
+	if e.entryMeta == nil {
+		return 0
+	}
+	return e.entryMeta.revision
+}
+
+// bumpEntryRevision invalidates optimizer candidates for metadata-only logical
+// mutations such as EXPIRE/PERSIST. Optimizer candidates are short-lived; a
+// 32-bit per-key revision keeps the optional sidecar at 32 bytes while allowing
+// more than four billion mutations before wraparound.
+func bumpEntryRevision(e *entry) {
+	if e.entryMeta == nil {
+		return
+	}
+	e.entryMeta.revision++
+	if e.entryMeta.revision == 0 {
+		e.entryMeta.revision = 1
+	}
+}
+
+func nextEntryRevision(old entry) uint32 {
+	revision := entryRevision(old) + 1
+	if revision == 0 {
+		revision = 1
+	}
+	return revision
+}
+
+func (s *Store) shouldTrackActivity(e entry) bool {
+	return s.encoding && e.valueType != TypeHash
 }
 
 func (sh *shard) encoded(e entry) []byte {
@@ -53,7 +105,6 @@ type Store struct {
 	shapeEncoding    bool
 	compression      bool
 	memory           accounting
-	version          uint64
 	sampleCursor     uint64
 	shapeCatalog     globalShapeCatalog
 	hashShapes       hashShapeCatalog
@@ -106,14 +157,20 @@ func (s *Store) Get(key string) ([]byte, bool) {
 	if !ok || e.expired(s.now()) {
 		return nil, false
 	}
-	if s.now().Sub(e.lastAccess.Time()) > time.Minute {
-		e.reads = 0
+	// Metadata is admitted on publication. Do not lazily allocate it from a
+	// read path, because GET has no error channel for max-memory admission.
+	if s.shouldTrackActivity(e) && e.entryMeta != nil {
+		now := s.now()
+		meta := e.entryMeta
+		if now.Sub(meta.lastAccess.Time()) > time.Minute {
+			meta.reads = 0
+		}
+		meta.lastAccess = activityStampOf(now)
+		if meta.reads < ^uint8(0) {
+			meta.reads++
+		}
+		sh.set(key, e)
 	}
-	e.lastAccess = activityStampOf(s.now())
-	if e.reads < ^uint8(0) {
-		e.reads++
-	}
-	sh.set(key, e)
 	return s.decode(sh, e), true
 }
 func (s *Store) Delete(key string) bool {

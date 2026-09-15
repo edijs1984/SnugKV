@@ -16,7 +16,10 @@ func (s *Store) Victim(excluded map[string]bool, volatile bool) (string, bool) {
 		sh.mu.RLock()
 		e, ok := sh.get(key)
 		if ok && (!volatile || !e.expiresAt.IsZero()) {
-			age := e.lastAccess.Time()
+			age := time.Time{}
+			if e.entryMeta != nil {
+				age = e.entryMeta.lastAccess.Time()
+			}
 			if e.expired(s.now()) {
 				age = time.Time{}
 			}

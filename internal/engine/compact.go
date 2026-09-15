@@ -3,7 +3,6 @@ package engine
 import (
 	"snugkv/internal/arena"
 	"sort"
-	"sync/atomic"
 )
 
 // Compact reclaims unused arena segments and index slots one shard at a time.
@@ -51,8 +50,6 @@ func (s *Store) Compact(scratch uint64) int {
 			value := sh.encoded(e)
 
 			e.ref = fresh.Alloc(value)
-			e.version = atomic.AddUint64(&s.version, 1)
-
 			items[j].value = e
 		}
 

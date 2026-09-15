@@ -11,6 +11,7 @@ func auditMemory(t *testing.T, s *Store) {
 	unlock := s.lockAll()
 	defer unlock()
 	var entries uint64
+	var metas uint64
 	index := uint64(len(s.shards)) * 512
 	var arenaBytes uint64
 	schemaBytes := uint64(0)
@@ -30,11 +31,17 @@ func auditMemory(t *testing.T, s *Store) {
 
 		for k, e := range sh.all() {
 			entries += entryCharge(k, e)
+			metas += metadataCharge(e)
 		}
 	}
 	m := s.Memory()
-	if m.AccountedBytes != index+entries+arenaBytes+schemaBytes || m.ArenaBytes != arenaBytes || m.SchemaBytes != schemaBytes || m.IndexReservedBytes != index || m.EntryBytes != entries {
-		t.Fatalf("audit %+v want index=%d entries=%d", m, index, entries)
+	if m.AccountedBytes != index+entries+arenaBytes+schemaBytes+metas ||
+		m.ArenaBytes != arenaBytes ||
+		m.SchemaBytes != schemaBytes ||
+		m.IndexReservedBytes != index ||
+		m.EntryBytes != entries ||
+		m.MetaBytes != metas {
+		t.Fatalf("audit %+v want index=%d entries=%d metas=%d", m, index, entries, metas)
 	}
 }
 func TestMemoryLimitAtomicity(t *testing.T) {

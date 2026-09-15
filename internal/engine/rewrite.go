@@ -17,12 +17,13 @@ type Candidate struct {
 	LastRewrite  time.Time
 	LastWrite    time.Time
 	Heat         string
+	expiresAt    stamp
 }
 
 // OptimizationEligible performs the cheap read-only eligibility check before
-// the optimizer reserves scratch/bandwidth resources. It deliberately does
-// not update lastOptimize: a temporary reserve failure is not an optimization
-// attempt and must not put the key into cooldown.
+// the optimizer reserves scratch/bandwidth resources. HASH values have their
+// own packed/shape representation and are intentionally excluded from the
+// generic scalar/compression optimizer.
 func (s *Store) OptimizationEligible(
 	key string,
 	rewriteInterval time.Duration,
@@ -35,21 +36,22 @@ func (s *Store) OptimizationEligible(
 
 	now := s.now()
 	e, ok := sh.get(key)
-	if !ok || e.expired(now) {
+	if !ok || e.expired(now) || e.valueType == TypeHash {
 		return 0, false
 	}
 
-	if heat(e, now) == "write-heavy" {
+	meta := e.entryMeta
+	if heat(meta, now) == "write-heavy" {
 		return 0, false
 	}
 
-	if !e.lastRewrite.IsZero() &&
-		now.Sub(e.lastRewrite.Time()) < rewriteInterval {
+	if meta != nil && !meta.lastRewrite.IsZero() &&
+		now.Sub(meta.lastRewrite.Time()) < rewriteInterval {
 		return 0, false
 	}
 
-	if !e.lastOptimize.IsZero() &&
-		now.Sub(e.lastOptimize.Time()) < attemptInterval {
+	if meta != nil && !meta.lastOptimize.IsZero() &&
+		now.Sub(meta.lastOptimize.Time()) < attemptInterval {
 		return 0, false
 	}
 
@@ -71,25 +73,27 @@ func (s *Store) MarkOptimizationAttempt(
 
 	now := s.now()
 	e, ok := sh.get(key)
-	if !ok || e.expired(now) {
+	if !ok || e.expired(now) || e.valueType == TypeHash {
 		return false
 	}
 
-	if heat(e, now) == "write-heavy" {
+	meta := e.entryMeta
+	if heat(meta, now) == "write-heavy" {
 		return false
 	}
 
-	if !e.lastRewrite.IsZero() &&
-		now.Sub(e.lastRewrite.Time()) < rewriteInterval {
+	if meta != nil && !meta.lastRewrite.IsZero() &&
+		now.Sub(meta.lastRewrite.Time()) < rewriteInterval {
 		return false
 	}
 
-	if !e.lastOptimize.IsZero() &&
-		now.Sub(e.lastOptimize.Time()) < attemptInterval {
+	if meta != nil && !meta.lastOptimize.IsZero() &&
+		now.Sub(meta.lastOptimize.Time()) < attemptInterval {
 		return false
 	}
 
-	e.lastOptimize = activityStampOf(now)
+	meta = e.ensureMeta()
+	meta.lastOptimize = activityStampOf(now)
 	sh.set(key, e)
 
 	return true
@@ -100,27 +104,37 @@ func (s *Store) Candidate(key string, maxBytes int) (Candidate, bool) {
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) || int(e.rawLength) > maxBytes {
+	if !ok || e.expired(s.now()) || e.valueType == TypeHash || int(e.rawLength) > maxBytes {
 		return Candidate{}, false
+	}
+	meta := e.entryMeta
+	var lastRewrite, lastWrite time.Time
+	if meta != nil {
+		lastRewrite = meta.lastRewrite.Time()
+		lastWrite = meta.lastWrite.Time()
 	}
 	return Candidate{
 		Key:          key,
-		Version:      e.version,
+		Version:      e.ref.Generation(),
 		Value:        s.decode(sh, e),
 		EncodedBytes: len(sh.encoded(e)),
-		LastRewrite:  e.lastRewrite.Time(),
-		LastWrite:    e.lastWrite.Time(),
-		Heat:         heat(e, s.now()),
+		LastRewrite:  lastRewrite,
+		LastWrite:    lastWrite,
+		Heat:         heat(meta, s.now()),
+		expiresAt:    e.expiresAt,
 	}, true
 }
-func heat(e entry, now time.Time) string {
-	if now.Sub(e.lastWrite.Time()) < time.Minute && e.writes >= 10 {
+func heat(meta *entryMeta, now time.Time) string {
+	if meta == nil {
+		return "warm"
+	}
+	if now.Sub(meta.lastWrite.Time()) < time.Minute && meta.writes >= 10 {
 		return "write-heavy"
 	}
-	if now.Sub(e.lastAccess.Time()) < time.Minute && e.reads >= 100 {
+	if now.Sub(meta.lastAccess.Time()) < time.Minute && meta.reads >= 100 {
 		return "hot"
 	}
-	if now.Sub(e.lastAccess.Time()) > 5*time.Minute && now.Sub(e.lastWrite.Time()) > 5*time.Minute {
+	if now.Sub(meta.lastAccess.Time()) > 5*time.Minute && now.Sub(meta.lastWrite.Time()) > 5*time.Minute {
 		return "cold"
 	}
 	return "warm"
@@ -136,7 +150,10 @@ func (s *Store) Policy(key string) (string, bool) {
 	if !s.encoding {
 		return "disabled", true
 	}
-	return heat(e, s.now()), true
+	if e.valueType == TypeHash {
+		return "hash-native", true
+	}
+	return heat(e.entryMeta, s.now()), true
 }
 func (s *Store) ensureShapeStoreLocked(sh *shard) *jsonshape.Store {
 	if !s.shapeEncoding {
@@ -221,10 +238,6 @@ func (s *Store) ObserveJSONShape(key string, value []byte) {
 
 // JSONShapeWarmupPending reports whether a recently-written structured JSON
 // value is still waiting for its schema to be admitted.
-//
-// This lets the optimizer briefly defer generic compression instead of locking
-// the value into LZ4 immediately before a much smaller JSON-shape representation
-// becomes available.
 func (s *Store) JSONShapeWarmupPending(candidate Candidate, window time.Duration) bool {
 	if !s.shapeEncoding ||
 		!structuredJSONCandidate(candidate.Value) ||
@@ -402,8 +415,6 @@ func (s *Store) CandidateDiagnostics(key string) (CandidateDiagnosticReport, boo
 		)
 	}
 
-	// Use the real optimizer selection path for the winner so diagnostics
-	// cannot disagree with production behavior.
 	winner := s.EncodeCandidate(candidate)
 
 	report.WinnerName = s.codecs.Name(winner.ID)
@@ -412,8 +423,8 @@ func (s *Store) CandidateDiagnostics(key string) (CandidateDiagnosticReport, boo
 	return report, true
 }
 
-// Rewrite commits only the exact version observed. It verifies logical bytes,
-// keeps TTL/access metadata, and advances the CAS version to reject other jobs.
+// Rewrite commits only the exact arena generation and TTL observed. It verifies
+// logical bytes, keeps access metadata, and rejects stale optimizer jobs.
 func (s *Store) Rewrite(candidate Candidate, record codec.Record) bool {
 	if !s.encoding {
 		return false
@@ -428,7 +439,9 @@ func (s *Store) Rewrite(candidate Candidate, record codec.Record) bool {
 	e, ok := sh.get(candidate.Key)
 	if !ok ||
 		e.expired(s.now()) ||
-		e.version != candidate.Version ||
+		e.valueType == TypeHash ||
+		e.ref.Generation() != candidate.Version ||
+		e.expiresAt != candidate.expiresAt ||
 		len(record.Data) >= len(sh.encoded(e)) {
 		return false
 	}
@@ -441,11 +454,13 @@ func (s *Store) Rewrite(candidate Candidate, record codec.Record) bool {
 		entry: e,
 		data:  bytes.Clone(record.Data),
 	}
+	prepared.entryMeta = cloneEntryMeta(e.entryMeta)
+	meta := prepared.ensureMeta()
 
 	prepared.codecID = record.ID
-	prepared.schema = record.Schema
+	meta.schema = record.Schema
 	prepared.rawLength = uint32(record.RawLength)
-	prepared.lastRewrite = activityStampOf(s.now())
+	meta.lastRewrite = activityStampOf(s.now())
 
 	return s.publish(sh, candidate.Key, prepared) == nil
 }
