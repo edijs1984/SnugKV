@@ -39,6 +39,12 @@ no known core Streams command-family gap is currently tracked.
   back.
 - Malformed commands passed to `redis.pcall` are validated before command routing,
   preventing internal type-guard panics and returning Lua error tables instead.
+- Manual Redis comparison confirmed basic EVAL replies, KEYS/ARGV handling,
+  SET/GET through `redis.call`, SCRIPT LOAD/EXISTS/FLUSH, identical script SHA-1,
+  exact `NOSCRIPT` behavior, and writes surviving later Lua runtime errors.
+- Redis reports wrong-arity nested commands as `ERR Wrong number of args calling
+  Redis command from script`; SnugKV now matches that wording for the Lua bridge.
+  Runtime-error stack text remains VM-specific, while command/write semantics match.
 - Each script has a five-second execution limit. Blocking, connection/subscription,
   transaction, nested scripting, and SnugKV administrative commands are rejected
   from the Lua command bridge.
@@ -204,6 +210,9 @@ Recent real-server verification includes:
 - HyperLogLog parity at 100,000 unique inputs with identical Redis estimate,
   serialized size, and serialized bytes;
 - GEO parity for the Sicily examples and score formatting;
+- Lua parity for basic EVAL/KEYS/ARGV, SET/GET via `redis.call`, script cache
+  load/exists/flush/EVALSHA, exact SHA/NOSCRIPT behavior, partial writes before
+  runtime errors, and Redis-specific nested-command wrong-arity wording;
 - transaction queue-time EXECABORT behavior;
 - runtime WRONGTYPE inside EXEC while later queued work still commits;
 - two-client WATCH invalidation and change-then-restore invalidation;
