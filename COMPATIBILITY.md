@@ -15,14 +15,14 @@ Redis 8.2 `KEEPREF` / `DELREF` / `ACKED` policies, `XDELEX`, and `XACKDEL`.
 Classic and sharded Pub/Sub are implemented, along with connection-scoped Redis
 transactions and optimistic locking (`MULTI`, `EXEC`, `DISCARD`, `WATCH`,
 `UNWATCH`). HyperLogLog (`PFADD`, `PFCOUNT`, `PFMERGE`), the modern GEO surface
-(`GEOADD`, `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH`, `GEOSEARCHSTORE`), and the
-common Lua scripting path (`EVAL`, `EVALSHA`, `SCRIPT LOAD/EXISTS/FLUSH`) are also
-implemented.
+(`GEOADD`, `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH`, `GEOSEARCHSTORE`), the
+common Lua scripting path (`EVAL`, `EVALSHA`, `SCRIPT LOAD/EXISTS/FLUSH`), and
+`SORT` / `SORT_RO` are also implemented.
 
 The largest remaining Redis compatibility families are Redis Functions/full
-scripting parity, RESP3, `SORT`/`SORT_RO`, COPY/migration scope, and broader
-CLIENT/CONFIG/ACL/tooling compatibility. Replication, Sentinel-style failover, and
-Cluster remain outside the current single-node scope.
+scripting parity, RESP3, COPY/migration scope, and broader CLIENT/CONFIG/ACL/tooling
+compatibility. Replication, Sentinel-style failover, and Cluster remain outside
+the current single-node scope.
 
 ## Client compatibility
 
@@ -57,6 +57,7 @@ protocol version`.
 | SET | Broad support | Native packed datatype and algebra/store operations |
 | LIST | Broad support | Native packed datatype, moves, blocking reads/pops |
 | ZSET | Broad support | Native packed datatype, ranges, algebra, blocking pops/multipops |
+| SORT | Supported | `SORT`, `SORT_RO`, BY/LIMIT/GET/ASC/DESC/ALPHA, external string/hash patterns, STORE-to-LIST semantics |
 | STREAM | Broad support | Core stream reads/writes, consumer groups, PEL, claims, XINFO, trimming/reference policies |
 | JSON | Partial | `JSON.SET`, `JSON.GET`, `JSON.TYPE`, `JSON.DEL` only |
 | Pub/Sub | Broad support | Classic and sharded Pub/Sub, pattern subscriptions, introspection, RESP2 subscribed-mode behavior |
@@ -119,6 +120,38 @@ ZRANDMEMBER ZSCAN ZRANGESTORE
 
 `ZRANGE` supports rank mode plus `BYSCORE`, `BYLEX`, `REV`, `LIMIT`, and
 `WITHSCORES` where applicable. ZSET algebra accepts SET and ZSET inputs.
+
+## SORT / SORT_RO
+
+Supported syntax:
+
+```text
+SORT key [BY pattern] [LIMIT offset count] [GET pattern ...]
+         [ASC|DESC] [ALPHA] [STORE destination]
+SORT_RO key [BY pattern] [LIMIT offset count] [GET pattern ...]
+            [ASC|DESC] [ALPHA]
+```
+
+LIST, SET, and ZSET are valid sources. Default ordering is numeric and reports
+`ERR One or more scores can't be converted into double` for invalid numeric
+weights. `BY` and repeated `GET` support first-wildcard substitution, string-key
+lookups, hash dereferences such as `user:*->score`, and `GET #`. A `BY` pattern
+without `*` uses native/no-sort ordering; `DESC` reverses LIST/ZSET native order.
+Missing external numeric weights behave as zero; missing GET values are returned
+as null.
+
+`SORT ... STORE destination` replaces any destination type with a native LIST,
+clears any previous destination TTL, stores missing GET results as empty strings,
+deletes the destination for an empty result, is journaled/replayed through the
+logical AOF path, and wakes LIST waiters when a non-empty result is stored.
+`SORT_RO` rejects `STORE`.
+
+Current boundary: SnugKV uses bytewise comparison for `ALPHA`. Redis can use
+locale-aware collation for non-STORE ALPHA replies, so locale-sensitive/non-ASCII
+ordering is not claimed as exact parity. SET native iteration order under `BY`
+without a wildcard is implementation-defined; STORE uses deterministic ordering.
+Dynamic-pattern ACL and Cluster slot restrictions are outside SnugKV's current
+single-node/no-ACL scope.
 
 ## HyperLogLog
 
@@ -308,10 +341,10 @@ It is not a complete RedisJSON implementation.
 Prioritized backlog:
 
 1. Redis Functions and remaining scripting parity/hardening.
-2. `SORT` / `SORT_RO`.
-3. `COPY` and migration scope decision.
-4. CLIENT/CONFIG/ACL compatibility and COMMAND metadata completeness.
-5. RESP3 where required by clients/tooling.
+2. `COPY` and migration scope decision.
+3. CLIENT/CONFIG/ACL compatibility and COMMAND metadata completeness.
+4. RESP3 where required by clients/tooling.
+5. Differential hardening for SORT and the completed Streams surface.
 6. Deprecated `GEORADIUS*` aliases if legacy client compatibility justifies them.
 7. Replication/failover/cluster only after the single-node compatibility target is mature.
 
