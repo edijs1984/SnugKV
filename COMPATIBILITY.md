@@ -14,14 +14,15 @@ Redis 8.2 `KEEPREF` / `DELREF` / `ACKED` policies, `XDELEX`, and `XACKDEL`.
 
 Classic and sharded Pub/Sub are implemented, along with connection-scoped Redis
 transactions and optimistic locking (`MULTI`, `EXEC`, `DISCARD`, `WATCH`,
-`UNWATCH`). HyperLogLog (`PFADD`, `PFCOUNT`, `PFMERGE`) and the modern GEO surface
-(`GEOADD`, `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH`, `GEOSEARCHSTORE`) are also
+`UNWATCH`). HyperLogLog (`PFADD`, `PFCOUNT`, `PFMERGE`), the modern GEO surface
+(`GEOADD`, `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH`, `GEOSEARCHSTORE`), and the
+common Lua scripting path (`EVAL`, `EVALSHA`, `SCRIPT LOAD/EXISTS/FLUSH`) are also
 implemented.
 
-The largest remaining Redis compatibility families are scripting/functions,
-RESP3, `SORT`/`SORT_RO`, COPY/migration scope, and broader CLIENT/CONFIG/ACL/tooling
-compatibility. Replication, Sentinel-style failover, and Cluster remain outside
-the current single-node scope.
+The largest remaining Redis compatibility families are Redis Functions/full
+scripting parity, RESP3, `SORT`/`SORT_RO`, COPY/migration scope, and broader
+CLIENT/CONFIG/ACL/tooling compatibility. Replication, Sentinel-style failover, and
+Cluster remain outside the current single-node scope.
 
 ## Client compatibility
 
@@ -62,7 +63,7 @@ protocol version`.
 | Transactions | Broad support | `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH`, queue/runtime error semantics, AOF transaction frames |
 | HyperLogLog | Supported | `PFADD`, `PFCOUNT`, `PFMERGE`; Redis-compatible serialized HLL strings |
 | GEO | Modern surface supported | `GEOADD`, `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH`, `GEOSEARCHSTORE`; deprecated `GEORADIUS*` commands are not implemented |
-| Lua / Functions | Not implemented | EVAL/SCRIPT/FUNCTION/FCALL scope not yet implemented |
+| Lua scripting | Partial | `EVAL`, `EVALSHA`, `SCRIPT LOAD/EXISTS/FLUSH`, KEYS/ARGV and common `redis.*` helpers; Functions/read-only/kill/debug surfaces remain |
 | RESP3 | Not implemented | RESP2 only |
 | Replication / Sentinel / Cluster | Not implemented | Outside current single-node scope |
 
@@ -233,6 +234,46 @@ Current RESP2 limitation: subscription-state commands (`SUBSCRIBE`, `PSUBSCRIBE`
 `SSUBSCRIBE`, unsubscribe variants, `RESET`) are not supported as queued MULTI
 commands. `PUBLISH` and `SPUBLISH` remain ordinary queueable commands.
 
+## Lua scripting
+
+Supported scripting commands:
+
+```text
+EVAL EVALSHA
+SCRIPT LOAD
+SCRIPT EXISTS
+SCRIPT FLUSH [SYNC|ASYNC]
+```
+
+The embedded runtime is Lua 5.1-compatible. `KEYS` and `ARGV` are populated with
+binary-safe strings. The Redis bridge supports `redis.call`, `redis.pcall`,
+`redis.error_reply`, `redis.status_reply`, and `redis.sha1hex`, including the
+usual RESP2/Lua reply conversions for strings, integers, arrays, null/false,
+status replies, and error replies.
+
+Scripts execute under SnugKV's global command-serialization boundary, so ordinary
+clients and transactions cannot interleave writes halfway through an EVAL. A
+script can be queued inside MULTI/EXEC. A WATCH is invalidated by transient script
+mutations even if the script later restores the original value.
+
+With logical AOF enabled, all resulting logical changes from one direct EVAL are
+stored in one persistence frame. A Lua runtime error does not roll back successful
+`redis.call` writes performed earlier in the script; those changes are still
+persisted. The SHA-1 script cache is process-local/volatile and is cleared by
+`SCRIPT FLUSH` or restart.
+
+Current scripting boundaries:
+
+- each invocation has a five-second execution limit;
+- filesystem/process Lua libraries are not exposed;
+- blocking commands, connection/subscription state, transaction commands, nested
+  EVAL/SCRIPT, and SnugKV admin commands are rejected from `redis.call`/`redis.pcall`;
+- Redis Functions (`FUNCTION`, `FCALL`, `FCALL_RO`) are not implemented;
+- `EVAL_RO`, `EVALSHA_RO`, `SCRIPT KILL`, `SCRIPT DEBUG`, and full Redis scripting
+  command-flag/ACL parity are not implemented;
+- SnugKV does not claim Redis's exact Lua VM implementation details or every
+  scripting edge-case yet.
+
 ## SCAN family
 
 `SCAN`, `HSCAN`, `SSCAN`, and `ZSCAN` support cursor iteration, `MATCH`, and
@@ -266,7 +307,7 @@ It is not a complete RedisJSON implementation.
 
 Prioritized backlog:
 
-1. Scripting / Redis Functions scope.
+1. Redis Functions and remaining scripting parity/hardening.
 2. `SORT` / `SORT_RO`.
 3. `COPY` and migration scope decision.
 4. CLIENT/CONFIG/ACL compatibility and COMMAND metadata completeness.
