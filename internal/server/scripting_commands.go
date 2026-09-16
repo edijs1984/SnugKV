@@ -331,6 +331,9 @@ func (s *Server) luaRedisCall(protected bool) lua.LGFunction {
 			return luaPushCommandError(L, protected, errors.New("ERR This Redis command is not allowed from script"))
 		}
 		if err := queuedCommandValidation(args); err != nil {
+			if strings.Contains(err.Error(), "wrong number of arguments") {
+				err = errors.New("ERR Wrong number of args calling Redis command from script")
+			}
 			return luaPushCommandError(L, protected, err)
 		}
 
