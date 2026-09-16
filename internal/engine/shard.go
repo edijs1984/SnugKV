@@ -35,16 +35,20 @@ func (sh *shard) entryCapacityFor(additional int) int {
 
 	for target > capacity {
 		// Sparse stores commonly have only a handful of keys in each of 256
-		// shards. Ramp tiny shards geometrically so a first insertion reserves
-		// only four 40-byte entries instead of eight or 64.
+		// shards. Start at four slots, then use a six-slot intermediate stage
+		// before eight. This trims slack in the common 5-6 key/shard range while
+		// adding an extra reallocation only for shards that grow past six keys.
 		//
-		// Once a shard reaches 64 entries, restore the established dense growth
-		// rule: grow by 25%, but never by fewer than 64 slots. The smaller +16
-		// floor used by the first sparse-memory pass caused many extra
-		// reallocations and left ~15k more reserved entries at 100k keys.
+		// From eight slots onward, keep the established geometric ramp to 64.
+		// Once a shard reaches 64 entries, restore the dense growth rule: grow
+		// by 25%, but never by fewer than 64 slots.
 		switch {
 		case capacity == 0:
 			capacity = 4
+		case capacity == 4:
+			capacity = 6
+		case capacity == 6:
+			capacity = 8
 		case capacity < 64:
 			capacity *= 2
 			if capacity > 64 {
