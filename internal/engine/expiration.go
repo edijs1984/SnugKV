@@ -34,17 +34,22 @@ func (q *expirationQueue) Pop() interface{} {
 	return e
 }
 func (sh *shard) schedule(key string, at stamp) {
-	if sh.expiration.positions == nil {
-		sh.expiration.positions = make(map[string]int)
-	}
-	i, exists := sh.expiration.positions[key]
 	if at.IsZero() {
-		if exists {
+		// Persistent writes are the common case. Do not allocate a positions
+		// map merely to discover that there is no scheduled expiry to remove.
+		if sh.expiration.positions == nil {
+			return
+		}
+		if i, exists := sh.expiration.positions[key]; exists {
 			heap.Remove(&sh.expiration, i)
 		}
 		return
 	}
-	if exists {
+
+	if sh.expiration.positions == nil {
+		sh.expiration.positions = make(map[string]int)
+	}
+	if i, exists := sh.expiration.positions[key]; exists {
 		sh.expiration.items[i].at = at
 		heap.Fix(&sh.expiration, i)
 	} else {
