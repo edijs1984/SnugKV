@@ -24,4 +24,25 @@ func TestStructuralMemoryReportsFixedShardLayout(t *testing.T) {
 	if m.TotalBytes >= m.LegacyBaselineBytes {
 		t.Fatalf("static layout %d no longer beats legacy baseline %d", m.TotalBytes, m.LegacyBaselineBytes)
 	}
+
+	accounted := s.Memory()
+	if accounted.AccountedBytes != m.TotalBytes {
+		t.Fatalf("empty store accounted bytes = %d, structural = %d", accounted.AccountedBytes, m.TotalBytes)
+	}
+	// Structural bytes remain in the legacy index-reservation bucket for now.
+	// A later diagnostics-only change can split that bucket without changing
+	// max_memory behavior again.
+	if accounted.IndexReservedBytes != m.TotalBytes {
+		t.Fatalf("empty store index bucket = %d, structural = %d", accounted.IndexReservedBytes, m.TotalBytes)
+	}
+}
+
+func TestStructuralMemoryDefinesMinimumMaxMemory(t *testing.T) {
+	base := structuralMemoryBytes(256)
+	if _, err := NewWithOptions(Options{Shards: 256, MaxMemory: base - 1}); err != ErrOOM {
+		t.Fatalf("max_memory below structural baseline: got %v, want %v", err, ErrOOM)
+	}
+	if _, err := NewWithOptions(Options{Shards: 256, MaxMemory: base}); err != nil {
+		t.Fatalf("max_memory at structural baseline rejected: %v", err)
+	}
 }
