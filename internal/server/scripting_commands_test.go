@@ -96,7 +96,7 @@ func TestScriptLoadExistsEvalSHAAndFlush(t *testing.T) {
 	if got := execute(t, s, "SCRIPT", "EXISTS", expectedSHA, strings.Repeat("0", 40)); got != "*2\r\n:1\r\n:0\r\n" {
 		t.Fatalf("SCRIPT EXISTS = %q", got)
 	}
-	if got := execute(t, s, "EVALSHA", expectedSHA, "0"); got != "$25\r\nImmabe a cached script\r\n" {
+	if got := execute(t, s, "EVALSHA", expectedSHA, "0"); got != "$22\r\nImmabe a cached script\r\n" {
 		t.Fatalf("EVALSHA = %q", got)
 	}
 	if got := execute(t, s, "SCRIPT", "FLUSH", "ASYNC"); got != "+OK\r\n" {
