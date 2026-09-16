@@ -11,6 +11,9 @@ func (s *Server) executePressureCommand(args [][]byte) ([]byte, error) {
 	if isScriptingCommand(args) {
 		return s.executeScripting(args)
 	}
+	if isSortCommand(args) {
+		return s.executeSort(args)
+	}
 	if isPubSubServerCommand(args) {
 		return s.executePubSubServer(args)
 	}
@@ -89,6 +92,10 @@ func (s *Server) executePressureMode(args [][]byte, journalEvictions bool) ([]by
 	excluded := make(map[string]bool)
 	if cmd == "XREADGROUP" {
 		for _, key := range streamGroupReadKeys(args) {
+			excluded[key] = true
+		}
+	} else if isSortCommand(args) {
+		for _, key := range s.sortPressureKeys(args) {
 			excluded[key] = true
 		}
 	} else if cmd == "GEOSEARCHSTORE" && len(args) >= 3 {
