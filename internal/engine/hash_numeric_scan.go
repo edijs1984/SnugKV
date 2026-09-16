@@ -17,7 +17,7 @@ func (s *Store) HashIncrBy(key string, field []byte, increment int64) (int64, er
 
 	now := s.now()
 	old, exists := sh.get(key)
-	if exists && old.expired(now) {
+	if exists && sh.expired(key, old, now) {
 		s.remove(sh, key)
 		exists = false
 		old = entry{}
@@ -34,7 +34,7 @@ func (s *Store) HashIncrBy(key string, field []byte, increment int64) (int64, er
 		if err != nil {
 			return 0, err
 		}
-		expiresAt = old.expiresAt
+		expiresAt = sh.expirationAt(key, old)
 	}
 
 	index := sort.Search(len(pairs), func(i int) bool {
@@ -96,7 +96,7 @@ func (s *Store) HashIncrByFloat(key string, field []byte, increment float64) (st
 
 	now := s.now()
 	old, exists := sh.get(key)
-	if exists && old.expired(now) {
+	if exists && sh.expired(key, old, now) {
 		s.remove(sh, key)
 		exists = false
 		old = entry{}
@@ -113,7 +113,7 @@ func (s *Store) HashIncrByFloat(key string, field []byte, increment float64) (st
 		if err != nil {
 			return "", err
 		}
-		expiresAt = old.expiresAt
+		expiresAt = sh.expirationAt(key, old)
 	}
 
 	index := sort.Search(len(pairs), func(i int) bool {
@@ -178,7 +178,7 @@ func (s *Store) HashScan(key string, cursor uint64, count int, pattern []byte) (
 	defer sh.mu.RUnlock()
 
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return 0, nil, nil
 	}
 	if e.valueType != TypeHash {
