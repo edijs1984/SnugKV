@@ -275,7 +275,7 @@ func (s *Store) SetAdd(key string, members [][]byte) (int64, error) {
 
 	now := s.now()
 	old, exists := sh.get(key)
-	if exists && old.expired(now) {
+	if exists && sh.expired(key, old, now) {
 		s.remove(sh, key)
 		exists = false
 		old = entry{}
@@ -292,7 +292,7 @@ func (s *Store) SetAdd(key string, members [][]byte) (int64, error) {
 		if err != nil {
 			return 0, err
 		}
-		expiresAt = old.expiresAt
+		expiresAt = sh.expirationAt(key, old)
 	}
 
 	var added int64
@@ -331,7 +331,7 @@ func (s *Store) SetRemove(key string, members [][]byte) (int64, error) {
 	defer sh.mu.Unlock()
 
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		if ok {
 			s.remove(sh, key)
 		}
@@ -369,7 +369,7 @@ func (s *Store) SetRemove(key string, members [][]byte) (int64, error) {
 		return 0, err
 	}
 	updated := setPreparedEntry(packed)
-	updated.expiresAt = e.expiresAt
+	updated.expiresAt = sh.expirationAt(key, e)
 	if err := s.publish(sh, key, updated); err != nil {
 		return 0, err
 	}
@@ -381,7 +381,7 @@ func (s *Store) SetContains(key string, member []byte) (bool, error) {
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return false, nil
 	}
 	if e.valueType != TypeSet {
@@ -400,7 +400,7 @@ func (s *Store) SetLen(key string) (int64, error) {
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return 0, nil
 	}
 	if e.valueType != TypeSet {
@@ -415,7 +415,7 @@ func (s *Store) SetMembers(key string) ([][]byte, error) {
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return nil, nil
 	}
 	if e.valueType != TypeSet {
@@ -429,7 +429,7 @@ func (s *Store) SetStorageStats(key string) (SetStats, bool, error) {
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return SetStats{}, false, nil
 	}
 	if e.valueType != TypeSet {
