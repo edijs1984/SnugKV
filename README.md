@@ -53,6 +53,7 @@ for current boundaries, [PLAN.md](PLAN.md) for the remaining roadmap, and
 - SET: `SADD`, `SREM`, `SISMEMBER`, `SMISMEMBER`, `SCARD`, `SMEMBERS`, `SSCAN`, `SUNION`, `SINTER`, `SDIFF`, `SUNIONSTORE`, `SINTERSTORE`, `SDIFFSTORE`, `SMOVE`, `SPOP`, `SRANDMEMBER`.
 - LIST: `LPUSH`, `RPUSH`, `LPUSHX`, `RPUSHX`, `LPOP`, `RPOP`, `LLEN`, `LINDEX`, `LRANGE`, `LSET`, `LTRIM`, `LREM`, `LINSERT`, `LPOS`, `LMOVE`, `RPOPLPUSH`, `BLPOP`, `BRPOP`, `BLMOVE`, `BRPOPLPUSH`.
 - ZSET: `ZADD`, `ZREM`, `ZINCRBY`, `ZSCORE`, `ZMSCORE`, `ZCARD`, `ZCOUNT`, `ZLEXCOUNT`, `ZRANK`, `ZREVRANK`, `ZRANGE`, `ZREVRANGE`, `ZRANGEBYSCORE`, `ZREVRANGEBYSCORE`, `ZRANGEBYLEX`, `ZREVRANGEBYLEX`, `ZREMRANGEBYRANK`, `ZREMRANGEBYSCORE`, `ZREMRANGEBYLEX`, `ZUNION`, `ZINTER`, `ZDIFF`, `ZUNIONSTORE`, `ZINTERSTORE`, `ZDIFFSTORE`, `ZINTERCARD`, `ZPOPMIN`, `ZPOPMAX`, `ZMPOP`, `BZPOPMIN`, `BZPOPMAX`, `BZMPOP`, `ZRANDMEMBER`, `ZSCAN`, `ZRANGESTORE`.
+- Sorting: `SORT`, `SORT_RO` over LIST/SET/ZSET sources with numeric or `ALPHA` ordering, `ASC`/`DESC`, `LIMIT`, external string/hash `BY` and `GET` patterns, `GET #`, `BY`-constant/native-order mode, and `SORT ... STORE` LIST replacement.
 - HyperLogLog: `PFADD`, `PFCOUNT`, `PFMERGE` with Redis-compatible serialized HLL strings.
 - GEO: `GEOADD`, `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH`, `GEOSEARCHSTORE` using Redis-compatible 52-bit geospatial ZSET scores.
 - STREAM: `XADD`, `XLEN`, `XRANGE`, `XREVRANGE`, `XDEL`, `XDELEX`, `XTRIM`, `XREAD`, `XGROUP`, `XREADGROUP`, `XACK`, `XACKDEL`, `XPENDING`, `XCLAIM`, `XAUTOCLAIM`, `XINFO`; Redis 8.2 `KEEPREF` / `DELREF` / `ACKED` reference policies are supported.
@@ -85,6 +86,21 @@ persisted as one frame. Writes completed before a later Lua runtime error remain
 applied and durable, matching Redis's non-rollback script behavior. Redis
 Functions (`FUNCTION`/`FCALL`), `EVAL_RO`/`EVALSHA_RO`, and `SCRIPT KILL`/`DEBUG`
 are not part of this first scripting slice.
+
+## SORT compatibility
+
+`SORT` and `SORT_RO` accept LIST, SET, and ZSET sources. The implemented option
+surface includes `BY`, `LIMIT`, repeated `GET`, `GET #`, `ASC`, `DESC`, and
+`ALPHA`; `SORT` additionally supports `STORE`, which replaces the destination as
+a native LIST and clears any previous destination TTL. Missing `GET` lookups are
+null in command replies and become empty list elements under `STORE`, matching
+Redis behavior. External patterns can dereference strings (`weight_*`) or hash
+fields (`user:*->score`).
+
+SnugKV uses bytewise comparison for `ALPHA`. Redis can use locale-aware collation
+for non-STORE ALPHA replies, so locale-sensitive/non-ASCII order is not claimed
+to be byte-for-byte identical yet. ACL/Cluster restrictions around dynamic
+external patterns are also outside the current single-node/no-ACL scope.
 
 ## Native container storage
 
@@ -139,12 +155,11 @@ optimizer.
 ## Major remaining compatibility work
 
 The next large Redis gaps are Redis Functions/full scripting parity,
-`SORT`/`SORT_RO`, COPY/migration scope, RESP3, and client/tooling compatibility
-(`CLIENT`, `CONFIG`, ACL/auth, COMMAND metadata). Deprecated `GEORADIUS*`
-compatibility is not part of the modern GEO surface yet. A final differential
-Redis edge-case audit remains useful for Streams, but there is no known core
-Streams command-family gap. See [COMPATIBILITY.md](COMPATIBILITY.md) and GitHub
-issue #55.
+COPY/migration scope, RESP3, and client/tooling compatibility (`CLIENT`, `CONFIG`,
+ACL/auth, COMMAND metadata). Deprecated `GEORADIUS*` compatibility is not part of
+the modern GEO surface yet. A final differential Redis edge-case audit remains
+useful for Streams and SORT, but there is no known core Streams command-family
+gap. See [COMPATIBILITY.md](COMPATIBILITY.md) and GitHub issue #55.
 
 ## License
 
