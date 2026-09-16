@@ -4,12 +4,12 @@ package index
 import "unsafe"
 
 const (
-	stateEmpty       = uint64(0)
-	stateLive        = uint64(1)
-	stateDeleted     = uint64(2)
-	stateShift       = 62
-	keyLengthMask    = uint64(1<<30) - 1
-	initialCapacity  = 4
+	stateEmpty      = uint64(0)
+	stateLive       = uint64(1)
+	stateDeleted    = uint64(2)
+	stateShift      = 62
+	keyLengthMask   = uint64(1<<30) - 1
+	initialCapacity = 4
 )
 
 // slot is intentionally 16 bytes on 64-bit targets:
@@ -28,7 +28,6 @@ type slot[V ~uint32] struct {
 type Table[V ~uint32] struct {
 	slots []slot[V]
 	count int
-	hash  func(string) uint64
 }
 
 func Hash(key string) uint64 {
@@ -40,7 +39,7 @@ func Hash(key string) uint64 {
 	return h
 }
 
-func New[V ~uint32]() *Table[V] { return &Table[V]{hash: Hash} }
+func New[V ~uint32]() *Table[V] { return &Table[V]{} }
 func (t *Table[V]) Len() int     { return t.count }
 
 func slotBytes[V ~uint32]() uint64 {
@@ -111,7 +110,7 @@ func (t *Table[V]) Get(key string) (V, bool) {
 	if len(t.slots) == 0 {
 		return zero, false
 	}
-	hash := t.hash(key)
+	hash := Hash(key)
 	mask := uint64(len(t.slots) - 1)
 	for n := 0; n < len(t.slots); n++ {
 		s := &t.slots[(hash+uint64(n))&mask]
@@ -146,7 +145,7 @@ func (t *Table[V]) Set(key string, value V) {
 }
 
 func (t *Table[V]) insert(key string, value V) {
-	hash := t.hash(key)
+	hash := Hash(key)
 	mask := uint64(len(t.slots) - 1)
 	deleted := -1
 	for n := 0; n < len(t.slots); n++ {
@@ -183,7 +182,7 @@ func (t *Table[V]) Delete(key string) {
 	if len(t.slots) == 0 {
 		return
 	}
-	hash := t.hash(key)
+	hash := Hash(key)
 	mask := uint64(len(t.slots) - 1)
 	for n := 0; n < len(t.slots); n++ {
 		s := &t.slots[(hash+uint64(n))&mask]
