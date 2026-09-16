@@ -105,7 +105,7 @@ func appendStreamGroups(dst []byte, groups []streamGroup) ([]byte, error) {
 		dst = appendStreamUvarint(dst, uint64(len(pending)))
 		var previous StreamID
 		for i, item := range pending {
-			if i > 0 && !previous.less(item.ID) || item.DeliveredAt < 0 || item.Deliveries == 0 {
+			if i > 0 && !previous.less(item.ID) || item.DeliveredAt < 0 {
 				return nil, errors.New("ERR invalid stream pending metadata")
 			}
 			if item.Consumer != "" {
@@ -201,7 +201,7 @@ func readStreamGroups(data []byte, offset *int) ([]streamGroup, error) {
 				return nil, errors.New("invalid packed stream")
 			}
 			deliveries, err := readStreamUvarint(data, offset)
-			if err != nil || deliveries == 0 {
+			if err != nil {
 				return nil, errors.New("invalid packed stream")
 			}
 			group.Pending = append(group.Pending, streamPending{ID: id, Consumer: consumer, DeliveredAt: int64(deliveredAt), Deliveries: deliveries})

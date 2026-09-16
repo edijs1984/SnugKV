@@ -14,6 +14,9 @@ func (s *Server) executePressureCommand(args [][]byte) ([]byte, error) {
 	if isStreamGroupDeliveryCommand(args) {
 		return s.executeStreamGroupDelivery(args)
 	}
+	if isStreamClaimCommand(args) {
+		return s.executeStreamClaim(args)
+	}
 	if isStreamCommand(args) {
 		return s.executeStream(args)
 	}
