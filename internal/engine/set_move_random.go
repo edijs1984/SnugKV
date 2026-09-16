@@ -19,7 +19,7 @@ func (s *Store) SetMove(source, destination string, member []byte) (bool, error)
 	now := s.now()
 	sourceShard := s.shardFor(source)
 	sourceEntry, sourceExists := sourceShard.get(source)
-	if !sourceExists || sourceEntry.expired(now) {
+	if !sourceExists || sourceShard.expired(source, sourceEntry, now) {
 		return false, nil
 	}
 	if sourceEntry.valueType != TypeSet {
@@ -41,7 +41,7 @@ func (s *Store) SetMove(source, destination string, member []byte) (bool, error)
 
 	destinationShard := s.shardFor(destination)
 	destinationEntry, destinationExists := destinationShard.get(destination)
-	if destinationExists && destinationEntry.expired(now) {
+	if destinationExists && destinationShard.expired(destination, destinationEntry, now) {
 		destinationExists = false
 	}
 	if destinationExists && destinationEntry.valueType != TypeSet {
@@ -76,7 +76,7 @@ func (s *Store) SetMove(source, destination string, member []byte) (bool, error)
 			return false, err
 		}
 		updated := setPreparedEntry(packed)
-		updated.expiresAt = sourceEntry.expiresAt
+		updated.expiresAt = sourceShard.expirationAt(source, sourceEntry)
 		updates[source] = updated
 	}
 
@@ -96,7 +96,7 @@ func (s *Store) SetMove(source, destination string, member []byte) (bool, error)
 		}
 		updated := setPreparedEntry(packed)
 		if destinationExists {
-			updated.expiresAt = destinationEntry.expiresAt
+			updated.expiresAt = destinationShard.expirationAt(destination, destinationEntry)
 		}
 		updates[destination] = updated
 	}
@@ -116,7 +116,7 @@ func (s *Store) SetRandomMembers(key string, count int64) ([][]byte, error) {
 	defer sh.mu.RUnlock()
 
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return nil, nil
 	}
 	if e.valueType != TypeSet {
@@ -173,7 +173,7 @@ func (s *Store) SetPop(key string, count int64) ([][]byte, error) {
 	defer sh.mu.Unlock()
 
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return nil, nil
 	}
 	if e.valueType != TypeSet {
@@ -222,7 +222,7 @@ func (s *Store) SetPop(key string, count int64) ([][]byte, error) {
 		return nil, err
 	}
 	updated := setPreparedEntry(packed)
-	updated.expiresAt = e.expiresAt
+	updated.expiresAt = sh.expirationAt(key, e)
 	if err := s.publish(sh, key, updated); err != nil {
 		return nil, err
 	}
