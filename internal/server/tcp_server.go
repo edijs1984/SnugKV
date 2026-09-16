@@ -137,9 +137,28 @@ func (s *TCPServer) handleConn(conn net.Conn) {
 }
 
 func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
+	// Pub/Sub delivery can write from a publisher's goroutine while this
+	// connection goroutine is blocked reading the next subscriber command.
+	// Serialize all writes on the connection so RESP frames cannot interleave.
+	conn = &serializedWriteConn{Conn: conn}
+	session := newPubSubSession(s.server, func(response []byte) error {
+		err := s.write(conn, response)
+		if err != nil {
+			_ = peer.Close()
+		}
+		return err
+	})
+	defer session.close()
+
 	decoder, _ := resp.NewDecoder(bufio.NewReader(conn), s.config.Limits())
 	for {
-		if err := conn.SetReadDeadline(time.Now().Add(time.Duration(s.config.ReadTimeoutMS) * time.Millisecond)); err != nil {
+		if session.active() {
+			// Pub/Sub subscriptions are long-lived. Message delivery is outbound,
+			// so an ordinary request read timeout must not kill an idle subscriber.
+			if err := conn.SetReadDeadline(time.Time{}); err != nil {
+				return
+			}
+		} else if err := conn.SetReadDeadline(time.Now().Add(time.Duration(s.config.ReadTimeoutMS) * time.Millisecond)); err != nil {
 			return
 		}
 		msg, err := decoder.ReadCommand()
@@ -149,7 +168,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			}
 
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				// Normal idle/read timeout. Close connection silently.
+				// Normal idle/read timeout for a non-subscribed connection.
 				return
 			}
 
@@ -180,6 +199,18 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				}
 				continue
 			}
+		}
+
+		if handled, quit, pubSubErr := s.server.executePubSubConnectionCommand(session, msg); handled {
+			if pubSubErr != nil {
+				if s.write(conn, errorResponse(pubSubErr)) != nil {
+					return
+				}
+			}
+			if quit {
+				return
+			}
+			continue
 		}
 
 		var result []byte
