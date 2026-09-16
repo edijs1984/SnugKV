@@ -20,6 +20,56 @@ func TestTableStructIs32Bytes(t *testing.T) {
 	}
 }
 
+func TestTinyNegativeFilterPreservesExistingKeys(t *testing.T) {
+	table := New[uint32]()
+	keys := []string{"alpha", "beta", "gamma", "delta"}
+	for i, key := range keys {
+		table.Set(key, uint32(i+1))
+	}
+	if got := table.CapacityBytes(); got != 4*16 {
+		t.Fatalf("full tiny capacity = %d, want %d", got, 4*16)
+	}
+	for i, key := range keys {
+		bits := tinyFilterBits(Hash(key))
+		if table.tinyFilter&bits != bits {
+			t.Fatalf("filter lost existing key %q", key)
+		}
+		got, ok := table.Get(key)
+		if !ok || got != uint32(i+1) {
+			t.Fatalf("lookup %q got=%d ok=%t", key, got, ok)
+		}
+	}
+
+	missing := ""
+	for i := 0; i < 10000; i++ {
+		candidate := fmt.Sprintf("missing-filter-%d", i)
+		bits := tinyFilterBits(Hash(candidate))
+		if table.tinyFilter&bits != bits {
+			missing = candidate
+			break
+		}
+	}
+	if missing == "" {
+		t.Fatal("could not find filter-negative key")
+	}
+	if _, ok := table.Get(missing); ok {
+		t.Fatal("filter-negative missing key returned")
+	}
+
+	table.Delete("beta")
+	for _, key := range []string{"alpha", "gamma", "delta"} {
+		if _, ok := table.Get(key); !ok {
+			t.Fatalf("delete caused false negative for %q", key)
+		}
+	}
+	table.Compact()
+	for _, key := range []string{"alpha", "gamma", "delta"} {
+		if _, ok := table.Get(key); !ok {
+			t.Fatalf("compact caused false negative for %q", key)
+		}
+	}
+}
+
 func TestSparseInitialCapacityAndCompaction(t *testing.T) {
 	table := New[uint32]()
 	if got := table.GrowthBytes(1); got != 4*16 {
@@ -50,6 +100,9 @@ func TestSparseInitialCapacityAndCompaction(t *testing.T) {
 	table.Set("k4", 4)
 	if got := table.CapacityBytes(); got != 8*16 {
 		t.Fatalf("five-key capacity = %d, want %d", got, 8*16)
+	}
+	if table.tinyFilter != 0 {
+		t.Fatalf("tiny filter retained after growth: %#x", table.tinyFilter)
 	}
 
 	table.Delete("k3")
@@ -120,7 +173,7 @@ func testInsertHashed(table *Table[uint32], key string, value uint32, hash uint6
 
 func testSetHashed(table *Table[uint32], key string, value uint32, hash uint64) {
 	if _, ok := testGetHashed(table, key, hash); !ok {
-		capacity := table.capacityFor(table.count + 1)
+		capacity := table.capacityFor(int(table.count) + 1)
 		if capacity != len(table.slots) {
 			old := table.slots
 			table.slots = make([]slot[uint32], capacity)
@@ -162,7 +215,7 @@ func testCompactHashed(table *Table[uint32], hash uint64) {
 		table.slots = nil
 		return
 	}
-	for !capacityAccepts(table.count, capacity) {
+	for !capacityAccepts(int(table.count), capacity) {
 		capacity *= 2
 	}
 	old := table.slots
