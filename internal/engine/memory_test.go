@@ -12,7 +12,7 @@ func auditMemory(t *testing.T, s *Store) {
 	defer unlock()
 	var entries uint64
 	var metas uint64
-	index := uint64(len(s.shards)) * 512
+	index := structuralMemoryBytes(len(s.shards))
 	var arenaBytes uint64
 	schemaBytes := uint64(0)
 	if s.shards[0].shapes != nil {
