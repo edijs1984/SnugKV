@@ -119,6 +119,10 @@ func isXReadCommand(args [][]byte) bool {
 }
 
 func isBlockingStreamCommand(args [][]byte) bool {
+	if isXReadGroupCommand(args) {
+		request, err := parseXReadGroup(args)
+		return err == nil && xreadGroupCanBlock(request)
+	}
 	if !isXReadCommand(args) {
 		return false
 	}

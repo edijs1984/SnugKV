@@ -235,20 +235,17 @@ func (s *Store) StreamGroupDeleteConsumer(key, group, consumer string) (int64, e
 	if consumerIndex < 0 {
 		return 0, nil
 	}
-	var removedPending int64
-	keptPending := groupState.Pending[:0]
-	for _, pending := range groupState.Pending {
-		if pending.Consumer == consumer {
-			removedPending++
-			continue
+	var orphanedPending int64
+	for i := range groupState.Pending {
+		if groupState.Pending[i].Consumer == consumer {
+			orphanedPending++
+			groupState.Pending[i].Consumer = ""
 		}
-		keptPending = append(keptPending, pending)
 	}
-	groupState.Pending = keptPending
 	copy(groupState.Consumers[consumerIndex:], groupState.Consumers[consumerIndex+1:])
 	groupState.Consumers = groupState.Consumers[:len(groupState.Consumers)-1]
 	if err := s.publishStreamStateLocked(sh, key, e, state); err != nil {
 		return 0, err
 	}
-	return removedPending, nil
+	return orphanedPending, nil
 }

@@ -109,6 +109,9 @@ func (s *Server) CancelBlockingStreams() {
 }
 
 func (s *Server) executeBlockingStream(args [][]byte, cancel <-chan struct{}) ([]byte, error) {
+	if isXReadGroupCommand(args) {
+		return s.executeBlockingXReadGroup(args, cancel)
+	}
 	request, err := parseXRead(args)
 	if err != nil {
 		return nil, err
@@ -137,6 +140,48 @@ func (s *Server) executeBlockingStream(args [][]byte, cancel <-chan struct{}) ([
 		if len(results) > 0 {
 			s.unregisterStreamWaiter(waiter)
 			return streamReadResponse(results), nil
+		}
+		select {
+		case <-waiter.ch:
+			s.unregisterStreamWaiter(waiter)
+			if s.streamBlockingStopped() {
+				return nil, errBlockingCanceled
+			}
+		case <-timeoutC:
+			s.unregisterStreamWaiter(waiter)
+			return []byte("*-1\r\n"), nil
+		case <-cancel:
+			s.unregisterStreamWaiter(waiter)
+			return nil, errBlockingClientGone
+		}
+	}
+}
+
+func (s *Server) executeBlockingXReadGroup(args [][]byte, cancel <-chan struct{}) ([]byte, error) {
+	request, err := parseXReadGroup(args)
+	if err != nil {
+		return nil, err
+	}
+	if !xreadGroupCanBlock(request) {
+		return s.executeDurable(args)
+	}
+	timer, timeoutC := blockingTimer(request.block)
+	if timer != nil {
+		defer timer.Stop()
+	}
+	for {
+		waiter, ok := s.registerStreamWaiter(request.keys)
+		if !ok {
+			return nil, errBlockingCanceled
+		}
+		response, err := s.executeDurable(args)
+		if err != nil {
+			s.unregisterStreamWaiter(waiter)
+			return nil, err
+		}
+		if string(response) != "*-1\r\n" {
+			s.unregisterStreamWaiter(waiter)
+			return response, nil
 		}
 		select {
 		case <-waiter.ch:

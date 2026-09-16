@@ -110,6 +110,8 @@ func (s *Server) executeDurable(args [][]byte) ([]byte, error) {
 	var affected []string
 	if cmd == "ZMPOP" {
 		affected = zsetMPopKeys(args)
+	} else if cmd == "XREADGROUP" {
+		affected = streamGroupReadKeys(args)
 	} else {
 		last := info.last
 		if last < 0 {
