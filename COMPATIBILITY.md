@@ -12,10 +12,17 @@ surface is implemented, including blocking reads, pending-entry management,
 claiming, XINFO introspection, lifetime stream metadata, MAXLEN/MINID trimming,
 Redis 8.2 `KEEPREF` / `DELREF` / `ACKED` policies, `XDELEX`, and `XACKDEL`.
 
-The largest remaining Redis compatibility families are Pub/Sub, transactions,
-HyperLogLog, GEO, scripting/functions, RESP3, and broader CLIENT/CONFIG/ACL/tooling
-compatibility. Replication, Sentinel-style failover, and Cluster remain outside
-the current single-node scope.
+Classic and sharded Pub/Sub are implemented, along with connection-scoped Redis
+transactions and optimistic locking (`MULTI`, `EXEC`, `DISCARD`, `WATCH`,
+`UNWATCH`). Transaction coverage includes queue-time EXECABORT behavior, runtime
+errors inside EXEC arrays, cross-client WATCH invalidation, change-then-restore
+invalidation, nonblocking behavior for blocking commands executed inside MULTI,
+and single-frame logical AOF persistence for transaction results.
+
+The largest remaining Redis compatibility families are HyperLogLog, GEO,
+scripting/functions, RESP3, and broader CLIENT/CONFIG/ACL/tooling compatibility.
+Replication, Sentinel-style failover, and Cluster remain outside the current
+single-node scope.
 
 ## Client compatibility
 
@@ -52,8 +59,8 @@ protocol version`.
 | ZSET | Broad support | Native packed datatype, ranges, algebra, blocking pops/multipops |
 | STREAM | Broad support | Core stream reads/writes, consumer groups, PEL, claims, XINFO, trimming/reference policies |
 | JSON | Partial | `JSON.SET`, `JSON.GET`, `JSON.TYPE`, `JSON.DEL` only |
-| Pub/Sub | Not implemented | Planned next |
-| Transactions | Not implemented | `MULTI`, `EXEC`, `WATCH`, `UNWATCH`, `DISCARD` |
+| Pub/Sub | Broad support | Classic and sharded Pub/Sub, pattern subscriptions, introspection, RESP2 subscribed-mode behavior |
+| Transactions | Broad support | `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH`, queue/runtime error semantics, AOF transaction frames |
 | HyperLogLog | Not implemented | `PFADD`, `PFCOUNT`, `PFMERGE` |
 | GEO | Not implemented | GEO command family |
 | Lua / Functions | Not implemented | EVAL/SCRIPT/FUNCTION/FCALL scope not yet implemented |
@@ -147,6 +154,50 @@ exact except for an explicit `LIMIT` cap. A final differential Redis edge-case
 audit remains useful, but no known core Streams command-family gap is currently
 tracked.
 
+## Pub/Sub
+
+Supported commands and subcommands include:
+
+```text
+SUBSCRIBE UNSUBSCRIBE PSUBSCRIBE PUNSUBSCRIBE PUBLISH
+SSUBSCRIBE SUNSUBSCRIBE SPUBLISH
+PUBSUB CHANNELS NUMSUB NUMPAT SHARDCHANNELS SHARDNUMSUB HELP
+```
+
+Classic and sharded Pub/Sub use separate subscription namespaces. Pattern
+subscriptions use the same Redis-style binary-safe glob matcher as SCAN. RESP2
+subscribed-mode command restrictions, subscribed `PING`, `RESET`, asynchronous
+socket pushes, disconnect cleanup, and serialized complete-response writes are
+covered by TCP/race tests.
+
+## Transactions
+
+Supported commands:
+
+```text
+MULTI EXEC DISCARD WATCH UNWATCH
+```
+
+Transaction behavior includes:
+
+- connection-scoped queues and WATCH state;
+- queue-time validation errors causing `EXECABORT` without executing queued work;
+- runtime command errors returned as individual EXEC array elements while later
+  queued commands continue;
+- atomic command execution relative to other clients through global command
+  serialization;
+- cross-client WATCH invalidation, including change-then-restore detection;
+- expiration invalidation of watched keys;
+- `UNWATCH`, successful/failed EXEC cleanup, and disconnect cleanup;
+- blocking LIST/ZSET/STREAM operations becoming nonblocking when executed inside
+  a transaction;
+- AOF transaction results persisted as one logical checksummed frame with rollback
+  on append failure.
+
+Current RESP2 limitation: subscription-state commands (`SUBSCRIBE`, `PSUBSCRIBE`,
+`SSUBSCRIBE`, unsubscribe variants, `RESET`) are not supported as queued MULTI
+commands. `PUBLISH` and `SPUBLISH` remain ordinary queueable commands.
+
 ## SCAN family
 
 `SCAN`, `HSCAN`, `SSCAN`, and `ZSCAN` support cursor iteration, `MATCH`, and
@@ -180,14 +231,12 @@ It is not a complete RedisJSON implementation.
 
 Prioritized backlog:
 
-1. Pub/Sub.
-2. Transactions / optimistic locking.
-3. HyperLogLog.
-4. GEO.
-5. Scripting / Redis Functions scope.
-6. SORT/SORT_RO, COPY/MIGRATE scope, CLIENT/CONFIG/ACL compatibility, and COMMAND metadata completeness.
-7. RESP3 where required by clients/tooling.
-8. Replication/failover/cluster only after the single-node compatibility target is mature.
+1. HyperLogLog.
+2. GEO.
+3. Scripting / Redis Functions scope.
+4. SORT/SORT_RO, COPY/MIGRATE scope, CLIENT/CONFIG/ACL compatibility, and COMMAND metadata completeness.
+5. RESP3 where required by clients/tooling.
+6. Replication/failover/cluster only after the single-node compatibility target is mature.
 
 See GitHub issue #55 and `PLAN.md` for the working roadmap.
 
