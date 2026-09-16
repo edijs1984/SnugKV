@@ -200,11 +200,17 @@ func (s *Server) executeBlockingXReadGroup(args [][]byte, cancel <-chan struct{}
 }
 
 func (s *Server) signalStreamAvailability(args [][]byte, response []byte) {
-	if len(args) < 2 || len(response) == 0 || !strings.EqualFold(string(args[0]), "XADD") {
+	if len(args) == 0 || len(response) == 0 {
 		return
 	}
-	if string(response) == "$-1\r\n" {
-		return
+	switch strings.ToUpper(string(args[0])) {
+	case "XADD":
+		if len(args) >= 2 && string(response) != "$-1\r\n" {
+			s.signalStreamKey(string(args[1]))
+		}
+	case "COPY":
+		if len(args) >= 3 && string(response) == ":1\r\n" && s.store.Type(string(args[2])) == "stream" {
+			s.signalStreamKey(string(args[2]))
+		}
 	}
-	s.signalStreamKey(string(args[1]))
 }
