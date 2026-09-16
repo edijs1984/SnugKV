@@ -8,8 +8,9 @@ import (
 )
 
 type streamConsumer struct {
-	Name   string
-	SeenAt int64
+	Name     string
+	SeenAt   int64
+	ActiveAt int64
 }
 
 type streamPending struct {
@@ -93,12 +94,13 @@ func appendStreamGroups(dst []byte, groups []streamGroup) ([]byte, error) {
 		dst = appendStreamUvarint(dst, uint64(len(group.Consumers)))
 		seenConsumers := make(map[string]struct{}, len(group.Consumers))
 		for _, consumer := range group.Consumers {
-			if _, exists := seenConsumers[consumer.Name]; exists || consumer.SeenAt < 0 {
+			if _, exists := seenConsumers[consumer.Name]; exists || consumer.SeenAt < 0 || consumer.ActiveAt < 0 {
 				return nil, errors.New("ERR invalid stream consumer metadata")
 			}
 			seenConsumers[consumer.Name] = struct{}{}
 			dst = appendStreamString(dst, consumer.Name)
 			dst = appendStreamUvarint(dst, uint64(consumer.SeenAt))
+			dst = appendStreamUvarint(dst, uint64(consumer.ActiveAt))
 		}
 		pending := append([]streamPending(nil), group.Pending...)
 		sort.Slice(pending, func(i, j int) bool { return pending[i].ID.less(pending[j].ID) })
@@ -126,7 +128,7 @@ func appendStreamGroups(dst []byte, groups []streamGroup) ([]byte, error) {
 	return dst, nil
 }
 
-func readStreamGroups(data []byte, offset *int) ([]streamGroup, error) {
+func readStreamGroups(data []byte, offset *int, version byte) ([]streamGroup, error) {
 	count, err := readStreamUvarint(data, offset)
 	if err != nil || count > uint64(maxPackedStreamBytes) {
 		return nil, errors.New("invalid packed stream")
@@ -174,7 +176,14 @@ func readStreamGroups(data []byte, offset *int) ([]streamGroup, error) {
 			if err != nil || seenAt > math.MaxInt64 {
 				return nil, errors.New("invalid packed stream")
 			}
-			group.Consumers = append(group.Consumers, streamConsumer{Name: consumerName, SeenAt: int64(seenAt)})
+			activeAt := seenAt
+			if version >= packedStreamHeaderV3[2] {
+				activeAt, err = readStreamUvarint(data, offset)
+				if err != nil || activeAt > math.MaxInt64 {
+					return nil, errors.New("invalid packed stream")
+				}
+			}
+			group.Consumers = append(group.Consumers, streamConsumer{Name: consumerName, SeenAt: int64(seenAt), ActiveAt: int64(activeAt)})
 		}
 		pendingCount, err := readStreamUvarint(data, offset)
 		if err != nil || pendingCount > uint64(maxPackedStreamBytes) {
