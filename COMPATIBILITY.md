@@ -14,15 +14,14 @@ Redis 8.2 `KEEPREF` / `DELREF` / `ACKED` policies, `XDELEX`, and `XACKDEL`.
 
 Classic and sharded Pub/Sub are implemented, along with connection-scoped Redis
 transactions and optimistic locking (`MULTI`, `EXEC`, `DISCARD`, `WATCH`,
-`UNWATCH`). Transaction coverage includes queue-time EXECABORT behavior, runtime
-errors inside EXEC arrays, cross-client WATCH invalidation, change-then-restore
-invalidation, nonblocking behavior for blocking commands executed inside MULTI,
-and single-frame logical AOF persistence for transaction results.
+`UNWATCH`). HyperLogLog (`PFADD`, `PFCOUNT`, `PFMERGE`) and the modern GEO surface
+(`GEOADD`, `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH`, `GEOSEARCHSTORE`) are also
+implemented.
 
-The largest remaining Redis compatibility families are HyperLogLog, GEO,
-scripting/functions, RESP3, and broader CLIENT/CONFIG/ACL/tooling compatibility.
-Replication, Sentinel-style failover, and Cluster remain outside the current
-single-node scope.
+The largest remaining Redis compatibility families are scripting/functions,
+RESP3, `SORT`/`SORT_RO`, COPY/migration scope, and broader CLIENT/CONFIG/ACL/tooling
+compatibility. Replication, Sentinel-style failover, and Cluster remain outside
+the current single-node scope.
 
 ## Client compatibility
 
@@ -61,8 +60,8 @@ protocol version`.
 | JSON | Partial | `JSON.SET`, `JSON.GET`, `JSON.TYPE`, `JSON.DEL` only |
 | Pub/Sub | Broad support | Classic and sharded Pub/Sub, pattern subscriptions, introspection, RESP2 subscribed-mode behavior |
 | Transactions | Broad support | `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH`, queue/runtime error semantics, AOF transaction frames |
-| HyperLogLog | Not implemented | `PFADD`, `PFCOUNT`, `PFMERGE` |
-| GEO | Not implemented | GEO command family |
+| HyperLogLog | Supported | `PFADD`, `PFCOUNT`, `PFMERGE`; Redis-compatible serialized HLL strings |
+| GEO | Modern surface supported | `GEOADD`, `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH`, `GEOSEARCHSTORE`; deprecated `GEORADIUS*` commands are not implemented |
 | Lua / Functions | Not implemented | EVAL/SCRIPT/FUNCTION/FCALL scope not yet implemented |
 | RESP3 | Not implemented | RESP2 only |
 | Replication / Sentinel / Cluster | Not implemented | Outside current single-node scope |
@@ -119,6 +118,42 @@ ZRANDMEMBER ZSCAN ZRANGESTORE
 
 `ZRANGE` supports rank mode plus `BYSCORE`, `BYLEX`, `REV`, `LIMIT`, and
 `WITHSCORES` where applicable. ZSET algebra accepts SET and ZSET inputs.
+
+## HyperLogLog
+
+Supported commands:
+
+```text
+PFADD PFCOUNT PFMERGE
+```
+
+SnugKV stores HyperLogLog values as Redis-compatible STRING values rather than a
+new native datatype. Compatibility coverage includes duplicate additions, unions,
+merge behavior, TTL preservation, invalid-HLL handling, and byte-for-byte Redis
+serialization on the 100,000-member comparison workload used during development.
+
+## GEO
+
+Supported modern commands:
+
+```text
+GEOADD GEODIST GEOHASH GEOPOS GEOSEARCH GEOSEARCHSTORE
+```
+
+GEO uses the same Redis model of storing 52-bit interleaved geospatial hashes as
+ZSET scores. `GEOADD` therefore creates/updates an ordinary ZSET and preserves an
+existing TTL just like `ZADD`. `GEOSEARCHSTORE` replaces the destination and clears
+its previous TTL.
+
+Supported GEOSEARCH forms include `FROMMEMBER` / `FROMLONLAT`, `BYRADIUS` /
+`BYBOX`, `ASC` / `DESC`, `COUNT [ANY]`, `WITHDIST`, `WITHHASH`, `WITHCOORD`, and
+`GEOSEARCHSTORE ... STOREDIST`.
+
+Current implementation note: Redis uses geohash score ranges to prune radius
+searches. SnugKV currently scans and decodes the packed source ZSET, so GEOSEARCH
+is O(source cardinality). This avoids another permanent index but may be slower on
+very large geospatial sets. Deprecated `GEORADIUS`, `GEORADIUSBYMEMBER`, and their
+read-only variants are not currently implemented.
 
 ## STREAM
 
@@ -231,12 +266,13 @@ It is not a complete RedisJSON implementation.
 
 Prioritized backlog:
 
-1. HyperLogLog.
-2. GEO.
-3. Scripting / Redis Functions scope.
-4. SORT/SORT_RO, COPY/MIGRATE scope, CLIENT/CONFIG/ACL compatibility, and COMMAND metadata completeness.
+1. Scripting / Redis Functions scope.
+2. `SORT` / `SORT_RO`.
+3. `COPY` and migration scope decision.
+4. CLIENT/CONFIG/ACL compatibility and COMMAND metadata completeness.
 5. RESP3 where required by clients/tooling.
-6. Replication/failover/cluster only after the single-node compatibility target is mature.
+6. Deprecated `GEORADIUS*` aliases if legacy client compatibility justifies them.
+7. Replication/failover/cluster only after the single-node compatibility target is mature.
 
 See GitHub issue #55 and `PLAN.md` for the working roadmap.
 
