@@ -141,18 +141,20 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 	// connection goroutine is blocked reading the next subscriber command.
 	// Serialize complete responses so partial socket writes cannot interleave.
 	writer := &serializedResponseWriter{server: s, conn: conn}
-	session := newPubSubSession(s.server, func(response []byte) error {
+	pubSession := newPubSubSession(s.server, func(response []byte) error {
 		err := writer.write(response)
 		if err != nil {
 			_ = peer.Close()
 		}
 		return err
 	})
-	defer session.close()
+	defer pubSession.close()
+	txSession := newTransactionSession(s.server)
+	defer txSession.close()
 
 	decoder, _ := resp.NewDecoder(bufio.NewReader(conn), s.config.Limits())
 	for {
-		if session.active() {
+		if pubSession.active() {
 			// Pub/Sub subscriptions are long-lived. Message delivery is outbound,
 			// so an ordinary request read timeout must not kill an idle subscriber.
 			if err := conn.SetReadDeadline(time.Time{}); err != nil {
@@ -166,15 +168,10 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			if err == io.EOF {
 				return
 			}
-
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				// Normal idle/read timeout for a non-subscribed connection.
 				return
 			}
-
 			log.Printf("RESP decode error: %v", err)
-
-			// Protocol error: reply once and close.
 			_ = writer.write([]byte("-ERR invalid RESP\r\n"))
 			return
 		}
@@ -201,7 +198,31 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			}
 		}
 
-		if handled, quit, pubSubErr := s.server.executePubSubConnectionCommand(session, msg); handled {
+		// RESP2 subscribed clients remain in Pub/Sub mode. This must run before
+		// transaction handling so MULTI is rejected by the subscribed-mode rules.
+		if pubSession.active() {
+			if handled, quit, pubSubErr := s.server.executePubSubConnectionCommand(pubSession, msg); handled {
+				if pubSubErr != nil && writer.write(errorResponse(pubSubErr)) != nil {
+					return
+				}
+				if quit {
+					return
+				}
+				continue
+			}
+		}
+
+		if handled, txResponse, txErr := s.server.executeTransactionConnectionCommand(txSession, msg); handled {
+			if txErr != nil {
+				txResponse = errorResponse(txErr)
+			}
+			if writer.write(txResponse) != nil {
+				return
+			}
+			continue
+		}
+
+		if handled, quit, pubSubErr := s.server.executePubSubConnectionCommand(pubSession, msg); handled {
 			if pubSubErr != nil {
 				if writer.write(errorResponse(pubSubErr)) != nil {
 					return
@@ -241,7 +262,7 @@ func (s *TCPServer) write(conn net.Conn, response []byte) error {
 func errorResponse(err error) []byte {
 	message := strings.TrimSpace(err.Error())
 	message = strings.NewReplacer("\r", " ", "\n", " ").Replace(message)
-	if !strings.HasPrefix(message, "ERR ") && !strings.HasPrefix(message, "NOPROTO ") && !strings.HasPrefix(message, "OOM ") && !strings.HasPrefix(message, "WRONGTYPE ") {
+	if !strings.HasPrefix(message, "ERR ") && !strings.HasPrefix(message, "NOPROTO ") && !strings.HasPrefix(message, "OOM ") && !strings.HasPrefix(message, "WRONGTYPE ") && !strings.HasPrefix(message, "EXECABORT ") {
 		message = "ERR " + message
 	}
 	return []byte("-" + message + "\r\n")
@@ -270,4 +291,17 @@ func (s *TCPServer) OptimizeSample() {
 	if s.server.optimizer != nil {
 		s.server.optimizer.Sample(256)
 	}
+}
+
+// Maintain performs semantic expiration cleanup under the same serialization
+// mutex used by commands and EXEC, so an expiry sweep cannot interleave halfway
+// through a transaction. Optimizer rewrites are logical no-ops and may remain
+// asynchronous.
+func (s *TCPServer) Maintain() {
+	s.server.durableMu.Lock()
+	s.server.refreshWatchesLocked()
+	s.server.store.CleanupExpiredLimit(1024)
+	s.server.refreshWatchesLocked()
+	s.server.durableMu.Unlock()
+	s.OptimizeSample()
 }
