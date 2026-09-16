@@ -9,7 +9,7 @@ GitHub issue #55 tracks command-family compatibility work.
 The single-node RESP2 engine, logical persistence, memory accounting, optimizer,
 observability, packaging, HASH, SET, LIST, ZSET, broad STREAM/consumer-group
 support, classic/sharded Pub/Sub, Redis-style transactions/WATCH, HyperLogLog,
-modern GEO, and the common Lua scripting path are implemented.
+modern GEO, the common Lua scripting path, and `SORT` / `SORT_RO` are implemented.
 
 Streams include core reads/writes, blocking `XREAD`, consumer groups,
 `XREADGROUP`, PEL inspection/acknowledgement, claims/autoclaims, XINFO,
@@ -28,6 +28,11 @@ Lua scripting now includes `EVAL`, `EVALSHA`, `SCRIPT LOAD/EXISTS/FLUSH`,
 conversion, volatile SHA-1 caching, a bounded runtime, MULTI/EXEC integration,
 WATCH invalidation, and one-frame logical AOF persistence for script results.
 Redis Functions and the remaining scripting-management/read-only commands remain.
+
+`SORT` / `SORT_RO` support LIST/SET/ZSET sources, numeric and ALPHA ordering,
+BY/LIMIT/GET/ASC/DESC options, string/hash external patterns, BY-constant native
+ordering, and durable STORE-to-LIST replacement semantics. Locale-sensitive Redis
+ALPHA collation remains a documented compatibility edge.
 
 HyperLogLog implements `PFADD`, `PFCOUNT`, and `PFMERGE` with Redis-compatible
 STRING serialization. The 100,000-member development comparison produced the
@@ -116,6 +121,18 @@ and 24-byte arena segment descriptors.
 - [ ] Redis Functions (`FUNCTION`, `FCALL`, `FCALL_RO`).
 - [ ] Differential Redis audit of Lua edge cases, command flags, ACL semantics, and OOM/eviction behavior.
 
+### SORT / SORT_RO
+
+- [x] LIST, SET, and ZSET sources with numeric sorting.
+- [x] `ASC`, `DESC`, `ALPHA`, and `LIMIT offset count`.
+- [x] External `BY` patterns and repeated `GET` patterns with first-`*` substitution.
+- [x] String lookup, hash `key-pattern->field` lookup, and `GET #`.
+- [x] BY-constant/native-order behavior including DESC/LIMIT handling.
+- [x] `SORT ... STORE` replacement as native LIST, destination TTL clearing, missing-GET empty-string storage, and empty-result destination deletion.
+- [x] Logical AOF replay for STORE destinations and LIST waiter wakeup.
+- [x] OOM retry protection for source, destination, and resolved external pattern keys.
+- [ ] Direct Redis differential audit across syntax/error edges and locale-sensitive ALPHA ordering.
+
 ### Native STREAM
 
 - [x] Versioned packed stream format with backward decode.
@@ -180,8 +197,8 @@ and 24-byte arena segment descriptors.
 - [x] HyperLogLog: `PFADD`, `PFCOUNT`, `PFMERGE`.
 - [x] Modern GEO: `GEOADD`, `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH`, `GEOSEARCHSTORE`.
 - [x] Lua scripting core: `EVAL`, `EVALSHA`, `SCRIPT LOAD/EXISTS/FLUSH` and common `redis.*` bridge.
+- [x] `SORT` / `SORT_RO`.
 - [ ] Redis Functions and remaining scripting parity/hardening.
-- [ ] `SORT` / `SORT_RO`.
 - [ ] `COPY` and migration scope decision.
 
 ### P2 — client/tooling compatibility
@@ -206,6 +223,7 @@ its complexity with measurements.
 - [ ] Expand third-party client compatibility tests.
 - [ ] Benchmark large GEO sets before adding permanent geospatial indexing.
 - [ ] Benchmark script compile/execute overhead and cache-hit behavior before pooling Lua states or compiled chunks.
+- [ ] Benchmark SORT with large external BY/GET pattern sets and STORE under memory pressure.
 
 ### P4 — distributed features (outside current single-node target)
 
