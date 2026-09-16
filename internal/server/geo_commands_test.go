@@ -35,13 +35,13 @@ func TestGeoAddPositionHashAndDistance(t *testing.T) {
 		t.Fatalf("TYPE Sicily = %q, err=%v", response, err)
 	}
 
-	response, err = s.Execute(geoArgs("ZSCORE", "Sicily", "Palermo"))
-	if err != nil || !strings.Contains(string(response), "3479099956230698") {
-		t.Fatalf("Palermo score = %q, err=%v", response, err)
+	palermoScore, found, err := s.store.ZSetScore("Sicily", []byte("Palermo"))
+	if err != nil || !found || palermoScore != 3479099956230698 {
+		t.Fatalf("Palermo score = %.0f, found=%v, err=%v", palermoScore, found, err)
 	}
-	response, err = s.Execute(geoArgs("ZSCORE", "Sicily", "Catania"))
-	if err != nil || !strings.Contains(string(response), "3479447370796909") {
-		t.Fatalf("Catania score = %q, err=%v", response, err)
+	cataniaScore, found, err := s.store.ZSetScore("Sicily", []byte("Catania"))
+	if err != nil || !found || cataniaScore != 3479447370796909 {
+		t.Fatalf("Catania score = %.0f, found=%v, err=%v", cataniaScore, found, err)
 	}
 
 	response, err = s.Execute(geoArgs("GEOPOS", "Sicily", "Palermo", "Catania", "missing"))
