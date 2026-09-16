@@ -24,7 +24,7 @@ func (s *Store) listPushX(key string, values [][]byte, left bool) (int64, error)
 
 	now := s.now()
 	old, exists := sh.get(key)
-	if !exists || old.expired(now) {
+	if !exists || sh.expired(key, old, now) {
 		if exists {
 			s.remove(sh, key)
 		}
@@ -56,7 +56,7 @@ func (s *Store) listPushX(key string, values [][]byte, left bool) (int64, error)
 		return 0, err
 	}
 	updated := listPreparedEntry(packed)
-	updated.expiresAt = old.expiresAt
+	updated.expiresAt = sh.expirationAt(key, old)
 	if err := s.publish(sh, key, updated); err != nil {
 		return 0, err
 	}
@@ -70,7 +70,7 @@ func (s *Store) ListSet(key string, index int64, value []byte) error {
 
 	now := s.now()
 	e, ok := sh.get(key)
-	if !ok || e.expired(now) {
+	if !ok || sh.expired(key, e, now) {
 		if ok {
 			s.remove(sh, key)
 		}
@@ -98,7 +98,7 @@ func (s *Store) ListSet(key string, index int64, value []byte) error {
 		return err
 	}
 	updated := listPreparedEntry(packed)
-	updated.expiresAt = e.expiresAt
+	updated.expiresAt = sh.expirationAt(key, e)
 	return s.publish(sh, key, updated)
 }
 
@@ -128,7 +128,7 @@ func (s *Store) ListTrim(key string, start, stop int64) error {
 
 	now := s.now()
 	e, ok := sh.get(key)
-	if !ok || e.expired(now) {
+	if !ok || sh.expired(key, e, now) {
 		if ok {
 			s.remove(sh, key)
 		}
@@ -153,7 +153,7 @@ func (s *Store) ListTrim(key string, start, stop int64) error {
 		return err
 	}
 	updated := listPreparedEntry(packed)
-	updated.expiresAt = e.expiresAt
+	updated.expiresAt = sh.expirationAt(key, e)
 	return s.publish(sh, key, updated)
 }
 
@@ -164,7 +164,7 @@ func (s *Store) ListRemove(key string, count int64, value []byte) (int64, error)
 
 	now := s.now()
 	e, ok := sh.get(key)
-	if !ok || e.expired(now) {
+	if !ok || sh.expired(key, e, now) {
 		if ok {
 			s.remove(sh, key)
 		}
@@ -230,7 +230,7 @@ func (s *Store) ListRemove(key string, count int64, value []byte) (int64, error)
 		return 0, err
 	}
 	updated := listPreparedEntry(packed)
-	updated.expiresAt = e.expiresAt
+	updated.expiresAt = sh.expirationAt(key, e)
 	if err := s.publish(sh, key, updated); err != nil {
 		return 0, err
 	}
@@ -244,7 +244,7 @@ func (s *Store) ListInsert(key string, before bool, pivot, value []byte) (int64,
 
 	now := s.now()
 	e, ok := sh.get(key)
-	if !ok || e.expired(now) {
+	if !ok || sh.expired(key, e, now) {
 		if ok {
 			s.remove(sh, key)
 		}
@@ -282,7 +282,7 @@ func (s *Store) ListInsert(key string, before bool, pivot, value []byte) (int64,
 		return 0, err
 	}
 	updated := listPreparedEntry(packed)
-	updated.expiresAt = e.expiresAt
+	updated.expiresAt = sh.expirationAt(key, e)
 	if err := s.publish(sh, key, updated); err != nil {
 		return 0, err
 	}
@@ -295,7 +295,7 @@ func (s *Store) ListPos(key string, value []byte, rank, count, maxLen int64, wit
 	defer sh.mu.RUnlock()
 
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return nil, nil
 	}
 	if e.valueType != TypeList {
