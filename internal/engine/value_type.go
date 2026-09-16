@@ -29,6 +29,7 @@ const (
 	TypeSet
 	TypeList
 	TypeZSet
+	TypeStream
 )
 
 func (t ValueType) String() string {
@@ -55,6 +56,8 @@ func (t ValueType) String() string {
 		return "LIST"
 	case TypeZSet:
 		return "ZSET"
+	case TypeStream:
+		return "STREAM"
 	default:
 		return "UNKNOWN"
 	}
@@ -92,7 +95,6 @@ func classifyValue(value []byte) ValueType {
 				n > uint64(^uint64(0)>>1) {
 				return TypeUint64
 			}
-		}
 	}
 
 	// Canonical FLOAT64.
