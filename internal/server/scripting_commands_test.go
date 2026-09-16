@@ -43,8 +43,9 @@ func TestEvalRedisCallAndPCall(t *testing.T) {
 
 	pcallScript := "local r=redis.pcall('SET','only-key'); return r.err"
 	got := execute(t, s, "EVAL", pcallScript, "0")
-	if !strings.Contains(got, "wrong number of arguments") {
-		t.Fatalf("redis.pcall error = %q", got)
+	want := "$58\r\nERR Wrong number of args calling Redis command from script\r\n"
+	if got != want {
+		t.Fatalf("redis.pcall error = %q, want %q", got, want)
 	}
 
 	status := execute(t, s, "EVAL", "return redis.status_reply('READY')", "0")
