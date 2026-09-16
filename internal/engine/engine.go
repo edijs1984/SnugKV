@@ -121,7 +121,7 @@ func NewWithOptions(options Options) (*Store, error) {
 	if count <= 0 || count&(count-1) != 0 || count > 65536 {
 		return nil, errors.New("shards must be a positive power of two at most 65536")
 	}
-	base := uint64(count) * 512
+	base := structuralMemoryBytes(count)
 	if options.MaxMemory > 0 && options.MaxMemory < base {
 		return nil, ErrOOM
 	}
