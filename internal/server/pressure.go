@@ -54,6 +54,17 @@ func (s *Server) executePressureCommand(args [][]byte) ([]byte, error) {
 }
 
 func (s *Server) executePressure(args [][]byte) ([]byte, error) {
+	return s.executePressureMode(args, true)
+}
+
+// executeTransactionPressure keeps eviction inside the transaction's single
+// durability frame. Evicted keys are captured by the transaction snapshot diff
+// rather than appended to the journal independently.
+func (s *Server) executeTransactionPressure(args [][]byte) ([]byte, error) {
+	return s.executePressureMode(args, false)
+}
+
+func (s *Server) executePressureMode(args [][]byte, journalEvictions bool) ([]byte, error) {
 	result, err := s.executePressureCommand(args)
 	if !errors.Is(err, engine.ErrOOM) || s.eviction == "" || s.eviction == "noeviction" {
 		return result, err
@@ -100,9 +111,7 @@ func (s *Server) executePressure(args [][]byte) ([]byte, error) {
 		if !ok {
 			break
 		}
-		// Durable eviction is logged before deletion and is independent of whether
-		// the pending client write eventually succeeds.
-		if s.journal != nil {
+		if journalEvictions && s.journal != nil {
 			if journalErr := s.journal.Append([]persistence.Record{{Key: []byte(key), Deleted: true}}); journalErr != nil {
 				s.durabilityFailed = true
 				return nil, errors.New("ERR persistence append failed during eviction")
