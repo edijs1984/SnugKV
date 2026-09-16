@@ -13,7 +13,7 @@ func (s *Store) ZSetScores(key string, members [][]byte) ([]float64, []bool, err
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return make([]float64, len(members)), make([]bool, len(members)), nil
 	}
 	if e.valueType != TypeZSet {
@@ -45,7 +45,7 @@ func (s *Store) ZSetPop(key string, count int64, max bool) ([]ZSetItem, error) {
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		if ok {
 			s.remove(sh, key)
 		}
@@ -89,7 +89,7 @@ func (s *Store) ZSetPop(key string, count int64, max bool) ([]ZSetItem, error) {
 		return nil, err
 	}
 	updated := zsetPreparedEntry(packed)
-	updated.expiresAt = e.expiresAt
+	updated.expiresAt = sh.expirationAt(key, e)
 	if err := s.publish(sh, key, updated); err != nil {
 		return nil, err
 	}
@@ -110,7 +110,7 @@ func (s *Store) ZSetMPop(keys []string, count int64, max bool) (string, []ZSetIt
 	for _, key := range keys {
 		sh := s.shardFor(key)
 		e, ok := sh.get(key)
-		if !ok || e.expired(now) {
+		if !ok || sh.expired(key, e, now) {
 			continue
 		}
 		if e.valueType != TypeZSet {
@@ -151,7 +151,7 @@ func (s *Store) ZSetMPop(keys []string, count int64, max bool) (string, []ZSetIt
 			return "", nil, false, err
 		}
 		updated := zsetPreparedEntry(packed)
-		updated.expiresAt = e.expiresAt
+		updated.expiresAt = sh.expirationAt(key, e)
 		if err := s.publish(sh, key, updated); err != nil {
 			return "", nil, false, err
 		}
@@ -167,7 +167,7 @@ func (s *Store) ZSetRandomMembers(key string, count int64) ([]ZSetItem, error) {
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return nil, nil
 	}
 	if e.valueType != TypeZSet {
@@ -222,7 +222,7 @@ func (s *Store) ZSetScan(key string, cursor uint64, count int, pattern string) (
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return 0, nil, nil
 	}
 	if e.valueType != TypeZSet {
@@ -340,7 +340,7 @@ func (s *Store) zsetRangeStore(destination, source string, selectItems func([]ZS
 	sourceShard := s.shardFor(source)
 	e, ok := sourceShard.get(source)
 	var sourceItems []ZSetItem
-	if ok && !e.expired(now) {
+	if ok && !sourceShard.expired(source, e, now) {
 		if e.valueType != TypeZSet {
 			return 0, zsetWrongType()
 		}
