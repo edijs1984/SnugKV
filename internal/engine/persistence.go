@@ -58,6 +58,12 @@ func (s *Store) Export(keys []string) []persistence.Record {
 					panic(err)
 				}
 				record.Value = logical
+			case TypeStream:
+				logical, err := s.streamLogicalValue(sh, e)
+				if err != nil {
+					panic(err)
+				}
+				record.Value = logical
 			default:
 				record.Value = s.decode(sh, e)
 			}
@@ -85,7 +91,7 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 		if len(record.Value) > 32<<20 {
 			return errors.New("ERR recovered value exceeds 32 MiB limit")
 		}
-		if record.ValueType > uint8(TypeZSet) {
+		if record.ValueType > uint8(TypeStream) {
 			return errors.New("ERR recovered value has unknown type")
 		}
 	}
@@ -125,6 +131,11 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 				return errors.New("ERR recovered ZSET value is invalid")
 			}
 			e = zsetPreparedEntry(record.Value)
+		case TypeStream:
+			if _, err := decodePackedStream(record.Value); err != nil {
+				return errors.New("ERR recovered STREAM value is invalid")
+			}
+			e = streamPreparedEntry(record.Value)
 		default:
 			e = s.makeEntry(record.Value)
 
