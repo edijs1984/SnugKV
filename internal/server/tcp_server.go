@@ -139,10 +139,10 @@ func (s *TCPServer) handleConn(conn net.Conn) {
 func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 	// Pub/Sub delivery can write from a publisher's goroutine while this
 	// connection goroutine is blocked reading the next subscriber command.
-	// Serialize all writes on the connection so RESP frames cannot interleave.
-	conn = &serializedWriteConn{Conn: conn}
+	// Serialize complete responses so partial socket writes cannot interleave.
+	writer := &serializedResponseWriter{server: s, conn: conn}
 	session := newPubSubSession(s.server, func(response []byte) error {
-		err := s.write(conn, response)
+		err := writer.write(response)
 		if err != nil {
 			_ = peer.Close()
 		}
@@ -175,17 +175,17 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			log.Printf("RESP decode error: %v", err)
 
 			// Protocol error: reply once and close.
-			_ = s.write(conn, []byte("-ERR invalid RESP\r\n"))
+			_ = writer.write([]byte("-ERR invalid RESP\r\n"))
 			return
 		}
 		if s.adminOnly && !adminAllowed(msg) {
-			if s.write(conn, []byte("-ERR command is unavailable on admin listener\r\n")) != nil {
+			if writer.write([]byte("-ERR command is unavailable on admin listener\r\n")) != nil {
 				return
 			}
 			continue
 		}
 		if !s.adminOnly && s.admin != nil && isAdminCommand(msg) {
-			if s.write(conn, []byte("-ERR use the admin listener\r\n")) != nil {
+			if writer.write([]byte("-ERR use the admin listener\r\n")) != nil {
 				return
 			}
 			continue
@@ -194,7 +194,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			host, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
 			ip := net.ParseIP(host)
 			if ip == nil || !ip.IsLoopback() {
-				if s.write(conn, []byte("-ERR administrative commands require loopback access\r\n")) != nil {
+				if writer.write([]byte("-ERR administrative commands require loopback access\r\n")) != nil {
 					return
 				}
 				continue
@@ -203,7 +203,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 
 		if handled, quit, pubSubErr := s.server.executePubSubConnectionCommand(session, msg); handled {
 			if pubSubErr != nil {
-				if s.write(conn, errorResponse(pubSubErr)) != nil {
+				if writer.write(errorResponse(pubSubErr)) != nil {
 					return
 				}
 			}
@@ -227,7 +227,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 		if err != nil {
 			result = errorResponse(err)
 		}
-		if err = s.write(conn, result); err != nil {
+		if err = writer.write(result); err != nil {
 			return
 		}
 		if len(msg) == 1 && strings.EqualFold(string(msg[0]), "QUIT") {
