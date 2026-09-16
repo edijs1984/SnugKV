@@ -1,8 +1,8 @@
 # Known Limitations
 
-SnugKV is currently an alpha-stage, single-node RESP2 datastore. It has a much
-broader command surface than the original alpha docs described, but it is not a
-complete Redis replacement.
+SnugKV is currently an alpha-stage, single-node RESP2 datastore. It has broad
+coverage across the common Redis datatype families, including Streams, but it is
+not a complete Redis replacement.
 
 ## Protocol
 
@@ -15,18 +15,20 @@ See [COMPATIBILITY.md](COMPATIBILITY.md).
 
 ## Redis command coverage
 
-HASH, SET, LIST, and ZSET are implemented as native datatypes with broad command
-coverage. Strings, counters, expiration, bit operations, key inspection, basic
-JSON, memory inspection, and administration are also implemented. LIST and ZSET
-blocking pop/move operations use waiter/wakeup paths rather than polling.
+Strings, counters, expiration, bit operations, key inspection, HASH, SET, LIST,
+ZSET, Streams/consumer groups, basic JSON, memory inspection, and administration
+are implemented to the documented scope.
 
-Not yet implemented as general Redis-compatible features:
+Major Redis-compatible features still not implemented:
 
-- streams;
 - Pub/Sub;
+- transactions (`MULTI`, `EXEC`, `WATCH`, `UNWATCH`, `DISCARD`);
+- HyperLogLog;
+- GEO;
 - Lua scripting;
 - Redis Functions;
-- transactions (`MULTI`, `EXEC`, `WATCH`, `UNWATCH`, `DISCARD`);
+- RESP3;
+- broad CLIENT / CONFIG / ACL compatibility;
 - replication;
 - Sentinel-style failover;
 - cluster mode;
@@ -34,20 +36,21 @@ Not yet implemented as general Redis-compatible features:
 
 The current JSON commands are not a complete RedisJSON implementation.
 
+Streams are broadly implemented, but Redis 8.2 trimming reference-policy selection
+(`KEEPREF`, `DELREF`, `ACKED`) remains outstanding. Current trimming preserves PEL
+references. SnugKV also has no Redis macro-node representation, so accepted `~`
+stream trimming is exact except for an explicit `LIMIT` cap.
+
 ## Compatibility hardening still in progress
 
 - `SCAN`, `HSCAN`, `SSCAN`, and `ZSCAN` support cursor/MATCH/COUNT behavior, but
-  exact Redis cursor progression and every glob edge case are not guaranteed.
-- Blocking LIST/ZSET waiters are released on server shutdown on all platforms.
-  Linux builds additionally detect TCP peer disconnects while blocked and release
-  the connection-specific waiter without consuming queued protocol bytes. The
-  equivalent proactive socket-disconnect monitor is not yet implemented on
+  exact Redis cursor values/page boundaries are not guaranteed.
+- Blocking LIST/ZSET/STREAM waiters are released on server shutdown on all
+  platforms. Linux builds additionally detect TCP peer disconnects while blocked.
+  Equivalent proactive socket-disconnect monitoring is not yet implemented on
   non-Linux builds.
-
-Legacy string/numeric/bitmap commands guard native HASH/SET/LIST/ZSET values
-instead of decoding packed container bytes. Redis-specific exceptions such as
-`MGET` nil slots, non-destructive `GETDEL` on non-string keys, and destination
-overwrite behavior for `SET`/`BITOP` are covered by regression tests.
+- Some operational/client metadata commands used by Redis tooling are still
+  incomplete even when ordinary application workloads work.
 
 ## Deployment topology
 
@@ -59,7 +62,7 @@ overwrite behavior for `SET`/`BITOP` are covered by regression tests.
 
 SnugKV includes logical AOF/snapshot persistence and recovery testing, including
 truncated-final-frame recovery, checksum-corruption rejection, append rollback,
-and online AOF rewrite.
+online AOF rewrite, and native datatype restore coverage.
 
 For alpha use:
 
@@ -73,38 +76,44 @@ For alpha use:
 includes Go runtime state, goroutine stacks, network/persistence buffers,
 optimizer scratch space, and allocator overhead.
 
-Native container payloads are compact, but the engine currently pays meaningful
-fixed per-key overhead. In 100k-key datatype benchmarks the index reservation was
-about 31.5 B/key and entry/key accounting about 54–55 B/key before container
-payload. This is why one-element HASH/SET/LIST/ZSET values can use more memory than
-Redis even when SnugKV's packed payload is small.
+The sparse 1,000-key / 256-shard / 16-byte-value benchmark improved from 527,768
+to 179,224 accounted bytes, a 66.04% reduction. Current measured sparse layout:
 
-Sparse datasets are a separate weakness: 256 shards, per-shard entry reservation,
-and initial arena segments can dominate memory at around 1,000 keys. Reducing this
-shared overhead is a planned engine-wide optimization.
+- 16-byte index slots;
+- 32-byte common entries;
+- 192 bytes of static shard structure;
+- 24-byte arena segment descriptors;
+- 1,184 entry slots for 1,000 keys in the canonical benchmark.
+
+This removes much of the earlier structural waste, but tiny keys/containers can
+still lose to Redis because fixed per-key index, entry, and arena overhead remains
+material. Further structural changes should be benchmark-driven rather than
+assumed to be wins.
 
 ## Datatype performance characteristics
 
-Native containers currently favor memory efficiency over asymptotically optimal
-large-collection operations:
+Native containers favor memory efficiency over asymptotically optimal very-large
+collection mutation:
 
-- HASH/SET/LIST/ZSET operations may decode and re-encode packed values for mutation.
+- HASH/SET/LIST/ZSET/STREAM mutations may decode and re-encode packed values.
 - ZSET member lookup/update is linear in member count; there is no permanent
   skiplist/tree/member index.
 - lex ZSET operations construct a temporary lexicographic view rather than keeping
-  a second in-memory index.
+  a second permanent index.
 - LIST uses one packed logical blob, so very large head mutations can be O(total
   encoded bytes).
+- Streams use packed logical state, including group/PEL metadata, rather than a
+  Redis radix-tree/listpack layout.
 
-These tradeoffs are intentional for v1 and should be revisited only with workload
-benchmarks that justify extra permanent memory.
+These tradeoffs are intentional for the current single-node design and should be
+revisited only with workload benchmarks that justify extra permanent memory.
 
 ## Performance claims
 
 Benchmark and soak results describe specific workloads and hardware. They are not
-universal performance claims. Current native-container comparisons use SnugKV
-engine-accounted deltas versus Redis `used_memory` deltas, not process RSS.
-Benchmark SnugKV with your own workload before capacity decisions.
+universal performance claims. Current comparisons use SnugKV engine-accounted
+deltas versus Redis `used_memory` deltas, not process RSS. Benchmark SnugKV with
+your own workload before capacity decisions.
 
 See [benchmarks/README.md](benchmarks/README.md).
 
@@ -116,6 +125,6 @@ SnugKV has not received an independent security audit. Follow
 ## Production use
 
 The current alpha is suitable for evaluation, local development, benchmarks,
-experiments, and non-critical caches where data can be recreated. It should not
-be presented as a complete replacement for Redis in mission-critical production
-systems yet.
+experiments, and non-critical caches/queues where data can be recreated. It should
+not be presented as a complete replacement for Redis in mission-critical
+production systems yet.

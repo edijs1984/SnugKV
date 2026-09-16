@@ -34,11 +34,11 @@ redis-cli -p 6380 get example
 ```
 
 See [operations](docs/operations.md) for configuration, persistence, metrics,
-and administration details. See [COMPATIBILITY.md](COMPATIBILITY.md) for tested
-clients and command caveats, [KNOWN-LIMITATIONS.md](KNOWN-LIMITATIONS.md) for
-current boundaries, [PLAN.md](PLAN.md) for the remaining roadmap, and
-[PROGRESS.md](PROGRESS.md) for current implementation evidence. Benchmark details
-are in [benchmarks/README.md](benchmarks/README.md).
+and administration details. See [COMPATIBILITY.md](COMPATIBILITY.md) for the
+current Redis command/type matrix, [KNOWN-LIMITATIONS.md](KNOWN-LIMITATIONS.md)
+for current boundaries, [PLAN.md](PLAN.md) for the remaining roadmap, and
+[PROGRESS.md](PROGRESS.md) for implementation evidence. Benchmark details are in
+[benchmarks/README.md](benchmarks/README.md).
 
 ## Supported command surface
 
@@ -52,27 +52,26 @@ are in [benchmarks/README.md](benchmarks/README.md).
 - SET: `SADD`, `SREM`, `SISMEMBER`, `SMISMEMBER`, `SCARD`, `SMEMBERS`, `SSCAN`, `SUNION`, `SINTER`, `SDIFF`, `SUNIONSTORE`, `SINTERSTORE`, `SDIFFSTORE`, `SMOVE`, `SPOP`, `SRANDMEMBER`.
 - LIST: `LPUSH`, `RPUSH`, `LPUSHX`, `RPUSHX`, `LPOP`, `RPOP`, `LLEN`, `LINDEX`, `LRANGE`, `LSET`, `LTRIM`, `LREM`, `LINSERT`, `LPOS`, `LMOVE`, `RPOPLPUSH`, `BLPOP`, `BRPOP`, `BLMOVE`, `BRPOPLPUSH`.
 - ZSET: `ZADD`, `ZREM`, `ZINCRBY`, `ZSCORE`, `ZMSCORE`, `ZCARD`, `ZCOUNT`, `ZLEXCOUNT`, `ZRANK`, `ZREVRANK`, `ZRANGE`, `ZREVRANGE`, `ZRANGEBYSCORE`, `ZREVRANGEBYSCORE`, `ZRANGEBYLEX`, `ZREVRANGEBYLEX`, `ZREMRANGEBYRANK`, `ZREMRANGEBYSCORE`, `ZREMRANGEBYLEX`, `ZUNION`, `ZINTER`, `ZDIFF`, `ZUNIONSTORE`, `ZINTERSTORE`, `ZDIFFSTORE`, `ZINTERCARD`, `ZPOPMIN`, `ZPOPMAX`, `ZMPOP`, `BZPOPMIN`, `BZPOPMAX`, `BZMPOP`, `ZRANDMEMBER`, `ZSCAN`, `ZRANGESTORE`.
+- STREAM: `XADD`, `XLEN`, `XRANGE`, `XREVRANGE`, `XDEL`, `XTRIM`, `XREAD`, `XGROUP`, `XREADGROUP`, `XACK`, `XPENDING`, `XCLAIM`, `XAUTOCLAIM`, `XINFO`.
 - JSON: `JSON.SET`, `JSON.GET`, `JSON.TYPE`, `JSON.DEL`.
 - Administration: `FLUSHDB`, `FLUSHALL`, `MEMORY`, `SNUG.ENCODING`, `SNUG.MEMORY`, `SNUG.STATS`, `SNUG.COMPACT`, `SNUG.POLICY`, `SNUG.AOFREWRITE`, `SNUG.SHAPES`, `SNUG.CANDIDATES`, `SNUG.TYPE`.
 
-LIST and ZSET blocking commands use per-key waiter/wakeup paths rather than polling,
-and sleeping blockers do not hold the global durability mutex. RESP3 and Redis
-transactions are not implemented; see [COMPATIBILITY.md](COMPATIBILITY.md).
+Blocking LIST, ZSET, `XREAD`, and `XREADGROUP` commands use waiter/wakeup paths
+rather than polling, and sleeping blockers do not hold the global durability
+mutex. RESP3 and Redis transactions are not implemented; see
+[COMPATIBILITY.md](COMPATIBILITY.md).
 
 ## Native container storage
 
-HASH, SET, LIST, and ZSET are native semantic types rather than strings carrying
-Redis-like payloads. Their packed formats are excluded from the generic scalar
-optimizer and are persisted as logical container state.
+HASH, SET, LIST, ZSET, and STREAM are native semantic types rather than strings
+carrying Redis-like payloads. Their packed formats are excluded from the generic
+scalar optimizer and are persisted as logical container state.
 
 - HASH uses canonical packed SH1 and an adaptive shared-field-shape SH2 physical representation.
 - SET uses canonical SS1 plus adaptive singleton and prefix-coded physical forms.
 - LIST uses canonical ordered SL1 storage.
 - ZSET uses adaptive packed SZ formats with integer score delta-varints and member front coding when they reduce size, with float64/raw-member fallback otherwise.
-
-The native format designs are intentionally frozen for v1 unless new benchmark or
-correctness evidence justifies a change. Current optimization work should target
-shared engine overhead before adding more datatype-specific special cases.
+- STREAM uses versioned packed storage with backward decode for earlier stream formats, durable consumer groups/PEL state, lifetime entry metadata, and separate consumer activity timestamps.
 
 ## Memory and benchmarks
 
@@ -80,6 +79,13 @@ The memory limit covers engine-accounted index capacity, arena capacity, entry/k
 charges, and bounded schema/dictionary state. It is not process RSS. Network
 buffers, stacks, persistence buffers, Go runtime state, and optimizer scratch can
 add additional RSS.
+
+The sparse 1,000-key / 256-shard benchmark has been reduced from the original
+527,768 accounted bytes to 179,224 bytes: a 348,544-byte reduction, or 66.04%.
+The current layout in that benchmark uses 16-byte index slots, 32-byte common
+entries, 192 bytes of static shard structure, and 24-byte arena segment
+descriptors. This result is workload-specific and does not imply equivalent RSS
+reduction.
 
 On the recorded 100,000-key datatype benchmarks with 16-byte members/elements,
 SnugKV's measured engine-accounted memory versus Redis `used_memory` delta was:
@@ -89,15 +95,24 @@ SnugKV's measured engine-accounted memory versus Redis `used_memory` delta was:
 - ZSET structured members after score delta + prefix coding: about 17.8% lower at 8 members, 34.1% at 16, 45.5% at 32, and 51.2% at 64.
 - HASH shared schemas: about 13.2% lower at 8 fields, 22.8% at 16, 21.8% at 32, and 22.1% at 64.
 
-Tiny containers can still lose to Redis because SnugKV currently pays substantial
-fixed per-key index/entry overhead. The benchmark page records the exact workload
-and caveats; these figures are engineering measurements, not universal claims.
+Tiny containers can still lose to Redis because fixed per-key/index/arena overhead
+remains significant even after the sparse-memory work. The benchmark page records
+the exact workloads and caveats; these figures are engineering measurements, not
+universal claims.
 
 Raw storage is the default for ordinary scalar values. `-encoding` enables
 verified canonical integer, UUID, and timestamp storage. `-json-shape` and
 `-compression` require `-encoding` and add background shape/dictionary, LZ4, and
-Zstandard candidates. Every selected scalar codec is decoded and compared before
-publication so clients receive exact input bytes.
+Zstandard candidates. Native container types are excluded from the generic scalar
+optimizer.
+
+## Major remaining compatibility work
+
+The next large Redis families are Pub/Sub, transactions/WATCH, HyperLogLog, GEO,
+scripting/functions, RESP3, and client/tooling compatibility (`CLIENT`, `CONFIG`,
+ACL/auth, COMMAND metadata). The small remaining Streams gap is Redis 8.2 trimming
+reference policies (`KEEPREF`, `DELREF`, `ACKED`). See
+[COMPATIBILITY.md](COMPATIBILITY.md) and GitHub issue #55.
 
 ## License
 
