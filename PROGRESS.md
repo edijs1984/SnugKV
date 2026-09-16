@@ -4,17 +4,45 @@
 
 SnugKV now has a broad single-node RESP2 command surface with native HASH, SET,
 LIST, ZSET, and STREAM types, logical durability, memory accounting, adaptive
-scalar encoding, observability, and operational tooling.
+scalar encoding, observability, operational tooling, classic/sharded Pub/Sub,
+and Redis-style transactions with optimistic locking.
 
 The current engineering focus has moved from building the core native datatype
-set to finishing Redis compatibility families and validating release behavior.
-The main remaining application-level gaps are Pub/Sub, transactions/WATCH,
-HyperLogLog, GEO, scripting/functions, RESP3, and client/tooling compatibility.
-Streams are now broadly implemented through Redis 8.2 reference-policy behavior;
-a final differential edge-case audit remains useful but no known core Streams
-command-family gap is currently tracked.
+set to finishing the remaining Redis compatibility families and validating release
+behavior. The main remaining application-level gaps are HyperLogLog, GEO,
+scripting/functions, RESP3, and client/tooling compatibility. Streams are broadly
+implemented through Redis 8.2 reference-policy behavior; a final differential
+edge-case audit remains useful but no known core Streams command-family gap is
+currently tracked.
 
 ## Recently completed
+
+### Transactions / WATCH
+
+- `MULTI`, `EXEC`, `DISCARD`, `WATCH`, and `UNWATCH`.
+- Queue-time validation failures poison the transaction and make EXEC return
+  `EXECABORT` without applying queued writes.
+- Runtime errors are returned as individual EXEC array elements while later
+  queued commands continue.
+- EXEC is serialized against other client commands.
+- WATCH invalidates across clients, including change-then-restore sequences and
+  key expiration.
+- `UNWATCH`, successful/failed EXEC, and disconnects clear transaction state.
+- Blocking LIST/ZSET/STREAM commands execute nonblockingly when reached inside
+  MULTI/EXEC.
+- AOF transaction results are appended as one logical checksummed frame with
+  rollback on append failure.
+- Validation includes focused two-client TCP tests, full race/vet/fuzz gates, and
+  an isolated Python smoke harness that exercises live MULTI/EXEC/WATCH behavior.
+
+### Pub/Sub
+
+- Classic `SUBSCRIBE`, `UNSUBSCRIBE`, `PSUBSCRIBE`, `PUNSUBSCRIBE`, and `PUBLISH`.
+- Sharded `SSUBSCRIBE`, `SUNSUBSCRIBE`, and `SPUBLISH`.
+- `PUBSUB CHANNELS`, `NUMSUB`, `NUMPAT`, `SHARDCHANNELS`, `SHARDNUMSUB`, and HELP.
+- Classic and sharded namespaces are isolated even for identical channel names.
+- RESP2 subscribed-mode command restrictions, subscribed `PING`, `RESET`, async
+  pushes, disconnect cleanup, and serialized complete socket writes.
 
 ### Streams
 
@@ -101,7 +129,8 @@ TTL sidecars, and compact arena segment descriptors.
 - Linux TCP peer-disconnect monitoring cancels blocked commands without consuming
   queued RESP bytes.
 - Logical AOF/snapshot persistence with checksums, restart recovery,
-  truncated-final-frame handling, corruption rejection, and online AOF rewrite.
+  truncated-final-frame handling, corruption rejection, online AOF rewrite, and
+  atomic transaction-frame persistence.
 - Prometheus metrics, separate loopback-only administration listener, Docker,
   Make targets, CI, benchmark harnesses, and soak tooling.
 
@@ -119,8 +148,13 @@ Important durable/multi-key/native-type work also receives focused restart,
 redis-cli/TCP, TTL, WRONGTYPE, OOM/rollback, and production-configuration tests as
 appropriate.
 
-Recent real-server Stream verification includes:
+Recent real-server verification includes:
 
+- transaction queue-time EXECABORT behavior;
+- runtime WRONGTYPE inside EXEC while later queued work still commits;
+- two-client WATCH invalidation and change-then-restore invalidation;
+- `UNWATCH` restoring successful EXEC;
+- blocking `BLPOP` returning immediately when executed inside a transaction;
 - `RETRYCOUNT 0` surviving encode/decode and subsequent stream operations;
 - optimizer-enabled operation without stream corruption;
 - `XAUTOCLAIM` returning deleted PEL IDs and cleaning them up;
@@ -143,15 +177,13 @@ when evaluating CPU tradeoffs.
 
 ## Remaining engineering work
 
-1. Pub/Sub.
-2. Transactions / WATCH.
-3. HyperLogLog.
-4. GEO.
-5. Scripting / Functions scope.
-6. RESP3 and CLIENT/CONFIG/ACL/COMMAND tooling compatibility.
-7. Differential Redis edge-case audit for the completed Streams surface.
-8. Fresh release-scale benchmarks, multi-run variance, million-record datasets,
+1. HyperLogLog.
+2. GEO.
+3. Scripting / Functions scope.
+4. RESP3 and CLIENT/CONFIG/ACL/COMMAND tooling compatibility.
+5. Differential Redis edge-case audit for the completed Streams surface.
+6. Fresh release-scale benchmarks, multi-run variance, million-record datasets,
    broader client compatibility, and retained long-duration soak evidence.
-9. Distributed features only after the single-node target is mature.
+7. Distributed features only after the single-node target is mature.
 
 See `PLAN.md`, `COMPATIBILITY.md`, `KNOWN-LIMITATIONS.md`, and GitHub issue #55.
