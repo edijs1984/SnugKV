@@ -87,6 +87,19 @@ func (s *Server) executeDurableLocked(args [][]byte) ([]byte, error) {
 	if !ok || !info.write {
 		return s.executePressure(args)
 	}
+
+	// SORT is only mutating when STORE is present. Keep ordinary SORT usable as
+	// a read even if the journal has failed, and avoid writing redundant AOF
+	// records for read-only invocations.
+	var sortDestination string
+	if cmd == "SORT" {
+		var hasStore bool
+		sortDestination, hasStore = sortStoreDestination(args)
+		if !hasStore {
+			return s.executePressure(args)
+		}
+	}
+
 	if s.durabilityFailed {
 		return nil, errors.New("ERR persistence is unavailable; restart after repairing storage")
 	}
@@ -127,7 +140,9 @@ func (s *Server) executeDurableLocked(args [][]byte) ([]byte, error) {
 		return s.executePressure(args)
 	}
 	var affected []string
-	if cmd == "ZMPOP" {
+	if cmd == "SORT" {
+		affected = []string{sortDestination}
+	} else if cmd == "ZMPOP" {
 		affected = zsetMPopKeys(args)
 	} else if cmd == "XREADGROUP" {
 		affected = streamGroupReadKeys(args)
