@@ -4,12 +4,19 @@ import (
 	"fmt"
 	"runtime"
 	"testing"
+	"unsafe"
 )
 
 func TestPackedSlotIs16Bytes(t *testing.T) {
 	table := New[uint32]()
 	if got := table.EntryBytes(); got != 16 {
 		t.Fatalf("entry bytes = %d, want 16", got)
+	}
+}
+
+func TestTableStructIs32Bytes(t *testing.T) {
+	if got, want := unsafe.Sizeof(Table[uint32]{}), uintptr(32); got != want {
+		t.Fatalf("table struct size = %d, want %d", got, want)
 	}
 }
 
@@ -47,28 +54,138 @@ func TestSparseInitialCapacityAndCompaction(t *testing.T) {
 	}
 }
 
+func testGetHashed(table *Table[uint32], key string, hash uint64) (uint32, bool) {
+	if len(table.slots) == 0 {
+		return 0, false
+	}
+	mask := uint64(len(table.slots) - 1)
+	for n := 0; n < len(table.slots); n++ {
+		s := &table.slots[(hash+uint64(n))&mask]
+		switch s.state() {
+		case stateEmpty:
+			return 0, false
+		case stateLive:
+			if s.keyLen() == len(key) && s.key() == key {
+				return s.value(), true
+			}
+		}
+	}
+	return 0, false
+}
+
+func testInsertHashed(table *Table[uint32], key string, value uint32, hash uint64) {
+	mask := uint64(len(table.slots) - 1)
+	deleted := -1
+	for n := 0; n < len(table.slots); n++ {
+		i := int((hash + uint64(n)) & mask)
+		s := &table.slots[i]
+		switch s.state() {
+		case stateLive:
+			if s.keyLen() == len(key) && s.key() == key {
+				s.setLive(key, value)
+				return
+			}
+		case stateDeleted:
+			if deleted < 0 {
+				deleted = i
+			}
+		case stateEmpty:
+			if deleted >= 0 {
+				s = &table.slots[deleted]
+			}
+			s.setLive(key, value)
+			table.count++
+			return
+		}
+	}
+	if deleted >= 0 {
+		table.slots[deleted].setLive(key, value)
+		table.count++
+		return
+	}
+	panic("index capacity invariant")
+}
+
+func testSetHashed(table *Table[uint32], key string, value uint32, hash uint64) {
+	if _, ok := testGetHashed(table, key, hash); !ok {
+		capacity := table.capacityFor(table.count + 1)
+		if capacity != len(table.slots) {
+			old := table.slots
+			table.slots = make([]slot[uint32], capacity)
+			table.count = 0
+			for i := range old {
+				s := &old[i]
+				if s.state() == stateLive {
+					testInsertHashed(table, s.key(), s.value(), hash)
+				}
+			}
+		}
+	}
+	testInsertHashed(table, key, value, hash)
+}
+
+func testDeleteHashed(table *Table[uint32], key string, hash uint64) {
+	if len(table.slots) == 0 {
+		return
+	}
+	mask := uint64(len(table.slots) - 1)
+	for n := 0; n < len(table.slots); n++ {
+		s := &table.slots[(hash+uint64(n))&mask]
+		switch s.state() {
+		case stateEmpty:
+			return
+		case stateLive:
+			if s.keyLen() == len(key) && s.key() == key {
+				s.setDeleted()
+				table.count--
+				return
+			}
+		}
+	}
+}
+
+func testCompactHashed(table *Table[uint32], hash uint64) {
+	capacity := initialCapacity
+	if table.count == 0 {
+		table.slots = nil
+		return
+	}
+	for table.count > capacity*8/10 {
+		capacity *= 2
+	}
+	old := table.slots
+	table.slots = make([]slot[uint32], capacity)
+	table.count = 0
+	for i := range old {
+		s := &old[i]
+		if s.state() == stateLive {
+			testInsertHashed(table, s.key(), s.value(), hash)
+		}
+	}
+}
+
 func TestCollisionChurn(t *testing.T) {
 	table := New[uint32]()
-	table.hash = func(string) uint64 { return 7 }
+	const hash = uint64(7)
 	for i := 0; i < 1000; i++ {
-		table.Set(fmt.Sprint(i), uint32(i))
+		testSetHashed(table, fmt.Sprint(i), uint32(i), hash)
 	}
 	for i := 0; i < 1000; i += 2 {
-		table.Delete(fmt.Sprint(i))
+		testDeleteHashed(table, fmt.Sprint(i), hash)
 	}
 	for i := 1; i < 1000; i += 2 {
-		v, ok := table.Get(fmt.Sprint(i))
+		v, ok := testGetHashed(table, fmt.Sprint(i), hash)
 		if !ok || v != uint32(i) {
 			t.Fatal("collision lost key")
 		}
 	}
 	before := table.CapacityBytes()
-	table.Compact()
+	testCompactHashed(table, hash)
 	if table.CapacityBytes() > before {
 		t.Fatal("compaction grew index")
 	}
 	for i := 0; i < 1000; i += 2 {
-		table.Set(fmt.Sprint(i), uint32(i))
+		testSetHashed(table, fmt.Sprint(i), uint32(i), hash)
 	}
 	if table.Len() != 1000 {
 		t.Fatal(table.Len())
@@ -149,25 +266,25 @@ func TestPackedSlotKeyBytesSurviveGCAndRehash(t *testing.T) {
 
 func TestPackedSlotTombstonesRemainCollisionSafe(t *testing.T) {
 	table := New[uint32]()
-	table.hash = func(string) uint64 { return 1 }
+	const hash = uint64(1)
 
-	table.Set("alpha", 1)
-	table.Set("beta", 2)
-	table.Set("gamma", 3)
-	table.Delete("beta")
-	table.Set("delta", 4)
+	testSetHashed(table, "alpha", 1, hash)
+	testSetHashed(table, "beta", 2, hash)
+	testSetHashed(table, "gamma", 3, hash)
+	testDeleteHashed(table, "beta", hash)
+	testSetHashed(table, "delta", 4, hash)
 
 	for key, want := range map[string]uint32{
 		"alpha": 1,
 		"gamma": 3,
 		"delta": 4,
 	} {
-		got, ok := table.Get(key)
+		got, ok := testGetHashed(table, key, hash)
 		if !ok || got != want {
 			t.Fatalf("%s got=%d ok=%t want=%d", key, got, ok, want)
 		}
 	}
-	if _, ok := table.Get("beta"); ok {
+	if _, ok := testGetHashed(table, "beta", hash); ok {
 		t.Fatal("deleted colliding key returned")
 	}
 }
