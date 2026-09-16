@@ -13,6 +13,40 @@ func TestPackedSlotIs16Bytes(t *testing.T) {
 	}
 }
 
+func TestSparseInitialCapacityAndCompaction(t *testing.T) {
+	table := New[uint32]()
+	if got := table.GrowthBytes(1); got != 4*16 {
+		t.Fatalf("first growth = %d, want %d", got, 4*16)
+	}
+
+	for i := 0; i < 3; i++ {
+		table.Set(fmt.Sprintf("k%d", i), uint32(i))
+	}
+	if got := table.CapacityBytes(); got != 4*16 {
+		t.Fatalf("three-key capacity = %d, want %d", got, 4*16)
+	}
+	if got := table.GrowthBytes(1); got != 4*16 {
+		t.Fatalf("fourth-key growth = %d, want %d", got, 4*16)
+	}
+
+	table.Set("k3", 3)
+	if got := table.CapacityBytes(); got != 8*16 {
+		t.Fatalf("four-key capacity = %d, want %d", got, 8*16)
+	}
+
+	table.Delete("k3")
+	table.Compact()
+	if got := table.CapacityBytes(); got != 4*16 {
+		t.Fatalf("compact three-key capacity = %d, want %d", got, 4*16)
+	}
+	for i := 0; i < 3; i++ {
+		got, ok := table.Get(fmt.Sprintf("k%d", i))
+		if !ok || got != uint32(i) {
+			t.Fatalf("post-compact lookup %d got=%d ok=%t", i, got, ok)
+		}
+	}
+}
+
 func TestCollisionChurn(t *testing.T) {
 	table := New[uint32]()
 	table.hash = func(string) uint64 { return 7 }
