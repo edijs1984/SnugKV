@@ -9,6 +9,7 @@ import (
 
 const SegmentBytes = 8 << 10
 const firstSmallSegmentBytes = 256
+const tinyFirstSegmentBytes = 192
 const secondSmallSegmentBytes = 1 << 10
 const segmentMetadata = 32
 const freeBucketCount = 130
@@ -210,15 +211,19 @@ func segmentSizeForBlock(block int) int {
 }
 
 // segmentSizeForAllocation stages small-value growth so sparse shards reserve
-// only what they are likely to use: roughly 256 bytes for the first segment,
-// roughly 1 KiB for the second, then the normal dense segment policy. Only the
-// two sparse stages are rounded to exact block multiples.
+// only what they are likely to use: a tighter 192-byte first segment for the
+// exact 24-byte tiny-value class, roughly 256 bytes for other small classes,
+// roughly 1 KiB for the second segment, then the normal dense segment policy.
+// Sparse stages are rounded to exact block multiples.
 func segmentSizeForAllocation(block, existingSegments int) int {
 	if block > 1024 || existingSegments >= 2 {
 		return segmentSizeForBlock(block)
 	}
 
 	target := firstSmallSegmentBytes
+	if existingSegments == 0 && block == 24 {
+		target = tinyFirstSegmentBytes
+	}
 	if existingSegments == 1 {
 		target = secondSmallSegmentBytes
 	}
