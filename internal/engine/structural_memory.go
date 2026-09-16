@@ -16,6 +16,15 @@ type StructuralMemoryStats struct {
 	LegacyBaselineBytes   uint64
 }
 
+func structuralMemoryPerShard() uint64 {
+	var table index.Table[uint32]
+	return uint64(unsafe.Sizeof(shard{})) + uint64(unsafe.Sizeof(table))
+}
+
+func structuralMemoryBytes(shards int) uint64 {
+	return uint64(shards) * structuralMemoryPerShard()
+}
+
 // StructuralMemory measures the fixed shard backing array plus the separately
 // allocated index.Table object owned by every shard. Dynamic index slots, entry
 // pools, arena segments, free tables, expiration maps, and schemas are reported

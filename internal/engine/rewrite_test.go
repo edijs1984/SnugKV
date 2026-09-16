@@ -236,7 +236,7 @@ func TestShapeStoreAllocatesLazily(t *testing.T) {
 
 func TestLazyShapeStoreRespectsMaxMemory(t *testing.T) {
 	const shards = 1
-	base := uint64(shards) * 512
+	base := structuralMemoryBytes(shards)
 
 	s, err := NewWithOptions(Options{
 		Shards:        shards,

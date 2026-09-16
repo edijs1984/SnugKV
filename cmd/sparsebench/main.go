@@ -49,15 +49,6 @@ func main() {
 	sparse := store.SparseLayout()
 	delta := after.AccountedBytes - before.AccountedBytes
 
-	adjustedBefore := before.AccountedBytes
-	adjustedAfter := after.AccountedBytes
-	if before.AccountedBytes >= structural.LegacyBaselineBytes {
-		adjustedBefore = before.AccountedBytes - structural.LegacyBaselineBytes + structural.TotalBytes
-	}
-	if after.AccountedBytes >= structural.LegacyBaselineBytes {
-		adjustedAfter = after.AccountedBytes - structural.LegacyBaselineBytes + structural.TotalBytes
-	}
-
 	structuralSaving := uint64(0)
 	if structural.LegacyBaselineBytes > structural.TotalBytes {
 		structuralSaving = structural.LegacyBaselineBytes - structural.TotalBytes
@@ -73,12 +64,10 @@ func main() {
 	fmt.Printf("accounted_after: %d\n", after.AccountedBytes)
 	fmt.Printf("accounted_delta: %d\n", delta)
 	fmt.Printf("bytes_per_key_delta: %.2f\n", float64(delta)/float64(*keys))
+	fmt.Printf("bytes_per_key_total: %.2f\n", float64(after.AccountedBytes)/float64(*keys))
 	fmt.Printf("static_structural_bytes: %d\n", structural.TotalBytes)
 	fmt.Printf("legacy_structural_baseline_bytes: %d\n", structural.LegacyBaselineBytes)
 	fmt.Printf("structural_saving_vs_legacy_bytes: %d\n", structuralSaving)
-	fmt.Printf("structural_adjusted_accounted_before: %d\n", adjustedBefore)
-	fmt.Printf("structural_adjusted_accounted_after: %d\n", adjustedAfter)
-	fmt.Printf("bytes_per_key_structural_adjusted_total: %.2f\n", float64(adjustedAfter)/float64(*keys))
 	fmt.Printf("index_reserved_bytes: %d\n", after.IndexReservedBytes)
 	fmt.Printf("entry_bytes: %d\n", after.EntryBytes)
 	fmt.Printf("arena_bytes: %d\n", after.ArenaBytes)
