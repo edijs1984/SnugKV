@@ -12,7 +12,7 @@ type shard struct {
 	arena        arena.Arena
 	mu           sync.RWMutex
 
-	data    *index.Table[uint32]
+	data    index.Table[uint32]
 	entries []entry
 	freeIDs []uint32
 
