@@ -71,6 +71,8 @@ func (s *Store) Type(key string) string {
 		return "list"
 	case TypeZSet:
 		return "zset"
+	case TypeStream:
+		return "stream"
 	default:
 		return "string"
 	}
