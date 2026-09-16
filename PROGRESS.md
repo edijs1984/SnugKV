@@ -3,157 +3,150 @@
 ## Current milestone
 
 SnugKV now has a broad single-node RESP2 command surface with native HASH, SET,
-LIST, and ZSET types, logical durability, memory accounting, adaptive scalar
-encoding, observability, and operational tooling. The intended v1 HASH/SET/LIST/
-ZSET command/storage surface is implemented, including blocking LIST and ZSET
-operations.
+LIST, ZSET, and STREAM types, logical durability, memory accounting, adaptive
+scalar encoding, observability, and operational tooling.
 
-The immediate engineering focus is no longer datatype storage design. HASH, SET,
-LIST, and ZSET packed formats are frozen for v1, the legacy scalar/native-
-container WRONGTYPE audit is complete for the current command surface, and Linux
-TCP builds now proactively release blocked LIST/ZSET waiters when clients
-disconnect. Remaining work is scan compatibility hardening, shared small-key
-overhead, non-Linux disconnect parity if required, and release-scale validation.
+The current engineering focus has moved from building the core native datatype
+set to finishing Redis compatibility families and validating release behavior.
+The main remaining application-level gaps are Pub/Sub, transactions/WATCH,
+HyperLogLog, GEO, scripting/functions, RESP3, and client/tooling compatibility.
+Streams are now broadly implemented; the remaining stream-specific gap is Redis
+8.2 trimming reference policies (`KEEPREF`, `DELREF`, `ACKED`) plus a final
+differential edge-case audit.
 
-## Completed
+## Recently completed
+
+### Streams
+
+- Native versioned STREAM storage with backward decode.
+- `XADD`, `XLEN`, `XRANGE`, `XREVRANGE`, `XDEL`, `XTRIM`.
+- `MAXLEN` and `MINID` trimming, including XADD trimming and LIMIT-bounded trims.
+- `XREAD` with blocking wakeup, disconnect cancellation, and shutdown cancellation.
+- Durable consumer groups: `XGROUP CREATE/DESTROY/SETID/CREATECONSUMER/DELCONSUMER`.
+- `XREADGROUP`, `XACK`, `XPENDING`.
+- `XCLAIM` and `XAUTOCLAIM`, including ownership transfer, retry counters,
+  `JUSTID`, `FORCE`, idle gating, and deleted-P­­EL cleanup.
+- `XINFO STREAM`, `GROUPS`, `CONSUMERS`, and `HELP`.
+- Persisted `entries-added`, `max-deleted-entry-id`, and distinct consumer
+  attempted/successful interaction timestamps for accurate `idle`/`inactive`.
+- STREAM excluded from the generic scalar optimizer after production-config
+  testing exposed and fixed a corruption path.
+- Export/restore, TTL, rename, WRONGTYPE, race, RESP, and redis-cli smoke coverage.
+
+### Sparse-memory optimization
+
+Canonical workload:
+
+```text
+keys=1000
+value_bytes=16
+shards=256
+```
+
+Original accounted memory:
+
+```text
+527,768 bytes
+527.77 B/key total
+```
+
+Current verified result:
+
+```text
+179,224 bytes
+179.22 B/key total
+130,072-byte dynamic delta
+```
+
+Improvement:
+
+```text
+348,544 bytes saved
+66.04% lower accounted memory
+```
+
+Current measured layout in that benchmark:
+
+```text
+index_slot_bytes                16
+entry_struct_bytes              32
+shard_struct_bytes             192
+arena segment descriptor        24 bytes
+entry_capacity_after          1184
+entry_slots_used              1000
+entry_free_slots               184
+index_reserved_bytes         71040
+entry_bytes                  52888
+arena_bytes                  55296
+```
+
+The reduction came from structural accounting fixes, embedded/compact index
+metadata, smaller sparse index stages, full 4-slot tiny tables plus a zero-size
+negative lookup filter, staged entry growth, smaller/lazy arena allocation, entry
+TTL sidecars, and compact arena segment descriptors.
+
+## Broader completed surface
 
 - Bounded streaming RESP2 parsing with fragmentation, pipelining, binary payloads,
   request limits, deadlines, connection limits, and graceful shutdown.
 - Sharded collision-safe indexing, segmented arenas, expiration, compaction,
   explicit max-memory accounting, OOM rollback, and sampled LRU eviction.
 - String, numeric, bit, expiration, key, JSON, and administration commands.
-- Native HASH with packed SH1 plus shared field-shape optimization and full
-  hash command coverage for the v1 scope.
-- Native SET with canonical packed storage, adaptive singleton/prefix storage,
-  algebra/store, move, pop, random-member, and scan commands.
-- Native LIST with packed ordered storage, compatibility mutations, cross-key
-  moves, and blocking waiter/wakeup commands.
-- Native ZSET with adaptive score/member packing, score/lex/rank ranges, algebra,
-  pop/random/scan/range-store operations, and blocking pop commands.
-- Mixed SET/ZSET algebra with `WEIGHTS` and `AGGREGATE SUM|MIN|MAX|COUNT`.
-- Blocking LIST and ZSET waits register before readiness checks, use per-key wakeup
-  signaling, and do not hold the AOF durability mutex while sleeping.
-- Linux TCP peer-disconnect polling cancels the specific blocked command without
-  consuming queued RESP bytes; server shutdown still releases all blockers on all platforms.
-- Legacy scalar/numeric/bitmap commands reject native HASH/SET/LIST/ZSET keys with
-  Redis-style WRONGTYPE where required instead of decoding packed container bytes.
-- Redis-specific string exceptions are preserved: `MGET` returns nil for non-string
-  slots, `GETDEL` returns nil without deleting non-string keys, plain `SET` may
-  replace any type, and `BITOP` validates sources while allowing destination overwrite.
-- TCP error framing preserves the `-WRONGTYPE` prefix.
-- Logical AOF and snapshot persistence with checksums, restart recovery,
+- Native HASH, SET, LIST, and ZSET with broad Redis-style command coverage.
+- Blocking LIST/ZSET/STREAM waits register before readiness checks and use
+  waiter/wakeup signaling instead of polling.
+- Linux TCP peer-disconnect monitoring cancels blocked commands without consuming
+  queued RESP bytes.
+- Logical AOF/snapshot persistence with checksums, restart recovery,
   truncated-final-frame handling, corruption rejection, and online AOF rewrite.
-- Prometheus metrics and a separate loopback-only administration listener.
-- Strict configuration, container files, Make targets, CI, benchmark harnesses,
-  and soak tooling.
+- Prometheus metrics, separate loopback-only administration listener, Docker,
+  Make targets, CI, benchmark harnesses, and soak tooling.
 
-## Current verification
+## Current verification discipline
 
-- Go 1.27.1 is used locally and in CI.
-- `go test -race -count=1 ./...`, `go vet ./...`, and RESP fuzz are required for every feature branch.
-- Cross-datatype scalar tests exercise GET/GETSET/GETEX, append/range, numeric,
-  bitmap, `SET ... GET`, `MGET`, `GETDEL`, and `BITOP` against native HASH/SET/LIST/ZSET keys.
-- Blocking ZSET tests cover immediate replies, fractional timeout, key priority,
-  wake-on-`ZADD`, `BZMPOP COUNT`, nested RESP2 replies, shutdown cancellation, and
-  validation errors.
-- Per-connection cancellation tests verify both LIST and ZSET waiters unregister
-  promptly when their cancel channel closes.
-- Linux TCP integration tests close real blocked clients and require waiter and
-  connection cleanup; the LIST case includes a pipelined `PING` behind `BLPOP` to
-  prove disconnect detection does not consume queued protocol bytes.
-- A dedicated durability test verifies a sleeping `BZPOPMIN` does not retain
-  `durableMu`; only the producer write and eventual pop append durable state.
-- AOF restart tests cover generic recovery plus native HASH/SET/LIST/ZSET writes.
-- Atomic OOM rollback tests cover multi-key LIST moves, ZSET algebra stores, and
-  ZSET range-store/multi-pop paths.
-- Local redis-cli smoke tests have validated LIST blocking behavior, ZSET core,
-  score ranges, lex ranges, ZSET algebra/store behavior, and blocking/non-blocking ZSET pops.
+Every feature branch is expected to pass:
 
-## Native datatype benchmark results
+```text
+go test -race -count=1 ./...
+go vet ./...
+go test ./internal/resp -run '^$' -fuzz FuzzReadCommand -fuzztime=10s
+```
 
-The following are single-run engineering measurements from the local Linux test
-machine using 100,000 keys and Redis `used_memory` deltas. They are not RSS
-comparisons or universal claims. Exact command/workload details are recorded in
-`benchmarks/README.md`.
+Important durable/multi-key/native-type work also receives focused restart,
+redis-cli/TCP, TTL, WRONGTYPE, OOM/rollback, and production-configuration tests as
+appropriate.
 
-### HASH — 100k hashes
+Recent real-server Stream verification includes:
 
-Shared-schema workload, 16-byte-ish structured fields/values:
+- `RETRYCOUNT 0` surviving encode/decode and subsequent stream operations;
+- optimizer-enabled operation without stream corruption;
+- `XAUTOCLAIM` returning deleted PEL IDs and cleaning them up;
+- exact lifetime `entries-added` and `max-deleted-entry-id` after delete/trim histories;
+- `XTRIM MINID ... LIMIT` behavior;
+- consumer `idle` dropping after an empty read attempt while `inactive` continues
+  from the last successful delivery.
 
-| Fields/hash | Snug B/hash | Redis B/hash | Snug memory saving |
-|---:|---:|---:|---:|
-| 4 | 254.65 | 258.33 | 1.43% |
-| 8 | 390.96 | 450.33 | 13.18% |
-| 16 | 644.26 | 834.33 | 22.78% |
-| 32 | 1252.66 | 1602.33 | 21.82% |
-| 64 | 2445.88 | 3138.33 | 22.06% |
+## Native datatype benchmark snapshot
 
-The mixed 80/20 shared/unique workload wins from 8 fields upward; fully unique
-small hashes remain close to Redis and can lose at low field counts.
+The existing 100k-key benchmark tables remain in `benchmarks/README.md`. Recorded
+results show the packed container payloads become increasingly competitive as
+collection cardinality grows, while tiny collections can still pay more fixed
+per-key overhead than Redis.
 
-### SET — 100k sets, 16-byte members
-
-Sequential/structured members:
-
-| Members/set | Snug B/set | Redis B/set | Snug memory saving |
-|---:|---:|---:|---:|
-| 1 | 127.73 | 91.78 | -39.16% |
-| 4 | 148.87 | 146.33 | -1.73% |
-| 8 | 190.64 | 226.33 | 15.77% |
-| 16 | 254.39 | 386.33 | 34.15% |
-| 32 | 389.71 | 706.33 | 44.83% |
-| 64 | 644.32 | 1346.33 | 52.14% |
-
-Dispersed/random-like members cross over later; 32 and 64 members were still
-lower than Redis in the recorded run.
-
-### LIST — 100k lists, 16-byte elements
-
-| Elements/list | Snug B/list | Redis B/list | Snug memory saving |
-|---:|---:|---:|---:|
-| 1 | 128.56 | 92.03 | -39.70% |
-| 4 | 170.84 | 146.33 | -16.75% |
-| 8 | 255.05 | 226.33 | -12.69% |
-| 16 | 389.56 | 386.33 | -0.84% |
-| 32 | 683.82 | 706.33 | 3.19% |
-| 64 | 1251.95 | 1346.33 | 7.01% |
-
-The SL1 payload itself is compact; the tiny-list deficit is dominated by shared
-per-key/index overhead rather than list encoding.
-
-### ZSET — 100k sorted sets, 16-byte structured members
-
-After adaptive integer-score delta encoding and member front coding:
-
-| Members/zset | Snug B/zset | Redis B/zset | Snug memory saving |
-|---:|---:|---:|---:|
-| 1 | 128.00 | 98.34 | -30.17% |
-| 4 | 166.34 | 162.33 | -2.47% |
-| 8 | 212.38 | 258.33 | 17.79% |
-| 16 | 296.60 | 450.33 | 34.14% |
-| 32 | 454.86 | 834.33 | 45.48% |
-| 64 | 782.73 | 1602.33 | 51.15% |
-
-The adaptive codec falls back to raw members and/or float64 scores when prefix or
-integer-delta encoding would not reduce the physical representation.
-
-## Scalar benchmark results
-
-Recorded 10,000-key scalar runs showed engine-accounted memory reductions of
-43.1% for session JSON and 35.1% for API JSON with JSON-shape encoding. A
-synthetic highly repetitive 4 KiB workload reduced accounted memory by 91.0%
-with LZ4. Random and already-compressed inputs stayed raw. See
-`benchmarks/README.md` for the exact workload caveats.
+Do not turn single runs into universal latency claims; use paired/multi-run tests
+when evaluating CPU tradeoffs.
 
 ## Remaining engineering work
 
-- Scan/glob compatibility audit.
-- Optional non-Linux proactive blocked-client disconnect detection parity.
-- Shared per-key overhead reduction: 24-byte index slots, 40-byte common entries,
-  reservation growth, sparse-shard entry floors, and first arena-segment cost.
-- Fresh dedicated Redis benchmark baselines, multi-run variance, million-record
-  datasets, and retained 24-hour soak evidence.
-- Broader client compatibility testing.
+1. Finish Streams `KEEPREF` / `DELREF` / `ACKED` reference policies and differential audit.
+2. Pub/Sub.
+3. Transactions / WATCH.
+4. HyperLogLog.
+5. GEO.
+6. Scripting / Functions scope.
+7. RESP3 and CLIENT/CONFIG/ACL/COMMAND tooling compatibility.
+8. Fresh release-scale benchmarks, multi-run variance, million-record datasets,
+   broader client compatibility, and retained long-duration soak evidence.
+9. Distributed features only after the single-node target is mature.
 
-See `PLAN.md` for the prioritized backlog and `KNOWN-LIMITATIONS.md` for public
-product boundaries.
+See `PLAN.md`, `COMPATIBILITY.md`, `KNOWN-LIMITATIONS.md`, and GitHub issue #55.
