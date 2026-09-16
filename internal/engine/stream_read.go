@@ -101,7 +101,11 @@ func (s *Store) StreamReadAfter(keys []string, ids []StreamID, count int) ([]Str
 		if err != nil {
 			return nil, err
 		}
-		entries := make([]StreamEntry, 0, count)
+		capacity := count
+		if capacity > len(state.Entries) {
+			capacity = len(state.Entries)
+		}
+		entries := make([]StreamEntry, 0, capacity)
 		for _, item := range state.Entries {
 			if !ids[i].less(item.ID) {
 				continue
