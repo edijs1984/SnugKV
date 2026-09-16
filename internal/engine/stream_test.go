@@ -14,11 +14,14 @@ func streamFields(values ...string) []StreamField {
 }
 
 func TestPackedStreamRoundTrip(t *testing.T) {
-	entries := []StreamEntry{
-		{ID: StreamID{Millis: 1, Sequence: 0}, Fields: streamFields("a", "1", "b", "2")},
-		{ID: StreamID{Millis: 2, Sequence: 3}, Fields: streamFields("c", "three")},
+	state := packedStream{
+		LastID: StreamID{Millis: 2, Sequence: 3},
+		Entries: []StreamEntry{
+			{ID: StreamID{Millis: 1, Sequence: 0}, Fields: streamFields("a", "1", "b", "2")},
+			{ID: StreamID{Millis: 2, Sequence: 3}, Fields: streamFields("c", "three")},
+		},
 	}
-	packed, err := encodePackedStream(entries)
+	packed, err := encodePackedStream(state)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,11 +29,11 @@ func TestPackedStreamRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(decoded) != 2 || decoded[0].ID.String() != "1-0" || decoded[1].ID.String() != "2-3" {
-		t.Fatalf("decoded IDs = %#v", decoded)
+	if decoded.LastID.String() != "2-3" || len(decoded.Entries) != 2 || decoded.Entries[0].ID.String() != "1-0" || decoded.Entries[1].ID.String() != "2-3" {
+		t.Fatalf("decoded state = %#v", decoded)
 	}
-	if string(decoded[0].Fields[1].Field) != "b" || string(decoded[0].Fields[1].Value) != "2" {
-		t.Fatalf("decoded fields = %#v", decoded[0].Fields)
+	if string(decoded.Entries[0].Fields[1].Field) != "b" || string(decoded.Entries[0].Fields[1].Value) != "2" {
+		t.Fatalf("decoded fields = %#v", decoded.Entries[0].Fields)
 	}
 }
 
@@ -78,9 +81,35 @@ func TestStreamAddRangeDeleteTrimAndType(t *testing.T) {
 	if err != nil || trimmed != 1 {
 		t.Fatalf("XTRIM = %d err=%v", trimmed, err)
 	}
-	items, err = s.StreamRange("events", StreamRangeBound{}, StreamRangeBound{ID: StreamID{Millis: ^uint64(0), Sequence: ^uint64(0)}}, 10, false)
+	allStart, _ := ParseStreamRangeBound("-", true)
+	allEnd, _ := ParseStreamRangeBound("+", false)
+	items, err = s.StreamRange("events", allStart, allEnd, 10, false)
 	if err != nil || len(items) != 1 || items[0].ID.String() != "3-0" {
 		t.Fatalf("post-trim range = %#v err=%v", items, err)
+	}
+}
+
+func TestStreamKeepsTopIDWhenAllEntriesDisappear(t *testing.T) {
+	s, _ := NewWithShards(4)
+	if _, _, err := s.StreamAdd("events", "9-0", streamFields("a", "b"), StreamAddOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	deleted, err := s.StreamDelete("events", []StreamID{{Millis: 9}})
+	if err != nil || deleted != 1 {
+		t.Fatalf("delete=%d err=%v", deleted, err)
+	}
+	if got := s.Type("events"); got != "stream" {
+		t.Fatalf("empty stream type=%q", got)
+	}
+	if n, _ := s.StreamLen("events"); n != 0 {
+		t.Fatalf("empty stream len=%d", n)
+	}
+	if _, _, err := s.StreamAdd("events", "8-0", streamFields("a", "c"), StreamAddOptions{}); err == nil {
+		t.Fatal("XADD reused ID below deleted top ID")
+	}
+	id, _, err := s.StreamAdd("events", "9-*", streamFields("a", "d"), StreamAddOptions{})
+	if err != nil || id.String() != "9-1" {
+		t.Fatalf("post-delete partial ID=%s err=%v", id.String(), err)
 	}
 }
 
@@ -112,20 +141,18 @@ func TestStreamPreservesTTLAndRename(t *testing.T) {
 	if !s.Expire("events", time.Hour) {
 		t.Fatal("EXPIRE failed")
 	}
-	before := s.PTTL("events")
 	if _, _, err := s.StreamAdd("events", "2-0", streamFields("c", "d"), StreamAddOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	after := s.PTTL("events")
-	if before <= 0 || after <= 0 {
-		t.Fatalf("TTL lost before=%d after=%d", before, after)
+	if ttl := s.TTL("events"); ttl <= 0 {
+		t.Fatalf("TTL lost: %d", ttl)
 	}
 	handled, renamed, err := s.RenameStream("events", "renamed", false)
 	if err != nil || !handled || !renamed {
 		t.Fatalf("rename handled=%t renamed=%t err=%v", handled, renamed, err)
 	}
-	if s.Type("events") != "none" || s.Type("renamed") != "stream" || s.PTTL("renamed") <= 0 {
-		t.Fatalf("rename state source=%s destination=%s ttl=%d", s.Type("events"), s.Type("renamed"), s.PTTL("renamed"))
+	if s.Type("events") != "none" || s.Type("renamed") != "stream" || s.TTL("renamed") <= 0 {
+		t.Fatalf("rename state source=%s destination=%s ttl=%d", s.Type("events"), s.Type("renamed"), s.TTL("renamed"))
 	}
 }
 
