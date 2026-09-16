@@ -12,8 +12,9 @@ type Journal interface {
 	Append([]persistence.Record) error
 }
 
-// SetJournal is a startup-only operation. Durable commands are serialized so
-// clients cannot observe a mutation whose journal append later fails.
+// SetJournal is a startup-only operation. Command execution is serialized so
+// clients cannot observe a mutation whose journal append later fails, and so a
+// MULTI/EXEC block can execute without another client interleaving commands.
 func (s *Server) SetJournal(j Journal) { s.journal = j }
 
 func (s *Server) Execute(args [][]byte) ([]byte, error) {
@@ -37,8 +38,8 @@ func (s *Server) ExecuteWithCancel(args [][]byte, cancel <-chan struct{}) (respo
 	defer func() { s.metrics.Observe(name, time.Since(start), resultErr != nil) }()
 
 	// Blocking commands must not retain durableMu while sleeping. They wait
-	// outside the persistence critical section, then execute the eventual
-	// non-blocking mutation through executeDurable below.
+	// outside the command-serialization critical section, then execute the
+	// eventual non-blocking mutation through executeDurable below.
 	if isBlockingListCommand(args) {
 		return s.executeBlockingList(args, cancel)
 	}
@@ -52,6 +53,23 @@ func (s *Server) ExecuteWithCancel(args [][]byte, cancel <-chan struct{}) (respo
 }
 
 func (s *Server) executeDurable(args [][]byte) ([]byte, error) {
+	s.durableMu.Lock()
+	defer s.durableMu.Unlock()
+
+	// WATCH must observe every logical change, including a change that is later
+	// restored to the original value by another command. Refresh both before and
+	// after each serialized command so expiration cleanup that happened between
+	// commands is also visible.
+	s.refreshWatchesLocked()
+	result, err := s.executeDurableLocked(args)
+	s.refreshWatchesLocked()
+	return result, err
+}
+
+// executeDurableLocked executes one command while durableMu is already held.
+// Transaction execution uses a different durability path so the whole EXEC is
+// appended as one persistence frame rather than one frame per queued command.
+func (s *Server) executeDurableLocked(args [][]byte) ([]byte, error) {
 	if s.journal == nil {
 		result, err := s.executePressure(args)
 		if err == nil {
@@ -61,8 +79,6 @@ func (s *Server) executeDurable(args [][]byte) ([]byte, error) {
 		}
 		return result, err
 	}
-	s.durableMu.Lock()
-	defer s.durableMu.Unlock()
 	if len(args) == 0 {
 		return s.executePressure(args)
 	}
@@ -75,7 +91,7 @@ func (s *Server) executeDurable(args [][]byte) ([]byte, error) {
 		return nil, errors.New("ERR persistence is unavailable; restart after repairing storage")
 	}
 
-	if cmd == "FLUSHDB" {
+	if cmd == "FLUSHDB" || cmd == "FLUSHALL" {
 		before := s.store.Export(nil)
 
 		result, err := s.executePressure(args)
@@ -83,17 +99,13 @@ func (s *Server) executeDurable(args [][]byte) ([]byte, error) {
 			return result, err
 		}
 
-		reset := []persistence.Record{
-			{Reset: true},
-		}
-
+		reset := []persistence.Record{{Reset: true}}
 		if err = s.journal.Append(reset); err != nil {
 			s.durabilityFailed = true
-
-			if rollbackErr := s.store.Restore(before, true); rollbackErr != nil {
+			rollback := append([]persistence.Record{{Reset: true}}, before...)
+			if rollbackErr := s.store.Restore(rollback, true); rollbackErr != nil {
 				return nil, errors.New("ERR persistence and rollback failed")
 			}
-
 			return nil, errors.New("ERR persistence append failed")
 		}
 
