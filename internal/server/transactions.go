@@ -419,7 +419,8 @@ func (session *transactionSession) handleCommand(args [][]byte) (bool, []byte, e
 		if len(args) != 1 {
 			return true, nil, errors.New("ERR wrong number of arguments for 'exec' command")
 		}
-		return true, sessionExecResult(session)
+		response, err := session.exec()
+		return true, response, err
 	case "DISCARD":
 		if len(args) != 1 {
 			return true, nil, errors.New("ERR wrong number of arguments for 'discard' command")
@@ -452,10 +453,6 @@ func (session *transactionSession) handleCommand(args [][]byte) (bool, []byte, e
 		response, err := session.queueCommand(args)
 		return true, response, err
 	}
-}
-
-func sessionExecResult(session *transactionSession) ([]byte, error) {
-	return session.exec()
 }
 
 func (s *Server) observeTransactionCommand(args [][]byte, started time.Time, err error) {
