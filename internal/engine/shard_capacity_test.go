@@ -12,7 +12,8 @@ func TestEntryCapacityUsesSparseRampThenDenseGrowthFloor(t *testing.T) {
 	for _, tc := range []struct {
 		length, capacity, want int
 	}{
-		{4, 4, 8},
+		{4, 4, 6},
+		{6, 6, 8},
 		{8, 8, 16},
 		{16, 16, 32},
 		{32, 32, 64},
@@ -46,6 +47,12 @@ func TestEntryCapacityUsesFreeSlotsBeforeGrowing(t *testing.T) {
 
 func TestEntryCapacityCanPlanBatchGrowth(t *testing.T) {
 	var sh shard
+	if got := sh.entryCapacityFor(5); got != 6 {
+		t.Fatalf("five-entry sparse batch capacity = %d, want 6", got)
+	}
+	if got := sh.entryCapacityFor(7); got != 8 {
+		t.Fatalf("seven-entry sparse batch capacity = %d, want 8", got)
+	}
 	if got := sh.entryCapacityFor(63); got != 64 {
 		t.Fatalf("batch capacity = %d, want 64", got)
 	}
@@ -73,7 +80,20 @@ func TestEntryCapacityPreservesSparseFourSlotFloor(t *testing.T) {
 		sh.entries = make([]entry, len(sh.entries), sh.entryCapacityFor(1))
 	}
 	sh.entries = append(sh.entries, entry{})
+	if cap(sh.entries) != 6 {
+		t.Fatalf("five-entry sparse growth = %d, want 6", cap(sh.entries))
+	}
+
+	sh.entries = append(sh.entries, entry{})
+	if cap(sh.entries) != 6 {
+		t.Fatalf("six-entry sparse capacity = %d, want 6", cap(sh.entries))
+	}
+
+	if len(sh.entries) == cap(sh.entries) {
+		sh.entries = make([]entry, len(sh.entries), sh.entryCapacityFor(1))
+	}
+	sh.entries = append(sh.entries, entry{})
 	if cap(sh.entries) != 8 {
-		t.Fatalf("sparse shard growth = %d, want 8", cap(sh.entries))
+		t.Fatalf("seven-entry sparse growth = %d, want 8", cap(sh.entries))
 	}
 }
