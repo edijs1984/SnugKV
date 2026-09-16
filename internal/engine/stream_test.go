@@ -15,7 +15,8 @@ func streamFields(values ...string) []StreamField {
 
 func TestPackedStreamRoundTrip(t *testing.T) {
 	state := packedStream{
-		LastID: StreamID{Millis: 2, Sequence: 3},
+		LastID:       StreamID{Millis: 2, Sequence: 3},
+		EntriesAdded: 2,
 		Entries: []StreamEntry{
 			{ID: StreamID{Millis: 1, Sequence: 0}, Fields: streamFields("a", "1", "b", "2")},
 			{ID: StreamID{Millis: 2, Sequence: 3}, Fields: streamFields("c", "three")},
@@ -29,7 +30,7 @@ func TestPackedStreamRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.LastID.String() != "2-3" || len(decoded.Entries) != 2 || decoded.Entries[0].ID.String() != "1-0" || decoded.Entries[1].ID.String() != "2-3" {
+	if decoded.LastID.String() != "2-3" || decoded.EntriesAdded != 2 || len(decoded.Entries) != 2 || decoded.Entries[0].ID.String() != "1-0" || decoded.Entries[1].ID.String() != "2-3" {
 		t.Fatalf("decoded state = %#v", decoded)
 	}
 	if string(decoded.Entries[0].Fields[1].Field) != "b" || string(decoded.Entries[0].Fields[1].Value) != "2" {
