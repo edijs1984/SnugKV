@@ -12,6 +12,7 @@ const maxPackedStreamBytes = 32 << 20
 
 var packedStreamHeaderV1 = [...]byte{'S', 'X', 1}
 var packedStreamHeaderV2 = [...]byte{'S', 'X', 2}
+var packedStreamHeaderV3 = [...]byte{'S', 'X', 3}
 
 type StreamID struct {
 	Millis   uint64
@@ -41,15 +42,20 @@ type StreamEntry struct {
 }
 
 type packedStream struct {
-	LastID  StreamID
-	Entries []StreamEntry
-	Groups  []streamGroup
+	LastID       StreamID
+	EntriesAdded uint64
+	MaxDeletedID StreamID
+	Entries      []StreamEntry
+	Groups       []streamGroup
 }
 
 type StreamAddOptions struct {
 	NoMkStream bool
 	MaxLen     int
 	HasMaxLen  bool
+	MinID      StreamID
+	HasMinID   bool
+	Limit      int
 }
 
 type StreamRangeBound struct {
@@ -80,7 +86,10 @@ func readStreamUvarint(data []byte, offset *int) (uint64, error) {
 }
 
 func encodePackedStream(state packedStream) ([]byte, error) {
-	capacity := len(packedStreamHeaderV2) + 16 + binary.MaxVarintLen64
+	if state.EntriesAdded < uint64(len(state.Entries)) || state.LastID.less(state.MaxDeletedID) {
+		return nil, errors.New("ERR invalid stream lifetime metadata")
+	}
+	capacity := len(packedStreamHeaderV3) + 32 + 2*binary.MaxVarintLen64
 	for _, item := range state.Entries {
 		capacity += 16 + binary.MaxVarintLen64
 		if len(item.Fields) == 0 {
@@ -94,11 +103,10 @@ func encodePackedStream(state packedStream) ([]byte, error) {
 		}
 	}
 	out := make([]byte, 0, capacity)
-	out = append(out, packedStreamHeaderV2[:]...)
-	var fixed [16]byte
-	binary.BigEndian.PutUint64(fixed[:8], state.LastID.Millis)
-	binary.BigEndian.PutUint64(fixed[8:], state.LastID.Sequence)
-	out = append(out, fixed[:]...)
+	out = append(out, packedStreamHeaderV3[:]...)
+	out = appendStreamID(out, state.LastID)
+	out = appendStreamUvarint(out, state.EntriesAdded)
+	out = appendStreamID(out, state.MaxDeletedID)
 	out = appendStreamUvarint(out, uint64(len(state.Entries)))
 	var previous StreamID
 	for i, item := range state.Entries {
@@ -108,9 +116,7 @@ func encodePackedStream(state packedStream) ([]byte, error) {
 		if state.LastID.less(item.ID) {
 			return nil, errors.New("ERR stream last-generated ID precedes an entry")
 		}
-		binary.BigEndian.PutUint64(fixed[:8], item.ID.Millis)
-		binary.BigEndian.PutUint64(fixed[8:], item.ID.Sequence)
-		out = append(out, fixed[:]...)
+		out = appendStreamID(out, item.ID)
 		out = appendStreamUvarint(out, uint64(len(item.Fields)))
 		for _, field := range item.Fields {
 			out = appendStreamUvarint(out, uint64(len(field.Field)))
@@ -136,30 +142,39 @@ func decodePackedStream(data []byte) (packedStream, error) {
 		return packedStream{}, errors.New("invalid packed stream")
 	}
 	version := data[2]
-	if version != packedStreamHeaderV1[2] && version != packedStreamHeaderV2[2] {
+	if version != packedStreamHeaderV1[2] && version != packedStreamHeaderV2[2] && version != packedStreamHeaderV3[2] {
 		return packedStream{}, errors.New("invalid packed stream")
 	}
 	offset := len(packedStreamHeaderV1)
-	state := packedStream{LastID: StreamID{
-		Millis:   binary.BigEndian.Uint64(data[offset : offset+8]),
-		Sequence: binary.BigEndian.Uint64(data[offset+8 : offset+16]),
-	}}
-	offset += 16
+	lastID, err := readStreamID(data, &offset)
+	if err != nil {
+		return packedStream{}, err
+	}
+	state := packedStream{LastID: lastID}
+	if version == packedStreamHeaderV3[2] {
+		state.EntriesAdded, err = readStreamUvarint(data, &offset)
+		if err != nil {
+			return packedStream{}, err
+		}
+		state.MaxDeletedID, err = readStreamID(data, &offset)
+		if err != nil || state.LastID.less(state.MaxDeletedID) {
+			return packedStream{}, errors.New("invalid packed stream")
+		}
+	}
 	count64, err := readStreamUvarint(data, &offset)
 	if err != nil || count64 > uint64(maxPackedStreamBytes) {
+		return packedStream{}, errors.New("invalid packed stream")
+	}
+	if version == packedStreamHeaderV3[2] && state.EntriesAdded < count64 {
 		return packedStream{}, errors.New("invalid packed stream")
 	}
 	state.Entries = make([]StreamEntry, 0, int(count64))
 	var previous StreamID
 	for i := 0; i < int(count64); i++ {
-		if offset+16 > len(data) {
-			return packedStream{}, errors.New("invalid packed stream")
+		id, err := readStreamID(data, &offset)
+		if err != nil {
+			return packedStream{}, err
 		}
-		id := StreamID{
-			Millis:   binary.BigEndian.Uint64(data[offset : offset+8]),
-			Sequence: binary.BigEndian.Uint64(data[offset+8 : offset+16]),
-		}
-		offset += 16
 		if i > 0 && !previous.less(id) || state.LastID.less(id) {
 			return packedStream{}, errors.New("invalid packed stream order")
 		}
@@ -188,10 +203,23 @@ func decodePackedStream(data []byte) (packedStream, error) {
 		state.Entries = append(state.Entries, StreamEntry{ID: id, Fields: fields})
 		previous = id
 	}
-	if version == packedStreamHeaderV2[2] {
-		state.Groups, err = readStreamGroups(data, &offset)
+	if version >= packedStreamHeaderV2[2] {
+		state.Groups, err = readStreamGroups(data, &offset, version)
 		if err != nil {
 			return packedStream{}, err
+		}
+	}
+	if version < packedStreamHeaderV3[2] {
+		state.EntriesAdded = count64
+		for _, group := range state.Groups {
+			if group.EntriesRead >= 0 && uint64(group.EntriesRead) > state.EntriesAdded {
+				state.EntriesAdded = uint64(group.EntriesRead)
+			}
+			for _, pending := range group.Pending {
+				if _, exists := streamEntryByID(state.Entries, pending.ID); !exists && state.MaxDeletedID.less(pending.ID) {
+					state.MaxDeletedID = pending.ID
+				}
+			}
 		}
 	}
 	if offset != len(data) {
@@ -338,11 +366,46 @@ func cloneStreamFields(fields []StreamField) []StreamField {
 	return out
 }
 
+func noteStreamDeleted(state *packedStream, id StreamID) {
+	if state.MaxDeletedID.less(id) {
+		state.MaxDeletedID = id
+	}
+}
+
+func trimStreamMaxLen(state *packedStream, maxLen, limit int) int {
+	remove := len(state.Entries) - maxLen
+	if remove <= 0 {
+		return 0
+	}
+	if limit > 0 && remove > limit {
+		remove = limit
+	}
+	noteStreamDeleted(state, state.Entries[remove-1].ID)
+	state.Entries = state.Entries[remove:]
+	return remove
+}
+
+func trimStreamMinID(state *packedStream, minID StreamID, limit int) int {
+	remove := 0
+	for remove < len(state.Entries) && state.Entries[remove].ID.less(minID) {
+		if limit > 0 && remove >= limit {
+			break
+		}
+		remove++
+	}
+	if remove == 0 {
+		return 0
+	}
+	noteStreamDeleted(state, state.Entries[remove-1].ID)
+	state.Entries = state.Entries[remove:]
+	return remove
+}
+
 func (s *Store) StreamAdd(key, idSpec string, fields []StreamField, options StreamAddOptions) (StreamID, bool, error) {
 	if len(fields) == 0 {
 		return StreamID{}, false, errors.New("ERR wrong number of arguments for 'xadd' command")
 	}
-	if options.HasMaxLen && options.MaxLen < 0 {
+	if options.HasMaxLen && options.MaxLen < 0 || options.Limit < 0 || options.HasMaxLen && options.HasMinID {
 		return StreamID{}, false, errors.New("ERR value is not an integer or out of range")
 	}
 	sh := s.shardFor(key)
@@ -379,10 +442,16 @@ func (s *Store) StreamAdd(key, idSpec string, fields []StreamField, options Stre
 	if err != nil {
 		return StreamID{}, false, err
 	}
+	if state.EntriesAdded == math.MaxUint64 {
+		return StreamID{}, false, errors.New("ERR stream entries-added counter overflow")
+	}
 	state.LastID = id
+	state.EntriesAdded++
 	state.Entries = append(state.Entries, StreamEntry{ID: id, Fields: cloneStreamFields(fields)})
-	if options.HasMaxLen && len(state.Entries) > options.MaxLen {
-		state.Entries = state.Entries[len(state.Entries)-options.MaxLen:]
+	if options.HasMaxLen {
+		trimStreamMaxLen(&state, options.MaxLen, options.Limit)
+	} else if options.HasMinID {
+		trimStreamMinID(&state, options.MinID, options.Limit)
 	}
 	packed, err := encodePackedStream(state)
 	if err != nil {
@@ -502,6 +571,7 @@ func (s *Store) StreamDelete(key string, ids []StreamID) (int64, error) {
 	for _, item := range state.Entries {
 		if _, remove := wanted[item.ID]; remove {
 			deleted++
+			noteStreamDeleted(&state, item.ID)
 			continue
 		}
 		kept = append(kept, item)
@@ -543,14 +613,47 @@ func (s *Store) StreamTrimMaxLen(key string, maxLen, limit int) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	remove := len(state.Entries) - maxLen
-	if remove <= 0 {
+	remove := trimStreamMaxLen(&state, maxLen, limit)
+	if remove == 0 {
 		return 0, nil
 	}
-	if limit > 0 && remove > limit {
-		remove = limit
+	packed, err := encodePackedStream(state)
+	if err != nil {
+		return 0, err
 	}
-	state.Entries = state.Entries[remove:]
+	updated := streamPreparedEntry(packed)
+	updated.expiresAt = sh.expirationAt(key, e)
+	if err := s.publish(sh, key, updated); err != nil {
+		return 0, err
+	}
+	return int64(remove), nil
+}
+
+func (s *Store) StreamTrimMinID(key string, minID StreamID, limit int) (int64, error) {
+	if limit < 0 {
+		return 0, errors.New("ERR value is not an integer or out of range")
+	}
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+	e, ok := sh.get(key)
+	if !ok || sh.expired(key, e, s.now()) {
+		if ok {
+			s.remove(sh, key)
+		}
+		return 0, nil
+	}
+	if e.valueType != TypeStream {
+		return 0, streamWrongType()
+	}
+	state, err := s.streamStateFromEntry(sh, e)
+	if err != nil {
+		return 0, err
+	}
+	remove := trimStreamMinID(&state, minID, limit)
+	if remove == 0 {
+		return 0, nil
+	}
 	packed, err := encodePackedStream(state)
 	if err != nil {
 		return 0, err
