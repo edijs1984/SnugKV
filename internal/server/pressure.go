@@ -8,6 +8,9 @@ import (
 )
 
 func (s *Server) executePressureCommand(args [][]byte) ([]byte, error) {
+	if isPubSubServerCommand(args) {
+		return s.executePubSubServer(args)
+	}
 	if isStreamRefPolicyCommand(args) {
 		return s.executeStreamRefPolicy(args)
 	}
