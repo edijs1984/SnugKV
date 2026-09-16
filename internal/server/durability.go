@@ -91,6 +91,13 @@ func (s *Server) executeDurableLocked(args [][]byte) ([]byte, error) {
 		return nil, errors.New("ERR persistence is unavailable; restart after repairing storage")
 	}
 
+	// Script keys are dynamic and a Redis script may keep mutations performed
+	// before a later runtime error. Snapshot/diff the complete logical DB and
+	// append the script's resulting changes as one persistence frame.
+	if isScriptEvalCommand(args) {
+		return s.executeScriptDurableLocked(args)
+	}
+
 	if cmd == "FLUSHDB" || cmd == "FLUSHALL" {
 		before := s.store.Export(nil)
 
