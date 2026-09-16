@@ -64,6 +64,31 @@ func (session *pubSubSession) subscribe(values [][]byte, pattern bool) error {
 	return session.send(response)
 }
 
+func (session *pubSubSession) subscribeShard(values [][]byte) error {
+	h := session.hub
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if session.closed {
+		return errors.New("ERR client connection is closed")
+	}
+
+	response := make([]byte, 0)
+	for _, value := range values {
+		name := string(value)
+		if _, exists := session.shardChannels[name]; !exists {
+			session.shardChannels[name] = struct{}{}
+			set := h.shardChannels[name]
+			if set == nil {
+				set = make(map[*pubSubSession]struct{})
+				h.shardChannels[name] = set
+			}
+			set[session] = struct{}{}
+		}
+		response = append(response, pubSubConfirmation("ssubscribe", value, false, session.shardSubscriptionCountLocked())...)
+	}
+	return session.send(response)
+}
+
 func (session *pubSubSession) unsubscribe(values [][]byte, pattern bool) error {
 	h := session.hub
 	h.mu.Lock()
@@ -108,6 +133,41 @@ func (session *pubSubSession) unsubscribe(values [][]byte, pattern bool) error {
 	return session.send(response)
 }
 
+func (session *pubSubSession) unsubscribeShard(values [][]byte) error {
+	h := session.hub
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if session.closed {
+		return errors.New("ERR client connection is closed")
+	}
+
+	if len(values) == 0 && len(session.shardChannels) == 0 {
+		return session.send(pubSubConfirmation("sunsubscribe", nil, true, session.shardSubscriptionCountLocked()))
+	}
+	if len(values) == 0 {
+		names := sortedSubscriptionNames(session.shardChannels)
+		values = make([][]byte, 0, len(names))
+		for _, name := range names {
+			values = append(values, []byte(name))
+		}
+	}
+
+	response := make([]byte, 0)
+	for _, value := range values {
+		name := string(value)
+		if _, exists := session.shardChannels[name]; exists {
+			delete(session.shardChannels, name)
+			set := h.shardChannels[name]
+			delete(set, session)
+			if len(set) == 0 {
+				delete(h.shardChannels, name)
+			}
+		}
+		response = append(response, pubSubConfirmation("sunsubscribe", value, false, session.shardSubscriptionCountLocked())...)
+	}
+	return session.send(response)
+}
+
 func (session *pubSubSession) clearLocked() {
 	h := session.hub
 	for channel := range session.channels {
@@ -124,8 +184,16 @@ func (session *pubSubSession) clearLocked() {
 			delete(h.patterns, pattern)
 		}
 	}
+	for channel := range session.shardChannels {
+		set := h.shardChannels[channel]
+		delete(set, session)
+		if len(set) == 0 {
+			delete(h.shardChannels, channel)
+		}
+	}
 	session.channels = make(map[string]struct{})
 	session.patterns = make(map[string]struct{})
+	session.shardChannels = make(map[string]struct{})
 }
 
 func (session *pubSubSession) reset() error {
@@ -171,8 +239,15 @@ func (session *pubSubSession) handleCommand(args [][]byte) (handled, quit bool, 
 			return true, false, fmt.Errorf("ERR wrong number of arguments for '%s' command", strings.ToLower(cmd))
 		}
 		return true, false, session.subscribe(args[1:], cmd == "PSUBSCRIBE")
+	case "SSUBSCRIBE":
+		if len(args) < 2 {
+			return true, false, errors.New("ERR wrong number of arguments for 'ssubscribe' command")
+		}
+		return true, false, session.subscribeShard(args[1:])
 	case "UNSUBSCRIBE", "PUNSUBSCRIBE":
 		return true, false, session.unsubscribe(args[1:], cmd == "PUNSUBSCRIBE")
+	case "SUNSUBSCRIBE":
+		return true, false, session.unsubscribeShard(args[1:])
 	case "RESET":
 		if len(args) != 1 {
 			return true, false, errors.New("ERR wrong number of arguments for 'reset' command")
