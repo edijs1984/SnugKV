@@ -32,22 +32,23 @@ func isSortCommand(args [][]byte) bool {
 }
 
 type sortOptions struct {
-	by        []byte
-	hasBy     bool
-	limit     bool
-	offset    int64
-	count     int64
-	get       [][]byte
-	desc      bool
-	alpha     bool
-	store     string
-	hasStore  bool
+	by       []byte
+	hasBy    bool
+	limit    bool
+	offset   int64
+	count    int64
+	get      [][]byte
+	desc     bool
+	alpha    bool
+	store    string
+	hasStore bool
 }
 
 type sortItem struct {
-	value []byte
-	num   float64
-	alpha []byte
+	value      []byte
+	num        float64
+	alpha      []byte
+	alphaFound bool
 }
 
 func parseSortOptions(args [][]byte, readOnly bool) (sortOptions, error) {
@@ -205,17 +206,29 @@ func sortNumber(value []byte) (float64, error) {
 	return n, nil
 }
 
+func reverseSortItems(items []sortItem) {
+	for i, j := 0, len(items)-1; i < j; i, j = i+1, j-1 {
+		items[i], items[j] = items[j], items[i]
+	}
+}
+
 func (s *Server) sortItems(elements [][]byte, options sortOptions) ([]sortItem, bool, error) {
 	items := make([]sortItem, len(elements))
 	for i, element := range elements {
 		items[i].value = append([]byte(nil), element...)
 	}
 
-	// Redis treats a BY pattern with no wildcard as BY nosort: preserve the
-	// source iteration order and only apply LIMIT / GET processing.
+	// Redis treats a BY pattern with no wildcard as BY nosort. LIST and ZSET
+	// native order is reversed when DESC is requested.
 	dontSort := options.hasBy && bytes.IndexByte(options.by, '*') < 0
-	if dontSort || len(items) < 2 {
-		return items, dontSort, nil
+	if dontSort {
+		if options.desc {
+			reverseSortItems(items)
+		}
+		return items, true, nil
+	}
+	if len(items) < 2 {
+		return items, false, nil
 	}
 
 	for i := range items {
@@ -229,6 +242,7 @@ func (s *Server) sortItems(elements [][]byte, options sortOptions) ([]sortItem, 
 			}
 		}
 		if options.alpha {
+			items[i].alphaFound = found
 			if found {
 				items[i].alpha = append([]byte(nil), weight...)
 			}
@@ -245,19 +259,30 @@ func (s *Server) sortItems(elements [][]byte, options sortOptions) ([]sortItem, 
 		items[i].num = n
 	}
 
-	sort.Slice(items, func(i, j int) bool {
+	sort.SliceStable(items, func(i, j int) bool {
 		cmp := 0
 		if options.alpha {
-			cmp = bytes.Compare(items[i].alpha, items[j].alpha)
+			if options.hasBy && (!items[i].alphaFound || !items[j].alphaFound) {
+				switch {
+				case items[i].alphaFound == items[j].alphaFound:
+					cmp = 0
+				case !items[i].alphaFound:
+					cmp = -1
+				default:
+					cmp = 1
+				}
+			} else {
+				cmp = bytes.Compare(items[i].alpha, items[j].alpha)
+			}
 		} else {
 			if items[i].num < items[j].num {
 				cmp = -1
 			} else if items[i].num > items[j].num {
 				cmp = 1
+			} else {
+				// Redis makes numeric ties deterministic using the element itself.
+				cmp = bytes.Compare(items[i].value, items[j].value)
 			}
-		}
-		if cmp == 0 {
-			cmp = bytes.Compare(items[i].value, items[j].value)
 		}
 		if options.desc {
 			return cmp > 0
@@ -334,9 +359,16 @@ func (s *Server) executeSort(args [][]byte) ([]byte, error) {
 		return nil, err
 	}
 
-	elements, err := s.sortSourceElements(string(args[1]))
+	sourceKey := string(args[1])
+	elements, err := s.sortSourceElements(sourceKey)
 	if err != nil {
 		return nil, err
+	}
+	// Redis forces deterministic ALPHA ordering for SET + BY <constant> when
+	// STORE is used, instead of persisting hash-table iteration order.
+	if sourceType, ok := s.store.ValueTypeOf(sourceKey); ok && sourceType == engine.TypeSet && options.hasStore && options.hasBy && bytes.IndexByte(options.by, '*') < 0 {
+		options.hasBy = false
+		options.alpha = true
 	}
 	items, _, err := s.sortItems(elements, options)
 	if err != nil {
