@@ -26,8 +26,9 @@ type slot[V ~uint32] struct {
 }
 
 type Table[V ~uint32] struct {
-	slots []slot[V]
-	count int
+	slots      []slot[V]
+	count      uint32
+	tinyFilter uint32
 }
 
 func Hash(key string) uint64 {
@@ -39,8 +40,12 @@ func Hash(key string) uint64 {
 	return h
 }
 
+func tinyFilterBits(hash uint64) uint32 {
+	return 1<<uint32(hash&31) | 1<<uint32((hash>>32)&31)
+}
+
 func New[V ~uint32]() *Table[V] { return &Table[V]{} }
-func (t *Table[V]) Len() int     { return t.count }
+func (t *Table[V]) Len() int     { return int(t.count) }
 
 func slotBytes[V ~uint32]() uint64 {
 	return uint64(unsafe.Sizeof(slot[V]{}))
@@ -113,7 +118,7 @@ func (t *Table[V]) capacityFor(n int) int {
 }
 
 func (t *Table[V]) GrowthBytes(additional int) uint64 {
-	return uint64(t.capacityFor(t.count+additional)-len(t.slots)) * slotBytes[V]()
+	return uint64(t.capacityFor(int(t.count)+additional)-len(t.slots)) * slotBytes[V]()
 }
 
 func (t *Table[V]) Get(key string) (V, bool) {
@@ -122,6 +127,12 @@ func (t *Table[V]) Get(key string) (V, bool) {
 		return zero, false
 	}
 	hash := Hash(key)
+	if len(t.slots) == initialCapacity && t.count == initialCapacity {
+		bits := tinyFilterBits(hash)
+		if t.tinyFilter&bits != bits {
+			return zero, false
+		}
+	}
 	mask := uint64(len(t.slots) - 1)
 	for n := 0; n < len(t.slots); n++ {
 		s := &t.slots[(hash+uint64(n))&mask]
@@ -139,11 +150,12 @@ func (t *Table[V]) Get(key string) (V, bool) {
 
 func (t *Table[V]) Set(key string, value V) {
 	if _, ok := t.Get(key); !ok {
-		capacity := t.capacityFor(t.count + 1)
+		capacity := t.capacityFor(int(t.count) + 1)
 		if capacity != len(t.slots) {
 			old := t.slots
 			t.slots = make([]slot[V], capacity)
 			t.count = 0
+			t.tinyFilter = 0
 			for i := range old {
 				s := &old[i]
 				if s.state() == stateLive {
@@ -157,6 +169,9 @@ func (t *Table[V]) Set(key string, value V) {
 
 func (t *Table[V]) insert(key string, value V) {
 	hash := Hash(key)
+	if len(t.slots) == initialCapacity {
+		t.tinyFilter |= tinyFilterBits(hash)
+	}
 	mask := uint64(len(t.slots) - 1)
 	deleted := -1
 	for n := 0; n < len(t.slots); n++ {
@@ -194,6 +209,12 @@ func (t *Table[V]) Delete(key string) {
 		return
 	}
 	hash := Hash(key)
+	if len(t.slots) == initialCapacity && t.count == initialCapacity {
+		bits := tinyFilterBits(hash)
+		if t.tinyFilter&bits != bits {
+			return
+		}
+	}
 	mask := uint64(len(t.slots) - 1)
 	for n := 0; n < len(t.slots); n++ {
 		s := &t.slots[(hash+uint64(n))&mask]
@@ -204,6 +225,9 @@ func (t *Table[V]) Delete(key string) {
 			if s.keyLen() == len(key) && s.key() == key {
 				s.setDeleted()
 				t.count--
+				if t.count == 0 {
+					t.tinyFilter = 0
+				}
 				return
 			}
 		}
@@ -226,14 +250,16 @@ func (t *Table[V]) Compact() {
 	capacity := initialCapacity
 	if t.count == 0 {
 		t.slots = nil
+		t.tinyFilter = 0
 		return
 	}
-	for !capacityAccepts(t.count, capacity) {
+	for !capacityAccepts(int(t.count), capacity) {
 		capacity *= 2
 	}
 	old := t.slots
 	t.slots = make([]slot[V], capacity)
 	t.count = 0
+	t.tinyFilter = 0
 	for i := range old {
 		s := &old[i]
 		if s.state() == stateLive {
