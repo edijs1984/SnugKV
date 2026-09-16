@@ -2,8 +2,9 @@
 
 SnugKV is currently an alpha-stage, single-node RESP2 datastore. It has broad
 coverage across the common Redis datatype families, including Streams, Pub/Sub,
-transactions, HyperLogLog, modern GEO, the common Lua scripting path, and
-`SORT` / `SORT_RO`, but it is not a complete Redis replacement.
+transactions, HyperLogLog, modern GEO, the common Lua scripting path,
+`SORT` / `SORT_RO`, and single-database `COPY`, but it is not a complete Redis
+replacement.
 
 ## Protocol
 
@@ -16,8 +17,8 @@ See [COMPATIBILITY.md](COMPATIBILITY.md).
 
 ## Redis command coverage
 
-Strings, counters, expiration, bit operations, key inspection, HASH, SET, LIST,
-ZSET, SORT/SORT_RO, HyperLogLog, modern GEO, Streams/consumer groups,
+Strings, counters, expiration, bit operations, key inspection, COPY, HASH, SET,
+LIST, ZSET, SORT/SORT_RO, HyperLogLog, modern GEO, Streams/consumer groups,
 classic/sharded Pub/Sub, transactions/WATCH, partial Lua scripting, basic JSON,
 memory inspection, and administration are implemented to the documented scope.
 
@@ -25,7 +26,7 @@ Major Redis-compatible features still not implemented or incomplete:
 
 - Redis Functions (`FUNCTION`, `FCALL`, `FCALL_RO`);
 - full Lua scripting parity (`EVAL_RO`, `EVALSHA_RO`, `SCRIPT KILL/DEBUG`, exact command flags/ACL behavior);
-- full COPY/migration scope;
+- cross-database COPY and broader migration/transfer command scope;
 - RESP3;
 - broad CLIENT / CONFIG / ACL compatibility;
 - replication;
@@ -77,9 +78,23 @@ Current compatibility boundaries:
 - SET native iteration order under a constant/no-wildcard `BY` is implementation
   dependent, so exact order is not promised for that intentionally-unsorted case;
 - Redis ACL checks and Cluster slot restrictions for dynamically resolved BY/GET
-  patterns are outside SnugKV's current no-ACL, single-node scope;
-- focused automated coverage exists, but direct Redis differential testing across
-  syntax/error/collation edges is still pending.
+  patterns are outside SnugKV's current no-ACL, single-node scope.
+
+The implemented common SORT surface has been compared manually against Redis for
+LIST/SET/ZSET sources, BY/GET/hash patterns, nosort, STORE/TTL, missing values,
+and tested error replies.
+
+## COPY boundaries
+
+`COPY source destination [DB 0] [REPLACE]` is implemented. It deep-copies the
+logical value, preserves datatype and absolute expiry, leaves the source intact,
+and can replace any destination type with `REPLACE`.
+
+SnugKV exposes only database 0. `COPY ... DB 0` is accepted, while every nonzero
+DB index is rejected with `ERR DB index is out of range`; cross-database COPY is
+not emulated. Migration/transfer commands and multi-database semantics remain out
+of scope for the current single-node target. Direct Redis differential testing of
+COPY option/error/type/TTL behavior remains a final compatibility-hardening step.
 
 Modern GEO commands are implemented, but deprecated `GEORADIUS`,
 `GEORADIUSBYMEMBER`, `GEORADIUS_RO`, and `GEORADIUSBYMEMBER_RO` aliases are not.
@@ -112,8 +127,8 @@ queued MULTI commands; `PUBLISH` and `SPUBLISH` remain ordinary queueable comman
   dataset differential/performance testing is intentionally still pending.
 - Lua scripting has focused unit/durability/transaction coverage plus a basic
   Redis differential smoke pass; deeper command-flag/ACL/OOM edge auditing remains.
-- SORT has focused source/options/STORE/durability coverage; a live Redis
-  differential pass is still required before stronger parity claims.
+- COPY has focused option/type/TTL/durability/OOM/transaction coverage; a live
+  Redis differential pass remains before stronger parity claims.
 
 ## Deployment topology
 
@@ -127,8 +142,8 @@ SnugKV includes logical AOF/snapshot persistence and recovery testing, including
 truncated-final-frame recovery, checksum-corruption rejection, append rollback,
 online AOF rewrite, native datatype restore coverage, single logical AOF frames
 for successful transaction results, single logical frames for direct script
-mutations including partial writes before runtime errors, and destination-only
-persistence/replay for `SORT ... STORE`.
+mutations including partial writes before runtime errors, destination-only
+persistence/replay for `SORT ... STORE`, and destination-only COPY persistence.
 
 For alpha use:
 
@@ -169,6 +184,8 @@ collection mutation:
   in the source set rather than using Redis-style geohash range pruning.
 - SORT materializes the selected source collection and performs in-memory ordering;
   ordinary sorting is O(N log N), and external BY/GET patterns add key/hash lookups.
+- COPY materializes the logical source representation and allocates an independent
+  destination value, so copying large values temporarily requires memory for both.
 - lex ZSET operations construct a temporary lexicographic view rather than keeping
   a second permanent index.
 - LIST uses one packed logical blob, so very large head mutations can be O(total
