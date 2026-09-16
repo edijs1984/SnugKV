@@ -8,6 +8,9 @@ import (
 )
 
 func (s *Server) executePressureCommand(args [][]byte) ([]byte, error) {
+	if isScriptingCommand(args) {
+		return s.executeScripting(args)
+	}
 	if isPubSubServerCommand(args) {
 		return s.executePubSubServer(args)
 	}
@@ -73,6 +76,12 @@ func (s *Server) executeTransactionPressure(args [][]byte) ([]byte, error) {
 func (s *Server) executePressureMode(args [][]byte, journalEvictions bool) ([]byte, error) {
 	result, err := s.executePressureCommand(args)
 	if !errors.Is(err, engine.ErrOOM) || s.eviction == "" || s.eviction == "noeviction" {
+		return result, err
+	}
+	// A script can successfully mutate data before a later redis.call() hits OOM.
+	// Re-running the whole script would repeat those earlier side effects, so only
+	// nested ordinary commands are eligible for eviction/retry.
+	if isScriptEvalCommand(args) {
 		return result, err
 	}
 	cmd := strings.ToUpper(string(args[0]))
