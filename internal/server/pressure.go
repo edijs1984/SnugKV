@@ -8,6 +8,9 @@ import (
 )
 
 func (s *Server) executePressureCommand(args [][]byte) ([]byte, error) {
+	if isXReadCommand(args) {
+		return s.executeXRead(args)
+	}
 	if isStreamCommand(args) {
 		return s.executeStream(args)
 	}
