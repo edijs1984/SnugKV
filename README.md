@@ -52,6 +52,8 @@ for current boundaries, [PLAN.md](PLAN.md) for the remaining roadmap, and
 - SET: `SADD`, `SREM`, `SISMEMBER`, `SMISMEMBER`, `SCARD`, `SMEMBERS`, `SSCAN`, `SUNION`, `SINTER`, `SDIFF`, `SUNIONSTORE`, `SINTERSTORE`, `SDIFFSTORE`, `SMOVE`, `SPOP`, `SRANDMEMBER`.
 - LIST: `LPUSH`, `RPUSH`, `LPUSHX`, `RPUSHX`, `LPOP`, `RPOP`, `LLEN`, `LINDEX`, `LRANGE`, `LSET`, `LTRIM`, `LREM`, `LINSERT`, `LPOS`, `LMOVE`, `RPOPLPUSH`, `BLPOP`, `BRPOP`, `BLMOVE`, `BRPOPLPUSH`.
 - ZSET: `ZADD`, `ZREM`, `ZINCRBY`, `ZSCORE`, `ZMSCORE`, `ZCARD`, `ZCOUNT`, `ZLEXCOUNT`, `ZRANK`, `ZREVRANK`, `ZRANGE`, `ZREVRANGE`, `ZRANGEBYSCORE`, `ZREVRANGEBYSCORE`, `ZRANGEBYLEX`, `ZREVRANGEBYLEX`, `ZREMRANGEBYRANK`, `ZREMRANGEBYSCORE`, `ZREMRANGEBYLEX`, `ZUNION`, `ZINTER`, `ZDIFF`, `ZUNIONSTORE`, `ZINTERSTORE`, `ZDIFFSTORE`, `ZINTERCARD`, `ZPOPMIN`, `ZPOPMAX`, `ZMPOP`, `BZPOPMIN`, `BZPOPMAX`, `BZMPOP`, `ZRANDMEMBER`, `ZSCAN`, `ZRANGESTORE`.
+- HyperLogLog: `PFADD`, `PFCOUNT`, `PFMERGE` with Redis-compatible serialized HLL strings.
+- GEO: `GEOADD`, `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH`, `GEOSEARCHSTORE` using Redis-compatible 52-bit geospatial ZSET scores.
 - STREAM: `XADD`, `XLEN`, `XRANGE`, `XREVRANGE`, `XDEL`, `XDELEX`, `XTRIM`, `XREAD`, `XGROUP`, `XREADGROUP`, `XACK`, `XACKDEL`, `XPENDING`, `XCLAIM`, `XAUTOCLAIM`, `XINFO`; Redis 8.2 `KEEPREF` / `DELREF` / `ACKED` reference policies are supported.
 - Pub/Sub: `SUBSCRIBE`, `UNSUBSCRIBE`, `PSUBSCRIBE`, `PUNSUBSCRIBE`, `PUBLISH`, `SSUBSCRIBE`, `SUNSUBSCRIBE`, `SPUBLISH`, and `PUBSUB` classic/sharded introspection.
 - Transactions: `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH` with cross-client optimistic locking and EXEC error semantics.
@@ -73,6 +75,11 @@ scalar optimizer and are persisted as logical container state.
 - LIST uses canonical ordered SL1 storage.
 - ZSET uses adaptive packed SZ formats with integer score delta-varints and member front coding when they reduce size, with float64/raw-member fallback otherwise.
 - STREAM uses versioned packed storage with backward decode for earlier stream formats, durable consumer groups/PEL state, lifetime entry metadata, separate consumer activity timestamps, and Redis 8.2 reference-policy semantics.
+
+GEO intentionally reuses the ZSET representation, matching Redis's data model.
+`GEOSEARCH` currently scans the packed ZSET and filters decoded coordinates rather
+than maintaining a second permanent geospatial index; this favors memory economy
+and makes query cost linear in source cardinality for now.
 
 ## Memory and benchmarks
 
@@ -109,11 +116,12 @@ optimizer.
 
 ## Major remaining compatibility work
 
-The next large Redis families are HyperLogLog, GEO, scripting/functions, RESP3,
-and client/tooling compatibility (`CLIENT`, `CONFIG`, ACL/auth, COMMAND metadata).
-A final differential Redis edge-case audit remains useful for Streams, but there
-is no known core Streams command-family gap. See [COMPATIBILITY.md](COMPATIBILITY.md)
-and GitHub issue #55.
+The next large Redis gaps are scripting/functions, `SORT`/`SORT_RO`, COPY/migration
+scope, RESP3, and client/tooling compatibility (`CLIENT`, `CONFIG`, ACL/auth,
+COMMAND metadata). Deprecated `GEORADIUS*` compatibility is not part of the modern
+GEO surface yet. A final differential Redis edge-case audit remains useful for
+Streams, but there is no known core Streams command-family gap. See
+[COMPATIBILITY.md](COMPATIBILITY.md) and GitHub issue #55.
 
 ## License
 
