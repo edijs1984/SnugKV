@@ -87,6 +87,17 @@ func (t *Table[V]) CapacityBytes() uint64 {
 	return uint64(cap(t.slots)) * slotBytes[V]()
 }
 
+func capacityAccepts(n, capacity int) bool {
+	// Tiny shard indexes are bounded enough that filling all four slots is a
+	// worthwhile memory trade. Missing lookups can scan at most four slots,
+	// while the fifth insertion still grows before it is published. Larger
+	// tables keep the established 80% ceiling to bound probe lengths.
+	if capacity == initialCapacity {
+		return n <= capacity
+	}
+	return n <= capacity*8/10
+}
+
 func (t *Table[V]) capacityFor(n int) int {
 	capacity := len(t.slots)
 	if n == 0 {
@@ -95,7 +106,7 @@ func (t *Table[V]) capacityFor(n int) int {
 	if capacity == 0 {
 		capacity = initialCapacity
 	}
-	for n > capacity*8/10 {
+	for !capacityAccepts(n, capacity) {
 		capacity *= 2
 	}
 	return capacity
@@ -217,7 +228,7 @@ func (t *Table[V]) Compact() {
 		t.slots = nil
 		return
 	}
-	for t.count > capacity*8/10 {
+	for !capacityAccepts(t.count, capacity) {
 		capacity *= 2
 	}
 	old := t.slots

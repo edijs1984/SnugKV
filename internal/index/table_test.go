@@ -32,16 +32,28 @@ func TestSparseInitialCapacityAndCompaction(t *testing.T) {
 	if got := table.CapacityBytes(); got != 4*16 {
 		t.Fatalf("three-key capacity = %d, want %d", got, 4*16)
 	}
-	if got := table.GrowthBytes(1); got != 4*16 {
-		t.Fatalf("fourth-key growth = %d, want %d", got, 4*16)
+	if got := table.GrowthBytes(1); got != 0 {
+		t.Fatalf("fourth-key growth = %d, want 0", got)
 	}
 
 	table.Set("k3", 3)
+	if got := table.CapacityBytes(); got != 4*16 {
+		t.Fatalf("four-key capacity = %d, want %d", got, 4*16)
+	}
+	if _, ok := table.Get("missing"); ok {
+		t.Fatal("missing key found in full tiny table")
+	}
+	if got := table.GrowthBytes(1); got != 4*16 {
+		t.Fatalf("fifth-key growth = %d, want %d", got, 4*16)
+	}
+
+	table.Set("k4", 4)
 	if got := table.CapacityBytes(); got != 8*16 {
-		t.Fatalf("four-key capacity = %d, want %d", got, 8*16)
+		t.Fatalf("five-key capacity = %d, want %d", got, 8*16)
 	}
 
 	table.Delete("k3")
+	table.Delete("k4")
 	table.Compact()
 	if got := table.CapacityBytes(); got != 4*16 {
 		t.Fatalf("compact three-key capacity = %d, want %d", got, 4*16)
@@ -150,7 +162,7 @@ func testCompactHashed(table *Table[uint32], hash uint64) {
 		table.slots = nil
 		return
 	}
-	for table.count > capacity*8/10 {
+	for !capacityAccepts(table.count, capacity) {
 		capacity *= 2
 	}
 	old := table.slots
@@ -160,6 +172,46 @@ func testCompactHashed(table *Table[uint32], hash uint64) {
 		s := &old[i]
 		if s.state() == stateLive {
 			testInsertHashed(table, s.key(), s.value(), hash)
+		}
+	}
+}
+
+func TestFullTinyTableRemainsCollisionSafe(t *testing.T) {
+	table := New[uint32]()
+	const hash = uint64(3)
+
+	for i, key := range []string{"alpha", "beta", "gamma", "delta"} {
+		testSetHashed(table, key, uint32(i+1), hash)
+	}
+	if got := table.CapacityBytes(); got != 4*16 {
+		t.Fatalf("full tiny capacity = %d, want %d", got, 4*16)
+	}
+	if _, ok := testGetHashed(table, "missing", hash); ok {
+		t.Fatal("missing colliding key returned from full table")
+	}
+
+	testSetHashed(table, "gamma", 99, hash)
+	if got, ok := testGetHashed(table, "gamma", hash); !ok || got != 99 {
+		t.Fatalf("full-table update got=%d ok=%t", got, ok)
+	}
+	if got := table.CapacityBytes(); got != 4*16 {
+		t.Fatalf("update grew tiny table to %d bytes", got)
+	}
+
+	testSetHashed(table, "epsilon", 5, hash)
+	if got := table.CapacityBytes(); got != 8*16 {
+		t.Fatalf("fifth colliding key capacity = %d, want %d", got, 8*16)
+	}
+	for key, want := range map[string]uint32{
+		"alpha": 1,
+		"beta": 2,
+		"gamma": 99,
+		"delta": 4,
+		"epsilon": 5,
+	} {
+		got, ok := testGetHashed(table, key, hash)
+		if !ok || got != want {
+			t.Fatalf("%s got=%d ok=%t want=%d", key, got, ok, want)
 		}
 	}
 }
