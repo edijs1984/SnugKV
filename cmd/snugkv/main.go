@@ -133,8 +133,7 @@ func main() {
 			log.Print("event=stopped")
 			return
 		case <-ticker.C:
-			store.CleanupExpiredLimit(1024)
-			listener.OptimizeSample()
+			listener.Maintain()
 		}
 	}
 }
