@@ -41,7 +41,7 @@ func streamEntryByID(entries []StreamEntry, id StreamID) (StreamEntry, bool) {
 func ensureStreamConsumer(group *streamGroup, name string, nowMS int64) *streamConsumer {
 	i := streamConsumerIndex(group.Consumers, name)
 	if i < 0 {
-		group.Consumers = append(group.Consumers, streamConsumer{Name: name, SeenAt: nowMS})
+		group.Consumers = append(group.Consumers, streamConsumer{Name: name, SeenAt: nowMS, ActiveAt: nowMS})
 		return &group.Consumers[len(group.Consumers)-1]
 	}
 	group.Consumers[i].SeenAt = nowMS
@@ -86,7 +86,7 @@ func (s *Store) StreamGroupRead(keys []string, groupName, consumer string, curso
 			return nil, streamNoGroup(groupName, key)
 		}
 		group := &state.Groups[gi]
-		ensureStreamConsumer(group, consumer, nowMS)
+		consumerState := ensureStreamConsumer(group, consumer, nowMS)
 		entries := make([]StreamEntry, 0)
 
 		if cursors[i].New {
@@ -123,6 +123,9 @@ func (s *Store) StreamGroupRead(keys []string, groupName, consumer string, curso
 					break
 				}
 			}
+		}
+		if len(entries) > 0 {
+			consumerState.ActiveAt = nowMS
 		}
 
 		if err := s.publishStreamStateLocked(sh, key, e, state); err != nil {

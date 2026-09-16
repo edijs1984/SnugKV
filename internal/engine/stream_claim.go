@@ -103,7 +103,10 @@ func (s *Store) StreamGroupClaim(key, groupName, consumer string, minIdle time.D
 	}
 	minIdleMS := minIdle.Milliseconds()
 	changed := false
-	consumerTouched := false
+	if ci := streamConsumerIndex(group.Consumers, consumer); ci >= 0 {
+		group.Consumers[ci].SeenAt = nowMS
+		changed = true
+	}
 	entries := make([]StreamEntry, 0, len(ids))
 	claimedIDs := make([]StreamID, 0, len(ids))
 
@@ -140,10 +143,8 @@ func (s *Store) StreamGroupClaim(key, groupName, consumer string, minIdle time.D
 			}
 			changed = true
 		}
-		if !consumerTouched {
-			ensureStreamConsumer(group, consumer, nowMS)
-			consumerTouched = true
-		}
+		consumerState := ensureStreamConsumer(group, consumer, nowMS)
+		consumerState.ActiveAt = nowMS
 		claimedIDs = append(claimedIDs, id)
 		entries = append(entries, entry)
 	}
@@ -192,7 +193,10 @@ func (s *Store) StreamGroupAutoClaim(key, groupName, consumer string, minIdle ti
 	minIdleMS := minIdle.Milliseconds()
 	result := StreamAutoClaimResult{}
 	changed := false
-	consumerTouched := false
+	if ci := streamConsumerIndex(group.Consumers, consumer); ci >= 0 {
+		group.Consumers[ci].SeenAt = nowMS
+		changed = true
+	}
 
 	i := sort.Search(len(group.Pending), func(i int) bool { return !group.Pending[i].ID.less(start) })
 	scanLimit := count * 10
@@ -217,10 +221,8 @@ func (s *Store) StreamGroupAutoClaim(key, groupName, consumer string, minIdle ti
 			if !justID {
 				pending.Deliveries++
 			}
-			if !consumerTouched {
-				ensureStreamConsumer(group, consumer, nowMS)
-				consumerTouched = true
-			}
+			consumerState := ensureStreamConsumer(group, consumer, nowMS)
+			consumerState.ActiveAt = nowMS
 			result.IDs = append(result.IDs, pending.ID)
 			result.Entries = append(result.Entries, entry)
 			changed = true

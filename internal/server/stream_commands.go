@@ -39,6 +39,14 @@ func parseNonNegativeInt(arg []byte) (int, error) {
 	return int(n), nil
 }
 
+func parseStreamMinID(arg []byte) (engine.StreamID, error) {
+	bound, err := engine.ParseStreamRangeBound(string(arg), true)
+	if err != nil {
+		return engine.StreamID{}, err
+	}
+	return bound.ID, nil
+}
+
 func parseXAdd(args [][]byte) (string, []engine.StreamField, engine.StreamAddOptions, error) {
 	options := engine.StreamAddOptions{}
 	i := 2
@@ -47,8 +55,9 @@ func parseXAdd(args [][]byte) (string, []engine.StreamField, engine.StreamAddOpt
 		case "NOMKSTREAM":
 			options.NoMkStream = true
 			i++
-		case "MAXLEN":
-			if options.HasMaxLen {
+		case "MAXLEN", "MINID":
+			strategy := strings.ToUpper(string(args[i]))
+			if options.HasMaxLen || options.HasMinID {
 				return "", nil, options, errors.New("ERR syntax error")
 			}
 			i++
@@ -58,23 +67,31 @@ func parseXAdd(args [][]byte) (string, []engine.StreamField, engine.StreamAddOpt
 			if i >= len(args) {
 				return "", nil, options, errors.New("ERR syntax error")
 			}
-			maxLen, err := parseNonNegativeInt(args[i])
-			if err != nil {
-				return "", nil, options, err
+			if strategy == "MAXLEN" {
+				maxLen, err := parseNonNegativeInt(args[i])
+				if err != nil {
+					return "", nil, options, err
+				}
+				options.HasMaxLen = true
+				options.MaxLen = maxLen
+			} else {
+				minID, err := parseStreamMinID(args[i])
+				if err != nil {
+					return "", nil, options, err
+				}
+				options.HasMinID = true
+				options.MinID = minID
 			}
-			options.HasMaxLen = true
-			options.MaxLen = maxLen
 			i++
-			// Redis permits LIMIT with approximate trimming. SnugKV's packed
-			// phase-1 implementation trims exactly, so LIMIT is accepted and
-			// parsed for wire compatibility but does not weaken MAXLEN.
 			if i < len(args) && strings.EqualFold(string(args[i]), "LIMIT") {
 				if i+1 >= len(args) {
 					return "", nil, options, errors.New("ERR syntax error")
 				}
-				if _, err := parseNonNegativeInt(args[i+1]); err != nil {
+				limit, err := parseNonNegativeInt(args[i+1])
+				if err != nil {
 					return "", nil, options, err
 				}
+				options.Limit = limit
 				i += 2
 			}
 		default:
@@ -211,7 +228,8 @@ func (s *Server) executeStream(args [][]byte) ([]byte, error) {
 		return integer(deleted), nil
 
 	case "XTRIM":
-		if !strings.EqualFold(string(args[2]), "MAXLEN") {
+		strategy := strings.ToUpper(string(args[2]))
+		if strategy != "MAXLEN" && strategy != "MINID" {
 			return nil, errors.New("ERR syntax error")
 		}
 		i := 3
@@ -221,16 +239,14 @@ func (s *Server) executeStream(args [][]byte) ([]byte, error) {
 		if i >= len(args) {
 			return nil, errors.New("ERR syntax error")
 		}
-		maxLen, err := parseNonNegativeInt(args[i])
-		if err != nil {
-			return nil, err
-		}
+		thresholdIndex := i
 		i++
 		limit := 0
 		if i < len(args) {
 			if i+2 != len(args) || !strings.EqualFold(string(args[i]), "LIMIT") {
 				return nil, errors.New("ERR syntax error")
 			}
+			var err error
 			limit, err = parseNonNegativeInt(args[i+1])
 			if err != nil {
 				return nil, err
@@ -240,7 +256,22 @@ func (s *Server) executeStream(args [][]byte) ([]byte, error) {
 		if i != len(args) {
 			return nil, errors.New("ERR syntax error")
 		}
-		trimmed, err := s.store.StreamTrimMaxLen(key, maxLen, limit)
+		if strategy == "MAXLEN" {
+			maxLen, err := parseNonNegativeInt(args[thresholdIndex])
+			if err != nil {
+				return nil, err
+			}
+			trimmed, err := s.store.StreamTrimMaxLen(key, maxLen, limit)
+			if err != nil {
+				return nil, err
+			}
+			return integer(trimmed), nil
+		}
+		minID, err := parseStreamMinID(args[thresholdIndex])
+		if err != nil {
+			return nil, err
+		}
+		trimmed, err := s.store.StreamTrimMinID(key, minID, limit)
 		if err != nil {
 			return nil, err
 		}
