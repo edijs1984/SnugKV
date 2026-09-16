@@ -9,11 +9,14 @@ func TestStructuralMemoryReportsFixedShardLayout(t *testing.T) {
 	}
 
 	m := s.StructuralMemory()
-	if m.ShardStructBytes == 0 || m.IndexTableStructBytes == 0 {
-		t.Fatalf("zero structural component: %+v", m)
+	if m.ShardStructBytes == 0 {
+		t.Fatalf("zero shard structural bytes: %+v", m)
 	}
-	if m.PerShardBytes != m.ShardStructBytes+m.IndexTableStructBytes {
-		t.Fatalf("per-shard bytes = %d, components = %d + %d", m.PerShardBytes, m.ShardStructBytes, m.IndexTableStructBytes)
+	if m.IndexTableStructBytes != 0 {
+		t.Fatalf("embedded index reported separate allocation: %+v", m)
+	}
+	if m.PerShardBytes != m.ShardStructBytes {
+		t.Fatalf("per-shard bytes = %d, shard bytes = %d", m.PerShardBytes, m.ShardStructBytes)
 	}
 	if m.TotalBytes != 256*m.PerShardBytes {
 		t.Fatalf("total bytes = %d, want %d", m.TotalBytes, 256*m.PerShardBytes)
@@ -34,6 +37,20 @@ func TestStructuralMemoryReportsFixedShardLayout(t *testing.T) {
 	// max_memory behavior again.
 	if accounted.IndexReservedBytes != m.TotalBytes {
 		t.Fatalf("empty store index bucket = %d, structural = %d", accounted.IndexReservedBytes, m.TotalBytes)
+	}
+}
+
+func TestEmbeddedIndexShrinksFixedLayout(t *testing.T) {
+	s, err := NewWithShards(256)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := s.StructuralMemory()
+	// Before embedding, the measured fixed layout was 208 bytes per shard:
+	// a 168-byte shard plus a separately allocated 40-byte index.Table.
+	if m.PerShardBytes >= 208 {
+		t.Fatalf("embedded layout = %d bytes/shard, want < 208", m.PerShardBytes)
 	}
 }
 
