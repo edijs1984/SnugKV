@@ -7,14 +7,21 @@ GitHub issue #55 tracks command-family compatibility work.
 ## Current status
 
 The single-node RESP2 engine, logical persistence, memory accounting, optimizer,
-observability, packaging, HASH, SET, LIST, ZSET, and the broad STREAM/consumer-group
-surface are implemented.
+observability, packaging, HASH, SET, LIST, ZSET, broad STREAM/consumer-group
+support, classic/sharded Pub/Sub, and Redis-style transactions/WATCH are
+implemented.
 
-Streams now include core reads/writes, blocking `XREAD`, consumer groups,
+Streams include core reads/writes, blocking `XREAD`, consumer groups,
 `XREADGROUP`, PEL inspection/acknowledgement, claims/autoclaims, XINFO,
 MAXLEN/MINID trimming, lifetime `entries-added` / `max-deleted-entry-id`,
 separate consumer idle/inactive tracking, Redis 8.2 `KEEPREF` / `DELREF` /
 `ACKED` reference policies, `XDELEX`, and `XACKDEL`.
+
+Transactions include `MULTI`, `EXEC`, `DISCARD`, `WATCH`, and `UNWATCH`, with
+queue-time EXECABORT semantics, runtime errors preserved inside EXEC arrays,
+cross-client WATCH invalidation including change-then-restore, expiration
+invalidation, nonblocking execution of blocking commands inside MULTI, and one
+logical AOF frame for transaction results.
 
 Shared sparse-memory overhead has also been reduced substantially. On the canonical
 1,000-key / 256-shard / 16-byte-value benchmark, accounted memory moved from
@@ -77,6 +84,23 @@ and 24-byte arena segment descriptors.
 - [x] Distinct consumer attempted/successful timestamps for `idle` vs `inactive`.
 - [x] Production optimizer regression: STREAM is never rewritten by scalar codecs.
 
+### Pub/Sub
+
+- [x] Classic `SUBSCRIBE` / `UNSUBSCRIBE` / `PSUBSCRIBE` / `PUNSUBSCRIBE` / `PUBLISH`.
+- [x] Sharded `SSUBSCRIBE` / `SUNSUBSCRIBE` / `SPUBLISH`.
+- [x] `PUBSUB` classic/sharded introspection.
+- [x] RESP2 subscribed-mode restrictions, subscribed `PING`, `RESET`, asynchronous push delivery, disconnect cleanup, and serialized socket writes.
+
+### Transactions / optimistic locking
+
+- [x] `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH`.
+- [x] Queue-time errors abort EXEC; runtime errors remain individual EXEC array elements.
+- [x] Atomic EXEC relative to other client commands.
+- [x] Cross-client WATCH invalidation, including change-then-restore and key expiration.
+- [x] Blocking commands execute nonblockingly inside MULTI/EXEC.
+- [x] One-frame logical AOF persistence for transaction results with rollback on append failure.
+- [x] Two-client TCP, race, full-suite, vet, fuzz, and live Python smoke validation.
+
 ### SCAN family compatibility
 
 - [x] Binary-safe MATCH implementation for keyspace/HASH/SET/ZSET scans.
@@ -104,8 +128,6 @@ and 24-byte arena segment descriptors.
 
 ### P1 — major Redis command families
 
-- [ ] Pub/Sub: `SUBSCRIBE`, `PSUBSCRIBE`, `SSUBSCRIBE`, `PUBLISH`, `SPUBLISH` and unsubscribe variants, plus `PUBSUB` introspection.
-- [ ] Transactions: `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH`.
 - [ ] HyperLogLog: `PFADD`, `PFCOUNT`, `PFMERGE`.
 - [ ] GEO: `GEOADD`, `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH`, `GEOSEARCHSTORE`.
 - [ ] Scripting / Redis Functions scope (`EVAL`, `EVALSHA`, `SCRIPT`, `FUNCTION`, `FCALL`) or explicitly document a different extension model.
