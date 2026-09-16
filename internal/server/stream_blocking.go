@@ -1,9 +1,8 @@
 package server
 
 import (
-	"errors"
+	"strings"
 	"sync"
-	"time"
 )
 
 type streamWaiter struct {
@@ -156,10 +155,7 @@ func (s *Server) executeBlockingStream(args [][]byte, cancel <-chan struct{}) ([
 }
 
 func (s *Server) signalStreamAvailability(args [][]byte, response []byte) {
-	if len(args) < 2 || len(response) == 0 {
-		return
-	}
-	if string(args[0]) != "XADD" && string(args[0]) != "xadd" {
+	if len(args) < 2 || len(response) == 0 || !strings.EqualFold(string(args[0]), "XADD") {
 		return
 	}
 	if string(response) == "$-1\r\n" {
@@ -167,6 +163,3 @@ func (s *Server) signalStreamAvailability(args [][]byte, response []byte) {
 	}
 	s.signalStreamKey(string(args[1]))
 }
-
-var _ = errors.Is
-var _ = time.Second
