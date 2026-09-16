@@ -117,9 +117,6 @@ func (s *Store) StreamGroupClaim(key, groupName, consumer string, minIdle time.D
 			deliveries := uint64(1)
 			if options.RetryCount != nil {
 				deliveries = *options.RetryCount
-				if deliveries == 0 {
-					deliveries = 1
-				}
 			}
 			group.Pending = append(group.Pending, streamPending{ID: id, Consumer: consumer, DeliveredAt: deliveredAt, Deliveries: deliveries})
 			pi = len(group.Pending) - 1
@@ -138,9 +135,6 @@ func (s *Store) StreamGroupClaim(key, groupName, consumer string, minIdle time.D
 			pending.DeliveredAt = deliveredAt
 			if options.RetryCount != nil {
 				pending.Deliveries = *options.RetryCount
-				if pending.Deliveries == 0 {
-					pending.Deliveries = 1
-				}
 			} else if !options.JustID {
 				pending.Deliveries++
 			}
