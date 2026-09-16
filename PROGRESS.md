@@ -5,18 +5,41 @@
 SnugKV now has a broad single-node RESP2 command surface with native HASH, SET,
 LIST, ZSET, and STREAM types, logical durability, memory accounting, adaptive
 scalar encoding, observability, operational tooling, classic/sharded Pub/Sub,
-Redis-style transactions with optimistic locking, HyperLogLog, modern GEO, and a
-bounded Lua scripting core.
+Redis-style transactions with optimistic locking, HyperLogLog, modern GEO, a
+bounded Lua scripting core, and `SORT` / `SORT_RO`.
 
 The current engineering focus has moved from building the core native datatype
 set to finishing remaining Redis compatibility/tooling families and validating
 release behavior. The main remaining application-level gaps are Redis Functions
-and full scripting parity, `SORT`/`SORT_RO`, COPY/migration scope, RESP3, and
-client/tooling compatibility. Streams are broadly implemented through Redis 8.2
-reference-policy behavior; a final differential edge-case audit remains useful but
-no known core Streams command-family gap is currently tracked.
+and full scripting parity, COPY/migration scope, RESP3, and client/tooling
+compatibility. Streams are broadly implemented through Redis 8.2 reference-policy
+behavior; final differential edge-case audits remain useful for Streams and SORT.
 
 ## Recently completed
+
+### SORT / SORT_RO
+
+- `SORT` and `SORT_RO` accept LIST, SET, and ZSET sources.
+- Numeric sorting is the default; `ALPHA`, `ASC`, `DESC`, and `LIMIT` are supported.
+- `BY` and repeated `GET` support first-`*` substitution against external string
+  keys or hash fields (`key-pattern->field`), plus `GET #`.
+- A constant `BY` pattern preserves native/no-sort order; LIST/ZSET DESC reverses
+  that native order and LIMIT is applied against the resulting sequence.
+- Missing numeric BY lookups use score zero. Missing GET results are null in wire
+  replies and become empty list elements when stored.
+- `SORT ... STORE` atomically replaces any destination type with a native LIST,
+  clears destination TTL, deletes the destination for an empty result, and wakes
+  blocked LIST consumers for non-empty results.
+- STORE durability journals/replays the destination only; transaction execution
+  continues to use the existing whole-transaction logical diff.
+- OOM retries protect the source, STORE destination, and resolved BY/GET external
+  keys so a retry cannot silently observe an eviction-altered input set.
+- Focused tests cover LIST/SET/ZSET sources, numeric/ALPHA ordering, LIMIT,
+  external strings/hashes, GET #, BY nosort, missing lookups, WRONGTYPE,
+  SORT_RO STORE rejection, TTL clearing, empty-result deletion, and AOF restart.
+- Current documented boundary: ALPHA comparison is bytewise in SnugKV, while Redis
+  can use locale-aware collation for non-STORE replies. Direct Redis differential
+  smoke testing remains the next validation step before stronger parity claims.
 
 ### Lua scripting core
 
@@ -179,7 +202,7 @@ TTL sidecars, and compact arena segment descriptors.
   request limits, deadlines, connection limits, and graceful shutdown.
 - Sharded collision-safe indexing, segmented arenas, expiration, compaction,
   explicit max-memory accounting, OOM rollback, and sampled LRU eviction.
-- String, numeric, bit, expiration, key, JSON, HyperLogLog, GEO, scripting, and administration commands.
+- String, numeric, bit, expiration, key, JSON, HyperLogLog, GEO, scripting, SORT, and administration commands.
 - Native HASH, SET, LIST, and ZSET with broad Redis-style command coverage.
 - Blocking LIST/ZSET/STREAM waits register before readiness checks and use
   waiter/wakeup signaling instead of polling.
@@ -187,7 +210,8 @@ TTL sidecars, and compact arena segment descriptors.
   queued RESP bytes.
 - Logical AOF/snapshot persistence with checksums, restart recovery,
   truncated-final-frame handling, corruption rejection, online AOF rewrite,
-  atomic transaction-frame persistence, and atomic logical script frames.
+  atomic transaction-frame persistence, atomic logical script frames, and
+  destination-only SORT STORE persistence.
 - Prometheus metrics, separate loopback-only administration listener, Docker,
   Make targets, CI, benchmark harnesses, and soak tooling.
 
@@ -241,13 +265,14 @@ when evaluating CPU tradeoffs.
 ## Remaining engineering work
 
 1. Redis Functions and remaining scripting parity (`EVAL_RO`, `SCRIPT KILL/DEBUG`, command-flag/ACL semantics, differential testing).
-2. `SORT` / `SORT_RO` and COPY/migration scope.
+2. COPY/migration scope.
 3. RESP3 and CLIENT/CONFIG/ACL/COMMAND tooling compatibility.
-4. Differential Redis edge-case audit for the completed Streams surface.
+4. Differential Redis edge-case audits for SORT and the completed Streams surface.
 5. Optional legacy `GEORADIUS*` aliases if real client usage requires them.
 6. Fresh release-scale benchmarks, multi-run variance, million-record datasets,
    broader client compatibility, retained long-duration soak evidence, dedicated
-   large-GEO benchmarking, and script runtime/cache benchmarks.
+   large-GEO benchmarking, script runtime/cache benchmarks, and SORT external-key
+   performance testing.
 7. Distributed features only after the single-node target is mature.
 
 See `PLAN.md`, `COMPATIBILITY.md`, `KNOWN-LIMITATIONS.md`, and GitHub issue #55.
