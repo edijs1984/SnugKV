@@ -2,6 +2,7 @@ package engine
 
 import (
 	"errors"
+	"math"
 	"sort"
 )
 
@@ -82,16 +83,17 @@ func streamInfoConsumer(group streamGroup, consumer streamConsumer, nowMS int64,
 	if idle < 0 {
 		idle = 0
 	}
-	// Packed stream v2 stores one consumer interaction timestamp. Until the
-	// lifetime-metadata format lands, expose the same timestamp for Redis 7.2's
-	// inactive field rather than inventing a second value.
+	inactive := nowMS - consumer.ActiveAt
+	if inactive < 0 {
+		inactive = 0
+	}
 	return StreamInfoConsumer{
 		Name:           consumer.Name,
 		Pending:        int64(len(pending)),
 		IdleMillis:     idle,
-		InactiveMillis: idle,
+		InactiveMillis: inactive,
 		SeenTime:       consumer.SeenAt,
-		ActiveTime:     consumer.SeenAt,
+		ActiveTime:     consumer.ActiveAt,
 		PendingEntries: cappedStreamInfoPending(pending, count),
 	}
 }
@@ -106,16 +108,8 @@ func streamInfoGroup(state packedStream, group streamGroup, nowMS int64, count i
 	if group.EntriesRead >= 0 {
 		entriesRead := group.EntriesRead
 		result.EntriesRead = &entriesRead
-		// With the current packed format, the exact lifetime entries-added
-		// counter is not persisted yet. A caught-up group is always known to
-		// have zero lag; otherwise use the live-entry count only when the read
-		// counter is within that range. The format-v3 follow-up will make this
-		// exact across deletion and trimming histories.
-		if group.LastDeliveredID.equal(state.LastID) {
-			lag := int64(0)
-			result.Lag = &lag
-		} else if entriesRead <= int64(len(state.Entries)) {
-			lag := int64(len(state.Entries)) - entriesRead
+		if uint64(entriesRead) <= state.EntriesAdded && state.EntriesAdded <= math.MaxInt64 {
+			lag := int64(state.EntriesAdded) - entriesRead
 			result.Lag = &lag
 		}
 	}
@@ -157,12 +151,15 @@ func (s *Store) StreamInfo(key string, full bool, count int) (StreamInfoResult, 
 	if err != nil {
 		return StreamInfoResult{}, err
 	}
+	if state.EntriesAdded > math.MaxInt64 {
+		return StreamInfoResult{}, errors.New("ERR stream entries-added counter out of range")
+	}
 	result := StreamInfoResult{
 		Length:            int64(len(state.Entries)),
 		Groups:            int64(len(state.Groups)),
 		LastGeneratedID:   state.LastID,
-		EntriesAdded:      int64(len(state.Entries)),
-		MaxDeletedEntryID: StreamID{},
+		EntriesAdded:      int64(state.EntriesAdded),
+		MaxDeletedEntryID: state.MaxDeletedID,
 	}
 	if len(state.Entries) > 0 {
 		result.RadixTreeKeys = 1
