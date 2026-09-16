@@ -14,6 +14,9 @@ func (s *Server) executePressureCommand(args [][]byte) ([]byte, error) {
 	if isSortCommand(args) {
 		return s.executeSort(args)
 	}
+	if isCopyCommand(args) {
+		return s.executeCopy(args)
+	}
 	if isPubSubServerCommand(args) {
 		return s.executePubSubServer(args)
 	}

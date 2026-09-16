@@ -24,5 +24,9 @@ func (s *Server) signalZSetAvailability(args [][]byte, response []byte) {
 		if len(args) > 2 && string(response) == ":1\r\n" {
 			s.signalZSetKey(string(args[2]))
 		}
+	case "COPY":
+		if len(args) > 2 && string(response) == ":1\r\n" && s.store.Type(string(args[2])) == "zset" {
+			s.signalZSetKey(string(args[2]))
+		}
 	}
 }

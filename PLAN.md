@@ -9,7 +9,8 @@ GitHub issue #55 tracks command-family compatibility work.
 The single-node RESP2 engine, logical persistence, memory accounting, optimizer,
 observability, packaging, HASH, SET, LIST, ZSET, broad STREAM/consumer-group
 support, classic/sharded Pub/Sub, Redis-style transactions/WATCH, HyperLogLog,
-modern GEO, the common Lua scripting path, and `SORT` / `SORT_RO` are implemented.
+modern GEO, the common Lua scripting path, `SORT` / `SORT_RO`, and single-database
+`COPY` are implemented.
 
 Streams include core reads/writes, blocking `XREAD`, consumer groups,
 `XREADGROUP`, PEL inspection/acknowledgement, claims/autoclaims, XINFO,
@@ -31,8 +32,15 @@ Redis Functions and the remaining scripting-management/read-only commands remain
 
 `SORT` / `SORT_RO` support LIST/SET/ZSET sources, numeric and ALPHA ordering,
 BY/LIMIT/GET/ASC/DESC options, string/hash external patterns, BY-constant native
-ordering, and durable STORE-to-LIST replacement semantics. Locale-sensitive Redis
-ALPHA collation remains a documented compatibility edge.
+ordering, and durable STORE-to-LIST replacement semantics. Manual Redis
+differential testing covers the common implemented surface; locale-sensitive
+non-ASCII ALPHA collation remains a documented edge.
+
+`COPY source destination [DB 0] [REPLACE]` now preserves logical datatype,
+contents, and absolute TTL while leaving the source unchanged. It integrates with
+max-memory admission, AOF rollback/restart, MULTI/EXEC, WATCH invalidation, and
+blocking LIST/ZSET/STREAM wakeups. Cross-database COPY is intentionally absent
+because SnugKV exposes only DB 0.
 
 HyperLogLog implements `PFADD`, `PFCOUNT`, and `PFMERGE` with Redis-compatible
 STRING serialization. The 100,000-member development comparison produced the
@@ -131,7 +139,21 @@ and 24-byte arena segment descriptors.
 - [x] `SORT ... STORE` replacement as native LIST, destination TTL clearing, missing-GET empty-string storage, and empty-result destination deletion.
 - [x] Logical AOF replay for STORE destinations and LIST waiter wakeup.
 - [x] OOM retry protection for source, destination, and resolved external pattern keys.
-- [ ] Direct Redis differential audit across syntax/error edges and locale-sensitive ALPHA ordering.
+- [x] Direct Redis differential audit for the common syntax/error/external-pattern/STORE surface.
+- [ ] Decide whether locale-sensitive non-ASCII ALPHA collation parity is worth implementing.
+
+### COPY
+
+- [x] `COPY source destination [REPLACE]` for the single logical database.
+- [x] `DB 0` grammar compatibility; nonzero DB indexes return Redis-style out-of-range errors.
+- [x] Preserve logical datatype, value, stream metadata, and source absolute expiry.
+- [x] Existing destination returns 0 unless `REPLACE` is present; REPLACE can overwrite any datatype.
+- [x] Deep-copy semantics keep later source and destination mutations independent.
+- [x] Destination-only logical AOF persistence/restart and rollback on append failure.
+- [x] Max-memory/OOM admission leaves source and previous destination unchanged.
+- [x] MULTI/EXEC execution and WATCH invalidation.
+- [x] Successful LIST/ZSET/STREAM copies wake destination blockers.
+- [ ] Direct Redis differential audit of COPY option/error/TTL/type behavior.
 
 ### Native STREAM
 
@@ -198,8 +220,9 @@ and 24-byte arena segment descriptors.
 - [x] Modern GEO: `GEOADD`, `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH`, `GEOSEARCHSTORE`.
 - [x] Lua scripting core: `EVAL`, `EVALSHA`, `SCRIPT LOAD/EXISTS/FLUSH` and common `redis.*` bridge.
 - [x] `SORT` / `SORT_RO`.
+- [x] `COPY` for DB 0 with `REPLACE`, TTL/type preservation, durability, transactions, and OOM safety.
 - [ ] Redis Functions and remaining scripting parity/hardening.
-- [ ] `COPY` and migration scope decision.
+- [ ] Migration/transfer command scope beyond single-node COPY.
 
 ### P2 — client/tooling compatibility
 

@@ -16,13 +16,13 @@ Classic and sharded Pub/Sub are implemented, along with connection-scoped Redis
 transactions and optimistic locking (`MULTI`, `EXEC`, `DISCARD`, `WATCH`,
 `UNWATCH`). HyperLogLog (`PFADD`, `PFCOUNT`, `PFMERGE`), the modern GEO surface
 (`GEOADD`, `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH`, `GEOSEARCHSTORE`), the
-common Lua scripting path (`EVAL`, `EVALSHA`, `SCRIPT LOAD/EXISTS/FLUSH`), and
-`SORT` / `SORT_RO` are also implemented.
+common Lua scripting path (`EVAL`, `EVALSHA`, `SCRIPT LOAD/EXISTS/FLUSH`),
+`SORT` / `SORT_RO`, and single-database `COPY` are also implemented.
 
 The largest remaining Redis compatibility families are Redis Functions/full
-scripting parity, RESP3, COPY/migration scope, and broader CLIENT/CONFIG/ACL/tooling
-compatibility. Replication, Sentinel-style failover, and Cluster remain outside
-the current single-node scope.
+scripting parity, RESP3, migration/transfer scope, and broader
+CLIENT/CONFIG/ACL/tooling compatibility. Replication, Sentinel-style failover, and
+Cluster remain outside the current single-node scope.
 
 ## Client compatibility
 
@@ -52,7 +52,7 @@ protocol version`.
 | Family | Status | Notes |
 |---|---|---|
 | Strings / numeric / bits | Broad support | SET/GET variants, counters, ranges, bit operations, multi-key string operations |
-| Expiration / keyspace | Broad support | TTL/expire variants, rename, scan, type, delete, key inspection |
+| Expiration / keyspace | Broad support | TTL/expire variants, rename, copy, scan, type, delete, key inspection |
 | HASH | Broad support | Native packed datatype |
 | SET | Broad support | Native packed datatype and algebra/store operations |
 | LIST | Broad support | Native packed datatype, moves, blocking reads/pops |
@@ -152,6 +152,32 @@ ordering is not claimed as exact parity. SET native iteration order under `BY`
 without a wildcard is implementation-defined; STORE uses deterministic ordering.
 Dynamic-pattern ACL and Cluster slot restrictions are outside SnugKV's current
 single-node/no-ACL scope.
+
+## COPY
+
+Supported syntax:
+
+```text
+COPY source destination [DB 0] [REPLACE]
+```
+
+COPY leaves the source unchanged and deep-copies the logical value into a new
+independent destination allocation. STRING-style values and native HASH, SET,
+LIST, ZSET, and STREAM values retain their datatype and logical contents. Stream
+consumer-group/PEL metadata is part of the logical stream payload and is copied
+with the stream. An existing source expiry is preserved as the same absolute
+expiry on the destination.
+
+If the source does not exist, COPY returns 0. If the destination exists and
+`REPLACE` is absent, COPY returns 0 without changing either key. `REPLACE`
+overwrites any destination datatype. Source and destination being the same key is
+rejected with `ERR source and destination objects are the same`.
+
+SnugKV exposes only logical database 0, so `DB 0` is accepted while any other DB
+index returns `ERR DB index is out of range`. Cross-database copying is therefore
+not available. COPY participates in max-memory admission/OOM rollback, logical
+AOF persistence and restart recovery, MULTI/EXEC, WATCH invalidation, and
+LIST/ZSET/STREAM waiter wakeups when a successful copy creates a ready destination.
 
 ## HyperLogLog
 
@@ -341,10 +367,10 @@ It is not a complete RedisJSON implementation.
 Prioritized backlog:
 
 1. Redis Functions and remaining scripting parity/hardening.
-2. `COPY` and migration scope decision.
+2. Migration/transfer scope beyond single-database `COPY`.
 3. CLIENT/CONFIG/ACL compatibility and COMMAND metadata completeness.
 4. RESP3 where required by clients/tooling.
-5. Differential hardening for SORT and the completed Streams surface.
+5. Differential hardening for the completed Streams surface.
 6. Deprecated `GEORADIUS*` aliases if legacy client compatibility justifies them.
 7. Replication/failover/cluster only after the single-node compatibility target is mature.
 

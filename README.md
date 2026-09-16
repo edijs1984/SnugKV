@@ -44,7 +44,7 @@ for current boundaries, [PLAN.md](PLAN.md) for the remaining roadmap, and
 ## Supported command surface
 
 - Connection: `PING`, `ECHO`, `QUIT`, `SELECT 0`, `HELLO 2`, `INFO`, `DBSIZE`, `COMMAND`.
-- Keys: `DEL`, `UNLINK`, `EXISTS`, `TYPE`, `TOUCH`, `KEYS`, `SCAN`, `RANDOMKEY`, `RENAME`, `RENAMENX`.
+- Keys: `DEL`, `UNLINK`, `EXISTS`, `TYPE`, `TOUCH`, `KEYS`, `SCAN`, `RANDOMKEY`, `RENAME`, `RENAMENX`, `COPY`.
 - Strings: `SET`, `GET`, `GETSET`, `GETDEL`, `GETEX`, `SETNX`, `SETEX`, `PSETEX`, `MSET`, `MSETNX`, `MGET`, `APPEND`, `STRLEN`, `GETRANGE`, `SETRANGE`.
 - Numeric: `INCR`, `INCRBY`, `DECR`, `DECRBY`, `INCRBYFLOAT`.
 - Bit operations: `GETBIT`, `SETBIT`, `BITCOUNT`, `BITPOS`, `BITOP`.
@@ -102,6 +102,21 @@ for non-STORE ALPHA replies, so locale-sensitive/non-ASCII order is not claimed
 to be byte-for-byte identical yet. ACL/Cluster restrictions around dynamic
 external patterns are also outside the current single-node/no-ACL scope.
 
+## COPY compatibility
+
+`COPY source destination [DB 0] [REPLACE]` deep-copies the logical value while
+leaving the source unchanged. Native HASH, SET, LIST, ZSET, STREAM state and
+STRING-style values retain their Redis-visible datatype, and an existing source
+TTL is copied as the same absolute expiry. Without `REPLACE`, an existing live
+destination makes the command return 0; with `REPLACE`, any destination datatype
+can be overwritten. Successful COPY writes participate in AOF rollback,
+MULTI/EXEC, WATCH invalidation, max-memory admission, and blocking container
+wakeups.
+
+SnugKV intentionally exposes only database 0, so `COPY ... DB 0` is accepted and
+other destination DB indexes return `ERR DB index is out of range`. Cross-database
+copy and Redis migration/transfer commands are not implemented.
+
 ## Native container storage
 
 HASH, SET, LIST, ZSET, and STREAM are native semantic types rather than strings
@@ -154,12 +169,12 @@ optimizer.
 
 ## Major remaining compatibility work
 
-The next large Redis gaps are Redis Functions/full scripting parity,
-COPY/migration scope, RESP3, and client/tooling compatibility (`CLIENT`, `CONFIG`,
-ACL/auth, COMMAND metadata). Deprecated `GEORADIUS*` compatibility is not part of
-the modern GEO surface yet. A final differential Redis edge-case audit remains
-useful for Streams and SORT, but there is no known core Streams command-family
-gap. See [COMPATIBILITY.md](COMPATIBILITY.md) and GitHub issue #55.
+The next large Redis gaps are Redis Functions/full scripting parity, migration
+scope, RESP3, and client/tooling compatibility (`CLIENT`, `CONFIG`, ACL/auth,
+COMMAND metadata). Deprecated `GEORADIUS*` compatibility is not part of the modern
+GEO surface yet. A final differential Redis edge-case audit remains useful for
+Streams, but there is no known core Streams command-family gap. See
+[COMPATIBILITY.md](COMPATIBILITY.md) and GitHub issue #55.
 
 ## License
 

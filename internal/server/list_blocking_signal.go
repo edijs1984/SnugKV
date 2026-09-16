@@ -20,5 +20,9 @@ func (s *Server) signalListAvailability(args [][]byte, response []byte) {
 		if destination, ok := sortStoreDestination(args); ok && string(response) != ":0\r\n" {
 			s.signalListKey(destination)
 		}
+	case "COPY":
+		if len(args) > 2 && string(response) == ":1\r\n" && s.store.Type(string(args[2])) == "list" {
+			s.signalListKey(string(args[2]))
+		}
 	}
 }
