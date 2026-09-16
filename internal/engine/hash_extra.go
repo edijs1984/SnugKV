@@ -16,7 +16,7 @@ func (s *Store) HashSetNX(key string, field, value []byte) (bool, error) {
 
 	now := s.now()
 	old, exists := sh.get(key)
-	if exists && old.expired(now) {
+	if exists && sh.expired(key, old, now) {
 		s.remove(sh, key)
 		exists = false
 		old = entry{}
@@ -33,7 +33,7 @@ func (s *Store) HashSetNX(key string, field, value []byte) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		expiresAt = old.expiresAt
+		expiresAt = sh.expirationAt(key, old)
 	}
 
 	index := sort.Search(len(pairs), func(i int) bool {
