@@ -6,16 +6,46 @@ SnugKV now has a broad single-node RESP2 command surface with native HASH, SET,
 LIST, ZSET, and STREAM types, logical durability, memory accounting, adaptive
 scalar encoding, observability, operational tooling, classic/sharded Pub/Sub,
 Redis-style transactions with optimistic locking, HyperLogLog, modern GEO, a
-bounded Lua scripting core, and `SORT` / `SORT_RO`.
+bounded Lua scripting core, `SORT` / `SORT_RO`, and single-database `COPY`.
 
 The current engineering focus has moved from building the core native datatype
 set to finishing remaining Redis compatibility/tooling families and validating
 release behavior. The main remaining application-level gaps are Redis Functions
-and full scripting parity, COPY/migration scope, RESP3, and client/tooling
-compatibility. Streams are broadly implemented through Redis 8.2 reference-policy
-behavior; final differential edge-case audits remain useful for Streams and SORT.
+and full scripting parity, migration/transfer scope beyond COPY, RESP3, and
+client/tooling compatibility. Streams are broadly implemented through Redis 8.2
+reference-policy behavior; a final Streams differential edge-case audit remains
+useful.
 
 ## Recently completed
+
+### COPY
+
+- `COPY source destination [DB 0] [REPLACE]` is implemented for SnugKV's single
+  logical database.
+- Missing sources return 0; existing destinations return 0 unless `REPLACE` is
+  supplied; REPLACE can overwrite any Redis-visible datatype.
+- The source stays unchanged and the destination receives an independent logical
+  copy rather than sharing mutable storage.
+- STRING-style values and native HASH, SET, LIST, ZSET, and STREAM values retain
+  their logical datatype and contents through the persistence representation.
+- Existing source TTL is copied as the same absolute expiry instead of being
+  cleared or restarted from a relative duration.
+- `DB 0` is accepted for Redis grammar compatibility. Nonzero destination DBs are
+  rejected with `ERR DB index is out of range` because SnugKV exposes only DB 0.
+- Destination-only AOF journaling/replay is covered, with rollback preserving the
+  previous destination if persistence append fails.
+- Max-memory admission uses atomic logical Restore, so OOM leaves both source and
+  previous destination unchanged. Source and destination are protected from
+  eviction during retry.
+- COPY can run inside MULTI/EXEC and successful destination changes invalidate
+  WATCH state on other clients.
+- Successful copies of LIST, ZSET, and STREAM values wake blockers waiting on the
+  destination key.
+- Focused automated coverage includes basic/no-op/REPLACE cases, option/error
+  handling, TTL preservation, deep-copy independence, native container types,
+  restart persistence, OOM rollback, transactions, and WATCH invalidation.
+- Direct Redis differential testing is the remaining COPY validation step before
+  making a stronger parity claim.
 
 ### SORT / SORT_RO
 
@@ -37,9 +67,10 @@ behavior; final differential edge-case audits remain useful for Streams and SORT
 - Focused tests cover LIST/SET/ZSET sources, numeric/ALPHA ordering, LIMIT,
   external strings/hashes, GET #, BY nosort, missing lookups, WRONGTYPE,
   SORT_RO STORE rejection, TTL clearing, empty-result deletion, and AOF restart.
+- Manual Redis 6379 vs SnugKV 6380 differential testing matched the implemented
+  common surface command-for-command, including errors and STORE/TTL behavior.
 - Current documented boundary: ALPHA comparison is bytewise in SnugKV, while Redis
-  can use locale-aware collation for non-STORE replies. Direct Redis differential
-  smoke testing remains the next validation step before stronger parity claims.
+  can use locale-aware collation for non-STORE replies.
 
 ### Lua scripting core
 
@@ -202,7 +233,7 @@ TTL sidecars, and compact arena segment descriptors.
   request limits, deadlines, connection limits, and graceful shutdown.
 - Sharded collision-safe indexing, segmented arenas, expiration, compaction,
   explicit max-memory accounting, OOM rollback, and sampled LRU eviction.
-- String, numeric, bit, expiration, key, JSON, HyperLogLog, GEO, scripting, SORT, and administration commands.
+- String, numeric, bit, expiration, key, JSON, HyperLogLog, GEO, scripting, SORT, COPY, and administration commands.
 - Native HASH, SET, LIST, and ZSET with broad Redis-style command coverage.
 - Blocking LIST/ZSET/STREAM waits register before readiness checks and use
   waiter/wakeup signaling instead of polling.
@@ -210,8 +241,8 @@ TTL sidecars, and compact arena segment descriptors.
   queued RESP bytes.
 - Logical AOF/snapshot persistence with checksums, restart recovery,
   truncated-final-frame handling, corruption rejection, online AOF rewrite,
-  atomic transaction-frame persistence, atomic logical script frames, and
-  destination-only SORT STORE persistence.
+  atomic transaction-frame persistence, atomic logical script frames,
+  destination-only SORT STORE persistence, and destination-only COPY persistence.
 - Prometheus metrics, separate loopback-only administration listener, Docker,
   Make targets, CI, benchmark harnesses, and soak tooling.
 
@@ -234,6 +265,8 @@ Recent real-server verification includes:
 - HyperLogLog parity at 100,000 unique inputs with identical Redis estimate,
   serialized size, and serialized bytes;
 - GEO parity for the Sicily examples and score formatting;
+- SORT/SORT_RO parity for LIST/SET/ZSET sources, BY/GET/hash patterns, nosort,
+  STORE/TTL behavior, missing values, and exact tested error replies;
 - Lua parity for basic EVAL/KEYS/ARGV, SET/GET via `redis.call`, script cache
   load/exists/flush/EVALSHA, exact SHA/NOSCRIPT behavior, partial writes before
   runtime errors, and Redis-specific nested-command wrong-arity wording;
@@ -265,9 +298,9 @@ when evaluating CPU tradeoffs.
 ## Remaining engineering work
 
 1. Redis Functions and remaining scripting parity (`EVAL_RO`, `SCRIPT KILL/DEBUG`, command-flag/ACL semantics, differential testing).
-2. COPY/migration scope.
+2. Migration/transfer scope beyond single-database COPY.
 3. RESP3 and CLIENT/CONFIG/ACL/COMMAND tooling compatibility.
-4. Differential Redis edge-case audits for SORT and the completed Streams surface.
+4. Differential Redis edge-case audit for the completed Streams surface.
 5. Optional legacy `GEORADIUS*` aliases if real client usage requires them.
 6. Fresh release-scale benchmarks, multi-run variance, million-record datasets,
    broader client compatibility, retained long-duration soak evidence, dedicated
