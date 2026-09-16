@@ -11,7 +11,7 @@ const SegmentBytes = 8 << 10
 const firstSmallSegmentBytes = 256
 const tinyFirstSegmentBytes = 192
 const secondSmallSegmentBytes = 1 << 10
-const segmentMetadata = 32
+const segmentMetadata = 24
 const freeBucketCount = 130
 
 // Ref is an opaque allocation identity. Generation prevents aliasing after reuse.
@@ -74,10 +74,14 @@ func (r Ref) length() uint32 {
 	return uint32(r.location & refLengthMask)
 }
 
+// segment uses the slice length as the number of committed bytes and the slice
+// capacity as the reserved segment size. That keeps the descriptor to one
+// 24-byte slice header instead of storing a separate used counter that padded
+// the descriptor to 32 bytes on 64-bit targets.
 type segment struct {
 	data []byte
-	used uint32
 }
+
 type Arena struct {
 	segments []segment
 	// Buckets 128 and 129 are reserved for exact 24- and 88-byte blocks used
@@ -261,8 +265,8 @@ func (a *Arena) GrowthFor(lengths []int) uint64 {
 	used, size := 0, 0
 	if count > 0 {
 		last := a.segments[count-1]
-		used = int(last.used)
-		size = len(last.data)
+		used = len(last.data)
+		size = cap(last.data)
 	}
 	var growth uint64
 	for _, n := range lengths {
@@ -294,6 +298,7 @@ func (a *Arena) GrowthFor(lengths []int) uint64 {
 	}
 	return growth
 }
+
 func (a *Arena) Alloc(value []byte) Ref {
 	if len(value) == 0 {
 		return Ref{}
@@ -310,7 +315,7 @@ func (a *Arena) Alloc(value []byte) Ref {
 		a.free[bucket] = binary.LittleEndian.Uint64(a.segments[seg].data[offset+8:])
 	} else {
 		seg = len(a.segments) - 1
-		if seg < 0 || len(a.segments[seg].data)-int(a.segments[seg].used) < block {
+		if seg < 0 || cap(a.segments[seg].data)-len(a.segments[seg].data) < block {
 			size := segmentSizeForAllocation(block, len(a.segments))
 			if len(a.segments) == cap(a.segments) {
 				capacity := 2 * cap(a.segments)
@@ -321,11 +326,11 @@ func (a *Arena) Alloc(value []byte) Ref {
 				copy(next, a.segments)
 				a.segments = next
 			}
-			a.segments = append(a.segments, segment{data: make([]byte, size)})
+			a.segments = append(a.segments, segment{data: make([]byte, 0, size)})
 			seg = len(a.segments) - 1
 		}
-		offset = int(a.segments[seg].used)
-		a.segments[seg].used += uint32(block)
+		offset = len(a.segments[seg].data)
+		a.segments[seg].data = a.segments[seg].data[:offset+block]
 	}
 	a.generation++
 	if a.generation == 0 {
@@ -335,6 +340,7 @@ func (a *Arena) Alloc(value []byte) Ref {
 	copy(a.segments[seg].data[offset+8:], value)
 	return newRef(uint32(seg), uint32(offset), uint32(len(value)), a.generation)
 }
+
 func (a *Arena) View(ref Ref) ([]byte, error) {
 	if ref.generation == 0 {
 		if ref.length() == 0 {
@@ -353,6 +359,7 @@ func (a *Arena) View(ref Ref) ([]byte, error) {
 	}
 	return data[start+8 : end : end], nil
 }
+
 func (a *Arena) Free(ref Ref) {
 	if ref.generation == 0 {
 		return
