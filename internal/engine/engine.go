@@ -139,7 +139,7 @@ func NewWithOptions(options Options) (*Store, error) {
 		},
 	}
 	for i := range s.shards {
-		s.shards[i].data = index.New[uint32]()
+		s.shards[i].data = *index.New[uint32]()
 	}
 	return s, nil
 }
