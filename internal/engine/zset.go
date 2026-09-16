@@ -420,7 +420,7 @@ func (s *Store) ZSetAdd(key string, pairs []ZSetItem, options ZSetAddOptions) (c
 	defer sh.mu.Unlock()
 	now := s.now()
 	old, exists := sh.get(key)
-	if exists && old.expired(now) {
+	if exists && sh.expired(key, old, now) {
 		s.remove(sh, key)
 		exists = false
 		old = entry{}
@@ -435,7 +435,7 @@ func (s *Store) ZSetAdd(key string, pairs []ZSetItem, options ZSetAddOptions) (c
 		if err != nil {
 			return 0, false, 0, err
 		}
-		expiresAt = old.expiresAt
+		expiresAt = sh.expirationAt(key, old)
 	}
 
 	changedMembers := make(map[string]struct{})
@@ -510,7 +510,7 @@ func (s *Store) ZSetRemove(key string, members [][]byte) (int64, error) {
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		if ok {
 			s.remove(sh, key)
 		}
@@ -548,7 +548,7 @@ func (s *Store) ZSetRemove(key string, members [][]byte) (int64, error) {
 		return 0, err
 	}
 	updated := zsetPreparedEntry(packed)
-	updated.expiresAt = e.expiresAt
+	updated.expiresAt = sh.expirationAt(key, e)
 	if err := s.publish(sh, key, updated); err != nil {
 		return 0, err
 	}
@@ -560,7 +560,7 @@ func (s *Store) ZSetScore(key string, member []byte) (float64, bool, error) {
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return 0, false, nil
 	}
 	if e.valueType != TypeZSet {
@@ -582,7 +582,7 @@ func (s *Store) ZSetCard(key string) (int64, error) {
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return 0, nil
 	}
 	if e.valueType != TypeZSet {
@@ -597,7 +597,7 @@ func (s *Store) ZSetRank(key string, member []byte, reverse bool) (int64, bool, 
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return 0, false, nil
 	}
 	if e.valueType != TypeZSet {
@@ -642,7 +642,7 @@ func (s *Store) ZSetRange(key string, start, stop int64, reverse bool) ([]ZSetIt
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return nil, nil
 	}
 	if e.valueType != TypeZSet {
@@ -675,7 +675,7 @@ func (s *Store) ZSetStorageStats(key string) (ZSetStats, bool, error) {
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return ZSetStats{}, false, nil
 	}
 	if e.valueType != TypeZSet {
