@@ -16,5 +16,9 @@ func (s *Server) signalListAvailability(args [][]byte, response []byte) {
 		if len(args) > 2 && string(response) != "$-1\r\n" {
 			s.signalListKey(string(args[2]))
 		}
+	case "SORT":
+		if destination, ok := sortStoreDestination(args); ok && string(response) != ":0\r\n" {
+			s.signalListKey(destination)
+		}
 	}
 }
