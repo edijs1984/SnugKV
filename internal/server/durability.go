@@ -142,6 +142,10 @@ func (s *Server) executeDurableLocked(args [][]byte) ([]byte, error) {
 	var affected []string
 	if cmd == "SORT" {
 		affected = []string{sortDestination}
+	} else if cmd == "COPY" && len(args) >= 3 {
+		// COPY never mutates the source key. Persist and rollback only the
+		// destination so a failed AOF append cannot disturb the source.
+		affected = []string{string(args[2])}
 	} else if cmd == "ZMPOP" {
 		affected = zsetMPopKeys(args)
 	} else if cmd == "XREADGROUP" {
