@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"math"
@@ -11,7 +10,8 @@ import (
 
 const maxPackedStreamBytes = 32 << 20
 
-var packedStreamHeader = [...]byte{'S', 'X', 1}
+var packedStreamHeaderV1 = [...]byte{'S', 'X', 1}
+var packedStreamHeaderV2 = [...]byte{'S', 'X', 2}
 
 type StreamID struct {
 	Millis   uint64
@@ -43,6 +43,7 @@ type StreamEntry struct {
 type packedStream struct {
 	LastID  StreamID
 	Entries []StreamEntry
+	Groups  []streamGroup
 }
 
 type StreamAddOptions struct {
@@ -79,7 +80,7 @@ func readStreamUvarint(data []byte, offset *int) (uint64, error) {
 }
 
 func encodePackedStream(state packedStream) ([]byte, error) {
-	capacity := len(packedStreamHeader) + 16 + binary.MaxVarintLen64
+	capacity := len(packedStreamHeaderV2) + 16 + binary.MaxVarintLen64
 	for _, item := range state.Entries {
 		capacity += 16 + binary.MaxVarintLen64
 		if len(item.Fields) == 0 {
@@ -93,7 +94,7 @@ func encodePackedStream(state packedStream) ([]byte, error) {
 		}
 	}
 	out := make([]byte, 0, capacity)
-	out = append(out, packedStreamHeader[:]...)
+	out = append(out, packedStreamHeaderV2[:]...)
 	var fixed [16]byte
 	binary.BigEndian.PutUint64(fixed[:8], state.LastID.Millis)
 	binary.BigEndian.PutUint64(fixed[8:], state.LastID.Sequence)
@@ -119,6 +120,11 @@ func encodePackedStream(state packedStream) ([]byte, error) {
 		}
 		previous = item.ID
 	}
+	var err error
+	out, err = appendStreamGroups(out, state.Groups)
+	if err != nil {
+		return nil, err
+	}
 	if len(out) > maxPackedStreamBytes {
 		return nil, errors.New("ERR stream exceeds 32 MiB limit")
 	}
@@ -126,10 +132,14 @@ func encodePackedStream(state packedStream) ([]byte, error) {
 }
 
 func decodePackedStream(data []byte) (packedStream, error) {
-	if len(data) < len(packedStreamHeader)+16 || !bytes.Equal(data[:len(packedStreamHeader)], packedStreamHeader[:]) {
+	if len(data) < len(packedStreamHeaderV1)+16 || data[0] != 'S' || data[1] != 'X' {
 		return packedStream{}, errors.New("invalid packed stream")
 	}
-	offset := len(packedStreamHeader)
+	version := data[2]
+	if version != packedStreamHeaderV1[2] && version != packedStreamHeaderV2[2] {
+		return packedStream{}, errors.New("invalid packed stream")
+	}
+	offset := len(packedStreamHeaderV1)
 	state := packedStream{LastID: StreamID{
 		Millis:   binary.BigEndian.Uint64(data[offset : offset+8]),
 		Sequence: binary.BigEndian.Uint64(data[offset+8 : offset+16]),
@@ -177,6 +187,12 @@ func decodePackedStream(data []byte) (packedStream, error) {
 		}
 		state.Entries = append(state.Entries, StreamEntry{ID: id, Fields: fields})
 		previous = id
+	}
+	if version == packedStreamHeaderV2[2] {
+		state.Groups, err = readStreamGroups(data, &offset)
+		if err != nil {
+			return packedStream{}, err
+		}
 	}
 	if offset != len(data) {
 		return packedStream{}, errors.New("invalid packed stream trailing data")
