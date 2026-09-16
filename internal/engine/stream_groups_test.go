@@ -16,23 +16,36 @@ func legacyEmptyStreamV1(last StreamID) []byte {
 	return out
 }
 
+func legacyEmptyStreamV2(last StreamID) []byte {
+	out := []byte{'S', 'X', 2}
+	out = appendStreamID(out, last)
+	out = appendStreamUvarint(out, 0) // entries
+	out = appendStreamUvarint(out, 0) // groups
+	return out
+}
+
 func TestPackedStreamConsumerGroupsRoundTripAndV1Compatibility(t *testing.T) {
-	legacy := legacyEmptyStreamV1(StreamID{Millis: 7, Sequence: 2})
-	decoded, err := decodePackedStream(legacy)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if decoded.LastID != (StreamID{Millis: 7, Sequence: 2}) || len(decoded.Groups) != 0 {
-		t.Fatalf("legacy decode = %#v", decoded)
+	for name, legacy := range map[string][]byte{
+		"v1": legacyEmptyStreamV1(StreamID{Millis: 7, Sequence: 2}),
+		"v2": legacyEmptyStreamV2(StreamID{Millis: 7, Sequence: 2}),
+	} {
+		decoded, err := decodePackedStream(legacy)
+		if err != nil {
+			t.Fatalf("%s decode: %v", name, err)
+		}
+		if decoded.LastID != (StreamID{Millis: 7, Sequence: 2}) || decoded.EntriesAdded != 0 || len(decoded.Groups) != 0 {
+			t.Fatalf("%s legacy decode = %#v", name, decoded)
+		}
 	}
 
 	state := packedStream{
-		LastID: StreamID{Millis: 9},
+		LastID:       StreamID{Millis: 9},
+		EntriesAdded: 4,
 		Groups: []streamGroup{{
 			Name:            "workers",
 			LastDeliveredID: StreamID{Millis: 8, Sequence: 3},
 			EntriesRead:     4,
-			Consumers:       []streamConsumer{{Name: "c1", SeenAt: 1234}},
+			Consumers:       []streamConsumer{{Name: "c1", SeenAt: 1234, ActiveAt: 1200}},
 			Pending: []streamPending{{
 				ID:          StreamID{Millis: 8, Sequence: 3},
 				Consumer:    "c1",
@@ -45,18 +58,22 @@ func TestPackedStreamConsumerGroupsRoundTripAndV1Compatibility(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(packed) < 3 || packed[2] != 2 {
+	if len(packed) < 3 || packed[2] != packedStreamHeaderV3[2] {
 		t.Fatalf("packed version = %v", packed[:3])
 	}
 	roundTrip, err := decodePackedStream(packed)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(roundTrip.Groups) != 1 || roundTrip.Groups[0].Name != "workers" || roundTrip.Groups[0].EntriesRead != 4 {
-		t.Fatalf("round trip groups = %#v", roundTrip.Groups)
+	if roundTrip.EntriesAdded != 4 || len(roundTrip.Groups) != 1 || roundTrip.Groups[0].Name != "workers" || roundTrip.Groups[0].EntriesRead != 4 {
+		t.Fatalf("round trip groups = %#v", roundTrip)
 	}
 	if len(roundTrip.Groups[0].Consumers) != 1 || len(roundTrip.Groups[0].Pending) != 1 {
 		t.Fatalf("round trip group metadata = %#v", roundTrip.Groups[0])
+	}
+	consumer := roundTrip.Groups[0].Consumers[0]
+	if consumer.SeenAt != 1234 || consumer.ActiveAt != 1200 {
+		t.Fatalf("round trip consumer = %#v", consumer)
 	}
 }
 
