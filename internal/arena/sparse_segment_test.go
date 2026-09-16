@@ -34,8 +34,8 @@ func TestFirstArenaGrowthProjectionMatchesAllocation(t *testing.T) {
 	if a.SegmentCount() != 1 {
 		t.Fatalf("segments = %d, want 1", a.SegmentCount())
 	}
-	if len(a.segments[0].data) >= secondSmallSegmentBytes {
-		t.Fatalf("first sparse segment = %d, expected smaller than %d", len(a.segments[0].data), secondSmallSegmentBytes)
+	if cap(a.segments[0].data) >= secondSmallSegmentBytes {
+		t.Fatalf("first sparse segment = %d, expected smaller than %d", cap(a.segments[0].data), secondSmallSegmentBytes)
 	}
 	if _, err := a.View(ref); err != nil {
 		t.Fatal(err)
@@ -55,7 +55,7 @@ func TestSmallArenaUsesStagedGrowthBeforeDenseSegments(t *testing.T) {
 	if a.SegmentCount() != 1 {
 		t.Fatalf("segments before first overflow = %d, want 1", a.SegmentCount())
 	}
-	if got := len(a.segments[0].data); got != firstSize {
+	if got := cap(a.segments[0].data); got != firstSize {
 		t.Fatalf("first segment = %d, want %d", got, firstSize)
 	}
 
@@ -66,7 +66,7 @@ func TestSmallArenaUsesStagedGrowthBeforeDenseSegments(t *testing.T) {
 		t.Fatalf("segments after first overflow = %d, want 2", a.SegmentCount())
 	}
 	secondSize := segmentSizeForAllocation(block, 1)
-	if got := len(a.segments[1].data); got != secondSize {
+	if got := cap(a.segments[1].data); got != secondSize {
 		t.Fatalf("second segment = %d, want %d", got, secondSize)
 	}
 	if got := a.MemoryBytes() - before; got != projected {
@@ -88,7 +88,7 @@ func TestSmallArenaUsesStagedGrowthBeforeDenseSegments(t *testing.T) {
 		t.Fatalf("segments after second overflow = %d, want 3", a.SegmentCount())
 	}
 	denseSize := segmentSizeForBlock(block)
-	if got := len(a.segments[2].data); got != denseSize {
+	if got := cap(a.segments[2].data); got != denseSize {
 		t.Fatalf("third segment = %d, want dense segment %d", got, denseSize)
 	}
 	if got := a.MemoryBytes() - before; got != projected {

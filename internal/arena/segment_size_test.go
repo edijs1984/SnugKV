@@ -110,10 +110,10 @@ func TestMediumBlocksFillAdaptiveSegmentExactly(t *testing.T) {
 	if len(a.segments) != 1 {
 		t.Fatalf("segments = %d, want 1", len(a.segments))
 	}
-	if got := len(a.segments[0].data); got != 5906 {
+	if got := cap(a.segments[0].data); got != 5906 {
 		t.Fatalf("segment bytes = %d, want 5906", got)
 	}
-	if got := int(a.segments[0].used); got != 5906 {
+	if got := len(a.segments[0].data); got != 5906 {
 		t.Fatalf("used bytes = %d, want 5906", got)
 	}
 	if got := a.MemoryBytes(); got != growth {
