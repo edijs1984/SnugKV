@@ -53,13 +53,14 @@ for current boundaries, [PLAN.md](PLAN.md) for the remaining roadmap, and
 - LIST: `LPUSH`, `RPUSH`, `LPUSHX`, `RPUSHX`, `LPOP`, `RPOP`, `LLEN`, `LINDEX`, `LRANGE`, `LSET`, `LTRIM`, `LREM`, `LINSERT`, `LPOS`, `LMOVE`, `RPOPLPUSH`, `BLPOP`, `BRPOP`, `BLMOVE`, `BRPOPLPUSH`.
 - ZSET: `ZADD`, `ZREM`, `ZINCRBY`, `ZSCORE`, `ZMSCORE`, `ZCARD`, `ZCOUNT`, `ZLEXCOUNT`, `ZRANK`, `ZREVRANK`, `ZRANGE`, `ZREVRANGE`, `ZRANGEBYSCORE`, `ZREVRANGEBYSCORE`, `ZRANGEBYLEX`, `ZREVRANGEBYLEX`, `ZREMRANGEBYRANK`, `ZREMRANGEBYSCORE`, `ZREMRANGEBYLEX`, `ZUNION`, `ZINTER`, `ZDIFF`, `ZUNIONSTORE`, `ZINTERSTORE`, `ZDIFFSTORE`, `ZINTERCARD`, `ZPOPMIN`, `ZPOPMAX`, `ZMPOP`, `BZPOPMIN`, `BZPOPMAX`, `BZMPOP`, `ZRANDMEMBER`, `ZSCAN`, `ZRANGESTORE`.
 - STREAM: `XADD`, `XLEN`, `XRANGE`, `XREVRANGE`, `XDEL`, `XDELEX`, `XTRIM`, `XREAD`, `XGROUP`, `XREADGROUP`, `XACK`, `XACKDEL`, `XPENDING`, `XCLAIM`, `XAUTOCLAIM`, `XINFO`; Redis 8.2 `KEEPREF` / `DELREF` / `ACKED` reference policies are supported.
+- Pub/Sub: `SUBSCRIBE`, `UNSUBSCRIBE`, `PSUBSCRIBE`, `PUNSUBSCRIBE`, `PUBLISH`, `SSUBSCRIBE`, `SUNSUBSCRIBE`, `SPUBLISH`, and `PUBSUB` classic/sharded introspection.
+- Transactions: `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH` with cross-client optimistic locking and EXEC error semantics.
 - JSON: `JSON.SET`, `JSON.GET`, `JSON.TYPE`, `JSON.DEL`.
 - Administration: `FLUSHDB`, `FLUSHALL`, `MEMORY`, `SNUG.ENCODING`, `SNUG.MEMORY`, `SNUG.STATS`, `SNUG.COMPACT`, `SNUG.POLICY`, `SNUG.AOFREWRITE`, `SNUG.SHAPES`, `SNUG.CANDIDATES`, `SNUG.TYPE`.
 
 Blocking LIST, ZSET, `XREAD`, and `XREADGROUP` commands use waiter/wakeup paths
 rather than polling, and sleeping blockers do not hold the global durability
-mutex. RESP3 and Redis transactions are not implemented; see
-[COMPATIBILITY.md](COMPATIBILITY.md).
+mutex. RESP3 is not implemented; see [COMPATIBILITY.md](COMPATIBILITY.md).
 
 ## Native container storage
 
@@ -108,11 +109,11 @@ optimizer.
 
 ## Major remaining compatibility work
 
-The next large Redis families are Pub/Sub, transactions/WATCH, HyperLogLog, GEO,
-scripting/functions, RESP3, and client/tooling compatibility (`CLIENT`, `CONFIG`,
-ACL/auth, COMMAND metadata). A final differential Redis edge-case audit remains
-useful for Streams, but there is no known core Streams command-family gap.
-See [COMPATIBILITY.md](COMPATIBILITY.md) and GitHub issue #55.
+The next large Redis families are HyperLogLog, GEO, scripting/functions, RESP3,
+and client/tooling compatibility (`CLIENT`, `CONFIG`, ACL/auth, COMMAND metadata).
+A final differential Redis edge-case audit remains useful for Streams, but there
+is no known core Streams command-family gap. See [COMPATIBILITY.md](COMPATIBILITY.md)
+and GitHub issue #55.
 
 ## License
 
