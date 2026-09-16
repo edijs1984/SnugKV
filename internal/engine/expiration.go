@@ -33,6 +33,18 @@ func (q *expirationQueue) Pop() interface{} {
 	delete(q.positions, e.key)
 	return e
 }
+
+func (q *expirationQueue) atFor(key string) (stamp, bool) {
+	if q.positions == nil {
+		return 0, false
+	}
+	i, ok := q.positions[key]
+	if !ok || i < 0 || i >= len(q.items) || q.items[i].key != key {
+		return 0, false
+	}
+	return q.items[i].at, true
+}
+
 func (sh *shard) schedule(key string, at stamp) {
 	if at.IsZero() {
 		// Persistent writes are the common case. Do not allocate a positions
