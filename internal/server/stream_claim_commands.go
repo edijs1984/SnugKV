@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"math"
 	"snugkv/internal/engine"
 	"strconv"
 	"strings"
@@ -35,6 +36,13 @@ func parseNonNegativeMillis(arg []byte) (int64, error) {
 	return value, nil
 }
 
+func claimDuration(milliseconds int64) (time.Duration, error) {
+	if milliseconds > math.MaxInt64/int64(time.Millisecond) {
+		return 0, errors.New("ERR value is not an integer or out of range")
+	}
+	return time.Duration(milliseconds) * time.Millisecond, nil
+}
+
 func parseClaimStreamID(text string) (engine.StreamID, error) {
 	if strings.Contains(text, "-") {
 		return engine.ParseStreamID(text)
@@ -61,6 +69,10 @@ func parseXClaim(args [][]byte) (string, string, string, time.Duration, []engine
 	}
 	key, group, consumer := string(args[1]), string(args[2]), string(args[3])
 	minIdleMS, err := parseNonNegativeMillis(args[4])
+	if err != nil {
+		return "", "", "", 0, nil, options, err
+	}
+	minIdle, err := claimDuration(minIdleMS)
 	if err != nil {
 		return "", "", "", 0, nil, options, err
 	}
@@ -141,7 +153,7 @@ func parseXClaim(args [][]byte) (string, string, string, time.Duration, []engine
 			return "", "", "", 0, nil, options, errors.New("ERR syntax error")
 		}
 	}
-	return key, group, consumer, time.Duration(minIdleMS) * time.Millisecond, ids, options, nil
+	return key, group, consumer, minIdle, ids, options, nil
 }
 
 func (s *Server) executeXClaim(args [][]byte) ([]byte, error) {
@@ -168,16 +180,21 @@ func parseXAutoClaim(args [][]byte) (string, string, string, time.Duration, engi
 	if err != nil {
 		return "", "", "", 0, engine.StreamID{}, 0, false, err
 	}
+	minIdle, err := claimDuration(minIdleMS)
+	if err != nil {
+		return "", "", "", 0, engine.StreamID{}, 0, false, err
+	}
 	start, err := parseClaimStreamID(string(args[5]))
 	if err != nil {
 		return "", "", "", 0, engine.StreamID{}, 0, false, err
 	}
 	count := 100
 	justID := false
+	seenCount := false
 	for i := 6; i < len(args); {
 		switch strings.ToUpper(string(args[i])) {
 		case "COUNT":
-			if i+1 >= len(args) {
+			if seenCount || i+1 >= len(args) {
 				return "", "", "", 0, engine.StreamID{}, 0, false, errors.New("ERR syntax error")
 			}
 			value, err := strconv.ParseInt(string(args[i+1]), 10, 64)
@@ -185,6 +202,7 @@ func parseXAutoClaim(args [][]byte) (string, string, string, time.Duration, engi
 				return "", "", "", 0, engine.StreamID{}, 0, false, errors.New("ERR value is not an integer or out of range")
 			}
 			count = int(value)
+			seenCount = true
 			i += 2
 		case "JUSTID":
 			if justID {
@@ -196,7 +214,7 @@ func parseXAutoClaim(args [][]byte) (string, string, string, time.Duration, engi
 			return "", "", "", 0, engine.StreamID{}, 0, false, errors.New("ERR syntax error")
 		}
 	}
-	return key, group, consumer, time.Duration(minIdleMS) * time.Millisecond, start, count, justID, nil
+	return key, group, consumer, minIdle, start, count, justID, nil
 }
 
 func (s *Server) executeXAutoClaim(args [][]byte) ([]byte, error) {
