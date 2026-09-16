@@ -199,17 +199,13 @@ func (s *Server) executeEval(args [][]byte, bySHA bool) ([]byte, error) {
 			return nil, errors.New("NOSCRIPT No matching script. Please use EVAL.")
 		}
 	} else {
-		sha = scriptSHA(source)
+		if err := validateLuaScript(source); err != nil {
+			return nil, fmt.Errorf("ERR Error compiling script (new function): %v", err)
+		}
+		sha = cache.put(source)
 	}
 
-	response, err := s.runLuaScript(source, sha, keys, argv)
-	if err != nil {
-		return nil, err
-	}
-	if !bySHA {
-		cache.put(source)
-	}
-	return response, nil
+	return s.runLuaScript(source, sha, keys, argv)
 }
 
 func newScriptLuaState() *lua.LState {
@@ -225,9 +221,6 @@ func newScriptLuaState() *lua.LState {
 	} {
 		_ = L.CallByParam(lua.P{Fn: L.NewFunction(lib.open), NRet: 0, Protect: true}, lua.LString(lib.name))
 	}
-	// Redis scripts do not have filesystem/process access. OpenBase exposes file
-	// loading helpers, so remove them explicitly while retaining ordinary Lua 5.1
-	// language helpers such as tonumber, tostring, pcall, and loadstring.
 	L.SetGlobal("dofile", lua.LNil)
 	L.SetGlobal("loadfile", lua.LNil)
 	L.SetGlobal("require", lua.LNil)
@@ -279,11 +272,11 @@ func (s *Server) runLuaScript(source, sha string, keys, argv [][]byte) ([]byte, 
 func (s *Server) luaRedisModule(L *lua.LState) *lua.LTable {
 	module := L.NewTable()
 	L.SetFuncs(module, map[string]lua.LGFunction{
-		"call":        s.luaRedisCall(false),
-		"pcall":       s.luaRedisCall(true),
-		"error_reply": luaRedisErrorReply,
+		"call":         s.luaRedisCall(false),
+		"pcall":        s.luaRedisCall(true),
+		"error_reply":  luaRedisErrorReply,
 		"status_reply": luaRedisStatusReply,
-		"sha1hex":     luaRedisSHA1Hex,
+		"sha1hex":      luaRedisSHA1Hex,
 	})
 	return module
 }
@@ -337,6 +330,9 @@ func (s *Server) luaRedisCall(protected bool) lua.LGFunction {
 		if scriptCommandForbidden(args) {
 			return luaPushCommandError(L, protected, errors.New("ERR This Redis command is not allowed from script"))
 		}
+		if err := queuedCommandValidation(args); err != nil {
+			return luaPushCommandError(L, protected, err)
+		}
 
 		result, err := s.executePressureMode(args, false)
 		if err != nil {
@@ -345,8 +341,6 @@ func (s *Server) luaRedisCall(protected bool) lua.LGFunction {
 		s.signalListAvailability(args, result)
 		s.signalZSetAvailability(args, result)
 		s.signalStreamAvailability(args, result)
-		// WATCH must notice transient mutations made by a script even when a
-		// later redis.call restores the original value before EVAL returns.
 		s.refreshWatchesLocked()
 
 		value, err := respToLuaValue(L, result)
