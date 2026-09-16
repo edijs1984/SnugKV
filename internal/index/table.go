@@ -208,6 +208,7 @@ func (t *Table[V]) All() func(func(string, V) bool) {
 				return
 			}
 		}
+	}
 }
 
 func (t *Table[V]) Compact() {
