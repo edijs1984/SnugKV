@@ -2,7 +2,8 @@
 
 SnugKV is currently an alpha-stage, single-node RESP2 datastore. It has broad
 coverage across the common Redis datatype families, including Streams, Pub/Sub,
-and transactions, but it is not a complete Redis replacement.
+transactions, HyperLogLog, and the modern GEO surface, but it is not a complete
+Redis replacement.
 
 ## Protocol
 
@@ -16,16 +17,16 @@ See [COMPATIBILITY.md](COMPATIBILITY.md).
 ## Redis command coverage
 
 Strings, counters, expiration, bit operations, key inspection, HASH, SET, LIST,
-ZSET, Streams/consumer groups, classic/sharded Pub/Sub, transactions/WATCH, basic
-JSON, memory inspection, and administration are implemented to the documented
-scope.
+ZSET, HyperLogLog, modern GEO, Streams/consumer groups, classic/sharded Pub/Sub,
+transactions/WATCH, basic JSON, memory inspection, and administration are
+implemented to the documented scope.
 
 Major Redis-compatible features still not implemented:
 
-- HyperLogLog;
-- GEO;
 - Lua scripting;
 - Redis Functions;
+- `SORT` / `SORT_RO`;
+- full COPY/migration scope;
 - RESP3;
 - broad CLIENT / CONFIG / ACL compatibility;
 - replication;
@@ -34,6 +35,12 @@ Major Redis-compatible features still not implemented:
 - modules.
 
 The current JSON commands are not a complete RedisJSON implementation.
+
+Modern GEO commands are implemented, but deprecated `GEORADIUS`,
+`GEORADIUSBYMEMBER`, `GEORADIUS_RO`, and `GEORADIUSBYMEMBER_RO` aliases are not.
+`GEOSEARCH` currently scans/decodes the packed source ZSET rather than maintaining
+a permanent secondary geospatial index, making searches O(source cardinality).
+This is a deliberate memory/performance tradeoff pending large-GEO benchmarks.
 
 Streams include Redis 8.2 `KEEPREF`, `DELREF`, and `ACKED` reference-policy
 selection plus `XDELEX` and `XACKDEL`. SnugKV has no Redis macro-node
@@ -56,6 +63,8 @@ queued MULTI commands; `PUBLISH` and `SPUBLISH` remain ordinary queueable comman
   non-Linux builds.
 - Some operational/client metadata commands used by Redis tooling are still
   incomplete even when ordinary application workloads work.
+- The modern GEO command set has focused command-level compatibility tests; large
+  dataset differential/performance testing is intentionally still pending.
 
 ## Deployment topology
 
@@ -104,6 +113,8 @@ collection mutation:
 - HASH/SET/LIST/ZSET/STREAM mutations may decode and re-encode packed values.
 - ZSET member lookup/update is linear in member count; there is no permanent
   skiplist/tree/member index.
+- GEOSEARCH currently scans the ZSET and decodes candidate scores, so it is O(N)
+  in the source set rather than using Redis-style geohash range pruning.
 - lex ZSET operations construct a temporary lexicographic view rather than keeping
   a second permanent index.
 - LIST uses one packed logical blob, so very large head mutations can be O(total

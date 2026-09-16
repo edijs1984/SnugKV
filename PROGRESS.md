@@ -5,17 +5,41 @@
 SnugKV now has a broad single-node RESP2 command surface with native HASH, SET,
 LIST, ZSET, and STREAM types, logical durability, memory accounting, adaptive
 scalar encoding, observability, operational tooling, classic/sharded Pub/Sub,
-and Redis-style transactions with optimistic locking.
+Redis-style transactions with optimistic locking, HyperLogLog, and the modern GEO
+command surface.
 
 The current engineering focus has moved from building the core native datatype
-set to finishing the remaining Redis compatibility families and validating release
-behavior. The main remaining application-level gaps are HyperLogLog, GEO,
-scripting/functions, RESP3, and client/tooling compatibility. Streams are broadly
-implemented through Redis 8.2 reference-policy behavior; a final differential
-edge-case audit remains useful but no known core Streams command-family gap is
-currently tracked.
+set to finishing the remaining Redis compatibility/tooling families and validating
+release behavior. The main remaining application-level gaps are scripting/functions,
+`SORT`/`SORT_RO`, COPY/migration scope, RESP3, and client/tooling compatibility.
+Streams are broadly implemented through Redis 8.2 reference-policy behavior; a
+final differential edge-case audit remains useful but no known core Streams
+command-family gap is currently tracked.
 
 ## Recently completed
+
+### HyperLogLog
+
+- `PFADD`, `PFCOUNT`, and `PFMERGE`.
+- Redis-compatible HLL STRING serialization with sparse/dense handling.
+- Duplicate additions, union/merge, TTL preservation, invalid-value handling, and
+  large-cardinality automated coverage.
+- Manual 100,000-member Redis comparison produced identical `PFCOUNT` (99,471),
+  identical `STRLEN` (12,304), and an identical SHA-256 of the serialized value.
+
+### GEO
+
+- `GEOADD`, `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH`, and `GEOSEARCHSTORE`.
+- Redis-compatible 52-bit coordinate encoding stored directly as native ZSET scores.
+- `GEOADD` supports `NX`, `XX`, and `CH` while preserving existing TTL.
+- `GEOSEARCH` supports member/coordinate origins, radius/box shapes, sorting,
+  `COUNT [ANY]`, `WITHDIST`, `WITHHASH`, and `WITHCOORD`.
+- `GEOSEARCHSTORE` replaces the destination, clears previous TTL, supports
+  `STOREDIST`, and protects both source/destination during OOM retry eviction.
+- Focused tests use the canonical Redis Sicily coordinates and expected hashes,
+  scores, positions, and distance values.
+- Current search implementation is intentionally O(source cardinality), scanning
+  the packed ZSET instead of maintaining a second permanent spatial index.
 
 ### Transactions / WATCH
 
@@ -122,7 +146,7 @@ TTL sidecars, and compact arena segment descriptors.
   request limits, deadlines, connection limits, and graceful shutdown.
 - Sharded collision-safe indexing, segmented arenas, expiration, compaction,
   explicit max-memory accounting, OOM rollback, and sampled LRU eviction.
-- String, numeric, bit, expiration, key, JSON, and administration commands.
+- String, numeric, bit, expiration, key, JSON, HyperLogLog, GEO, and administration commands.
 - Native HASH, SET, LIST, and ZSET with broad Redis-style command coverage.
 - Blocking LIST/ZSET/STREAM waits register before readiness checks and use
   waiter/wakeup signaling instead of polling.
@@ -150,6 +174,8 @@ appropriate.
 
 Recent real-server verification includes:
 
+- HyperLogLog parity at 100,000 unique inputs with identical Redis estimate,
+  serialized size, and serialized bytes;
 - transaction queue-time EXECABORT behavior;
 - runtime WRONGTYPE inside EXEC while later queued work still commits;
 - two-client WATCH invalidation and change-then-restore invalidation;
@@ -177,13 +203,14 @@ when evaluating CPU tradeoffs.
 
 ## Remaining engineering work
 
-1. HyperLogLog.
-2. GEO.
-3. Scripting / Functions scope.
-4. RESP3 and CLIENT/CONFIG/ACL/COMMAND tooling compatibility.
-5. Differential Redis edge-case audit for the completed Streams surface.
+1. Scripting / Functions scope.
+2. `SORT` / `SORT_RO` and COPY/migration scope.
+3. RESP3 and CLIENT/CONFIG/ACL/COMMAND tooling compatibility.
+4. Differential Redis edge-case audit for the completed Streams surface.
+5. Optional legacy `GEORADIUS*` aliases if real client usage requires them.
 6. Fresh release-scale benchmarks, multi-run variance, million-record datasets,
-   broader client compatibility, and retained long-duration soak evidence.
+   broader client compatibility, retained long-duration soak evidence, and a
+   dedicated large-GEO benchmark before adding a permanent spatial index.
 7. Distributed features only after the single-node target is mature.
 
 See `PLAN.md`, `COMPATIBILITY.md`, `KNOWN-LIMITATIONS.md`, and GitHub issue #55.

@@ -8,8 +8,8 @@ GitHub issue #55 tracks command-family compatibility work.
 
 The single-node RESP2 engine, logical persistence, memory accounting, optimizer,
 observability, packaging, HASH, SET, LIST, ZSET, broad STREAM/consumer-group
-support, classic/sharded Pub/Sub, and Redis-style transactions/WATCH are
-implemented.
+support, classic/sharded Pub/Sub, Redis-style transactions/WATCH, HyperLogLog,
+and the modern GEO command surface are implemented.
 
 Streams include core reads/writes, blocking `XREAD`, consumer groups,
 `XREADGROUP`, PEL inspection/acknowledgement, claims/autoclaims, XINFO,
@@ -22,6 +22,15 @@ queue-time EXECABORT semantics, runtime errors preserved inside EXEC arrays,
 cross-client WATCH invalidation including change-then-restore, expiration
 invalidation, nonblocking execution of blocking commands inside MULTI, and one
 logical AOF frame for transaction results.
+
+HyperLogLog implements `PFADD`, `PFCOUNT`, and `PFMERGE` with Redis-compatible
+STRING serialization. The 100,000-member development comparison produced the
+same estimate, length, and SHA-256 payload as Redis.
+
+Modern GEO implements `GEOADD`, `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH`, and
+`GEOSEARCHSTORE` on top of native ZSET storage using Redis-compatible 52-bit
+geospatial scores. GEOSEARCH currently favors memory efficiency over a secondary
+spatial index and scans the source packed ZSET.
 
 Shared sparse-memory overhead has also been reduced substantially. On the canonical
 1,000-key / 256-shard / 16-byte-value benchmark, accounted memory moved from
@@ -66,6 +75,24 @@ and 24-byte arena segment descriptors.
 - [x] Native packed LIST with moves and blocking waiter/wakeup operations.
 - [x] Native packed ZSET with rank/score/lex ranges, algebra, multipops and blocking pops.
 - [x] TTL, persistence, WRONGTYPE, OOM rollback, race and RESP coverage across the implemented surfaces.
+
+### HyperLogLog
+
+- [x] `PFADD`, `PFCOUNT`, and `PFMERGE`.
+- [x] Redis-compatible sparse/dense serialized HLL STRING values.
+- [x] Duplicate-add, union/merge, TTL, invalid-object, and large-cardinality coverage.
+- [x] Manual Redis comparison at 100,000 members: identical `PFCOUNT` (99,471), `STRLEN` (12,304), and payload SHA-256.
+
+### GEO
+
+- [x] Redis-compatible 52-bit longitude/latitude score encoding on native ZSET storage.
+- [x] `GEOADD` with `NX`, `XX`, and `CH`, preserving an existing destination TTL.
+- [x] `GEODIST`, `GEOHASH`, and `GEOPOS`.
+- [x] `GEOSEARCH` with `FROMMEMBER` / `FROMLONLAT`, `BYRADIUS` / `BYBOX`, ordering, COUNT/ANY, and WITH* result options.
+- [x] `GEOSEARCHSTORE` with replacement semantics, TTL clearing, and `STOREDIST`.
+- [x] OOM retry protection keeps both GEOSEARCHSTORE source and destination from eviction.
+- [ ] Optional legacy `GEORADIUS*` aliases if real client compatibility requires them.
+- [ ] Dedicated large geospatial performance benchmark and potential score-range pruning/indexing if O(N) search becomes a measured bottleneck.
 
 ### Native STREAM
 
@@ -128,8 +155,8 @@ and 24-byte arena segment descriptors.
 
 ### P1 — major Redis command families
 
-- [ ] HyperLogLog: `PFADD`, `PFCOUNT`, `PFMERGE`.
-- [ ] GEO: `GEOADD`, `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH`, `GEOSEARCHSTORE`.
+- [x] HyperLogLog: `PFADD`, `PFCOUNT`, `PFMERGE`.
+- [x] Modern GEO: `GEOADD`, `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH`, `GEOSEARCHSTORE`.
 - [ ] Scripting / Redis Functions scope (`EVAL`, `EVALSHA`, `SCRIPT`, `FUNCTION`, `FCALL`) or explicitly document a different extension model.
 - [ ] `SORT` / `SORT_RO`.
 - [ ] `COPY` and migration scope decision.
@@ -154,6 +181,7 @@ its complexity with measurements.
 - [ ] Million-record datasets on dedicated hardware.
 - [ ] Retain evidence from a 24-hour mixed workload soak.
 - [ ] Expand third-party client compatibility tests.
+- [ ] Benchmark large GEO sets before adding permanent geospatial indexing.
 
 ### P4 — distributed features (outside current single-node target)
 

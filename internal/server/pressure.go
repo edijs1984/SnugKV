@@ -14,6 +14,9 @@ func (s *Server) executePressureCommand(args [][]byte) ([]byte, error) {
 	if isHyperLogLogCommand(args) {
 		return s.executeHyperLogLog(args)
 	}
+	if isGeoCommand(args) {
+		return s.executeGeo(args)
+	}
 	if isStreamRefPolicyCommand(args) {
 		return s.executeStreamRefPolicy(args)
 	}
@@ -79,6 +82,11 @@ func (s *Server) executePressureMode(args [][]byte, journalEvictions bool) ([]by
 		for _, key := range streamGroupReadKeys(args) {
 			excluded[key] = true
 		}
+	} else if cmd == "GEOSEARCHSTORE" && len(args) >= 3 {
+		// The destination is the only mutated key, but the source must remain
+		// stable across an OOM/eviction retry as well.
+		excluded[string(args[1])] = true
+		excluded[string(args[2])] = true
 	} else if isZSetAlgebraCommand(args) {
 		for _, key := range zsetAlgebraInputKeys(args) {
 			excluded[key] = true
