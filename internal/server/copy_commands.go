@@ -84,14 +84,9 @@ func (s *Server) executeCopy(args [][]byte) ([]byte, error) {
 	// changing only the key before Restore, COPY preserves the source datatype,
 	// value, stream/group metadata, and absolute expiry while allocating fully
 	// independent destination storage.
-	record := records[0]
-	record.Key = []byte(destination)
-	if err := s.store.Restore(records[:0+1], false); err != nil {
+	records[0].Key = []byte(destination)
+	if err := s.store.Restore(records, false); err != nil {
 		return nil, err
 	}
-	// Restore above received the original source-key record. Re-apply with the
-	// destination key. This assignment is intentionally separated so the record
-	// remains a standalone deep logical copy.
-	_ = record
 	return integer(1), nil
 }
