@@ -1,8 +1,8 @@
 # Known Limitations
 
 SnugKV is currently an alpha-stage, single-node RESP2 datastore. It has broad
-coverage across the common Redis datatype families, including Streams, but it is
-not a complete Redis replacement.
+coverage across the common Redis datatype families, including Streams, Pub/Sub,
+and transactions, but it is not a complete Redis replacement.
 
 ## Protocol
 
@@ -16,13 +16,12 @@ See [COMPATIBILITY.md](COMPATIBILITY.md).
 ## Redis command coverage
 
 Strings, counters, expiration, bit operations, key inspection, HASH, SET, LIST,
-ZSET, Streams/consumer groups, basic JSON, memory inspection, and administration
-are implemented to the documented scope.
+ZSET, Streams/consumer groups, classic/sharded Pub/Sub, transactions/WATCH, basic
+JSON, memory inspection, and administration are implemented to the documented
+scope.
 
 Major Redis-compatible features still not implemented:
 
-- Pub/Sub;
-- transactions (`MULTI`, `EXEC`, `WATCH`, `UNWATCH`, `DISCARD`);
 - HyperLogLog;
 - GEO;
 - Lua scripting;
@@ -41,6 +40,11 @@ selection plus `XDELEX` and `XACKDEL`. SnugKV has no Redis macro-node
 representation, so accepted `~` stream trimming is exact except for an explicit
 `LIMIT` cap. A differential Redis edge-case audit can still uncover small semantic
 differences even though no known core Streams command-family gap remains.
+
+Transactions implement `MULTI`, `EXEC`, `DISCARD`, `WATCH`, and `UNWATCH`,
+including cross-client WATCH invalidation and change-then-restore detection.
+Current RESP2 limitation: Pub/Sub subscription-state commands are not supported as
+queued MULTI commands; `PUBLISH` and `SPUBLISH` remain ordinary queueable commands.
 
 ## Compatibility hardening still in progress
 
@@ -63,7 +67,8 @@ differences even though no known core Streams command-family gap remains.
 
 SnugKV includes logical AOF/snapshot persistence and recovery testing, including
 truncated-final-frame recovery, checksum-corruption rejection, append rollback,
-online AOF rewrite, and native datatype restore coverage.
+online AOF rewrite, native datatype restore coverage, and single logical AOF
+frames for successful transaction results.
 
 For alpha use:
 
