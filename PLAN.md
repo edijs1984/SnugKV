@@ -9,7 +9,7 @@ GitHub issue #55 tracks command-family compatibility work.
 The single-node RESP2 engine, logical persistence, memory accounting, optimizer,
 observability, packaging, HASH, SET, LIST, ZSET, broad STREAM/consumer-group
 support, classic/sharded Pub/Sub, Redis-style transactions/WATCH, HyperLogLog,
-and the modern GEO command surface are implemented.
+modern GEO, and the common Lua scripting path are implemented.
 
 Streams include core reads/writes, blocking `XREAD`, consumer groups,
 `XREADGROUP`, PEL inspection/acknowledgement, claims/autoclaims, XINFO,
@@ -22,6 +22,12 @@ queue-time EXECABORT semantics, runtime errors preserved inside EXEC arrays,
 cross-client WATCH invalidation including change-then-restore, expiration
 invalidation, nonblocking execution of blocking commands inside MULTI, and one
 logical AOF frame for transaction results.
+
+Lua scripting now includes `EVAL`, `EVALSHA`, `SCRIPT LOAD/EXISTS/FLUSH`,
+`KEYS`/`ARGV`, the common `redis.call`/`redis.pcall` bridge, RESP2/Lua reply
+conversion, volatile SHA-1 caching, a bounded runtime, MULTI/EXEC integration,
+WATCH invalidation, and one-frame logical AOF persistence for script results.
+Redis Functions and the remaining scripting-management/read-only commands remain.
 
 HyperLogLog implements `PFADD`, `PFCOUNT`, and `PFMERGE` with Redis-compatible
 STRING serialization. The 100,000-member development comparison produced the
@@ -94,6 +100,22 @@ and 24-byte arena segment descriptors.
 - [ ] Optional legacy `GEORADIUS*` aliases if real client compatibility requires them.
 - [ ] Dedicated large geospatial performance benchmark and potential score-range pruning/indexing if O(N) search becomes a measured bottleneck.
 
+### Lua scripting core
+
+- [x] `EVAL` and `EVALSHA` with Redis-style key/argument splitting.
+- [x] `SCRIPT LOAD`, `SCRIPT EXISTS`, and `SCRIPT FLUSH [SYNC|ASYNC]`.
+- [x] Volatile SHA-1 cache populated by `SCRIPT LOAD` and successfully compiled `EVAL` scripts.
+- [x] Lua 5.1-compatible runtime with `KEYS`, `ARGV`, `redis.call`, `redis.pcall`, `redis.error_reply`, `redis.status_reply`, and `redis.sha1hex`.
+- [x] RESP2/Lua conversions for integers, strings, arrays, null/false, status replies, and error replies.
+- [x] Five-second execution limit and no filesystem/process Lua libraries.
+- [x] Atomic client-visible execution under the existing command-serialization mutex.
+- [x] MULTI/EXEC execution and transient WATCH invalidation across script writes.
+- [x] One logical AOF frame for direct script results; writes before a later runtime error remain durable.
+- [ ] `EVAL_RO` / `EVALSHA_RO`.
+- [ ] `SCRIPT KILL`, `SCRIPT DEBUG`, and broader SCRIPT subcommand parity.
+- [ ] Redis Functions (`FUNCTION`, `FCALL`, `FCALL_RO`).
+- [ ] Differential Redis audit of Lua edge cases, command flags, ACL semantics, and OOM/eviction behavior.
+
 ### Native STREAM
 
 - [x] Versioned packed stream format with backward decode.
@@ -157,7 +179,8 @@ and 24-byte arena segment descriptors.
 
 - [x] HyperLogLog: `PFADD`, `PFCOUNT`, `PFMERGE`.
 - [x] Modern GEO: `GEOADD`, `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH`, `GEOSEARCHSTORE`.
-- [ ] Scripting / Redis Functions scope (`EVAL`, `EVALSHA`, `SCRIPT`, `FUNCTION`, `FCALL`) or explicitly document a different extension model.
+- [x] Lua scripting core: `EVAL`, `EVALSHA`, `SCRIPT LOAD/EXISTS/FLUSH` and common `redis.*` bridge.
+- [ ] Redis Functions and remaining scripting parity/hardening.
 - [ ] `SORT` / `SORT_RO`.
 - [ ] `COPY` and migration scope decision.
 
@@ -182,6 +205,7 @@ its complexity with measurements.
 - [ ] Retain evidence from a 24-hour mixed workload soak.
 - [ ] Expand third-party client compatibility tests.
 - [ ] Benchmark large GEO sets before adding permanent geospatial indexing.
+- [ ] Benchmark script compile/execute overhead and cache-hit behavior before pooling Lua states or compiled chunks.
 
 ### P4 — distributed features (outside current single-node target)
 

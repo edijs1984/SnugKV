@@ -5,18 +5,43 @@
 SnugKV now has a broad single-node RESP2 command surface with native HASH, SET,
 LIST, ZSET, and STREAM types, logical durability, memory accounting, adaptive
 scalar encoding, observability, operational tooling, classic/sharded Pub/Sub,
-Redis-style transactions with optimistic locking, HyperLogLog, and the modern GEO
-command surface.
+Redis-style transactions with optimistic locking, HyperLogLog, modern GEO, and a
+bounded Lua scripting core.
 
 The current engineering focus has moved from building the core native datatype
-set to finishing the remaining Redis compatibility/tooling families and validating
-release behavior. The main remaining application-level gaps are scripting/functions,
-`SORT`/`SORT_RO`, COPY/migration scope, RESP3, and client/tooling compatibility.
-Streams are broadly implemented through Redis 8.2 reference-policy behavior; a
-final differential edge-case audit remains useful but no known core Streams
-command-family gap is currently tracked.
+set to finishing remaining Redis compatibility/tooling families and validating
+release behavior. The main remaining application-level gaps are Redis Functions
+and full scripting parity, `SORT`/`SORT_RO`, COPY/migration scope, RESP3, and
+client/tooling compatibility. Streams are broadly implemented through Redis 8.2
+reference-policy behavior; a final differential edge-case audit remains useful but
+no known core Streams command-family gap is currently tracked.
 
 ## Recently completed
+
+### Lua scripting core
+
+- `EVAL` and `EVALSHA` with Redis-style `numkeys`, `KEYS`, and `ARGV` handling.
+- `SCRIPT LOAD`, `SCRIPT EXISTS`, and `SCRIPT FLUSH [SYNC|ASYNC]` with a volatile
+  per-server SHA-1 cache.
+- Embedded Lua 5.1-compatible runtime with filesystem/process libraries removed.
+- `redis.call`, `redis.pcall`, `redis.error_reply`, `redis.status_reply`, and
+  `redis.sha1hex`.
+- RESP2/Lua conversions for integers, bulk strings, arrays, null/false, status
+  replies, and error replies.
+- Scripts execute under the same global command serialization used by ordinary
+  commands and MULTI/EXEC, preventing cross-client interleaving mid-script.
+- Scripts can execute inside MULTI/EXEC; runtime errors remain EXEC elements while
+  earlier script writes remain applied.
+- WATCH is invalidated by transient script changes even if a later command in the
+  same script restores the original value.
+- Direct EVAL/EVALSHA logical mutations are persisted as one AOF frame. Successful
+  writes before a later Lua runtime error remain durable rather than being rolled
+  back.
+- Malformed commands passed to `redis.pcall` are validated before command routing,
+  preventing internal type-guard panics and returning Lua error tables instead.
+- Each script has a five-second execution limit. Blocking, connection/subscription,
+  transaction, nested scripting, and SnugKV administrative commands are rejected
+  from the Lua command bridge.
 
 ### HyperLogLog
 
@@ -38,6 +63,8 @@ command-family gap is currently tracked.
   `STOREDIST`, and protects both source/destination during OOM retry eviction.
 - Focused tests use the canonical Redis Sicily coordinates and expected hashes,
   scores, positions, and distance values.
+- Manual Redis parity confirmed coordinates, hashes, distances, search results,
+  store behavior, errors, TTL behavior, and full-decimal GEO ZSET score formatting.
 - Current search implementation is intentionally O(source cardinality), scanning
   the packed ZSET instead of maintaining a second permanent spatial index.
 
@@ -146,15 +173,15 @@ TTL sidecars, and compact arena segment descriptors.
   request limits, deadlines, connection limits, and graceful shutdown.
 - Sharded collision-safe indexing, segmented arenas, expiration, compaction,
   explicit max-memory accounting, OOM rollback, and sampled LRU eviction.
-- String, numeric, bit, expiration, key, JSON, HyperLogLog, GEO, and administration commands.
+- String, numeric, bit, expiration, key, JSON, HyperLogLog, GEO, scripting, and administration commands.
 - Native HASH, SET, LIST, and ZSET with broad Redis-style command coverage.
 - Blocking LIST/ZSET/STREAM waits register before readiness checks and use
   waiter/wakeup signaling instead of polling.
 - Linux TCP peer-disconnect monitoring cancels blocked commands without consuming
   queued RESP bytes.
 - Logical AOF/snapshot persistence with checksums, restart recovery,
-  truncated-final-frame handling, corruption rejection, online AOF rewrite, and
-  atomic transaction-frame persistence.
+  truncated-final-frame handling, corruption rejection, online AOF rewrite,
+  atomic transaction-frame persistence, and atomic logical script frames.
 - Prometheus metrics, separate loopback-only administration listener, Docker,
   Make targets, CI, benchmark harnesses, and soak tooling.
 
@@ -176,6 +203,7 @@ Recent real-server verification includes:
 
 - HyperLogLog parity at 100,000 unique inputs with identical Redis estimate,
   serialized size, and serialized bytes;
+- GEO parity for the Sicily examples and score formatting;
 - transaction queue-time EXECABORT behavior;
 - runtime WRONGTYPE inside EXEC while later queued work still commits;
 - two-client WATCH invalidation and change-then-restore invalidation;
@@ -203,14 +231,14 @@ when evaluating CPU tradeoffs.
 
 ## Remaining engineering work
 
-1. Scripting / Functions scope.
+1. Redis Functions and remaining scripting parity (`EVAL_RO`, `SCRIPT KILL/DEBUG`, command-flag/ACL semantics, differential testing).
 2. `SORT` / `SORT_RO` and COPY/migration scope.
 3. RESP3 and CLIENT/CONFIG/ACL/COMMAND tooling compatibility.
 4. Differential Redis edge-case audit for the completed Streams surface.
 5. Optional legacy `GEORADIUS*` aliases if real client usage requires them.
 6. Fresh release-scale benchmarks, multi-run variance, million-record datasets,
-   broader client compatibility, retained long-duration soak evidence, and a
-   dedicated large-GEO benchmark before adding a permanent spatial index.
+   broader client compatibility, retained long-duration soak evidence, dedicated
+   large-GEO benchmarking, and script runtime/cache benchmarks.
 7. Distributed features only after the single-node target is mature.
 
 See `PLAN.md`, `COMPATIBILITY.md`, `KNOWN-LIMITATIONS.md`, and GitHub issue #55.

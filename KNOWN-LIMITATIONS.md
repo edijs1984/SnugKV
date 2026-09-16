@@ -2,8 +2,8 @@
 
 SnugKV is currently an alpha-stage, single-node RESP2 datastore. It has broad
 coverage across the common Redis datatype families, including Streams, Pub/Sub,
-transactions, HyperLogLog, and the modern GEO surface, but it is not a complete
-Redis replacement.
+transactions, HyperLogLog, modern GEO, and the common Lua scripting path, but it
+is not a complete Redis replacement.
 
 ## Protocol
 
@@ -18,13 +18,13 @@ See [COMPATIBILITY.md](COMPATIBILITY.md).
 
 Strings, counters, expiration, bit operations, key inspection, HASH, SET, LIST,
 ZSET, HyperLogLog, modern GEO, Streams/consumer groups, classic/sharded Pub/Sub,
-transactions/WATCH, basic JSON, memory inspection, and administration are
-implemented to the documented scope.
+transactions/WATCH, partial Lua scripting, basic JSON, memory inspection, and
+administration are implemented to the documented scope.
 
-Major Redis-compatible features still not implemented:
+Major Redis-compatible features still not implemented or incomplete:
 
-- Lua scripting;
-- Redis Functions;
+- Redis Functions (`FUNCTION`, `FCALL`, `FCALL_RO`);
+- full Lua scripting parity (`EVAL_RO`, `EVALSHA_RO`, `SCRIPT KILL/DEBUG`, exact command flags/ACL behavior);
 - `SORT` / `SORT_RO`;
 - full COPY/migration scope;
 - RESP3;
@@ -35,6 +35,32 @@ Major Redis-compatible features still not implemented:
 - modules.
 
 The current JSON commands are not a complete RedisJSON implementation.
+
+## Lua scripting boundaries
+
+The implemented scripting surface is `EVAL`, `EVALSHA`, `SCRIPT LOAD`,
+`SCRIPT EXISTS`, and `SCRIPT FLUSH [SYNC|ASYNC]`. Scripts receive `KEYS` and
+`ARGV` and can use `redis.call`, `redis.pcall`, `redis.error_reply`,
+`redis.status_reply`, and `redis.sha1hex`.
+
+Current boundaries are intentional and documented rather than silently emulated:
+
+- scripts run in an embedded Lua 5.1-compatible runtime, not Redis's exact Lua VM;
+- filesystem/process libraries are removed;
+- each invocation has a five-second execution limit;
+- blocking commands, subscription/connection state, transaction commands, nested
+  scripting, and SnugKV admin commands are rejected through the script bridge;
+- the script cache is volatile and process-local;
+- `SCRIPT KILL`, `SCRIPT DEBUG`, Redis Functions, and read-only EVAL variants are
+  not implemented;
+- exact Redis command-flag, ACL, OOM/eviction, and every Lua edge-case still need
+  differential testing.
+
+Scripts are atomic with respect to other SnugKV clients because they execute under
+the same command-serialization boundary as transactions. Lua runtime errors do not
+roll back successful writes already made by the script. With AOF enabled, those
+resulting logical changes are persisted in one frame even when the script later
+returns a runtime error.
 
 Modern GEO commands are implemented, but deprecated `GEORADIUS`,
 `GEORADIUSBYMEMBER`, `GEORADIUS_RO`, and `GEORADIUSBYMEMBER_RO` aliases are not.
@@ -65,6 +91,9 @@ queued MULTI commands; `PUBLISH` and `SPUBLISH` remain ordinary queueable comman
   incomplete even when ordinary application workloads work.
 - The modern GEO command set has focused command-level compatibility tests; large
   dataset differential/performance testing is intentionally still pending.
+- Lua scripting has focused unit/durability/transaction coverage; live redis-cli
+  and direct Redis differential testing should be completed before claiming full
+  scripting compatibility.
 
 ## Deployment topology
 
@@ -76,8 +105,9 @@ queued MULTI commands; `PUBLISH` and `SPUBLISH` remain ordinary queueable comman
 
 SnugKV includes logical AOF/snapshot persistence and recovery testing, including
 truncated-final-frame recovery, checksum-corruption rejection, append rollback,
-online AOF rewrite, native datatype restore coverage, and single logical AOF
-frames for successful transaction results.
+online AOF rewrite, native datatype restore coverage, single logical AOF frames
+for successful transaction results, and single logical frames for direct script
+mutations including partial writes before runtime errors.
 
 For alpha use:
 
@@ -89,7 +119,8 @@ For alpha use:
 
 `SNUG.STATS` reports engine-accounted memory, not process RSS. RSS additionally
 includes Go runtime state, goroutine stacks, network/persistence buffers,
-optimizer scratch space, and allocator overhead.
+optimizer scratch space, allocator overhead, and temporary Lua VM state while a
+script is executing.
 
 The sparse 1,000-key / 256-shard / 16-byte-value benchmark improved from 527,768
 to 179,224 accounted bytes, a 66.04% reduction. Current measured sparse layout:
@@ -121,9 +152,13 @@ collection mutation:
   encoded bytes).
 - Streams use packed logical state, including group/PEL metadata, rather than a
   Redis radix-tree/listpack layout.
+- the current Lua implementation creates an isolated VM per invocation rather than
+  pooling VM state or compiled chunks, favoring isolation/simplicity over minimum
+  script-call latency.
 
 These tradeoffs are intentional for the current single-node design and should be
-revisited only with workload benchmarks that justify extra permanent memory.
+revisited only with workload benchmarks that justify extra permanent memory or
+complexity.
 
 ## Performance claims
 
@@ -136,8 +171,9 @@ See [benchmarks/README.md](benchmarks/README.md).
 
 ## Security
 
-SnugKV has not received an independent security audit. Follow
-[SECURITY.md](SECURITY.md).
+SnugKV has not received an independent security audit. The scripting runtime is
+sandboxed by omitting filesystem/process libraries and limiting execution time,
+but this is not a substitute for a security review. Follow [SECURITY.md](SECURITY.md).
 
 ## Production use
 
