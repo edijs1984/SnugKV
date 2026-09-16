@@ -136,7 +136,7 @@ func (s *Store) ValueTypeOf(key string) (ValueType, bool) {
 	defer sh.mu.RUnlock()
 
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return TypeString, false
 	}
 
