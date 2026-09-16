@@ -79,6 +79,39 @@ func TestTinySetSizeClasses(t *testing.T) {
 	}
 }
 
+func TestTiny24ByteClassUsesTightFirstSegment(t *testing.T) {
+	if got := segmentSizeForAllocation(24, 0); got != 192 {
+		t.Fatalf("24-byte first segment=%d want 192", got)
+	}
+	if got := segmentSizeForAllocation(48, 0); got != 240 {
+		t.Fatalf("48-byte first segment=%d want 240", got)
+	}
+
+	var a Arena
+	value := bytes.Repeat([]byte{'x'}, 16)
+	for i := 0; i < 8; i++ {
+		a.Alloc(value)
+	}
+	if got := a.SegmentCount(); got != 1 {
+		t.Fatalf("8 tiny values used %d segments, want 1", got)
+	}
+	if got := a.MemoryBytes(); got != 224 { // 192 data + 32 segment metadata
+		t.Fatalf("8 tiny values use %d bytes, want 224", got)
+	}
+
+	projected := a.GrowthFor([]int{16})
+	a.Alloc(value)
+	if got := a.SegmentCount(); got != 2 {
+		t.Fatalf("9 tiny values used %d segments, want 2", got)
+	}
+	if got := a.MemoryBytes(); got != 1264 { // 192 + 1008 data + 64 metadata
+		t.Fatalf("9 tiny values use %d bytes, want 1264", got)
+	}
+	if projected != 1040 {
+		t.Fatalf("ninth-value growth=%d want 1040", projected)
+	}
+}
+
 func TestRefPacking(t *testing.T) {
 	ref := newRef(
 		(1<<refSegmentBits)-1,
