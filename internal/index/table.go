@@ -4,11 +4,12 @@ package index
 import "unsafe"
 
 const (
-	stateEmpty   = uint64(0)
-	stateLive    = uint64(1)
-	stateDeleted = uint64(2)
-	stateShift   = 62
-	keyLengthMask = uint64(1<<30) - 1
+	stateEmpty       = uint64(0)
+	stateLive        = uint64(1)
+	stateDeleted     = uint64(2)
+	stateShift       = 62
+	keyLengthMask    = uint64(1<<30) - 1
+	initialCapacity  = 4
 )
 
 // slot is intentionally 16 bytes on 64-bit targets:
@@ -93,7 +94,7 @@ func (t *Table[V]) capacityFor(n int) int {
 		return capacity
 	}
 	if capacity == 0 {
-		capacity = 8
+		capacity = initialCapacity
 	}
 	for n > capacity*8/10 {
 		capacity *= 2
@@ -212,7 +213,7 @@ func (t *Table[V]) All() func(func(string, V) bool) {
 }
 
 func (t *Table[V]) Compact() {
-	capacity := 8
+	capacity := initialCapacity
 	if t.count == 0 {
 		t.slots = nil
 		return
