@@ -18,7 +18,7 @@ func (s *Store) SetMultiContains(key string, targets [][]byte) ([]bool, error) {
 	defer sh.mu.RUnlock()
 
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return results, nil
 	}
 	if e.valueType != TypeSet {
@@ -53,7 +53,7 @@ func (s *Store) SetScan(key string, cursor uint64, count int, pattern []byte) (u
 	defer sh.mu.RUnlock()
 
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return 0, nil, nil
 	}
 	if e.valueType != TypeSet {

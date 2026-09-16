@@ -33,7 +33,7 @@ func (s *Store) Export(keys []string) []persistence.Record {
 		sh := s.shardFor(key)
 		e, ok := sh.get(key)
 		record := persistence.Record{Key: []byte(key)}
-		if !ok || e.expired(now) {
+		if !ok || sh.expired(key, e, now) {
 			if all {
 				continue
 			}
@@ -62,8 +62,8 @@ func (s *Store) Export(keys []string) []persistence.Record {
 				record.Value = s.decode(sh, e)
 			}
 			record.ValueType = uint8(e.valueType)
-			if !e.expiresAt.IsZero() {
-				record.ExpiresAtMS = e.expiresAt.UnixMilli()
+			if e.hasExpiry {
+				record.ExpiresAtMS = sh.expirationAt(key, e).UnixMilli()
 			}
 		}
 		records = append(records, record)

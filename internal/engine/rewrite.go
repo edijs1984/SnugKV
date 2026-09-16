@@ -36,7 +36,7 @@ func (s *Store) OptimizationEligible(
 
 	now := s.now()
 	e, ok := sh.get(key)
-	if !ok || e.expired(now) || isNativeContainerType(e.valueType) {
+	if !ok || sh.expired(key, e, now) || isNativeContainerType(e.valueType) {
 		return 0, false
 	}
 
@@ -73,7 +73,7 @@ func (s *Store) MarkOptimizationAttempt(
 
 	now := s.now()
 	e, ok := sh.get(key)
-	if !ok || e.expired(now) || isNativeContainerType(e.valueType) {
+	if !ok || sh.expired(key, e, now) || isNativeContainerType(e.valueType) {
 		return false
 	}
 
@@ -104,7 +104,7 @@ func (s *Store) Candidate(key string, maxBytes int) (Candidate, bool) {
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) || isNativeContainerType(e.valueType) || int(e.rawLength) > maxBytes {
+	if !ok || sh.expired(key, e, s.now()) || isNativeContainerType(e.valueType) || int(e.rawLength) > maxBytes {
 		return Candidate{}, false
 	}
 	meta := e.entryMeta
@@ -121,7 +121,7 @@ func (s *Store) Candidate(key string, maxBytes int) (Candidate, bool) {
 		LastRewrite:  lastRewrite,
 		LastWrite:    lastWrite,
 		Heat:         heat(meta, s.now()),
-		expiresAt:    e.expiresAt,
+		expiresAt:    sh.expirationAt(key, e),
 	}, true
 }
 func heat(meta *entryMeta, now time.Time) string {
@@ -144,7 +144,7 @@ func (s *Store) Policy(key string) (string, bool) {
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return "", false
 	}
 	if !s.encoding {
@@ -441,10 +441,10 @@ func (s *Store) Rewrite(candidate Candidate, record codec.Record) bool {
 	defer sh.mu.Unlock()
 	e, ok := sh.get(candidate.Key)
 	if !ok ||
-		e.expired(s.now()) ||
+		sh.expired(candidate.Key, e, s.now()) ||
 		isNativeContainerType(e.valueType) ||
 		e.ref.Generation() != candidate.Version ||
-		e.expiresAt != candidate.expiresAt ||
+		sh.expirationAt(candidate.Key, e) != candidate.expiresAt ||
 		len(record.Data) >= len(sh.encoded(e)) {
 		return false
 	}
@@ -454,8 +454,9 @@ func (s *Store) Rewrite(candidate Candidate, record codec.Record) bool {
 	}
 
 	prepared := preparedEntry{
-		entry: e,
-		data:  bytes.Clone(record.Data),
+		entry:     e,
+		expiresAt: candidate.expiresAt,
+		data:      bytes.Clone(record.Data),
 	}
 	prepared.entryMeta = cloneEntryMeta(e.entryMeta)
 	meta := prepared.ensureMeta()

@@ -19,17 +19,18 @@ type entryMeta struct {
 }
 
 type entry struct {
-	ref       arena.Ref
-	expiresAt stamp
+	ref arena.Ref
 	*entryMeta
 	rawLength uint32
 	codecID   codec.ID
 	valueType ValueType
+	hasExpiry bool
 }
 
 type preparedEntry struct {
 	entry
-	data []byte
+	expiresAt stamp
+	data      []byte
 }
 
 func (e *entry) ensureMeta() *entryMeta {
@@ -93,8 +94,22 @@ func (sh *shard) encoded(e entry) []byte {
 	return value
 }
 
-func (e entry) expired(now time.Time) bool {
-	return !e.expiresAt.IsZero() && stampOf(now) >= e.expiresAt
+func (sh *shard) expirationAt(key string, e entry) stamp {
+	if !e.hasExpiry {
+		return 0
+	}
+	at, ok := sh.expiration.atFor(key)
+	if !ok {
+		panic("expiration index invariant")
+	}
+	return at
+}
+
+func (sh *shard) expired(key string, e entry, now time.Time) bool {
+	if !e.hasExpiry {
+		return false
+	}
+	return stampOf(now) >= sh.expirationAt(key, e)
 }
 
 // Store owns immutable byte values. Returned values belong to the caller.
@@ -158,7 +173,7 @@ func (s *Store) Get(key string) ([]byte, bool) {
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return nil, false
 	}
 	// Metadata is admitted on publication. Do not lazily allocate it from a
@@ -182,8 +197,9 @@ func (s *Store) Delete(key string) bool {
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
 	e, ok := sh.get(key)
+	expired := ok && sh.expired(key, e, s.now())
 	s.remove(sh, key)
-	return ok && !e.expired(s.now())
+	return ok && !expired
 }
 func (s *Store) Incr(key string) (int64, error) { return s.Add(key, 1) }
 func (s *Store) Decr(key string) (int64, error) { return s.Add(key, -1) }
@@ -192,7 +208,7 @@ func (s *Store) Add(key string, delta int64) (int64, error) {
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
 	e, ok := sh.get(key)
-	if ok && e.expired(s.now()) {
+	if ok && sh.expired(key, e, s.now()) {
 		s.remove(sh, key)
 		e = entry{}
 		ok = false
@@ -210,7 +226,9 @@ func (s *Store) Add(key string, delta int64) (int64, error) {
 	}
 	n += delta
 	updated := s.makeEntry([]byte(strconv.FormatInt(n, 10)))
-	updated.expiresAt = e.expiresAt
+	if ok {
+		updated.expiresAt = sh.expirationAt(key, e)
+	}
 	if err := s.publish(sh, key, updated); err != nil {
 		return 0, err
 	}
@@ -225,13 +243,14 @@ func (s *Store) TTL(key string, milliseconds bool) int64 {
 	defer sh.mu.RUnlock()
 	e, ok := sh.get(key)
 	now := s.now()
-	if !ok || e.expired(now) {
+	if !ok || sh.expired(key, e, now) {
 		return -2
 	}
-	if e.expiresAt.IsZero() {
+	if !e.hasExpiry {
 		return -1
 	}
-	ms := e.expiresAt.Sub(now).Milliseconds()
+	at := sh.expirationAt(key, e)
+	ms := at.Sub(now).Milliseconds()
 	if milliseconds {
 		return ms
 	}
@@ -251,7 +270,7 @@ func (s *Store) Stats() DatasetStats {
 		sh.mu.RLock()
 		now := s.now()
 		for k, e := range sh.all() {
-			if !e.expired(now) {
+			if !sh.expired(k, e, now) {
 				result.Keys++
 				result.KeyBytes += uint64(len(k))
 				result.ValueBytes += uint64(e.rawLength)

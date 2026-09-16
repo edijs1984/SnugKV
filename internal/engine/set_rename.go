@@ -11,7 +11,7 @@ func (s *Store) RenameSet(source, destination string, nx bool) (handled bool, re
 		sh.mu.RLock()
 		e, ok := sh.get(source)
 		now := s.now()
-		isSet := ok && !e.expired(now) && e.valueType == TypeSet
+		isSet := ok && !sh.expired(source, e, now) && e.valueType == TypeSet
 		sh.mu.RUnlock()
 		if !isSet {
 			return false, false, nil
@@ -27,7 +27,7 @@ func (s *Store) RenameSet(source, destination string, nx bool) (handled bool, re
 	destinationShard := s.shardFor(destination)
 
 	sourceEntry, sourceExists := sourceShard.get(source)
-	if !sourceExists || sourceEntry.expired(now) {
+	if !sourceExists || sourceShard.expired(source, sourceEntry, now) {
 		if sourceExists {
 			s.remove(sourceShard, source)
 		}
@@ -38,7 +38,7 @@ func (s *Store) RenameSet(source, destination string, nx bool) (handled bool, re
 	}
 
 	destinationEntry, destinationExists := destinationShard.get(destination)
-	if destinationExists && destinationEntry.expired(now) {
+	if destinationExists && destinationShard.expired(destination, destinationEntry, now) {
 		s.remove(destinationShard, destination)
 		destinationExists = false
 	}
@@ -51,7 +51,7 @@ func (s *Store) RenameSet(source, destination string, nx bool) (handled bool, re
 		return true, false, decodeErr
 	}
 	replacement := setPreparedEntry(packed)
-	replacement.expiresAt = sourceEntry.expiresAt
+	replacement.expiresAt = sourceShard.expirationAt(source, sourceEntry)
 	if publishErr := s.publish(destinationShard, destination, replacement); publishErr != nil {
 		return true, false, publishErr
 	}

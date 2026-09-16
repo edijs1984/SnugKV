@@ -15,12 +15,12 @@ func (s *Store) Victim(excluded map[string]bool, volatile bool) (string, bool) {
 		sh := s.shardFor(key)
 		sh.mu.RLock()
 		e, ok := sh.get(key)
-		if ok && (!volatile || !e.expiresAt.IsZero()) {
+		if ok && (!volatile || e.hasExpiry) {
 			age := time.Time{}
 			if e.entryMeta != nil {
 				age = e.entryMeta.lastAccess.Time()
 			}
-			if e.expired(s.now()) {
+			if sh.expired(key, e, s.now()) {
 				age = time.Time{}
 			}
 			if !found || age.Before(oldest) {

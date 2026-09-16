@@ -14,8 +14,8 @@ func (s *Store) Inspect() Inspection {
 		sh := &s.shards[i]
 		sh.mu.RLock()
 		now := s.now()
-		for _, e := range sh.all() {
-			if !e.expired(now) {
+		for key, e := range sh.all() {
+			if !sh.expired(key, e, now) {
 				out.Keys++
 				out.EncodedBytes += uint64(len(sh.encoded(e)))
 				out.LogicalBytes += uint64(e.rawLength)
@@ -55,7 +55,7 @@ func (s *Store) Type(key string) string {
 		return "none"
 	}
 
-	if e.expired(s.now()) {
+	if sh.expired(key, e, s.now()) {
 		s.remove(sh, key)
 		return "none"
 	}

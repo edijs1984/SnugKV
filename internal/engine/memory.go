@@ -331,6 +331,9 @@ func (s *Store) publishRecord(
 
 	s.memory.arenaLiveBlocks += newBlockBytes
 
+	// The queue owns the expiration timestamp. The hot entry stores only this
+	// one-byte presence bit so persistent reads never need a map lookup.
+	e.hasExpiry = !e.expiresAt.IsZero()
 	sh.set(key, e.entry)
 
 	if exists {
@@ -344,7 +347,7 @@ func (s *Store) publishRecord(
 
 func (s *Store) remove(sh *shard, key string) {
 	if e, ok := sh.get(key); ok {
-		if e.expired(s.now()) {
+		if sh.expired(key, e, s.now()) {
 			atomic.AddUint64(&s.expired, 1)
 		}
 		freeGrowth := sh.arena.FreeGrowth(e.ref)
@@ -372,7 +375,7 @@ func (s *Store) Encoding(key string) (string, int, int, bool) {
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return "", 0, 0, false
 	}
 	return s.codecs.Name(e.codecID), int(e.rawLength), len(sh.encoded(e)), true
@@ -385,7 +388,7 @@ func (s *Store) MemoryUsage(key string) (uint64, bool) {
 	defer sh.mu.RUnlock()
 
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return 0, false
 	}
 

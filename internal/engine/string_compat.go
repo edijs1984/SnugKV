@@ -16,7 +16,7 @@ func (s *Store) MGetStrings(keys []string) ([][]byte, []bool) {
 	for i, key := range keys {
 		sh := s.shardFor(key)
 		e, ok := sh.get(key)
-		if !ok || e.expired(now) || isNativeContainerType(e.valueType) {
+		if !ok || sh.expired(key, e, now) || isNativeContainerType(e.valueType) {
 			continue
 		}
 
@@ -49,7 +49,7 @@ func (s *Store) GetDelString(key string) ([]byte, bool) {
 	if !ok {
 		return nil, false
 	}
-	if e.expired(s.now()) {
+	if sh.expired(key, e, s.now()) {
 		s.remove(sh, key)
 		return nil, false
 	}

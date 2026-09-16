@@ -10,7 +10,7 @@ func (s *Store) ListMove(source, destination string, sourceLeft, destinationLeft
 	now := s.now()
 	sourceShard := s.shardFor(source)
 	sourceEntry, sourceExists := sourceShard.get(source)
-	if !sourceExists || sourceEntry.expired(now) {
+	if !sourceExists || sourceShard.expired(source, sourceEntry, now) {
 		if sourceExists {
 			s.remove(sourceShard, source)
 		}
@@ -59,7 +59,7 @@ func (s *Store) ListMove(source, destination string, sourceLeft, destinationLeft
 			return nil, false, err
 		}
 		updated := listPreparedEntry(packed)
-		updated.expiresAt = sourceEntry.expiresAt
+		updated.expiresAt = sourceShard.expirationAt(source, sourceEntry)
 		if err := s.publish(sourceShard, source, updated); err != nil {
 			return nil, false, err
 		}
@@ -68,7 +68,7 @@ func (s *Store) ListMove(source, destination string, sourceLeft, destinationLeft
 
 	destinationShard := s.shardFor(destination)
 	destinationEntry, destinationExists := destinationShard.get(destination)
-	if destinationExists && destinationEntry.expired(now) {
+	if destinationExists && destinationShard.expired(destination, destinationEntry, now) {
 		s.remove(destinationShard, destination)
 		destinationExists = false
 	}
@@ -108,7 +108,7 @@ func (s *Store) ListMove(source, destination string, sourceLeft, destinationLeft
 			return nil, false, err
 		}
 		updated := listPreparedEntry(packed)
-		updated.expiresAt = sourceEntry.expiresAt
+		updated.expiresAt = sourceShard.expirationAt(source, sourceEntry)
 		updates[source] = updated
 	}
 
@@ -118,7 +118,7 @@ func (s *Store) ListMove(source, destination string, sourceLeft, destinationLeft
 	}
 	updatedDestination := listPreparedEntry(packedDestination)
 	if destinationExists {
-		updatedDestination.expiresAt = destinationEntry.expiresAt
+		updatedDestination.expiresAt = destinationShard.expirationAt(destination, destinationEntry)
 	}
 	updates[destination] = updatedDestination
 

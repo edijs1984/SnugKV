@@ -11,7 +11,7 @@ func (s *Store) RenameHash(source, destination string, nx bool) (handled bool, r
 		sh.mu.RLock()
 		e, ok := sh.get(source)
 		now := s.now()
-		isHash := ok && !e.expired(now) && e.valueType == TypeHash
+		isHash := ok && !sh.expired(source, e, now) && e.valueType == TypeHash
 		sh.mu.RUnlock()
 		if !isHash {
 			return false, false, nil
@@ -27,7 +27,7 @@ func (s *Store) RenameHash(source, destination string, nx bool) (handled bool, r
 	destinationShard := s.shardFor(destination)
 
 	sourceEntry, sourceExists := sourceShard.get(source)
-	if !sourceExists || sourceEntry.expired(now) {
+	if !sourceExists || sourceShard.expired(source, sourceEntry, now) {
 		if sourceExists {
 			s.remove(sourceShard, source)
 		}
@@ -38,7 +38,7 @@ func (s *Store) RenameHash(source, destination string, nx bool) (handled bool, r
 	}
 
 	destinationEntry, destinationExists := destinationShard.get(destination)
-	if destinationExists && destinationEntry.expired(now) {
+	if destinationExists && destinationShard.expired(destination, destinationEntry, now) {
 		s.remove(destinationShard, destination)
 		destinationExists = false
 	}
@@ -53,7 +53,7 @@ func (s *Store) RenameHash(source, destination string, nx bool) (handled bool, r
 	}
 
 	replacement := s.hashEntry(pairs, packed)
-	replacement.expiresAt = sourceEntry.expiresAt
+	replacement.expiresAt = sourceShard.expirationAt(source, sourceEntry)
 	if publishErr := s.publish(destinationShard, destination, replacement); publishErr != nil {
 		return true, false, publishErr
 	}

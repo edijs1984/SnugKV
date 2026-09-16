@@ -17,7 +17,7 @@ func (s *Store) ZSetScanCompat(key string, cursor uint64, count int, pattern []b
 	defer sh.mu.RUnlock()
 
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return 0, nil, nil
 	}
 	if e.valueType != TypeZSet {

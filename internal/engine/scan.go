@@ -28,7 +28,7 @@ func (s *Store) ScanTyped(cursor uint64, count int, pattern, typeFilter string) 
 		sh := &s.shards[i]
 		sh.mu.RLock()
 		for key, e := range sh.all() {
-			if !e.expired(now) {
+			if !sh.expired(key, e, now) {
 				keys = append(keys, key)
 			}
 		}
@@ -73,7 +73,7 @@ func (s *Store) Keys(pattern string) []string {
 		sh := &s.shards[i]
 		sh.mu.RLock()
 		for key, e := range sh.all() {
-			if e.expired(now) {
+			if sh.expired(key, e, now) {
 				continue
 			}
 			if pattern != "*" && !redisGlobMatch([]byte(pattern), []byte(key)) {

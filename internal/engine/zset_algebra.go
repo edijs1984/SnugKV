@@ -163,7 +163,7 @@ func (s *Store) zsetSourcesLocked(keys []string) ([]zsetSource, error) {
 	for i, key := range keys {
 		sh := s.shardFor(key)
 		e, ok := sh.get(key)
-		if !ok || e.expired(now) {
+		if !ok || sh.expired(key, e, now) {
 			sources[i] = zsetSource{}
 			continue
 		}

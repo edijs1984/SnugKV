@@ -57,7 +57,7 @@ func (s *Store) zsetLexSnapshot(key string) ([]ZSetItem, error) {
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return nil, nil
 	}
 	if e.valueType != TypeZSet {
@@ -123,7 +123,7 @@ func (s *Store) ZSetRemoveRangeByLex(key string, min, max ZSetLexBound) (int64, 
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		if ok {
 			s.remove(sh, key)
 		}
@@ -157,7 +157,7 @@ func (s *Store) ZSetRemoveRangeByLex(key string, min, max ZSetLexBound) (int64, 
 		return 0, err
 	}
 	updated := zsetPreparedEntry(packed)
-	updated.expiresAt = e.expiresAt
+	updated.expiresAt = sh.expirationAt(key, e)
 	if err := s.publish(sh, key, updated); err != nil {
 		return 0, err
 	}

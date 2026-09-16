@@ -52,7 +52,7 @@ func (s *Store) SetWithOptions(
 
 	old, exists := sh.get(key)
 
-	if exists && old.expired(now) {
+	if exists && sh.expired(key, old, now) {
 		s.remove(sh, key)
 		exists = false
 		old = entry{}
@@ -74,7 +74,7 @@ func (s *Store) SetWithOptions(
 
 	switch {
 	case options.KeepTTL && exists:
-		e.expiresAt = old.expiresAt
+		e.expiresAt = sh.expirationAt(key, old)
 
 	case options.TTL > 0:
 		e.expiresAt = stampOf(now.Add(options.TTL))
@@ -108,7 +108,7 @@ func (s *Store) GetSet(key string, value []byte) ([]byte, bool, error) {
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
 	old, exists := sh.get(key)
-	exists = exists && !old.expired(s.now())
+	exists = exists && !sh.expired(key, old, s.now())
 	var previous []byte
 	if exists {
 		previous = s.decode(sh, old)
@@ -232,6 +232,7 @@ func (s *Store) MSet(keys []string, values [][]byte) error {
 			meta.lastAccess = meta.lastWrite
 			meta.writes = 1
 		}
+		e.hasExpiry = !e.expiresAt.IsZero()
 		sh.set(k, e.entry)
 		if exists {
 			sh.arena.Free(old.ref)
@@ -271,7 +272,7 @@ func (s *Store) MSetNX(keys []string, values [][]byte) (bool, error) {
 		sh := s.shardFor(key)
 
 		if old, ok := sh.get(key); ok {
-			if old.expired(now) {
+			if sh.expired(key, old, now) {
 				// Expired keys are logically absent.
 				s.remove(sh, key)
 				continue
@@ -377,6 +378,7 @@ func (s *Store) MSetNX(keys []string, values [][]byte) (bool, error) {
 			meta.writes = 1
 		}
 
+		e.hasExpiry = !e.expiresAt.IsZero()
 		sh.set(key, e.entry)
 		sh.schedule(key, e.expiresAt)
 	}
@@ -396,7 +398,7 @@ func (s *Store) MGet(keys []string) ([][]byte, []bool) {
 		sh := s.shardFor(key)
 		e, ok := sh.get(key)
 
-		if !ok || e.expired(now) {
+		if !ok || sh.expired(key, e, now) {
 			continue
 		}
 
@@ -428,7 +430,8 @@ func (s *Store) Exists(keys []string) int64 {
 	now := s.now()
 	var count int64
 	for _, key := range keys {
-		if e, ok := s.shardFor(key).get(key); ok && !e.expired(now) {
+		sh := s.shardFor(key)
+		if e, ok := sh.get(key); ok && !sh.expired(key, e, now) {
 			count++
 		}
 	}
@@ -442,7 +445,7 @@ func (s *Store) DeleteMany(keys []string) int64 {
 	for _, key := range keys {
 		sh := s.shardFor(key)
 		if e, ok := sh.get(key); ok {
-			if !e.expired(now) {
+			if !sh.expired(key, e, now) {
 				count++
 			}
 			s.remove(sh, key)
@@ -478,14 +481,18 @@ func (s *Store) expireAtConditional(
 	e, ok := sh.get(key)
 	now := s.now()
 
-	if !ok || e.expired(now) {
+	if !ok || sh.expired(key, e, now) {
 		if ok {
 			s.remove(sh, key)
 		}
 		return false
 	}
 
-	hasExpiry := !e.expiresAt.IsZero()
+	hasExpiry := e.hasExpiry
+	var currentExpiry stamp
+	if hasExpiry {
+		currentExpiry = sh.expirationAt(key, e)
+	}
 
 	switch condition {
 	case "":
@@ -501,14 +508,14 @@ func (s *Store) expireAtConditional(
 
 	case "GT":
 		// Persistent keys are treated as having infinite TTL.
-		if !hasExpiry || !when.After(e.expiresAt.Time()) {
+		if !hasExpiry || !when.After(currentExpiry.Time()) {
 			return false
 		}
 
 	case "LT":
 		// Persistent keys have infinite TTL, therefore every finite
 		// expiration is less than their current expiration.
-		if hasExpiry && !when.Before(e.expiresAt.Time()) {
+		if hasExpiry && !when.Before(currentExpiry.Time()) {
 			return false
 		}
 
@@ -521,10 +528,10 @@ func (s *Store) expireAtConditional(
 		return true
 	}
 
-	e.expiresAt = stampOf(when)
-
+	at := stampOf(when)
+	e.hasExpiry = true
 	sh.set(key, e)
-	sh.schedule(key, e.expiresAt)
+	sh.schedule(key, at)
 
 	return true
 }
@@ -534,16 +541,16 @@ func (s *Store) Persist(key string) bool {
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		s.remove(sh, key)
 		return false
 	}
-	if e.expiresAt.IsZero() {
+	if !e.hasExpiry {
 		return false
 	}
-	e.expiresAt = 0
+	e.hasExpiry = false
 	sh.set(key, e)
-	sh.schedule(key, e.expiresAt)
+	sh.schedule(key, 0)
 	return true
 }
 
@@ -556,7 +563,7 @@ func (s *Store) Sub(key string, decrement int64) (int64, error) {
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return 0, errors.New("ERR increment or decrement would overflow")
 	}
 	n, err := strconv.ParseInt(string(s.decode(sh, e)), 10, 64)
@@ -568,7 +575,7 @@ func (s *Store) Sub(key string, decrement int64) (int64, error) {
 	}
 	n -= decrement
 	updated := s.makeEntry([]byte(strconv.FormatInt(n, 10)))
-	updated.expiresAt = e.expiresAt
+	updated.expiresAt = sh.expirationAt(key, e)
 	if err := s.publish(sh, key, updated); err != nil {
 		return 0, err
 	}
@@ -591,7 +598,7 @@ func (s *Store) Rename(source, destination string, nx bool) (bool, error) {
 
 	sourceEntry, sourceExists := sourceShard.get(source)
 
-	if !sourceExists || sourceEntry.expired(now) {
+	if !sourceExists || sourceShard.expired(source, sourceEntry, now) {
 		if sourceExists {
 			s.remove(sourceShard, source)
 		}
@@ -601,7 +608,7 @@ func (s *Store) Rename(source, destination string, nx bool) (bool, error) {
 
 	destinationEntry, destinationExists := destinationShard.get(destination)
 
-	if destinationExists && destinationEntry.expired(now) {
+	if destinationExists && destinationShard.expired(destination, destinationEntry, now) {
 		s.remove(destinationShard, destination)
 		destinationExists = false
 	}
@@ -617,7 +624,7 @@ func (s *Store) Rename(source, destination string, nx bool) (bool, error) {
 	replacement := s.makeEntry(value)
 
 	// RENAME preserves TTL.
-	replacement.expiresAt = sourceEntry.expiresAt
+	replacement.expiresAt = sourceShard.expirationAt(source, sourceEntry)
 
 	if err := s.publish(destinationShard, destination, replacement); err != nil {
 		return false, err
@@ -644,7 +651,7 @@ func (s *Store) AddFloat(key string, increment float64) (string, error) {
 	current := float64(0)
 
 	if exists {
-		if e.expired(now) {
+		if sh.expired(key, e, now) {
 			s.remove(sh, key)
 			exists = false
 		} else {
@@ -676,7 +683,7 @@ func (s *Store) AddFloat(key string, increment float64) (string, error) {
 
 	if exists {
 		// INCRBYFLOAT preserves the existing TTL.
-		updated.expiresAt = e.expiresAt
+		updated.expiresAt = sh.expirationAt(key, e)
 	}
 
 	if err := s.publish(sh, key, updated); err != nil {
@@ -700,7 +707,7 @@ func (s *Store) GetBit(key string, offset int64) (int64, error) {
 
 	e, ok := sh.get(key)
 
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return 0, nil
 	}
 
@@ -746,12 +753,12 @@ func (s *Store) SetBit(
 	var expiresAt stamp
 
 	if exists {
-		if old.expired(now) {
+		if sh.expired(key, old, now) {
 			s.remove(sh, key)
 			exists = false
 		} else {
 			current = s.decode(sh, old)
-			expiresAt = old.expiresAt
+			expiresAt = sh.expirationAt(key, old)
 		}
 	}
 
@@ -899,7 +906,7 @@ func (s *Store) BitCount(
 
 	e, ok := sh.get(key)
 
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return 0
 	}
 
@@ -987,7 +994,7 @@ func (s *Store) BitOp(
 			continue
 		}
 
-		if e.expired(now) {
+		if sh.expired(key, e, now) {
 			s.remove(sh, key)
 			continue
 		}
@@ -1197,7 +1204,7 @@ func (s *Store) BitPos(
 
 	var value []byte
 
-	if ok && !e.expired(s.now()) {
+	if ok && !sh.expired(key, e, s.now()) {
 		value = s.decode(sh, e)
 	}
 
@@ -1216,7 +1223,6 @@ func (s *Store) BitPos(
 			// explicit range is supplied.
 			return lengthBits, nil
 		}
-
 		return -1, nil
 	}
 
@@ -1320,7 +1326,7 @@ func (s *Store) Touch(keys []string) int {
 			continue
 		}
 
-		if e.expired(now) {
+		if sh.expired(key, e, now) {
 			s.remove(sh, key)
 			sh.mu.Unlock()
 			continue
@@ -1353,19 +1359,20 @@ func (s *Store) ExpireTime(key string, milliseconds bool) int64 {
 	e, ok := sh.get(key)
 	now := s.now()
 
-	if !ok || e.expired(now) {
+	if !ok || sh.expired(key, e, now) {
 		return -2
 	}
 
-	if e.expiresAt.IsZero() {
+	if !e.hasExpiry {
 		return -1
 	}
 
+	at := sh.expirationAt(key, e)
 	if milliseconds {
-		return e.expiresAt.Time().UnixMilli()
+		return at.Time().UnixMilli()
 	}
 
-	return e.expiresAt.Time().Unix()
+	return at.Time().Unix()
 }
 
 func (s *Store) GetDel(key string) ([]byte, bool) {
@@ -1376,7 +1383,7 @@ func (s *Store) GetDel(key string) ([]byte, bool) {
 	e, ok := sh.get(key)
 	now := s.now()
 
-	if !ok || e.expired(now) {
+	if !ok || sh.expired(key, e, now) {
 		if ok {
 			s.remove(sh, key)
 		}
@@ -1401,7 +1408,7 @@ func (s *Store) GetEx(
 	e, ok := sh.get(key)
 	now := s.now()
 
-	if !ok || e.expired(now) {
+	if !ok || sh.expired(key, e, now) {
 		if ok {
 			s.remove(sh, key)
 		}
@@ -1411,10 +1418,10 @@ func (s *Store) GetEx(
 	value := s.decode(sh, e)
 
 	if persist {
-		e.expiresAt = 0
+		e.hasExpiry = false
 
 		sh.set(key, e)
-		sh.schedule(key, e.expiresAt)
+		sh.schedule(key, 0)
 
 		return value, true
 	}
@@ -1427,10 +1434,11 @@ func (s *Store) GetEx(
 			return value, true
 		}
 
-		e.expiresAt = stampOf(*expireAt)
+		at := stampOf(*expireAt)
+		e.hasExpiry = true
 
 		sh.set(key, e)
-		sh.schedule(key, e.expiresAt)
+		sh.schedule(key, at)
 	}
 
 	return value, true
@@ -1449,12 +1457,12 @@ func (s *Store) Append(key string, suffix []byte) (int, error) {
 	var expiresAt stamp
 
 	if exists {
-		if e.expired(now) {
+		if sh.expired(key, e, now) {
 			s.remove(sh, key)
 			exists = false
 		} else {
 			current = s.decode(sh, e)
-			expiresAt = e.expiresAt
+			expiresAt = sh.expirationAt(key, e)
 		}
 	}
 
@@ -1483,7 +1491,7 @@ func (s *Store) GetRange(key string, start, end int64) []byte {
 
 	e, ok := sh.get(key)
 
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		if ok {
 			s.remove(sh, key)
 		}
@@ -1540,12 +1548,12 @@ func (s *Store) SetRange(key string, offset int64, replacement []byte) (int, err
 	var expiresAt stamp
 
 	if exists {
-		if e.expired(now) {
+		if sh.expired(key, e, now) {
 			s.remove(sh, key)
 			exists = false
 		} else {
 			current = s.decode(sh, e)
-			expiresAt = e.expiresAt
+			expiresAt = sh.expirationAt(key, e)
 		}
 	}
 

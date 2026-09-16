@@ -28,7 +28,7 @@ func (s *Store) ZSetCount(key string, min, max ZSetScoreBound) (int64, error) {
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return 0, nil
 	}
 	if e.valueType != TypeZSet {
@@ -55,7 +55,7 @@ func (s *Store) ZSetRangeByScore(key string, min, max ZSetScoreBound, reverse bo
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return nil, nil
 	}
 	if e.valueType != TypeZSet {
@@ -105,7 +105,7 @@ func (s *Store) ZSetRemoveRangeByRank(key string, start, stop int64) (int64, err
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		if ok {
 			s.remove(sh, key)
 		}
@@ -135,7 +135,7 @@ func (s *Store) ZSetRemoveRangeByRank(key string, start, stop int64) (int64, err
 		return 0, err
 	}
 	updated := zsetPreparedEntry(packed)
-	updated.expiresAt = e.expiresAt
+	updated.expiresAt = sh.expirationAt(key, e)
 	if err := s.publish(sh, key, updated); err != nil {
 		return 0, err
 	}
@@ -147,7 +147,7 @@ func (s *Store) ZSetRemoveRangeByScore(key string, min, max ZSetScoreBound) (int
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		if ok {
 			s.remove(sh, key)
 		}
@@ -181,7 +181,7 @@ func (s *Store) ZSetRemoveRangeByScore(key string, min, max ZSetScoreBound) (int
 		return 0, err
 	}
 	updated := zsetPreparedEntry(packed)
-	updated.expiresAt = e.expiresAt
+	updated.expiresAt = sh.expirationAt(key, e)
 	if err := s.publish(sh, key, updated); err != nil {
 		return 0, err
 	}

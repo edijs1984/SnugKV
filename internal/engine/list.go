@@ -114,7 +114,7 @@ func (s *Store) listPush(key string, values [][]byte, left bool) (int64, error) 
 	defer sh.mu.Unlock()
 	now := s.now()
 	old, exists := sh.get(key)
-	if exists && old.expired(now) {
+	if exists && sh.expired(key, old, now) {
 		s.remove(sh, key)
 		exists = false
 		old = entry{}
@@ -130,7 +130,7 @@ func (s *Store) listPush(key string, values [][]byte, left bool) (int64, error) 
 		if err != nil {
 			return 0, err
 		}
-		expiresAt = old.expiresAt
+		expiresAt = sh.expirationAt(key, old)
 	}
 	result := make([][]byte, 0, len(current)+len(values))
 	if left {
@@ -167,7 +167,7 @@ func (s *Store) listPop(key string, count int, left bool) ([][]byte, error) {
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		if ok {
 			s.remove(sh, key)
 		}
@@ -208,7 +208,7 @@ func (s *Store) listPop(key string, count int, left bool) ([][]byte, error) {
 		return nil, err
 	}
 	updated := listPreparedEntry(packed)
-	updated.expiresAt = e.expiresAt
+	updated.expiresAt = sh.expirationAt(key, e)
 	if err := s.publish(sh, key, updated); err != nil {
 		return nil, err
 	}
@@ -220,7 +220,7 @@ func (s *Store) ListLen(key string) (int64, error) {
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return 0, nil
 	}
 	if e.valueType != TypeList {
@@ -235,7 +235,7 @@ func (s *Store) ListIndex(key string, index int64) ([]byte, bool, error) {
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return nil, false, nil
 	}
 	if e.valueType != TypeList {
@@ -260,7 +260,7 @@ func (s *Store) ListRange(key string, start, stop int64) ([][]byte, error) {
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return nil, nil
 	}
 	if e.valueType != TypeList {
@@ -298,7 +298,7 @@ func (s *Store) ListStorageStats(key string) (ListStats, bool, error) {
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
 	e, ok := sh.get(key)
-	if !ok || e.expired(s.now()) {
+	if !ok || sh.expired(key, e, s.now()) {
 		return ListStats{}, false, nil
 	}
 	if e.valueType != TypeList {
