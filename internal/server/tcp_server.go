@@ -69,6 +69,7 @@ func (s *TCPServer) Close() error {
 		child := s.admin
 		s.server.CancelBlocking()
 		s.server.CancelBlockingZSets()
+		s.server.CancelBlockingStreams()
 		s.listener.Close()
 		for conn := range s.connections {
 			conn.Close()
@@ -182,7 +183,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 		}
 
 		var result []byte
-		if isBlockingListCommand(msg) || isBlockingZSetCommand(msg) {
+		if isBlockingListCommand(msg) || isBlockingZSetCommand(msg) || isBlockingStreamCommand(msg) {
 			disconnected, stopWatch := watchConnectionDisconnect(peer)
 			result, err = s.server.ExecuteWithCancel(msg, disconnected)
 			stopWatch()

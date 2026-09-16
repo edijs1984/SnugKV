@@ -45,6 +45,9 @@ func (s *Server) ExecuteWithCancel(args [][]byte, cancel <-chan struct{}) (respo
 	if isBlockingZSetCommand(args) {
 		return s.executeBlockingZSet(args, cancel)
 	}
+	if isBlockingStreamCommand(args) {
+		return s.executeBlockingStream(args, cancel)
+	}
 	return s.executeDurable(args)
 }
 
@@ -54,6 +57,7 @@ func (s *Server) executeDurable(args [][]byte) ([]byte, error) {
 		if err == nil {
 			s.signalListAvailability(args, result)
 			s.signalZSetAvailability(args, result)
+			s.signalStreamAvailability(args, result)
 		}
 		return result, err
 	}
@@ -95,6 +99,7 @@ func (s *Server) executeDurable(args [][]byte) ([]byte, error) {
 
 		s.signalListAvailability(args, result)
 		s.signalZSetAvailability(args, result)
+		s.signalStreamAvailability(args, result)
 		return result, nil
 	}
 
@@ -129,5 +134,6 @@ func (s *Server) executeDurable(args [][]byte) ([]byte, error) {
 	}
 	s.signalListAvailability(args, result)
 	s.signalZSetAvailability(args, result)
+	s.signalStreamAvailability(args, result)
 	return result, nil
 }
