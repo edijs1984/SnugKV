@@ -11,8 +11,8 @@ func (s *Server) executePressureCommand(args [][]byte) ([]byte, error) {
 	if isStreamCommand(args) {
 		return s.executeStream(args)
 	}
-	if err := s.routeStreamRename(args); err != nil {
-		return nil, err
+	if response, handled, err := s.executeStreamRename(args); handled {
+		return response, err
 	}
 	if isTypedScalarSpecial(args) {
 		return s.executeTypedScalarSpecial(args)
