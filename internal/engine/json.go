@@ -27,7 +27,7 @@ func (s *Store) JSONSet(
 
 	e, exists := sh.get(key)
 
-	if exists && e.expired(now) {
+	if exists && sh.expired(key, e, now) {
 		s.remove(sh, key)
 		exists = false
 	}
@@ -92,7 +92,7 @@ func (s *Store) JSONSet(
 
 	updated := s.makeEntry(encoded)
 	updated.valueType = TypeJSON
-	updated.expiresAt = e.expiresAt
+	updated.expiresAt = sh.expirationAt(key, e)
 
 	if err := s.publish(sh, key, updated); err != nil {
 		return false, err
@@ -114,7 +114,7 @@ func (s *Store) JSONGet(key, path string) ([]byte, bool, error) {
 		return nil, false, nil
 	}
 
-	if e.expired(now) {
+	if sh.expired(key, e, now) {
 		s.remove(sh, key)
 		return nil, false, nil
 	}
@@ -158,7 +158,7 @@ func (s *Store) JSONType(key, path string) (string, bool, error) {
 		return "", false, nil
 	}
 
-	if e.expired(now) {
+	if sh.expired(key, e, now) {
 		s.remove(sh, key)
 		return "", false, nil
 	}
@@ -197,7 +197,7 @@ func (s *Store) JSONDel(key, path string) (int64, error) {
 		return 0, nil
 	}
 
-	if e.expired(now) {
+	if sh.expired(key, e, now) {
 		s.remove(sh, key)
 		return 0, nil
 	}
@@ -232,7 +232,7 @@ func (s *Store) JSONDel(key, path string) (int64, error) {
 
 	updated := s.makeEntry(encoded)
 	updated.valueType = TypeJSON
-	updated.expiresAt = e.expiresAt
+	updated.expiresAt = sh.expirationAt(key, e)
 
 	if err := s.publish(sh, key, updated); err != nil {
 		return 0, err
