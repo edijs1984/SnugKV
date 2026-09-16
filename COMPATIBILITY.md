@@ -7,10 +7,10 @@ the public compatibility boundary; issue #55 tracks the implementation backlog.
 ## Current status
 
 SnugKV is a single-node RESP2 datastore with native STRING-style scalar storage,
-HASH, SET, LIST, ZSET, and STREAM semantics. The core Streams and consumer-group
-surface is now implemented, including blocking reads, pending-entry management,
-claiming, XINFO introspection, lifetime stream metadata, and MAXLEN/MINID
-trimming.
+HASH, SET, LIST, ZSET, and STREAM semantics. The broad Streams and consumer-group
+surface is implemented, including blocking reads, pending-entry management,
+claiming, XINFO introspection, lifetime stream metadata, MAXLEN/MINID trimming,
+Redis 8.2 `KEEPREF` / `DELREF` / `ACKED` policies, `XDELEX`, and `XACKDEL`.
 
 The largest remaining Redis compatibility families are Pub/Sub, transactions,
 HyperLogLog, GEO, scripting/functions, RESP3, and broader CLIENT/CONFIG/ACL/tooling
@@ -50,9 +50,9 @@ protocol version`.
 | SET | Broad support | Native packed datatype and algebra/store operations |
 | LIST | Broad support | Native packed datatype, moves, blocking reads/pops |
 | ZSET | Broad support | Native packed datatype, ranges, algebra, blocking pops/multipops |
-| STREAM | Broad support | Core stream reads/writes, consumer groups, PEL, claims, XINFO, trimming |
+| STREAM | Broad support | Core stream reads/writes, consumer groups, PEL, claims, XINFO, trimming/reference policies |
 | JSON | Partial | `JSON.SET`, `JSON.GET`, `JSON.TYPE`, `JSON.DEL` only |
-| Pub/Sub | Not implemented | Planned |
+| Pub/Sub | Not implemented | Planned next |
 | Transactions | Not implemented | `MULTI`, `EXEC`, `WATCH`, `UNWATCH`, `DISCARD` |
 | HyperLogLog | Not implemented | `PFADD`, `PFCOUNT`, `PFMERGE` |
 | GEO | Not implemented | GEO command family |
@@ -118,10 +118,10 @@ ZRANDMEMBER ZSCAN ZRANGESTORE
 Supported commands and subcommands include:
 
 ```text
-XADD XLEN XRANGE XREVRANGE XDEL XTRIM
+XADD XLEN XRANGE XREVRANGE XDEL XDELEX XTRIM
 XREAD
 XGROUP CREATE DESTROY SETID CREATECONSUMER DELCONSUMER
-XREADGROUP XACK XPENDING XCLAIM XAUTOCLAIM
+XREADGROUP XACK XACKDEL XPENDING XCLAIM XAUTOCLAIM
 XINFO STREAM GROUPS CONSUMERS HELP
 ```
 
@@ -130,6 +130,8 @@ Implemented stream behavior includes:
 - explicit, automatic (`*`), and partial (`ms-*`) IDs;
 - `NOMKSTREAM`;
 - `MAXLEN` and `MINID` trimming on `XTRIM` and `XADD`;
+- Redis 8.2 `KEEPREF`, `DELREF`, and `ACKED` reference policies for trimming/deletion;
+- `XDELEX` and `XACKDEL` with per-ID status replies and multi-group PEL semantics;
 - blocking `XREAD` and `XREADGROUP` with waiter/wakeup signaling;
 - client-disconnect and server-shutdown cancellation for blocking reads;
 - durable consumer groups and pending-entry lists;
@@ -140,10 +142,10 @@ Implemented stream behavior includes:
   consumer attempted/successful interaction timestamps;
 - TTL/RENAME/persistence support and optimizer exclusion as a native datatype.
 
-Current trimming keeps existing PEL references when stream entries are removed.
-Redis 8.2 `KEEPREF` / `DELREF` / `ACKED` policy selection is the remaining Streams
-compatibility slice. SnugKV has no Redis macro-node representation, so `~` is
-accepted but trimming remains exact except for an explicit `LIMIT` cap.
+SnugKV has no Redis macro-node representation, so `~` is accepted but trimming is
+exact except for an explicit `LIMIT` cap. A final differential Redis edge-case
+audit remains useful, but no known core Streams command-family gap is currently
+tracked.
 
 ## SCAN family
 
@@ -178,15 +180,14 @@ It is not a complete RedisJSON implementation.
 
 Prioritized backlog:
 
-1. Finish Redis 8.2 Streams reference policies (`KEEPREF`, `DELREF`, `ACKED`).
-2. Pub/Sub.
-3. Transactions / optimistic locking.
-4. HyperLogLog.
-5. GEO.
-6. Scripting / Redis Functions scope.
-7. SORT/SORT_RO, COPY/MIGRATE scope, CLIENT/CONFIG/ACL compatibility, and COMMAND metadata completeness.
-8. RESP3 where required by clients/tooling.
-9. Replication/failover/cluster only after the single-node compatibility target is mature.
+1. Pub/Sub.
+2. Transactions / optimistic locking.
+3. HyperLogLog.
+4. GEO.
+5. Scripting / Redis Functions scope.
+6. SORT/SORT_RO, COPY/MIGRATE scope, CLIENT/CONFIG/ACL compatibility, and COMMAND metadata completeness.
+7. RESP3 where required by clients/tooling.
+8. Replication/failover/cluster only after the single-node compatibility target is mature.
 
 See GitHub issue #55 and `PLAN.md` for the working roadmap.
 

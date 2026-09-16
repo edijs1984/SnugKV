@@ -36,10 +36,11 @@ Major Redis-compatible features still not implemented:
 
 The current JSON commands are not a complete RedisJSON implementation.
 
-Streams are broadly implemented, but Redis 8.2 trimming reference-policy selection
-(`KEEPREF`, `DELREF`, `ACKED`) remains outstanding. Current trimming preserves PEL
-references. SnugKV also has no Redis macro-node representation, so accepted `~`
-stream trimming is exact except for an explicit `LIMIT` cap.
+Streams include Redis 8.2 `KEEPREF`, `DELREF`, and `ACKED` reference-policy
+selection plus `XDELEX` and `XACKDEL`. SnugKV has no Redis macro-node
+representation, so accepted `~` stream trimming is exact except for an explicit
+`LIMIT` cap. A differential Redis edge-case audit can still uncover small semantic
+differences even though no known core Streams command-family gap remains.
 
 ## Compatibility hardening still in progress
 

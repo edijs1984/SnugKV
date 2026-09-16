@@ -10,9 +10,9 @@ The current engineering focus has moved from building the core native datatype
 set to finishing Redis compatibility families and validating release behavior.
 The main remaining application-level gaps are Pub/Sub, transactions/WATCH,
 HyperLogLog, GEO, scripting/functions, RESP3, and client/tooling compatibility.
-Streams are now broadly implemented; the remaining stream-specific gap is Redis
-8.2 trimming reference policies (`KEEPREF`, `DELREF`, `ACKED`) plus a final
-differential edge-case audit.
+Streams are now broadly implemented through Redis 8.2 reference-policy behavior;
+a final differential edge-case audit remains useful but no known core Streams
+command-family gap is currently tracked.
 
 ## Recently completed
 
@@ -21,17 +21,20 @@ differential edge-case audit.
 - Native versioned STREAM storage with backward decode.
 - `XADD`, `XLEN`, `XRANGE`, `XREVRANGE`, `XDEL`, `XTRIM`.
 - `MAXLEN` and `MINID` trimming, including XADD trimming and LIMIT-bounded trims.
+- Redis 8.2 `KEEPREF`, `DELREF`, and `ACKED` reference policies.
+- `XDELEX` and `XACKDEL` per-ID status behavior across multiple consumer groups.
 - `XREAD` with blocking wakeup, disconnect cancellation, and shutdown cancellation.
 - Durable consumer groups: `XGROUP CREATE/DESTROY/SETID/CREATECONSUMER/DELCONSUMER`.
 - `XREADGROUP`, `XACK`, `XPENDING`.
 - `XCLAIM` and `XAUTOCLAIM`, including ownership transfer, retry counters,
-  `JUSTID`, `FORCE`, idle gating, and deleted-P­­EL cleanup.
+  `JUSTID`, `FORCE`, idle gating, and deleted-PEL cleanup.
 - `XINFO STREAM`, `GROUPS`, `CONSUMERS`, and `HELP`.
 - Persisted `entries-added`, `max-deleted-entry-id`, and distinct consumer
   attempted/successful interaction timestamps for accurate `idle`/`inactive`.
 - STREAM excluded from the generic scalar optimizer after production-config
   testing exposed and fixed a corruption path.
-- Export/restore, TTL, rename, WRONGTYPE, race, RESP, and redis-cli smoke coverage.
+- Export/restore, TTL, rename, WRONGTYPE, race, RESP, redis-cli smoke, and
+  reference-policy coverage.
 
 ### Sparse-memory optimization
 
@@ -124,7 +127,9 @@ Recent real-server Stream verification includes:
 - exact lifetime `entries-added` and `max-deleted-entry-id` after delete/trim histories;
 - `XTRIM MINID ... LIMIT` behavior;
 - consumer `idle` dropping after an empty read attempt while `inactive` continues
-  from the last successful delivery.
+  from the last successful delivery;
+- multi-group `KEEPREF` / `DELREF` / `ACKED` behavior for trimming/deletion,
+  including dangling PEL cleanup through `XDELEX` / `XACKDEL`.
 
 ## Native datatype benchmark snapshot
 
@@ -138,13 +143,13 @@ when evaluating CPU tradeoffs.
 
 ## Remaining engineering work
 
-1. Finish Streams `KEEPREF` / `DELREF` / `ACKED` reference policies and differential audit.
-2. Pub/Sub.
-3. Transactions / WATCH.
-4. HyperLogLog.
-5. GEO.
-6. Scripting / Functions scope.
-7. RESP3 and CLIENT/CONFIG/ACL/COMMAND tooling compatibility.
+1. Pub/Sub.
+2. Transactions / WATCH.
+3. HyperLogLog.
+4. GEO.
+5. Scripting / Functions scope.
+6. RESP3 and CLIENT/CONFIG/ACL/COMMAND tooling compatibility.
+7. Differential Redis edge-case audit for the completed Streams surface.
 8. Fresh release-scale benchmarks, multi-run variance, million-record datasets,
    broader client compatibility, and retained long-duration soak evidence.
 9. Distributed features only after the single-node target is mature.

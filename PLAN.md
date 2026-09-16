@@ -7,13 +7,14 @@ GitHub issue #55 tracks command-family compatibility work.
 ## Current status
 
 The single-node RESP2 engine, logical persistence, memory accounting, optimizer,
-observability, packaging, HASH, SET, LIST, ZSET, and the core STREAM/consumer-group
+observability, packaging, HASH, SET, LIST, ZSET, and the broad STREAM/consumer-group
 surface are implemented.
 
 Streams now include core reads/writes, blocking `XREAD`, consumer groups,
 `XREADGROUP`, PEL inspection/acknowledgement, claims/autoclaims, XINFO,
-MAXLEN/MINID trimming, lifetime `entries-added` / `max-deleted-entry-id`, and
-separate consumer idle/inactive tracking.
+MAXLEN/MINID trimming, lifetime `entries-added` / `max-deleted-entry-id`,
+separate consumer idle/inactive tracking, Redis 8.2 `KEEPREF` / `DELREF` /
+`ACKED` reference policies, `XDELEX`, and `XACKDEL`.
 
 Shared sparse-memory overhead has also been reduced substantially. On the canonical
 1,000-key / 256-shard / 16-byte-value benchmark, accounted memory moved from
@@ -64,10 +65,12 @@ and 24-byte arena segment descriptors.
 - [x] Versioned packed stream format with backward decode.
 - [x] `XADD`, `XLEN`, `XRANGE`, `XREVRANGE`, `XDEL`, `XTRIM`.
 - [x] `MAXLEN` and `MINID` trimming, including XADD trimming options and LIMIT caps.
+- [x] Redis 8.2 `KEEPREF`, `DELREF`, and `ACKED` trimming/deletion reference policies.
+- [x] `XDELEX` and `XACKDEL` per-ID status semantics across consumer groups.
 - [x] `XREAD` including BLOCK and disconnect/shutdown cancellation.
 - [x] `XGROUP CREATE/DESTROY/SETID/CREATECONSUMER/DELCONSUMER`.
 - [x] `XREADGROUP`, `XACK`, `XPENDING`.
-- [x] `XCLAIM`, `XAUTOCLAIM` including deleted-P­­EL cleanup and retry metadata.
+- [x] `XCLAIM`, `XAUTOCLAIM` including deleted-PEL cleanup and retry metadata.
 - [x] `XINFO STREAM/GROUPS/CONSUMERS/HELP`.
 - [x] Durable PEL/group state and restart/export-restore coverage.
 - [x] Lifetime `entries-added` and `max-deleted-entry-id` metadata.
@@ -95,14 +98,13 @@ and 24-byte arena segment descriptors.
 
 ## Remaining work / TODO
 
-### P0 — finish Streams compatibility
+### P0 — Streams differential hardening
 
-- [ ] Redis 8.2 trimming/P­­EL reference policies: `KEEPREF`, `DELREF`, `ACKED`.
-- [ ] Differential Redis edge-case audit for stream ID/trimming/group/claim/XINFO semantics.
+- [ ] Differential Redis edge-case audit for stream ID/trimming/group/claim/XINFO/reference-policy semantics.
 
 ### P1 — major Redis command families
 
-- [ ] Pub/Sub: `SUBSCRIBE`, `PSUBSCRIBE`, `SSUBSCRIBE`, `PUBLISH` and unsubscribe variants.
+- [ ] Pub/Sub: `SUBSCRIBE`, `PSUBSCRIBE`, `SSUBSCRIBE`, `PUBLISH`, `SPUBLISH` and unsubscribe variants, plus `PUBSUB` introspection.
 - [ ] Transactions: `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH`.
 - [ ] HyperLogLog: `PFADD`, `PFCOUNT`, `PFMERGE`.
 - [ ] GEO: `GEOADD`, `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH`, `GEOSEARCHSTORE`.
