@@ -35,6 +35,7 @@ func TestReuseAndGeneration(t *testing.T) {
 		t.Fatal("reused value")
 	}
 }
+
 func TestBatchProjection(t *testing.T) {
 	var a Arena
 	lengths := []int{0, 1, 100, 65000, 65536, 130000, 10}
@@ -49,6 +50,15 @@ func TestBatchProjection(t *testing.T) {
 	}
 	if a.MemoryBytes() != growth {
 		t.Fatalf("got %d want %d", a.MemoryBytes(), growth)
+	}
+}
+
+func TestSegmentDescriptorIs24Bytes(t *testing.T) {
+	if got := unsafe.Sizeof(segment{}); got != 24 {
+		t.Fatalf("segment size = %d, want 24", got)
+	}
+	if segmentMetadata != int(unsafe.Sizeof(segment{})) {
+		t.Fatalf("segment metadata = %d, struct size = %d", segmentMetadata, unsafe.Sizeof(segment{}))
 	}
 }
 
@@ -95,8 +105,8 @@ func TestTiny24ByteClassUsesTightFirstSegment(t *testing.T) {
 	if got := a.SegmentCount(); got != 1 {
 		t.Fatalf("8 tiny values used %d segments, want 1", got)
 	}
-	if got := a.MemoryBytes(); got != 224 { // 192 data + 32 segment metadata
-		t.Fatalf("8 tiny values use %d bytes, want 224", got)
+	if got := a.MemoryBytes(); got != 216 { // 192 data + 24 segment metadata
+		t.Fatalf("8 tiny values use %d bytes, want 216", got)
 	}
 
 	projected := a.GrowthFor([]int{16})
@@ -104,11 +114,11 @@ func TestTiny24ByteClassUsesTightFirstSegment(t *testing.T) {
 	if got := a.SegmentCount(); got != 2 {
 		t.Fatalf("9 tiny values used %d segments, want 2", got)
 	}
-	if got := a.MemoryBytes(); got != 1264 { // 192 + 1008 data + 64 metadata
-		t.Fatalf("9 tiny values use %d bytes, want 1264", got)
+	if got := a.MemoryBytes(); got != 1248 { // 192 + 1008 data + 48 metadata
+		t.Fatalf("9 tiny values use %d bytes, want 1248", got)
 	}
-	if projected != 1040 {
-		t.Fatalf("ninth-value growth=%d want 1040", projected)
+	if projected != 1032 {
+		t.Fatalf("ninth-value growth=%d want 1032", projected)
 	}
 }
 
