@@ -262,7 +262,7 @@ func (s *TCPServer) write(conn net.Conn, response []byte) error {
 func errorResponse(err error) []byte {
 	message := strings.TrimSpace(err.Error())
 	message = strings.NewReplacer("\r", " ", "\n", " ").Replace(message)
-	if !strings.HasPrefix(message, "ERR ") && !strings.HasPrefix(message, "NOPROTO ") && !strings.HasPrefix(message, "OOM ") && !strings.HasPrefix(message, "WRONGTYPE ") && !strings.HasPrefix(message, "EXECABORT ") && !strings.HasPrefix(message, "INVALIDOBJ ") {
+	if !strings.HasPrefix(message, "ERR ") && !strings.HasPrefix(message, "NOPROTO ") && !strings.HasPrefix(message, "NOSCRIPT ") && !strings.HasPrefix(message, "OOM ") && !strings.HasPrefix(message, "WRONGTYPE ") && !strings.HasPrefix(message, "EXECABORT ") && !strings.HasPrefix(message, "INVALIDOBJ ") {
 		message = "ERR " + message
 	}
 	return []byte("-" + message + "\r\n")
