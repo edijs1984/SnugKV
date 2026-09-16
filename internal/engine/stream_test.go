@@ -144,15 +144,15 @@ func TestStreamPreservesTTLAndRename(t *testing.T) {
 	if _, _, err := s.StreamAdd("events", "2-0", streamFields("c", "d"), StreamAddOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if ttl := s.TTL("events"); ttl <= 0 {
+	if ttl := s.TTL("events", false); ttl <= 0 {
 		t.Fatalf("TTL lost: %d", ttl)
 	}
 	handled, renamed, err := s.RenameStream("events", "renamed", false)
 	if err != nil || !handled || !renamed {
 		t.Fatalf("rename handled=%t renamed=%t err=%v", handled, renamed, err)
 	}
-	if s.Type("events") != "none" || s.Type("renamed") != "stream" || s.TTL("renamed") <= 0 {
-		t.Fatalf("rename state source=%s destination=%s ttl=%d", s.Type("events"), s.Type("renamed"), s.TTL("renamed"))
+	if s.Type("events") != "none" || s.Type("renamed") != "stream" || s.TTL("renamed", false) <= 0 {
+		t.Fatalf("rename state source=%s destination=%s ttl=%d", s.Type("events"), s.Type("renamed"), s.TTL("renamed", false))
 	}
 }
 
