@@ -62,6 +62,12 @@ func (sh *shard) schedule(key string, at stamp) {
 		sh.expiration.positions = make(map[string]int)
 	}
 	if i, exists := sh.expiration.positions[key]; exists {
+		// TTL-preserving rewrites are common for KEEPTTL and native-container
+		// mutations. When the deadline is unchanged, the heap ordering is already
+		// valid, so avoid the assignment and heap.Fix walk entirely.
+		if sh.expiration.items[i].at == at {
+			return
+		}
 		sh.expiration.items[i].at = at
 		heap.Fix(&sh.expiration, i)
 	} else {
