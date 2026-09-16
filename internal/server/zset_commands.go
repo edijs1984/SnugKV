@@ -106,6 +106,25 @@ func formatZSetScore(score float64) []byte {
 	if math.IsInf(score, -1) {
 		return []byte("-inf")
 	}
+	if score == 0 {
+		if math.Signbit(score) {
+			return []byte("-0")
+		}
+		return []byte("0")
+	}
+
+	// Redis d2string() first emits losslessly integral doubles as signed
+	// decimal integers before falling back to dtoa formatting. GEO scores are
+	// 52-bit integers stored in ZSET doubles, so this avoids scientific notation
+	// for values such as 3479099956230698 and matches Redis wire output.
+	const redisDoubleIntLimit = float64(1 << 62)
+	if score >= -redisDoubleIntLimit && score <= redisDoubleIntLimit {
+		integerScore := int64(score)
+		if float64(integerScore) == score {
+			return []byte(strconv.FormatInt(integerScore, 10))
+		}
+	}
+
 	return []byte(strconv.FormatFloat(score, 'g', -1, 64))
 }
 
