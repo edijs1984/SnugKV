@@ -8,6 +8,9 @@ import (
 )
 
 func (s *Server) executePressureCommand(args [][]byte) ([]byte, error) {
+	if isStreamRefPolicyCommand(args) {
+		return s.executeStreamRefPolicy(args)
+	}
 	if isXReadCommand(args) {
 		return s.executeXRead(args)
 	}
