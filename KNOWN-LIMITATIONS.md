@@ -2,8 +2,8 @@
 
 SnugKV is currently an alpha-stage, single-node RESP2 datastore. It has broad
 coverage across the common Redis datatype families, including Streams, Pub/Sub,
-transactions, HyperLogLog, modern GEO, and the common Lua scripting path, but it
-is not a complete Redis replacement.
+transactions, HyperLogLog, modern GEO, the common Lua scripting path, and
+`SORT` / `SORT_RO`, but it is not a complete Redis replacement.
 
 ## Protocol
 
@@ -17,15 +17,14 @@ See [COMPATIBILITY.md](COMPATIBILITY.md).
 ## Redis command coverage
 
 Strings, counters, expiration, bit operations, key inspection, HASH, SET, LIST,
-ZSET, HyperLogLog, modern GEO, Streams/consumer groups, classic/sharded Pub/Sub,
-transactions/WATCH, partial Lua scripting, basic JSON, memory inspection, and
-administration are implemented to the documented scope.
+ZSET, SORT/SORT_RO, HyperLogLog, modern GEO, Streams/consumer groups,
+classic/sharded Pub/Sub, transactions/WATCH, partial Lua scripting, basic JSON,
+memory inspection, and administration are implemented to the documented scope.
 
 Major Redis-compatible features still not implemented or incomplete:
 
 - Redis Functions (`FUNCTION`, `FCALL`, `FCALL_RO`);
 - full Lua scripting parity (`EVAL_RO`, `EVALSHA_RO`, `SCRIPT KILL/DEBUG`, exact command flags/ACL behavior);
-- `SORT` / `SORT_RO`;
 - full COPY/migration scope;
 - RESP3;
 - broad CLIENT / CONFIG / ACL compatibility;
@@ -62,6 +61,26 @@ roll back successful writes already made by the script. With AOF enabled, those
 resulting logical changes are persisted in one frame even when the script later
 returns a runtime error.
 
+## SORT boundaries
+
+`SORT` and `SORT_RO` support LIST/SET/ZSET sources, numeric ordering, `ALPHA`,
+`ASC`/`DESC`, `LIMIT`, external `BY`, repeated `GET`, `GET #`, hash-field
+patterns, and `SORT ... STORE` replacement as a native LIST. STORE clears the
+previous destination TTL, deletes an empty-result destination, persists the
+destination through the logical AOF path, and stores missing GET results as empty
+strings.
+
+Current compatibility boundaries:
+
+- SnugKV uses bytewise comparison for `ALPHA`; Redis can use locale-aware collation
+  for non-STORE ALPHA replies, so locale-sensitive/non-ASCII ordering can differ;
+- SET native iteration order under a constant/no-wildcard `BY` is implementation
+  dependent, so exact order is not promised for that intentionally-unsorted case;
+- Redis ACL checks and Cluster slot restrictions for dynamically resolved BY/GET
+  patterns are outside SnugKV's current no-ACL, single-node scope;
+- focused automated coverage exists, but direct Redis differential testing across
+  syntax/error/collation edges is still pending.
+
 Modern GEO commands are implemented, but deprecated `GEORADIUS`,
 `GEORADIUSBYMEMBER`, `GEORADIUS_RO`, and `GEORADIUSBYMEMBER_RO` aliases are not.
 `GEOSEARCH` currently scans/decodes the packed source ZSET rather than maintaining
@@ -91,9 +110,10 @@ queued MULTI commands; `PUBLISH` and `SPUBLISH` remain ordinary queueable comman
   incomplete even when ordinary application workloads work.
 - The modern GEO command set has focused command-level compatibility tests; large
   dataset differential/performance testing is intentionally still pending.
-- Lua scripting has focused unit/durability/transaction coverage; live redis-cli
-  and direct Redis differential testing should be completed before claiming full
-  scripting compatibility.
+- Lua scripting has focused unit/durability/transaction coverage plus a basic
+  Redis differential smoke pass; deeper command-flag/ACL/OOM edge auditing remains.
+- SORT has focused source/options/STORE/durability coverage; a live Redis
+  differential pass is still required before stronger parity claims.
 
 ## Deployment topology
 
@@ -106,8 +126,9 @@ queued MULTI commands; `PUBLISH` and `SPUBLISH` remain ordinary queueable comman
 SnugKV includes logical AOF/snapshot persistence and recovery testing, including
 truncated-final-frame recovery, checksum-corruption rejection, append rollback,
 online AOF rewrite, native datatype restore coverage, single logical AOF frames
-for successful transaction results, and single logical frames for direct script
-mutations including partial writes before runtime errors.
+for successful transaction results, single logical frames for direct script
+mutations including partial writes before runtime errors, and destination-only
+persistence/replay for `SORT ... STORE`.
 
 For alpha use:
 
@@ -146,6 +167,8 @@ collection mutation:
   skiplist/tree/member index.
 - GEOSEARCH currently scans the ZSET and decodes candidate scores, so it is O(N)
   in the source set rather than using Redis-style geohash range pruning.
+- SORT materializes the selected source collection and performs in-memory ordering;
+  ordinary sorting is O(N log N), and external BY/GET patterns add key/hash lookups.
 - lex ZSET operations construct a temporary lexicographic view rather than keeping
   a second permanent index.
 - LIST uses one packed logical blob, so very large head mutations can be O(total
