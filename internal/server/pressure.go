@@ -49,7 +49,11 @@ func (s *Server) executePressure(args [][]byte) ([]byte, error) {
 	cmd := strings.ToUpper(string(args[0]))
 	info := commandTable[cmd]
 	excluded := make(map[string]bool)
-	if isZSetAlgebraCommand(args) {
+	if cmd == "XREADGROUP" {
+		for _, key := range streamGroupReadKeys(args) {
+			excluded[key] = true
+		}
+	} else if isZSetAlgebraCommand(args) {
 		for _, key := range zsetAlgebraInputKeys(args) {
 			excluded[key] = true
 		}
