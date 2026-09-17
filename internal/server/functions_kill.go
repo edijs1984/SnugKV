@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -92,6 +93,60 @@ func (s *Server) luaRedisCallFunction(protected bool) lua.LGFunction {
 		L.Push(value)
 		return 1
 	}
+}
+
+func (s *Server) executeKillableFunctionCall(args [][]byte) ([]byte, error) {
+	if len(args) == 0 {
+		return nil, errors.New("ERR empty command")
+	}
+	cmd := strings.ToUpper(string(args[0]))
+	info, ok := functionCommands[cmd]
+	if !ok {
+		return nil, fmt.Errorf("ERR unknown command '%s'", cmd)
+	}
+	if len(args) < info.min || info.max > 0 && len(args) > info.max {
+		return nil, fmt.Errorf("ERR wrong number of arguments for '%s' command", strings.ToLower(cmd))
+	}
+	readOnly := cmd == "FCALL_RO"
+	keys, argv, err := parseFCallArguments(args)
+	if err != nil {
+		return nil, err
+	}
+	fn := functionRegistryForServer(s).lookup(string(args[1]))
+	if fn == nil {
+		return nil, errors.New("ERR Function not found")
+	}
+	return s.runKillableRegisteredFunction(fn, keys, argv, readOnly || fn.noWrites)
+}
+
+func (s *Server) runKillableRegisteredFunction(fn *registeredFunction, keys, argv [][]byte, readOnly bool) ([]byte, error) {
+	L := fn.library.state
+	if readOnly {
+		fn.library.redis.RawSetString("call", L.NewFunction(s.luaRedisCallReadOnly(false)))
+		fn.library.redis.RawSetString("pcall", L.NewFunction(s.luaRedisCallReadOnly(true)))
+	} else {
+		fn.library.redis.RawSetString("call", L.NewFunction(s.luaRedisCallFunction(false)))
+		fn.library.redis.RawSetString("pcall", L.NewFunction(s.luaRedisCallFunction(true)))
+	}
+
+	ctx, cancel := context.WithTimeout(runningFunctionContext(s), scriptExecutionLimit)
+	defer cancel()
+	L.SetContext(ctx)
+	if err := L.CallByParam(lua.P{Fn: fn.callback, NRet: 1, Protect: true}, luaBytesTable(L, keys), luaBytesTable(L, argv)); err != nil {
+		if runningFunctionWasKilled(s) || errors.Is(ctx.Err(), context.Canceled) {
+			return nil, errFunctionKilled
+		}
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return nil, errors.New("ERR Function timed out")
+		}
+		return nil, fmt.Errorf("ERR Error running function: %v", err)
+	}
+	if runningFunctionWasKilled(s) {
+		return nil, errFunctionKilled
+	}
+	result := L.Get(-1)
+	L.Pop(1)
+	return luaValueToRESP(result)
 }
 
 func (s *Server) executeFunctionKill(args [][]byte) ([]byte, error) {
