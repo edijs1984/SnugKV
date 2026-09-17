@@ -26,13 +26,16 @@ func init() {
 }
 
 type registeredFunction struct {
-	name           string
-	description    string
-	hasDescription bool
-	flags          []string
-	noWrites       bool
-	callback       *lua.LFunction
-	library        *functionLibrary
+	name               string
+	description        string
+	hasDescription     bool
+	flags              []string
+	noWrites           bool
+	allowStale         bool
+	noCluster          bool
+	allowCrossSlotKeys bool
+	callback           *lua.LFunction
+	library            *functionLibrary
 }
 
 type functionLibrary struct {
@@ -147,28 +150,39 @@ func parseFunctionLibraryMetadata(code string) (name, body string, err error) {
 	return name, body, nil
 }
 
-func parseRegisteredFunction(L *lua.LState) (name string, callback *lua.LFunction, description string, hasDescription bool, flags []string, noWrites bool, err error) {
+func parseRegisteredFunction(L *lua.LState) (
+	name string,
+	callback *lua.LFunction,
+	description string,
+	hasDescription bool,
+	flags []string,
+	noWrites bool,
+	allowStale bool,
+	noCluster bool,
+	allowCrossSlotKeys bool,
+	err error,
+) {
 	if L.GetTop() == 2 {
 		name = L.CheckString(1)
 		fn, ok := L.Get(2).(*lua.LFunction)
 		if !ok {
-			return "", nil, "", false, nil, false, errors.New("callback must be a function")
+			return "", nil, "", false, nil, false, false, false, false, errors.New("callback must be a function")
 		}
 		callback = fn
 	} else if L.GetTop() == 1 {
 		definition, ok := L.Get(1).(*lua.LTable)
 		if !ok {
-			return "", nil, "", false, nil, false, errors.New("wrong number of arguments to redis.register_function")
+			return "", nil, "", false, nil, false, false, false, false, errors.New("wrong number of arguments to redis.register_function")
 		}
 		nameValue := definition.RawGetString("function_name")
 		nameString, ok := nameValue.(lua.LString)
 		if !ok {
-			return "", nil, "", false, nil, false, errors.New("function_name must be a string")
+			return "", nil, "", false, nil, false, false, false, false, errors.New("function_name must be a string")
 		}
 		name = string(nameString)
 		fn, ok := definition.RawGetString("callback").(*lua.LFunction)
 		if !ok {
-			return "", nil, "", false, nil, false, errors.New("callback must be a function")
+			return "", nil, "", false, nil, false, false, false, false, errors.New("callback must be a function")
 		}
 		callback = fn
 
@@ -176,7 +190,7 @@ func parseRegisteredFunction(L *lua.LState) (name string, callback *lua.LFunctio
 		if descriptionValue != lua.LNil {
 			descriptionString, ok := descriptionValue.(lua.LString)
 			if !ok {
-				return "", nil, "", false, nil, false, errors.New("description must be a string")
+				return "", nil, "", false, nil, false, false, false, false, errors.New("description must be a string")
 			}
 			description = string(descriptionString)
 			hasDescription = true
@@ -186,32 +200,58 @@ func parseRegisteredFunction(L *lua.LState) (name string, callback *lua.LFunctio
 		if flagsValue != lua.LNil {
 			flagsTable, ok := flagsValue.(*lua.LTable)
 			if !ok {
-				return "", nil, "", false, nil, false, errors.New("flags must be a table")
+				return "", nil, "", false, nil, false, false, false, false, errors.New("flags must be a table")
 			}
 			for i := 1; i <= flagsTable.Len(); i++ {
 				flagValue := flagsTable.RawGetInt(i)
 				flagString, ok := flagValue.(lua.LString)
 				if !ok {
-					return "", nil, "", false, nil, false, errors.New("function flag must be a string")
+					return "", nil, "", false, nil, false, false, false, false, errors.New("function flag must be a string")
 				}
 				flag := strings.ToLower(string(flagString))
-				if flag != "no-writes" {
-					return "", nil, "", false, nil, false, fmt.Errorf("unsupported function flag: %s", flag)
+
+				switch flag {
+				case "no-writes":
+					noWrites = true
+				case "allow-stale":
+					allowStale = true
+				case "no-cluster":
+					noCluster = true
+				case "allow-cross-slot-keys":
+					allowCrossSlotKeys = true
+				case "allow-oom":
+					// Do not silently claim Redis ALLOW_OOM semantics yet.
+					// Redis permits commands that would normally be rejected in
+					// OOM state, while SnugKV still applies its normal max-memory
+					// admission rules to nested commands.
+					return "", nil, "", false, nil, false, false, false, false,
+						fmt.Errorf("unsupported function flag: %s", flag)
+				default:
+					return "", nil, "", false, nil, false, false, false, false,
+						fmt.Errorf("unsupported function flag: %s", flag)
 				}
-				if !noWrites {
+
+				duplicate := false
+				for _, existing := range flags {
+					if existing == flag {
+						duplicate = true
+						break
+					}
+				}
+				if !duplicate {
 					flags = append(flags, flag)
 				}
-				noWrites = true
 			}
 		}
 	} else {
-		return "", nil, "", false, nil, false, errors.New("wrong number of arguments to redis.register_function")
+		return "", nil, "", false, nil, false, false, false, false, errors.New("wrong number of arguments to redis.register_function")
 	}
 
 	if !validFunctionName(name) {
-		return "", nil, "", false, nil, false, errors.New("Library names can only contain letters, numbers, or underscores(_) and must be at least one character long")
+		return "", nil, "", false, nil, false, false, false, false, errors.New("Library names can only contain letters, numbers, or underscores(_) and must be at least one character long")
 	}
-	return name, callback, description, hasDescription, flags, noWrites, nil
+	return name, callback, description, hasDescription, flags, noWrites,
+		allowStale, noCluster, allowCrossSlotKeys, nil
 }
 
 func (s *Server) loadFunctionLibrary(code string) (*functionLibrary, error) {
@@ -232,7 +272,8 @@ func (s *Server) loadFunctionLibrary(code string) (*functionLibrary, error) {
 	module.RawSetString("status_reply", L.NewFunction(luaRedisStatusReply))
 	module.RawSetString("sha1hex", L.NewFunction(luaRedisSHA1Hex))
 	module.RawSetString("register_function", L.NewFunction(func(L *lua.LState) int {
-		functionName, callback, description, hasDescription, flags, noWrites, parseErr := parseRegisteredFunction(L)
+		functionName, callback, description, hasDescription, flags, noWrites,
+			allowStale, noCluster, allowCrossSlotKeys, parseErr := parseRegisteredFunction(L)
 		if parseErr != nil {
 			L.RaiseError("%s", parseErr.Error())
 			return 0
@@ -243,13 +284,16 @@ func (s *Server) loadFunctionLibrary(code string) (*functionLibrary, error) {
 			return 0
 		}
 		lib.functions[lower] = &registeredFunction{
-			name:           functionName,
-			description:    description,
-			hasDescription: hasDescription,
-			flags:          flags,
-			noWrites:       noWrites,
-			callback:       callback,
-			library:        lib,
+			name:               functionName,
+			description:        description,
+			hasDescription:     hasDescription,
+			flags:              flags,
+			noWrites:           noWrites,
+			allowStale:         allowStale,
+			noCluster:          noCluster,
+			allowCrossSlotKeys: allowCrossSlotKeys,
+			callback:           callback,
+			library:            lib,
 		}
 		return 0
 	}))
