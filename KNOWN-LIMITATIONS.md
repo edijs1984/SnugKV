@@ -2,9 +2,9 @@
 
 SnugKV is currently an alpha-stage, single-node RESP2 datastore. It has broad
 coverage across the common Redis datatype families, including Streams, Pub/Sub,
-transactions, HyperLogLog, modern GEO, the common Lua scripting path,
-`SORT` / `SORT_RO`, and single-database `COPY`, but it is not a complete Redis
-replacement.
+transactions, HyperLogLog, modern GEO, Lua scripting/read-only scripting, Redis
+Functions core, `SORT` / `SORT_RO`, and single-database `COPY`, but it is not a
+complete Redis replacement.
 
 ## Protocol
 
@@ -19,13 +19,15 @@ See [COMPATIBILITY.md](COMPATIBILITY.md).
 
 Strings, counters, expiration, bit operations, key inspection, COPY, HASH, SET,
 LIST, ZSET, SORT/SORT_RO, HyperLogLog, modern GEO, Streams/consumer groups,
-classic/sharded Pub/Sub, transactions/WATCH, partial Lua scripting, basic JSON,
-memory inspection, and administration are implemented to the documented scope.
+classic/sharded Pub/Sub, transactions/WATCH, Lua scripting, Redis Functions core,
+basic JSON, memory inspection, and administration are implemented to the
+documented scope.
 
 Major Redis-compatible features still not implemented or incomplete:
 
-- Redis Functions (`FUNCTION`, `FCALL`, `FCALL_RO`);
-- full Lua scripting parity (`EVAL_RO`, `EVALSHA_RO`, `SCRIPT KILL/DEBUG`, exact command flags/ACL behavior);
+- remaining Function management such as `FUNCTION DUMP`, `RESTORE`, `STATS`, `KILL`, and `HELP`;
+- full Lua/Functions parity (`SCRIPT KILL/DEBUG`, broader function flags, exact command flags/ACL behavior);
+- durable restoration of loaded Function libraries across SnugKV restart;
 - cross-database COPY and broader migration/transfer command scope;
 - RESP3;
 - broad CLIENT / CONFIG / ACL compatibility;
@@ -36,31 +38,42 @@ Major Redis-compatible features still not implemented or incomplete:
 
 The current JSON commands are not a complete RedisJSON implementation.
 
-## Lua scripting boundaries
+## Lua scripting and Functions boundaries
 
-The implemented scripting surface is `EVAL`, `EVALSHA`, `SCRIPT LOAD`,
-`SCRIPT EXISTS`, and `SCRIPT FLUSH [SYNC|ASYNC]`. Scripts receive `KEYS` and
-`ARGV` and can use `redis.call`, `redis.pcall`, `redis.error_reply`,
+The implemented scripting surface is `EVAL`, `EVALSHA`, `EVAL_RO`, `EVALSHA_RO`,
+`SCRIPT LOAD`, `SCRIPT EXISTS`, and `SCRIPT FLUSH [SYNC|ASYNC]`. Scripts receive
+`KEYS` and `ARGV` and can use `redis.call`, `redis.pcall`, `redis.error_reply`,
 `redis.status_reply`, and `redis.sha1hex`.
+
+Redis Functions core support includes `FUNCTION LOAD [REPLACE]`, `FUNCTION LIST
+[LIBRARYNAME pattern] [WITHCODE]`, `FUNCTION DELETE`, `FUNCTION FLUSH
+[SYNC|ASYNC]`, `FCALL`, and `FCALL_RO`. `redis.register_function()` supports the
+common positional form and table-form registration with `description` and the
+`no-writes` flag. Loaded library Lua state is retained while the process is
+running, so library-local state can persist across calls.
 
 Current boundaries are intentional and documented rather than silently emulated:
 
-- scripts run in an embedded Lua 5.1-compatible runtime, not Redis's exact Lua VM;
+- scripts/functions run in an embedded Lua 5.1-compatible runtime, not Redis's exact Lua VM;
 - filesystem/process libraries are removed;
 - each invocation has a five-second execution limit;
 - blocking commands, subscription/connection state, transaction commands, nested
-  scripting, and SnugKV admin commands are rejected through the script bridge;
-- the script cache is volatile and process-local;
-- `SCRIPT KILL`, `SCRIPT DEBUG`, Redis Functions, and read-only EVAL variants are
-  not implemented;
-- exact Redis command-flag, ACL, OOM/eviction, and every Lua edge-case still need
-  differential testing.
+  scripting/functions, and SnugKV admin commands are rejected through the Lua bridge;
+- `EVAL_RO`, `EVALSHA_RO`, `FCALL_RO`, and `no-writes` functions reject write or
+  replication-capable commands, including `PUBLISH`/`SPUBLISH`;
+- the EVAL SHA cache is volatile and process-local;
+- Function libraries are process-local and are currently lost on restart even
+  though keyspace mutations caused by writable FCALL are persisted normally;
+- only the `no-writes` function flag is supported in this milestone;
+- `SCRIPT KILL`, `SCRIPT DEBUG`, `FUNCTION DUMP/RESTORE/STATS/KILL/HELP`, exact
+  Redis command-flag/ACL/OOM behavior, and every Lua edge case still need
+  differential hardening.
 
-Scripts are atomic with respect to other SnugKV clients because they execute under
-the same command-serialization boundary as transactions. Lua runtime errors do not
-roll back successful writes already made by the script. With AOF enabled, those
-resulting logical changes are persisted in one frame even when the script later
-returns a runtime error.
+Scripts and function calls are atomic with respect to other SnugKV clients because
+they execute under the same command-serialization boundary as transactions. Lua
+runtime errors do not roll back successful writes already made before the error.
+With AOF enabled, resulting logical changes from one direct writable EVAL or FCALL
+are persisted as one frame.
 
 ## SORT boundaries
 
@@ -125,8 +138,9 @@ queued MULTI commands; `PUBLISH` and `SPUBLISH` remain ordinary queueable comman
   incomplete even when ordinary application workloads work.
 - The modern GEO command set has focused command-level compatibility tests; large
   dataset differential/performance testing is intentionally still pending.
-- Lua scripting has focused unit/durability/transaction coverage plus a basic
-  Redis differential smoke pass; deeper command-flag/ACL/OOM edge auditing remains.
+- Lua scripting/read-only variants and Functions core have focused unit,
+  durability, transaction, and CI coverage; deeper Redis command-flag/ACL/OOM and
+  function-management differential auditing remains.
 - COPY has focused option/type/TTL/durability/OOM/transaction coverage; a live
   Redis differential pass remains before stronger parity claims.
 
@@ -141,9 +155,14 @@ queued MULTI commands; `PUBLISH` and `SPUBLISH` remain ordinary queueable comman
 SnugKV includes logical AOF/snapshot persistence and recovery testing, including
 truncated-final-frame recovery, checksum-corruption rejection, append rollback,
 online AOF rewrite, native datatype restore coverage, single logical AOF frames
-for successful transaction results, single logical frames for direct script
-mutations including partial writes before runtime errors, destination-only
-persistence/replay for `SORT ... STORE`, and destination-only COPY persistence.
+for successful transaction results, single logical frames for direct script and
+writable FCALL mutations including partial writes before runtime errors,
+destination-only persistence/replay for `SORT ... STORE`, and destination-only
+COPY persistence.
+
+Loaded Function libraries themselves are not yet part of the persistence format,
+so applications must reload Function code after a SnugKV restart before calling
+those functions again.
 
 For alpha use:
 
@@ -155,8 +174,8 @@ For alpha use:
 
 `SNUG.STATS` reports engine-accounted memory, not process RSS. RSS additionally
 includes Go runtime state, goroutine stacks, network/persistence buffers,
-optimizer scratch space, allocator overhead, and temporary Lua VM state while a
-script is executing.
+optimizer scratch space, allocator overhead, temporary EVAL Lua VM state, and
+persistent loaded Function Lua states.
 
 The sparse 1,000-key / 256-shard / 16-byte-value benchmark improved from 527,768
 to 179,224 accounted bytes, a 66.04% reduction. Current measured sparse layout:
@@ -192,9 +211,9 @@ collection mutation:
   encoded bytes).
 - Streams use packed logical state, including group/PEL metadata, rather than a
   Redis radix-tree/listpack layout.
-- the current Lua implementation creates an isolated VM per invocation rather than
-  pooling VM state or compiled chunks, favoring isolation/simplicity over minimum
-  script-call latency.
+- EVAL currently creates an isolated VM per invocation rather than pooling VM state
+  or compiled chunks; loaded Function libraries keep their own Lua VM/state until
+  delete/flush/replacement or process exit.
 
 These tradeoffs are intentional for the current single-node design and should be
 revisited only with workload benchmarks that justify extra permanent memory or
@@ -211,9 +230,10 @@ See [benchmarks/README.md](benchmarks/README.md).
 
 ## Security
 
-SnugKV has not received an independent security audit. The scripting runtime is
-sandboxed by omitting filesystem/process libraries and limiting execution time,
-but this is not a substitute for a security review. Follow [SECURITY.md](SECURITY.md).
+SnugKV has not received an independent security audit. The scripting/Functions
+runtime is sandboxed by omitting filesystem/process libraries and limiting
+execution time, but this is not a substitute for a security review. Follow
+[SECURITY.md](SECURITY.md).
 
 ## Production use
 
