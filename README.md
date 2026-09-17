@@ -101,7 +101,8 @@ SnugKV yet. See [docs/FUNCTION-DUMP-RESTORE.md](docs/FUNCTION-DUMP-RESTORE.md).
 FCALL plus Lua engine library/function counts. It remains available while an
 FCALL holds the normal command-serialization mutex, so another client can inspect
 the live function name, original command vector, and elapsed `duration_ms`.
-`FUNCTION HELP` exposes the Redis-style Functions subcommand help surface.
+`FUNCTION HELP` exposes the Redis-style Functions subcommand help surface. See
+[docs/FUNCTION-STATS-HELP.md](docs/FUNCTION-STATS-HELP.md).
 
 With logical AOF enabled, resulting database changes from one writable EVAL or
 FCALL are persisted as one frame. Writes completed before a later Lua runtime
