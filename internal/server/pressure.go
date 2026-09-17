@@ -8,6 +8,9 @@ import (
 )
 
 func (s *Server) executePressureCommand(args [][]byte) ([]byte, error) {
+	if response, handled, err := s.executeFunctionDumpRestore(args); handled {
+		return response, err
+	}
 	if isFunctionCommand(args) {
 		if scriptExecutionActive(s) {
 			return nil, errors.New("ERR This Redis command is not allowed from script")
