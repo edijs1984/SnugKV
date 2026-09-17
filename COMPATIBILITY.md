@@ -17,9 +17,9 @@ transactions and optimistic locking (`MULTI`, `EXEC`, `DISCARD`, `WATCH`,
 `UNWATCH`). HyperLogLog (`PFADD`, `PFCOUNT`, `PFMERGE`), the modern GEO surface
 (`GEOADD`, `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH`, `GEOSEARCHSTORE`), Lua
 scripting/read-only scripting (`EVAL`, `EVALSHA`, `EVAL_RO`, `EVALSHA_RO`,
-`SCRIPT LOAD/EXISTS/FLUSH`), Redis Functions core (`FUNCTION LOAD/LIST/DELETE/FLUSH`,
-`DUMP`, `RESTORE`, `FCALL`, `FCALL_RO`), `SORT` / `SORT_RO`, and single-database
-`COPY` are also implemented.
+`SCRIPT LOAD/EXISTS/FLUSH`), Redis Functions (`FUNCTION LOAD/LIST/DELETE/FLUSH`,
+`DUMP`, `RESTORE`, `STATS`, `HELP`, `FCALL`, `FCALL_RO`), `SORT` / `SORT_RO`, and
+single-database `COPY` are also implemented.
 
 The largest remaining Redis compatibility families are remaining scripting/function
 management and command-flag parity, RESP3, migration/transfer scope, and broader
@@ -66,7 +66,7 @@ protocol version`.
 | Transactions | Broad support | `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH`, queue/runtime error semantics, AOF transaction frames |
 | HyperLogLog | Supported | `PFADD`, `PFCOUNT`, `PFMERGE`; Redis-compatible serialized HLL strings |
 | GEO | Modern surface supported | `GEOADD`, `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH`, `GEOSEARCHSTORE`; deprecated `GEORADIUS*` commands are not implemented |
-| Lua scripting / Functions | Partial | `EVAL*`, read-only EVAL, SCRIPT load/exists/flush, Functions core, DUMP/RESTORE and restart persistence; KILL/DEBUG/STATS/HELP and broader flags/ACL parity remain |
+| Lua scripting / Functions | Partial | `EVAL*`, read-only EVAL, SCRIPT load/exists/flush, Functions core, DUMP/RESTORE/restart persistence, STATS/HELP; KILL/DEBUG and broader flags/ACL parity remain |
 | RESP3 | Not implemented | RESP2 only |
 | Replication / Sentinel / Cluster | Not implemented | Outside current single-node scope |
 
@@ -315,6 +315,8 @@ FUNCTION DELETE <library-name>
 FUNCTION FLUSH [SYNC|ASYNC]
 FUNCTION DUMP
 FUNCTION RESTORE <payload> [APPEND|REPLACE|FLUSH]
+FUNCTION STATS
+FUNCTION HELP
 FCALL function numkeys [key ...] [arg ...]
 FCALL_RO function numkeys [key ...] [arg ...]
 ```
@@ -347,6 +349,12 @@ in an atomic checksummed sidecar and restored on restart. Arbitrary live Lua VM
 state is not serialized; library-local variables are reconstructed from source
 and therefore reset after restore/restart.
 
+`FUNCTION STATS` reports the running Function name, original FCALL/FCALL_RO
+command vector, elapsed `duration_ms`, and per-engine library/function counts. It
+uses a read-only synchronized fast path so another client can query it while an
+FCALL holds SnugKV's normal command-serialization mutex. `FUNCTION HELP` returns
+the Redis-style Function subcommand help array. See `docs/FUNCTION-STATS-HELP.md`.
+
 Payload compatibility boundary: SnugKV currently uses its own versioned
 `SNUGF001` Function dump payload rather than Redis RDB Function bytes. Redis and
 SnugKV Function DUMP payloads are therefore not cross-restorable yet. See
@@ -358,8 +366,7 @@ Current scripting/Functions boundaries:
 - filesystem/process Lua libraries are not exposed;
 - blocking commands, connection/subscription state, transaction commands, nested
   EVAL/SCRIPT, and SnugKV admin commands are rejected from `redis.call`/`redis.pcall`;
-- `FUNCTION STATS`, `FUNCTION KILL`, `FUNCTION HELP`, `SCRIPT KILL`, and
-  `SCRIPT DEBUG` are not yet implemented;
+- `FUNCTION KILL`, `SCRIPT KILL`, and `SCRIPT DEBUG` are not yet implemented;
 - only the `no-writes` Function flag is currently supported;
 - full Redis scripting command-flag/ACL/OOM parity is not implemented;
 - SnugKV does not claim Redis's exact Lua VM implementation details or every
@@ -398,7 +405,7 @@ It is not a complete RedisJSON implementation.
 
 Prioritized backlog:
 
-1. Remaining scripting/Function management (`FUNCTION STATS/KILL/HELP`, `SCRIPT KILL/DEBUG`), broader Function flags, and command-flag/ACL parity.
+1. Remaining scripting/Function management (`FUNCTION KILL`, `SCRIPT KILL/DEBUG`), broader Function flags, and command-flag/ACL parity.
 2. Migration/transfer scope beyond single-database `COPY`.
 3. CLIENT/CONFIG/ACL compatibility and COMMAND metadata completeness.
 4. RESP3 where required by clients/tooling.
