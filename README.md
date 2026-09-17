@@ -59,7 +59,7 @@ for current boundaries, [PLAN.md](PLAN.md) for the remaining roadmap, and
 - STREAM: `XADD`, `XLEN`, `XRANGE`, `XREVRANGE`, `XDEL`, `XDELEX`, `XTRIM`, `XREAD`, `XGROUP`, `XREADGROUP`, `XACK`, `XACKDEL`, `XPENDING`, `XCLAIM`, `XAUTOCLAIM`, `XINFO`; Redis 8.2 `KEEPREF` / `DELREF` / `ACKED` reference policies are supported.
 - Pub/Sub: `SUBSCRIBE`, `UNSUBSCRIBE`, `PSUBSCRIBE`, `PUNSUBSCRIBE`, `PUBLISH`, `SSUBSCRIBE`, `SUNSUBSCRIBE`, `SPUBLISH`, and `PUBSUB` classic/sharded introspection.
 - Transactions: `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH` with cross-client optimistic locking and EXEC error semantics.
-- Scripting: `EVAL`, `EVALSHA`, `EVAL_RO`, `EVALSHA_RO`, `SCRIPT LOAD`, `SCRIPT EXISTS`, `SCRIPT FLUSH`; Lua `KEYS`/`ARGV`, `redis.call`, `redis.pcall`, `redis.error_reply`, `redis.status_reply`, and `redis.sha1hex` are available.
+- Scripting: `EVAL`, `EVALSHA`, `EVAL_RO`, `EVALSHA_RO`, `SCRIPT LOAD`, `SCRIPT EXISTS`, `SCRIPT FLUSH`, `SCRIPT KILL`; Lua `KEYS`/`ARGV`, `redis.call`, `redis.pcall`, `redis.error_reply`, `redis.status_reply`, and `redis.sha1hex` are available.
 - Functions: `FUNCTION LOAD [REPLACE]`, `FUNCTION LIST [LIBRARYNAME pattern] [WITHCODE]`, `FUNCTION DELETE`, `FUNCTION FLUSH [SYNC|ASYNC]`, `FUNCTION DUMP`, `FUNCTION RESTORE <payload> [APPEND|REPLACE|FLUSH]`, `FUNCTION STATS`, `FUNCTION KILL`, `FUNCTION HELP`, `FCALL`, and `FCALL_RO`; `redis.register_function()` supports positional registration and table registration with the `no-writes` flag.
 - JSON: `JSON.SET`, `JSON.GET`, `JSON.TYPE`, `JSON.DEL`.
 - Administration: `FLUSHDB`, `FLUSHALL`, `MEMORY`, `SNUG.ENCODING`, `SNUG.MEMORY`, `SNUG.STATS`, `SNUG.COMPACT`, `SNUG.POLICY`, `SNUG.AOFREWRITE`, `SNUG.SHAPES`, `SNUG.CANDIDATES`, `SNUG.TYPE`.
@@ -83,6 +83,13 @@ data/key commands through `redis.call` and `redis.pcall`. Blocking commands,
 connection/subscription state, transactions, nested scripting, and SnugKV admin
 commands are intentionally rejected from inside scripts. Filesystem/process Lua
 libraries are not exposed, and each script has a five-second execution limit.
+
+`SCRIPT KILL` can cancel a running EVAL/EVALSHA/EVAL_RO/EVALSHA_RO before the
+invocation crosses its first dataset-write boundary. Once a writable nested
+command has been dispatched the invocation becomes `UNKILLABLE`, while idle KILL
+returns `NOTBUSY`. The write boundary and KILL share the same running-script state
+lock so KILL cannot report success while a write starts concurrently. See
+[docs/SCRIPT-KILL.md](docs/SCRIPT-KILL.md).
 
 Redis Functions core support includes Lua libraries loaded with `FUNCTION LOAD`,
 global function-name lookup through `FCALL`/`FCALL_RO`, library replacement,
@@ -119,9 +126,9 @@ configured persistence file. Function-local Lua VM variables are reconstructed
 from source and therefore reset after restore/restart; arbitrary live VM state is
 not serialized.
 
-Remaining scripting/function management gaps include `SCRIPT KILL`/`DEBUG`, the
-broader Redis function-flag surface, exact Redis RDB byte compatibility for
-Function DUMP/RESTORE payloads, and full Redis Lua/ACL/command-flag parity.
+Remaining scripting/function management gaps include `SCRIPT DEBUG`, the broader
+Redis function-flag surface, exact Redis RDB byte compatibility for Function
+DUMP/RESTORE payloads, and full Redis Lua/ACL/command-flag parity.
 
 ## SORT compatibility
 
