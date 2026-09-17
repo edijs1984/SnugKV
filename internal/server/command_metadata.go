@@ -445,3 +445,548 @@ func commandGetKeysAndFlagsReply(
 
 	return array(items...)
 }
+
+func commandRESPString(value string) []byte {
+	return []byte("+" + value + "\r\n")
+}
+
+func commandRESPStrings(values []string) []byte {
+	items := make([][]byte, 0, len(values))
+
+	for _, value := range values {
+		items = append(
+			items,
+			commandRESPString(value),
+		)
+	}
+
+	return array(items...)
+}
+
+func commandBulkStrings(values []string) []byte {
+	items := make([][]byte, 0, len(values))
+
+	for _, value := range values {
+		items = append(
+			items,
+			formatBulkString([]byte(value)),
+		)
+	}
+
+	return array(items...)
+}
+
+func commandInfoArity(info commandInfo) int {
+	if info.max == info.min {
+		return info.min
+	}
+
+	return -info.min
+}
+
+func commandInfoFlags(
+	name string,
+	info commandInfo,
+) []string {
+	switch name {
+	case "GET":
+		return []string{"readonly", "fast"}
+
+	case "SET":
+		return []string{"write", "denyoom"}
+
+	case "COPY":
+		return []string{"write", "denyoom"}
+
+	case "SORT":
+		return []string{"write", "denyoom", "movablekeys"}
+
+	case "SORT_RO":
+		return []string{"readonly", "movablekeys"}
+
+	case "XADD":
+		return []string{"write", "denyoom", "fast"}
+
+	case "PFADD":
+		return []string{"write", "denyoom", "fast"}
+
+	case "GEOADD":
+		return []string{"write", "denyoom"}
+
+	case "EVAL", "EVALSHA",
+		"EVAL_RO", "EVALSHA_RO",
+		"FCALL", "FCALL_RO":
+		return []string{
+			"noscript",
+			"stale",
+			"skip_monitor",
+			"no_mandatory_keys",
+			"movablekeys",
+		}
+	}
+
+	if info.write {
+		return []string{"write"}
+	}
+
+	return []string{"readonly"}
+}
+
+func commandInfoACL(
+	name string,
+	info commandInfo,
+) []string {
+	switch name {
+	case "GET":
+		return []string{
+			"@read",
+			"@string",
+			"@fast",
+		}
+
+	case "SET":
+		return []string{
+			"@write",
+			"@string",
+			"@slow",
+		}
+
+	case "DEL":
+		return []string{
+			"@keyspace",
+			"@write",
+			"@slow",
+		}
+
+	case "COPY":
+		return []string{
+			"@keyspace",
+			"@write",
+			"@slow",
+		}
+
+	case "EVAL", "EVALSHA",
+		"EVAL_RO", "EVALSHA_RO",
+		"FCALL", "FCALL_RO":
+		return []string{
+			"@slow",
+			"@scripting",
+		}
+
+	case "SORT":
+		return []string{
+			"@write",
+			"@set",
+			"@sortedset",
+			"@list",
+			"@slow",
+			"@dangerous",
+		}
+
+	case "SORT_RO":
+		return []string{
+			"@read",
+			"@set",
+			"@sortedset",
+			"@list",
+			"@slow",
+			"@dangerous",
+		}
+
+	case "XADD":
+		return []string{
+			"@write",
+			"@stream",
+			"@fast",
+		}
+
+	case "PFADD":
+		return []string{
+			"@write",
+			"@hyperloglog",
+			"@fast",
+		}
+
+	case "GEOADD":
+		return []string{
+			"@write",
+			"@geo",
+			"@slow",
+		}
+	}
+
+	if info.write {
+		return []string{"@write"}
+	}
+
+	return []string{"@read"}
+}
+
+func commandInfoTips(name string) []string {
+	switch name {
+	case "DEL":
+		return []string{
+			"request_policy:multi_shard",
+			"response_policy:agg_sum",
+		}
+
+	case "XADD":
+		return []string{
+			"nondeterministic_output",
+		}
+	}
+
+	return nil
+}
+
+func commandKeySpec(
+	flags []string,
+	first int,
+	last int,
+	step int,
+) []byte {
+	return commandKeySpecWithNotes(
+		flags,
+		first,
+		last,
+		step,
+		"",
+	)
+}
+
+func commandKeySpecWithNotes(
+	flags []string,
+	first int,
+	last int,
+	step int,
+	notes string,
+) []byte {
+	parts := make([][]byte, 0, 8)
+
+	if notes != "" {
+		parts = append(
+			parts,
+			formatBulkString([]byte("notes")),
+			formatBulkString([]byte(notes)),
+		)
+	}
+
+	parts = append(
+		parts,
+		formatBulkString([]byte("flags")),
+		commandRESPStrings(flags),
+
+		formatBulkString([]byte("begin_search")),
+		array(
+			formatBulkString([]byte("type")),
+			formatBulkString([]byte("index")),
+			formatBulkString([]byte("spec")),
+			array(
+				formatBulkString([]byte("index")),
+				integer(int64(first)),
+			),
+		),
+
+		formatBulkString([]byte("find_keys")),
+		array(
+			formatBulkString([]byte("type")),
+			formatBulkString([]byte("range")),
+			formatBulkString([]byte("spec")),
+			array(
+				formatBulkString([]byte("lastkey")),
+				integer(int64(last)),
+				formatBulkString([]byte("keystep")),
+				integer(int64(step)),
+				formatBulkString([]byte("limit")),
+				integer(0),
+			),
+		),
+	)
+
+	return array(parts...)
+}
+
+func commandKeyNumSpec(
+	flags []string,
+	beginIndex int,
+) []byte {
+	return commandKeyNumSpecWithNotes(
+		flags,
+		beginIndex,
+		"",
+	)
+}
+
+func commandKeyNumSpecWithNotes(
+	flags []string,
+	beginIndex int,
+	notes string,
+) []byte {
+	parts := make([][]byte, 0, 8)
+
+	if notes != "" {
+		parts = append(
+			parts,
+			formatBulkString([]byte("notes")),
+			formatBulkString([]byte(notes)),
+		)
+	}
+
+	parts = append(
+		parts,
+		formatBulkString([]byte("flags")),
+		commandRESPStrings(flags),
+
+		formatBulkString([]byte("begin_search")),
+		array(
+			formatBulkString([]byte("type")),
+			formatBulkString([]byte("index")),
+			formatBulkString([]byte("spec")),
+			array(
+				formatBulkString([]byte("index")),
+				integer(int64(beginIndex)),
+			),
+		),
+
+		formatBulkString([]byte("find_keys")),
+		array(
+			formatBulkString([]byte("type")),
+			formatBulkString([]byte("keynum")),
+			formatBulkString([]byte("spec")),
+			array(
+				formatBulkString([]byte("keynumidx")),
+				integer(0),
+				formatBulkString([]byte("firstkey")),
+				integer(1),
+				formatBulkString([]byte("keystep")),
+				integer(1),
+			),
+		),
+	)
+
+	return array(parts...)
+}
+
+func commandUnknownKeySpec(
+	flags []string,
+	notes string,
+) []byte {
+	parts := make([][]byte, 0, 10)
+
+	if notes != "" {
+		parts = append(
+			parts,
+			formatBulkString([]byte("notes")),
+			formatBulkString([]byte(notes)),
+		)
+	}
+
+	parts = append(
+		parts,
+		formatBulkString([]byte("flags")),
+		commandRESPStrings(flags),
+
+		formatBulkString([]byte("begin_search")),
+		array(
+			formatBulkString([]byte("type")),
+			formatBulkString([]byte("unknown")),
+			formatBulkString([]byte("spec")),
+			array(),
+		),
+
+		formatBulkString([]byte("find_keys")),
+		array(
+			formatBulkString([]byte("type")),
+			formatBulkString([]byte("unknown")),
+			formatBulkString([]byte("spec")),
+			array(),
+		),
+	)
+
+	return array(parts...)
+}
+
+func commandInfoKeySpecs(
+	name string,
+	info commandInfo,
+) []byte {
+	switch name {
+	case "EVAL", "EVALSHA", "FCALL":
+		return array(
+			commandKeyNumSpecWithNotes(
+				[]string{
+					"RW",
+					"access",
+					"update",
+				},
+				2,
+				"We cannot tell how the keys will be used so we assume the worst, RW and UPDATE",
+			),
+		)
+
+	case "EVAL_RO", "EVALSHA_RO", "FCALL_RO":
+		return array(
+			commandKeyNumSpec(
+				[]string{
+					"RO",
+					"access",
+				},
+				2,
+			),
+		)
+
+	case "COPY":
+		return array(
+			commandKeySpec(
+				[]string{
+					"RO",
+					"access",
+				},
+				1,
+				0,
+				1,
+			),
+			commandKeySpec(
+				[]string{
+					"OW",
+					"update",
+				},
+				2,
+				0,
+				1,
+			),
+		)
+
+	case "SORT":
+		return array(
+			commandKeySpec(
+				[]string{
+					"RO",
+					"access",
+				},
+				1,
+				0,
+				1,
+			),
+
+			commandUnknownKeySpec(
+				[]string{
+					"RO",
+					"access",
+				},
+				"For the optional BY/GET keyword. It is marked 'unknown' because the key names derive from the content of the key we sort",
+			),
+
+			commandUnknownKeySpec(
+				[]string{
+					"OW",
+					"update",
+				},
+				"For the optional STORE keyword. It is marked 'unknown' because the keyword can appear anywhere in the argument array",
+			),
+		)
+	}
+
+	if info.first == 0 || info.step <= 0 {
+		return array()
+	}
+
+	flags := []string{"RO", "access"}
+	notes := ""
+
+	switch name {
+	case "SET":
+		flags = []string{
+			"RW",
+			"access",
+			"update",
+			"variable_flags",
+		}
+		notes = "RW and ACCESS due to the optional `GET` argument"
+
+	case "DEL", "UNLINK":
+		flags = []string{"RM", "delete"}
+
+	case "XADD":
+		flags = []string{"RW", "update"}
+		notes = "UPDATE instead of INSERT because of the optional trimming feature"
+
+	case "PFADD":
+		flags = []string{"RW", "insert"}
+
+	case "RENAME", "RENAMENX":
+		// The legacy first/last/step metadata cannot express
+		// source/destination flag differences accurately.
+		// GETKEYSANDFLAGS already does, so do not publish a
+		// misleading generic spec here yet.
+		return array()
+
+	default:
+		if info.write {
+			flags = []string{"RW", "update"}
+		}
+	}
+
+	last := info.last
+
+	if last > 0 {
+		// Redis range key specs express the last key relative
+		// to the first key rather than as an absolute argv
+		// position.
+		last -= info.first
+	}
+
+	return array(
+		commandKeySpecWithNotes(
+			flags,
+			info.first,
+			last,
+			info.step,
+			notes,
+		),
+	)
+}
+
+func commandInfoSubcommands(name string) []byte {
+	// Parent command subcommand metadata will be added as the next
+	// slice. Returning an empty array is preferable to advertising
+	// Redis subcommands that SnugKV does not implement.
+	return array()
+}
+
+func commandInfoReply(name string) []byte {
+	info, ok := commandTable[name]
+	if !ok {
+		return nullBulk()
+	}
+
+	return array(
+		formatBulkString(
+			[]byte(strings.ToLower(name)),
+		),
+
+		integer(
+			int64(commandInfoArity(info)),
+		),
+
+		commandRESPStrings(
+			commandInfoFlags(name, info),
+		),
+
+		integer(int64(info.first)),
+		integer(int64(info.last)),
+		integer(int64(info.step)),
+
+		commandRESPStrings(
+			commandInfoACL(name, info),
+		),
+
+		commandBulkStrings(
+			commandInfoTips(name),
+		),
+
+		commandInfoKeySpecs(name, info),
+
+		commandInfoSubcommands(name),
+	)
+}

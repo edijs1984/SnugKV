@@ -1098,29 +1098,7 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 
 	case "COMMAND":
 		commandEntry := func(name string) []byte {
-			c, ok := commandTable[name]
-			if !ok {
-				return nullBulk()
-			}
-
-			arity := c.min
-			if c.max != c.min {
-				arity = -arity
-			}
-
-			flag := "readonly"
-			if c.write {
-				flag = "write"
-			}
-
-			return array(
-				formatBulkString([]byte(strings.ToLower(name))),
-				integer(int64(arity)),
-				array(formatBulkString([]byte(flag))),
-				integer(int64(c.first)),
-				integer(int64(c.last)),
-				integer(int64(c.step)),
-			)
+			return commandInfoReply(name)
 		}
 
 		if len(args) == 1 {

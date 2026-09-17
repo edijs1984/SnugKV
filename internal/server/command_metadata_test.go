@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"reflect"
 	"testing"
 )
@@ -393,6 +394,187 @@ func TestCommandKeysXReadGroup(t *testing.T) {
 				"flags=%v want=%v",
 				ref.flags,
 				wantFlags,
+			)
+		}
+	}
+}
+
+func TestCommandInfoReplyHasRedisTenFieldShape(t *testing.T) {
+	reply := commandInfoReply("GET")
+
+	if !bytes.HasPrefix(
+		reply,
+		[]byte("*10\r\n"),
+	) {
+		t.Fatalf(
+			"COMMAND INFO GET reply does not have 10 fields: %q",
+			reply,
+		)
+	}
+}
+
+func TestCommandInfoGetMetadata(t *testing.T) {
+	reply := commandInfoReply("GET")
+
+	for _, want := range [][]byte{
+		[]byte("+readonly\r\n"),
+		[]byte("+fast\r\n"),
+		[]byte("+@read\r\n"),
+		[]byte("+@string\r\n"),
+		[]byte("+@fast\r\n"),
+		[]byte("+RO\r\n"),
+		[]byte("+access\r\n"),
+	} {
+		if !bytes.Contains(reply, want) {
+			t.Fatalf(
+				"COMMAND INFO GET missing %q in %q",
+				want,
+				reply,
+			)
+		}
+	}
+}
+
+func TestCommandInfoSetMetadata(t *testing.T) {
+	reply := commandInfoReply("SET")
+
+	for _, want := range [][]byte{
+		[]byte("+write\r\n"),
+		[]byte("+denyoom\r\n"),
+		[]byte("+@write\r\n"),
+		[]byte("+@string\r\n"),
+		[]byte("+RW\r\n"),
+		[]byte("+access\r\n"),
+		[]byte("+update\r\n"),
+		[]byte("+variable_flags\r\n"),
+	} {
+		if !bytes.Contains(reply, want) {
+			t.Fatalf(
+				"COMMAND INFO SET missing %q in %q",
+				want,
+				reply,
+			)
+		}
+	}
+}
+
+func TestCommandInfoEvalUsesDynamicKeySpec(t *testing.T) {
+	reply := commandInfoReply("EVAL")
+
+	for _, want := range [][]byte{
+		[]byte("+movablekeys\r\n"),
+		[]byte("$6\r\nkeynum\r\n"),
+		[]byte("$9\r\nkeynumidx\r\n"),
+	} {
+		if !bytes.Contains(reply, want) {
+			t.Fatalf(
+				"COMMAND INFO EVAL missing %q in %q",
+				want,
+				reply,
+			)
+		}
+	}
+}
+
+func TestCommandInfoCopyHasTwoKeySpecs(t *testing.T) {
+	reply := commandInfoReply("COPY")
+
+	if bytes.Count(
+		reply,
+		[]byte("$12\r\nbegin_search\r\n"),
+	) != 2 {
+		t.Fatalf(
+			"COPY should publish two key specs: %q",
+			reply,
+		)
+	}
+}
+
+func TestCommandInfoSetIncludesRedisKeySpecNote(t *testing.T) {
+	reply := commandInfoReply("SET")
+
+	want := []byte(
+		"RW and ACCESS due to the optional `GET` argument",
+	)
+
+	if !bytes.Contains(reply, want) {
+		t.Fatalf(
+			"COMMAND INFO SET missing key-spec note: %q",
+			reply,
+		)
+	}
+}
+
+func TestCommandInfoEvalIncludesWorstCaseNote(t *testing.T) {
+	reply := commandInfoReply("EVAL")
+
+	want := []byte(
+		"We cannot tell how the keys will be used so we assume the worst, RW and UPDATE",
+	)
+
+	if !bytes.Contains(reply, want) {
+		t.Fatalf(
+			"COMMAND INFO EVAL missing key-spec note: %q",
+			reply,
+		)
+	}
+}
+
+func TestCommandInfoXAddMetadata(t *testing.T) {
+	reply := commandInfoReply("XADD")
+
+	for _, want := range [][]byte{
+		[]byte("$23\r\nnondeterministic_output\r\n"),
+		[]byte(
+			"UPDATE instead of INSERT because of the optional trimming feature",
+		),
+	} {
+		if !bytes.Contains(reply, want) {
+			t.Fatalf(
+				"COMMAND INFO XADD missing %q in %q",
+				want,
+				reply,
+			)
+		}
+	}
+}
+
+func TestCommandInfoPFAddUsesInsertFlag(t *testing.T) {
+	reply := commandInfoReply("PFADD")
+
+	if !bytes.Contains(
+		reply,
+		[]byte("+insert\r\n"),
+	) {
+		t.Fatalf(
+			"COMMAND INFO PFADD missing insert flag: %q",
+			reply,
+		)
+	}
+}
+
+func TestCommandInfoTipsUseBulkStrings(t *testing.T) {
+	for _, name := range []string{"DEL", "XADD"} {
+		reply := commandInfoReply(name)
+
+		var want []byte
+
+		switch name {
+		case "DEL":
+			want = []byte(
+				"$26\r\nrequest_policy:multi_shard\r\n",
+			)
+		case "XADD":
+			want = []byte(
+				"$23\r\nnondeterministic_output\r\n",
+			)
+		}
+
+		if !bytes.Contains(reply, want) {
+			t.Fatalf(
+				"COMMAND INFO %s tips are not bulk strings: %q",
+				name,
+				reply,
 			)
 		}
 	}
