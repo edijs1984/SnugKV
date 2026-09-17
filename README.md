@@ -43,7 +43,7 @@ for current boundaries, [PLAN.md](PLAN.md) for the remaining roadmap, and
 
 ## Supported command surface
 
-- Connection: `PING`, `ECHO`, `QUIT`, `SELECT 0`, `HELLO 2`, `INFO`, `DBSIZE`, `COMMAND`.
+- Connection: `PING`, `ECHO`, `QUIT`, `SELECT 0`, `HELLO 2`, `INFO`, `DBSIZE`, `COMMAND`; CLIENT management/introspection includes `CLIENT ID`, `GETNAME`, `SETNAME`, `SETINFO`, `INFO`, `LIST`, `LIST ID`, `LIST TYPE NORMAL`, `KILL ID`, `UNBLOCK`, and `HELP`.
 - Keys: `DEL`, `UNLINK`, `EXISTS`, `TYPE`, `TOUCH`, `KEYS`, `SCAN`, `RANDOMKEY`, `RENAME`, `RENAMENX`, `COPY`.
 - Strings: `SET`, `GET`, `GETSET`, `GETDEL`, `GETEX`, `SETNX`, `SETEX`, `PSETEX`, `MSET`, `MSETNX`, `MGET`, `APPEND`, `STRLEN`, `GETRANGE`, `SETRANGE`.
 - Numeric: `INCR`, `INCRBY`, `DECR`, `DECRBY`, `INCRBYFLOAT`.
@@ -60,7 +60,7 @@ for current boundaries, [PLAN.md](PLAN.md) for the remaining roadmap, and
 - Pub/Sub: `SUBSCRIBE`, `UNSUBSCRIBE`, `PSUBSCRIBE`, `PUNSUBSCRIBE`, `PUBLISH`, `SSUBSCRIBE`, `SUNSUBSCRIBE`, `SPUBLISH`, and `PUBSUB` classic/sharded introspection.
 - Transactions: `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH` with cross-client optimistic locking and EXEC error semantics.
 - Scripting: `EVAL`, `EVALSHA`, `EVAL_RO`, `EVALSHA_RO`, `SCRIPT LOAD`, `SCRIPT EXISTS`, `SCRIPT FLUSH`, `SCRIPT KILL`; Lua `KEYS`/`ARGV`, `redis.call`, `redis.pcall`, `redis.error_reply`, `redis.status_reply`, and `redis.sha1hex` are available.
-- Functions: `FUNCTION LOAD [REPLACE]`, `FUNCTION LIST [LIBRARYNAME pattern] [WITHCODE]`, `FUNCTION DELETE`, `FUNCTION FLUSH [SYNC|ASYNC]`, `FUNCTION DUMP`, `FUNCTION RESTORE <payload> [APPEND|REPLACE|FLUSH]`, `FUNCTION STATS`, `FUNCTION KILL`, `FUNCTION HELP`, `FCALL`, and `FCALL_RO`; `redis.register_function()` supports positional registration and table registration with the `no-writes` flag.
+- Functions: `FUNCTION LOAD [REPLACE]`, `FUNCTION LIST [LIBRARYNAME pattern] [WITHCODE]`, `FUNCTION DELETE`, `FUNCTION FLUSH [SYNC|ASYNC]`, `FUNCTION DUMP`, `FUNCTION RESTORE <payload> [APPEND|REPLACE|FLUSH]`, `FUNCTION STATS`, `FUNCTION KILL`, `FUNCTION HELP`, `FCALL`, and `FCALL_RO`; table-form registration supports the currently safe standalone flags `no-writes`, `allow-stale`, `no-cluster`, and `allow-cross-slot-keys`.
 - JSON: `JSON.SET`, `JSON.GET`, `JSON.TYPE`, `JSON.DEL`.
 - Administration: `FLUSHDB`, `FLUSHALL`, `MEMORY`, `SNUG.ENCODING`, `SNUG.MEMORY`, `SNUG.STATS`, `SNUG.COMPACT`, `SNUG.POLICY`, `SNUG.AOFREWRITE`, `SNUG.SHAPES`, `SNUG.CANDIDATES`, `SNUG.TYPE`.
 
@@ -94,9 +94,11 @@ lock so KILL cannot report success while a write starts concurrently. See
 Redis Functions core support includes Lua libraries loaded with `FUNCTION LOAD`,
 global function-name lookup through `FCALL`/`FCALL_RO`, library replacement,
 listing/deletion/flushing, persistent library-local Lua state while the process
-is running, and table-form `redis.register_function()` metadata with the
-`no-writes` flag. `FCALL_RO` and `no-writes` functions use the same write/replication
-barrier as `EVAL_RO`.
+is running, and table-form `redis.register_function()` metadata. The current
+standalone-safe flag set is `no-writes`, `allow-stale`, `no-cluster`, and
+`allow-cross-slot-keys`; `allow-oom` is intentionally deferred until exact scoped
+memory-admission semantics are implemented. `FCALL_RO` and `no-writes` functions
+use the same write/replication barrier as `EVAL_RO`.
 
 `FUNCTION DUMP` and `FUNCTION RESTORE` support checksum-protected library export
 and import with Redis-style default `APPEND` plus `REPLACE` and `FLUSH` policies.
@@ -126,9 +128,22 @@ configured persistence file. Function-local Lua VM variables are reconstructed
 from source and therefore reset after restore/restart; arbitrary live VM state is
 not serialized.
 
-Remaining scripting/function management gaps include `SCRIPT DEBUG`, the broader
-Redis function-flag surface, exact Redis RDB byte compatibility for Function
+Remaining scripting/function management gaps include `SCRIPT DEBUG`, exact
+`allow-oom` scoped admission, exact Redis RDB byte compatibility for Function
 DUMP/RESTORE payloads, and full Redis Lua/ACL/command-flag parity.
+
+## CLIENT compatibility
+
+The implemented CLIENT management/tooling slice includes connection-scoped IDs
+and names, library metadata, INFO/LIST introspection, `LIST ID`, `LIST TYPE
+NORMAL`, targeted `KILL ID [SKIPME YES|NO]`, and targeted `UNBLOCK
+[TIMEOUT|ERROR]`. The implementation uses a concurrency-safe per-listener client
+registry, and the documented surface has been compared live against Redis for
+multiple persistent connections, targeted kill/unblock behavior, self-kill,
+connection survival, invalid IDs/reasons, and tested arity/error semantics. See
+[docs/CLIENT-COMPATIBILITY.md](docs/CLIENT-COMPATIBILITY.md).
+
+Advanced CLIENT tracking/caching/redirection features are not implemented yet.
 
 ## SORT compatibility
 
@@ -212,9 +227,10 @@ optimizer.
 
 ## Major remaining compatibility work
 
-The next large Redis gaps are remaining scripting/function management and exact
-command-flag/ACL parity, migration scope, RESP3, and client/tooling compatibility
-(`CLIENT`, `CONFIG`, ACL/auth, COMMAND metadata). Deprecated `GEORADIUS*`
+The next major tooling target is COMMAND metadata completeness. Other significant
+gaps are CONFIG/ACL compatibility, `SCRIPT DEBUG`, exact `allow-oom` semantics,
+migration scope beyond DB0 COPY, RESP3, advanced CLIENT tracking/caching, and
+optional Redis-RDB Function payload compatibility. Deprecated `GEORADIUS*`
 compatibility is not part of the modern GEO surface yet. A final differential
 Redis edge-case audit remains useful for Streams, but there is no known core
 Streams command-family gap. See [COMPATIBILITY.md](COMPATIBILITY.md) and GitHub
