@@ -3,8 +3,8 @@
 SnugKV is currently an alpha-stage, single-node RESP2 datastore. It has broad
 coverage across the common Redis datatype families, including Streams, Pub/Sub,
 transactions, HyperLogLog, modern GEO, Lua scripting/read-only scripting, Redis
-Functions core, `SORT` / `SORT_RO`, and single-database `COPY`, but it is not a
-complete Redis replacement.
+Functions core/management, `SORT` / `SORT_RO`, single-database `COPY`, and the
+current CLIENT tooling slice, but it is not a complete Redis replacement.
 
 ## Protocol
 
@@ -20,16 +20,17 @@ See [COMPATIBILITY.md](COMPATIBILITY.md).
 Strings, counters, expiration, bit operations, key inspection, COPY, HASH, SET,
 LIST, ZSET, SORT/SORT_RO, HyperLogLog, modern GEO, Streams/consumer groups,
 classic/sharded Pub/Sub, transactions/WATCH, Lua scripting, Redis Functions core,
-basic JSON, memory inspection, and administration are implemented to the
-documented scope.
+CLIENT connection/tooling commands, basic JSON, memory inspection, and
+administration are implemented to the documented scope.
 
 Major Redis-compatible features still not implemented or incomplete:
 
-- full Lua/Functions parity (`SCRIPT DEBUG`, broader function flags, exact command flags/ACL behavior);
+- full Lua/Functions parity (`SCRIPT DEBUG`, `allow-oom`, exact command flags/ACL behavior);
 - Redis-RDB byte compatibility for `FUNCTION DUMP` / `RESTORE` payloads;
 - cross-database COPY and broader migration/transfer command scope;
 - RESP3;
-- broad CLIENT / CONFIG / ACL compatibility;
+- broader CONFIG / ACL compatibility and advanced CLIENT tracking/caching features;
+- complete COMMAND metadata/introspection parity;
 - replication;
 - Sentinel-style failover;
 - cluster mode;
@@ -49,9 +50,10 @@ Redis Functions support includes `FUNCTION LOAD [REPLACE]`, `FUNCTION LIST
 [SYNC|ASYNC]`, `FUNCTION DUMP`, `FUNCTION RESTORE [APPEND|REPLACE|FLUSH]`,
 `FUNCTION STATS`, `FUNCTION KILL`, `FUNCTION HELP`, `FCALL`, and `FCALL_RO`.
 `redis.register_function()` supports the common positional form and table-form
-registration with `description` and the `no-writes` flag. Loaded library Lua state
-is retained while the process is running, so library-local state can persist
-across calls.
+registration with `description` plus the currently safe standalone flags
+`no-writes`, `allow-stale`, `no-cluster`, and `allow-cross-slot-keys`. Loaded
+library Lua state is retained while the process is running, so library-local state
+can persist across calls.
 
 `FUNCTION STATS` can be queried from another client while an FCALL is executing.
 It reports the active function name, original command vector, elapsed duration,
@@ -87,7 +89,9 @@ Current boundaries are intentional and documented rather than silently emulated:
   Function bytes, so Redis and SnugKV dump payloads are not cross-restorable;
 - Function-local Lua variables are not serialized and reset when a library is
   restored or reconstructed after process restart;
-- only the `no-writes` function flag is supported in this milestone;
+- `no-writes`, `allow-stale`, `no-cluster`, and `allow-cross-slot-keys` are supported
+  for the current standalone semantics; `allow-oom` remains intentionally deferred
+  until exact scoped memory-admission behavior is implemented;
 - `SCRIPT DEBUG`, exact Redis command-flag/ACL/OOM behavior, and every Lua edge
   case still need differential hardening.
 
@@ -96,6 +100,20 @@ they execute under the same command-serialization boundary as transactions. Lua
 runtime errors do not roll back successful writes already made before the error.
 With AOF enabled, resulting logical changes from one direct writable EVAL or FCALL
 are persisted as one frame.
+
+## CLIENT boundaries
+
+The implemented CLIENT surface includes `CLIENT ID`, `GETNAME`, `SETNAME`,
+`SETINFO LIB-NAME|LIB-VER`, `INFO`, `LIST`, `LIST ID`, `LIST TYPE NORMAL`,
+`KILL ID [SKIPME YES|NO]`, `UNBLOCK [TIMEOUT|ERROR]`, and `HELP`. The registry is
+connection-scoped/concurrency-safe and targeted KILL/UNBLOCK behavior has been
+compared directly with Redis, including self-kill and blocked-connection survival.
+See [docs/CLIENT-COMPATIBILITY.md](docs/CLIENT-COMPATIBILITY.md).
+
+Advanced Redis CLIENT tracking/caching/redirection features are not implemented,
+and only the NORMAL client class is currently meaningful for LIST TYPE filtering.
+Additional client classes should be added only when the corresponding topology or
+connection modes exist.
 
 ## SORT boundaries
 
@@ -157,14 +175,15 @@ queued MULTI commands; `PUBLISH` and `SPUBLISH` remain ordinary queueable comman
   platforms. Linux builds additionally detect TCP peer disconnects while blocked.
   Equivalent proactive socket-disconnect monitoring is not yet implemented on
   non-Linux builds.
-- Some operational/client metadata commands used by Redis tooling are still
-  incomplete even when ordinary application workloads work.
+- COMMAND metadata completeness is the next tooling milestone; CONFIG/ACL and
+  advanced CLIENT tracking/caching remain incomplete even though ordinary
+  application workloads and the implemented CLIENT management slice work.
 - The modern GEO command set has focused command-level compatibility tests; large
   dataset differential/performance testing is intentionally still pending.
 - Lua scripting/read-only variants and Functions core have focused unit,
   durability, transaction, restart-persistence, live introspection, cancellation,
-  and live Redis differential coverage; deeper command-flag/ACL/OOM auditing
-  remains.
+  standalone-safe flag, and live Redis differential coverage; deeper
+  command-flag/ACL/OOM auditing remains.
 - `FUNCTION DUMP`/`RESTORE` command policy/error semantics have automated coverage,
   but byte-level payload compatibility with Redis is intentionally not claimed.
 
