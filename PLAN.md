@@ -9,8 +9,9 @@ GitHub issue #55 tracks command-family compatibility work.
 The single-node RESP2 engine, logical persistence, memory accounting, optimizer,
 observability, packaging, HASH, SET, LIST, ZSET, broad STREAM/consumer-group
 support, classic/sharded Pub/Sub, Redis-style transactions/WATCH, HyperLogLog,
-modern GEO, the common Lua scripting path, `SORT` / `SORT_RO`, and single-database
-`COPY` are implemented.
+modern GEO, the common Lua scripting path including read-only execution, Redis
+Functions core/management through `FUNCTION KILL`, `SORT` / `SORT_RO`, and
+single-database `COPY` are implemented.
 
 Streams include core reads/writes, blocking `XREAD`, consumer groups,
 `XREADGROUP`, PEL inspection/acknowledgement, claims/autoclaims, XINFO,
@@ -24,11 +25,14 @@ cross-client WATCH invalidation including change-then-restore, expiration
 invalidation, nonblocking execution of blocking commands inside MULTI, and one
 logical AOF frame for transaction results.
 
-Lua scripting now includes `EVAL`, `EVALSHA`, `SCRIPT LOAD/EXISTS/FLUSH`,
-`KEYS`/`ARGV`, the common `redis.call`/`redis.pcall` bridge, RESP2/Lua reply
-conversion, volatile SHA-1 caching, a bounded runtime, MULTI/EXEC integration,
-WATCH invalidation, and one-frame logical AOF persistence for script results.
-Redis Functions and the remaining scripting-management/read-only commands remain.
+Lua scripting now includes `EVAL`, `EVALSHA`, `EVAL_RO`, `EVALSHA_RO`, `SCRIPT
+LOAD/EXISTS/FLUSH`, `KEYS`/`ARGV`, the common `redis.call`/`redis.pcall` bridge,
+RESP2/Lua reply conversion, volatile SHA-1 caching, a bounded runtime,
+MULTI/EXEC integration, WATCH invalidation, and one-frame logical AOF persistence
+for script results. Redis Functions include load/list/delete/flush,
+`FCALL`/`FCALL_RO`, DUMP/RESTORE, restart persistence, STATS/HELP, and KILL with
+Redis-style NOTBUSY/UNKILLABLE safety semantics. `SCRIPT KILL` / `SCRIPT DEBUG`,
+broader Function flags, and deeper command-flag/ACL/OOM parity remain.
 
 `SORT` / `SORT_RO` support LIST/SET/ZSET sources, numeric and ALPHA ordering,
 BY/LIMIT/GET/ASC/DESC options, string/hash external patterns, BY-constant native
@@ -36,10 +40,11 @@ ordering, and durable STORE-to-LIST replacement semantics. Manual Redis
 differential testing covers the common implemented surface; locale-sensitive
 non-ASCII ALPHA collation remains a documented edge.
 
-`COPY source destination [DB 0] [REPLACE]` now preserves logical datatype,
-contents, and absolute TTL while leaving the source unchanged. It integrates with
+`COPY source destination [DB 0] [REPLACE]` preserves logical datatype, contents,
+and absolute TTL while leaving the source unchanged. It integrates with
 max-memory admission, AOF rollback/restart, MULTI/EXEC, WATCH invalidation, and
-blocking LIST/ZSET/STREAM wakeups. Cross-database COPY is intentionally absent
+blocking LIST/ZSET/STREAM wakeups. Its documented DB0 surface has been manually
+differentially tested against Redis. Cross-database COPY is intentionally absent
 because SnugKV exposes only DB 0.
 
 HyperLogLog implements `PFADD`, `PFCOUNT`, and `PFMERGE` with Redis-compatible
@@ -113,21 +118,28 @@ and 24-byte arena segment descriptors.
 - [ ] Optional legacy `GEORADIUS*` aliases if real client compatibility requires them.
 - [ ] Dedicated large geospatial performance benchmark and potential score-range pruning/indexing if O(N) search becomes a measured bottleneck.
 
-### Lua scripting core
+### Lua scripting and Redis Functions
 
 - [x] `EVAL` and `EVALSHA` with Redis-style key/argument splitting.
+- [x] `EVAL_RO` and `EVALSHA_RO` with nested write/replication rejection.
 - [x] `SCRIPT LOAD`, `SCRIPT EXISTS`, and `SCRIPT FLUSH [SYNC|ASYNC]`.
 - [x] Volatile SHA-1 cache populated by `SCRIPT LOAD` and successfully compiled `EVAL` scripts.
 - [x] Lua 5.1-compatible runtime with `KEYS`, `ARGV`, `redis.call`, `redis.pcall`, `redis.error_reply`, `redis.status_reply`, and `redis.sha1hex`.
 - [x] RESP2/Lua conversions for integers, strings, arrays, null/false, status replies, and error replies.
 - [x] Five-second execution limit and no filesystem/process Lua libraries.
 - [x] Atomic client-visible execution under the existing command-serialization mutex.
-- [x] MULTI/EXEC execution and transient WATCH invalidation across script writes.
-- [x] One logical AOF frame for direct script results; writes before a later runtime error remain durable.
-- [ ] `EVAL_RO` / `EVALSHA_RO`.
+- [x] MULTI/EXEC execution and transient WATCH invalidation across script/function writes.
+- [x] One logical AOF frame for direct script/function results; writes before a later runtime error remain durable.
+- [x] `FUNCTION LOAD/LIST/DELETE/FLUSH`, `FCALL`, and `FCALL_RO`.
+- [x] `FUNCTION DUMP` / `RESTORE` with APPEND/REPLACE/FLUSH policies and checksum validation.
+- [x] Function-library restart persistence through the dedicated atomic sidecar.
+- [x] `FUNCTION STATS` / `HELP`.
+- [x] `FUNCTION KILL` with `NOTBUSY`, safe cancellation before the first write boundary, and `UNKILLABLE` after it.
+- [x] Live Redis differential audit for read-only scripting and Functions core behavior through LIST metadata formatting.
 - [ ] `SCRIPT KILL`, `SCRIPT DEBUG`, and broader SCRIPT subcommand parity.
-- [ ] Redis Functions (`FUNCTION`, `FCALL`, `FCALL_RO`).
-- [ ] Differential Redis audit of Lua edge cases, command flags, ACL semantics, and OOM/eviction behavior.
+- [ ] Broader Function flags beyond `no-writes`.
+- [ ] Exact Redis RDB byte compatibility for `FUNCTION DUMP` / `RESTORE` payloads.
+- [ ] Deeper differential audit of command flags, ACL semantics, and OOM/eviction behavior.
 
 ### SORT / SORT_RO
 
@@ -153,7 +165,7 @@ and 24-byte arena segment descriptors.
 - [x] Max-memory/OOM admission leaves source and previous destination unchanged.
 - [x] MULTI/EXEC execution and WATCH invalidation.
 - [x] Successful LIST/ZSET/STREAM copies wake destination blockers.
-- [ ] Direct Redis differential audit of COPY option/error/TTL/type behavior.
+- [x] Direct Redis differential audit of COPY option/error/TTL/type behavior for DB0; nonzero DB is the documented single-database boundary.
 
 ### Native STREAM
 
@@ -218,10 +230,11 @@ and 24-byte arena segment descriptors.
 
 - [x] HyperLogLog: `PFADD`, `PFCOUNT`, `PFMERGE`.
 - [x] Modern GEO: `GEOADD`, `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH`, `GEOSEARCHSTORE`.
-- [x] Lua scripting core: `EVAL`, `EVALSHA`, `SCRIPT LOAD/EXISTS/FLUSH` and common `redis.*` bridge.
+- [x] Lua scripting core including `EVAL_RO` / `EVALSHA_RO` and common `redis.*` bridge.
+- [x] Redis Functions core/management through `FUNCTION KILL`, plus restart persistence.
 - [x] `SORT` / `SORT_RO`.
-- [x] `COPY` for DB 0 with `REPLACE`, TTL/type preservation, durability, transactions, and OOM safety.
-- [ ] Redis Functions and remaining scripting parity/hardening.
+- [x] `COPY` for DB 0 with `REPLACE`, TTL/type preservation, durability, transactions, OOM safety, and direct Redis differential audit.
+- [ ] Remaining scripting parity/hardening: `SCRIPT KILL/DEBUG`, broader Function flags, command-flag/ACL/OOM parity, and optional Redis-RDB Function payload compatibility.
 - [ ] Migration/transfer command scope beyond single-node COPY.
 
 ### P2 — client/tooling compatibility
