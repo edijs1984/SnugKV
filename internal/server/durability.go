@@ -104,10 +104,10 @@ func (s *Server) executeDurableLocked(args [][]byte) ([]byte, error) {
 		return nil, errors.New("ERR persistence is unavailable; restart after repairing storage")
 	}
 
-	// Script keys are dynamic and a Redis script may keep mutations performed
-	// before a later runtime error. Snapshot/diff the complete logical DB and
-	// append the script's resulting changes as one persistence frame.
-	if isScriptEvalCommand(args) {
+	// EVAL/EVALSHA and FCALL have dynamic key access, and Redis keeps mutations
+	// performed before a later Lua runtime error. Snapshot/diff the complete
+	// logical DB and append the resulting changes as one persistence frame.
+	if isScriptEvalCommand(args) || isWritableFunctionCallCommand(args) {
 		return s.executeScriptDurableLocked(args)
 	}
 
