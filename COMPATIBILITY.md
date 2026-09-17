@@ -17,14 +17,16 @@ transactions and optimistic locking (`MULTI`, `EXEC`, `DISCARD`, `WATCH`,
 `UNWATCH`). HyperLogLog (`PFADD`, `PFCOUNT`, `PFMERGE`), the modern GEO surface
 (`GEOADD`, `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH`, `GEOSEARCHSTORE`), Lua
 scripting/read-only scripting (`EVAL`, `EVALSHA`, `EVAL_RO`, `EVALSHA_RO`,
-`SCRIPT LOAD/EXISTS/FLUSH`), Redis Functions (`FUNCTION LOAD/LIST/DELETE/FLUSH`,
-`DUMP`, `RESTORE`, `STATS`, `KILL`, `HELP`, `FCALL`, `FCALL_RO`), `SORT` /
-`SORT_RO`, and single-database `COPY` are also implemented.
+`SCRIPT LOAD/EXISTS/FLUSH/KILL`), Redis Functions (`FUNCTION
+LOAD/LIST/DELETE/FLUSH`, `DUMP`, `RESTORE`, `STATS`, `KILL`, `HELP`, `FCALL`,
+`FCALL_RO`), `SORT` / `SORT_RO`, single-database `COPY`, and the current CLIENT
+management/tooling slice are also implemented.
 
-The largest remaining Redis compatibility families are remaining scripting/function
-management and command-flag parity, RESP3, migration/transfer scope, and broader
-CLIENT/CONFIG/ACL/tooling compatibility. Replication, Sentinel-style failover, and
-Cluster remain outside the current single-node scope.
+The largest remaining Redis compatibility areas are COMMAND metadata completeness,
+CONFIG/ACL scope, `SCRIPT DEBUG`, exact `allow-oom` behavior, RESP3,
+migration/transfer scope, and advanced CLIENT tracking/caching features.
+Replication, Sentinel-style failover, and Cluster remain outside the current
+single-node scope.
 
 ## Client compatibility
 
@@ -66,7 +68,9 @@ protocol version`.
 | Transactions | Broad support | `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH`, queue/runtime error semantics, AOF transaction frames |
 | HyperLogLog | Supported | `PFADD`, `PFCOUNT`, `PFMERGE`; Redis-compatible serialized HLL strings |
 | GEO | Modern surface supported | `GEOADD`, `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH`, `GEOSEARCHSTORE`; deprecated `GEORADIUS*` commands are not implemented |
-| Lua scripting / Functions | Partial | `EVAL*`, read-only EVAL, SCRIPT load/exists/flush, Functions core, DUMP/RESTORE/restart persistence, STATS/HELP/KILL; SCRIPT KILL/DEBUG and broader flags/ACL parity remain |
+| Lua scripting / Functions | Partial | `EVAL*`, read-only EVAL, SCRIPT load/exists/flush/kill, Functions core/management, restart persistence and standalone-safe flags; SCRIPT DEBUG, allow-oom and deeper ACL/command-flag parity remain |
+| CLIENT | Partial | ID/name/setinfo/info/list/list filters/kill/unblock/help implemented and differentially tested; tracking/caching/redirection not implemented |
+| COMMAND metadata | Partial | Basic COMMAND exists; metadata completeness/introspection parity is the next tooling milestone |
 | RESP3 | Not implemented | RESP2 only |
 | Replication / Sentinel / Cluster | Not implemented | Outside current single-node scope |
 
@@ -304,6 +308,7 @@ EVAL EVALSHA EVAL_RO EVALSHA_RO
 SCRIPT LOAD
 SCRIPT EXISTS
 SCRIPT FLUSH [SYNC|ASYNC]
+SCRIPT KILL
 ```
 
 Supported Function commands:
@@ -362,6 +367,11 @@ subsequent KILL attempts return `UNKILLABLE` instead of interrupting partially
 mutated state. KILL with no active Function returns `NOTBUSY`. See
 `docs/FUNCTION-KILL.md`.
 
+`SCRIPT KILL` uses the corresponding running-script state and first-write safety
+boundary: it can cancel EVAL/EVALSHA/EVAL_RO/EVALSHA_RO before a writable nested
+command is dispatched, returns `UNKILLABLE` after the write boundary, and returns
+`NOTBUSY` when idle. See `docs/SCRIPT-KILL.md`.
+
 Payload compatibility boundary: SnugKV currently uses its own versioned
 `SNUGF001` Function dump payload rather than Redis RDB Function bytes. Redis and
 SnugKV Function DUMP payloads are therefore not cross-restorable yet. See
@@ -373,11 +383,50 @@ Current scripting/Functions boundaries:
 - filesystem/process Lua libraries are not exposed;
 - blocking commands, connection/subscription state, transaction commands, nested
   EVAL/SCRIPT, and SnugKV admin commands are rejected from `redis.call`/`redis.pcall`;
-- `SCRIPT KILL` and `SCRIPT DEBUG` are not yet implemented;
-- only the `no-writes` Function flag is currently supported;
+- `SCRIPT DEBUG` is intentionally not implemented until real Redis LDB-style
+  semantics are supported;
+- Function flags supported for current standalone semantics are `no-writes`,
+  `allow-stale`, `no-cluster`, and `allow-cross-slot-keys`;
+- `allow-oom` remains deferred pending exact scoped memory-admission semantics;
 - full Redis scripting command-flag/ACL/OOM parity is not implemented;
 - SnugKV does not claim Redis's exact Lua VM implementation details or every
   scripting edge-case yet.
+
+## CLIENT
+
+Supported management/introspection commands and forms:
+
+```text
+CLIENT ID
+CLIENT GETNAME
+CLIENT SETNAME <name>
+CLIENT SETINFO LIB-NAME <value>
+CLIENT SETINFO LIB-VER <value>
+CLIENT INFO
+CLIENT LIST
+CLIENT LIST ID <id> [<id> ...]
+CLIENT LIST TYPE NORMAL
+CLIENT KILL ID <id> [SKIPME YES|NO]
+CLIENT UNBLOCK <id> [TIMEOUT|ERROR]
+CLIENT HELP
+```
+
+The implementation uses a concurrency-safe per-listener registry. Targeted
+`CLIENT KILL` closes the selected connection while preserving Redis-style default
+SKIPME behavior for self-kill. `CLIENT UNBLOCK` wakes supported blocking commands
+without tearing down the connection and supports both Redis-style TIMEOUT and
+ERROR responses. Main/admin listener registry initialization and shutdown behavior
+are covered by race regression tests.
+
+Live Redis differential testing covered multiple persistent client IDs, names and
+SETINFO metadata, INFO/LIST fields, LIST ID/TYPE NORMAL filters, targeted and
+self-kill behavior, targeted TIMEOUT/ERROR unblock behavior, connection survival,
+nonexistent/invalid IDs, invalid unblock reasons, and tested arity/error replies.
+See `docs/CLIENT-COMPATIBILITY.md`.
+
+Advanced tracking/caching/redirection features are not implemented, and additional
+LIST TYPE classes should only be added when their corresponding connection modes
+or topology exist.
 
 ## SCAN family
 
@@ -412,14 +461,16 @@ It is not a complete RedisJSON implementation.
 
 Prioritized backlog:
 
-1. Remaining scripting parity (`SCRIPT KILL/DEBUG`), broader Function flags, and command-flag/ACL parity.
-2. Migration/transfer scope beyond single-database `COPY`.
-3. CLIENT/CONFIG/ACL compatibility and COMMAND metadata completeness.
-4. RESP3 where required by clients/tooling.
-5. Differential hardening for the completed Streams surface.
-6. Optional Redis-RDB byte compatibility for Function DUMP/RESTORE payloads.
-7. Deprecated `GEORADIUS*` aliases if legacy client compatibility justifies them.
-8. Replication/failover/cluster only after the single-node compatibility target is mature.
+1. COMMAND metadata completeness and Redis differential audit (issue #90).
+2. CONFIG compatibility and ACL/authentication scope.
+3. `SCRIPT DEBUG`, exact `allow-oom`, and deeper scripting command-flag/ACL/OOM parity.
+4. Migration/transfer scope beyond single-database `COPY`.
+5. RESP3 where required by clients/tooling.
+6. Advanced CLIENT tracking/caching/redirection features where real clients require them.
+7. Differential hardening for the completed Streams surface.
+8. Optional Redis-RDB byte compatibility for Function DUMP/RESTORE payloads.
+9. Deprecated `GEORADIUS*` aliases if legacy client compatibility justifies them.
+10. Replication/failover/cluster only after the single-node compatibility target is mature.
 
 See GitHub issue #55 and `PLAN.md` for the working roadmap.
 
