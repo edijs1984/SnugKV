@@ -28,12 +28,13 @@ func (s *Server) executePressureCommand(args [][]byte) ([]byte, error) {
 		}
 		leave := enterScriptExecution(s)
 		defer leave()
-		return s.executeReadOnlyScripting(args)
+		return s.executeKillableScripting(args)
 	}
 	if isScriptingCommand(args) {
 		if isScriptEvalCommand(args) {
 			leave := enterScriptExecution(s)
 			defer leave()
+			return s.executeKillableScripting(args)
 		}
 		return s.executeScripting(args)
 	}

@@ -25,7 +25,7 @@ documented scope.
 
 Major Redis-compatible features still not implemented or incomplete:
 
-- full Lua/Functions parity (`SCRIPT KILL/DEBUG`, broader function flags, exact command flags/ACL behavior);
+- full Lua/Functions parity (`SCRIPT DEBUG`, broader function flags, exact command flags/ACL behavior);
 - Redis-RDB byte compatibility for `FUNCTION DUMP` / `RESTORE` payloads;
 - cross-database COPY and broader migration/transfer command scope;
 - RESP3;
@@ -40,9 +40,9 @@ The current JSON commands are not a complete RedisJSON implementation.
 ## Lua scripting and Functions boundaries
 
 The implemented scripting surface is `EVAL`, `EVALSHA`, `EVAL_RO`, `EVALSHA_RO`,
-`SCRIPT LOAD`, `SCRIPT EXISTS`, and `SCRIPT FLUSH [SYNC|ASYNC]`. Scripts receive
-`KEYS` and `ARGV` and can use `redis.call`, `redis.pcall`, `redis.error_reply`,
-`redis.status_reply`, and `redis.sha1hex`.
+`SCRIPT LOAD`, `SCRIPT EXISTS`, `SCRIPT FLUSH [SYNC|ASYNC]`, and `SCRIPT KILL`.
+Scripts receive `KEYS` and `ARGV` and can use `redis.call`, `redis.pcall`,
+`redis.error_reply`, `redis.status_reply`, and `redis.sha1hex`.
 
 Redis Functions support includes `FUNCTION LOAD [REPLACE]`, `FUNCTION LIST
 [LIBRARYNAME pattern] [WITHCODE]`, `FUNCTION DELETE`, `FUNCTION FLUSH
@@ -64,6 +64,12 @@ crossed a dataset-write boundary. After the first writable nested command is
 dispatched, KILL returns Redis-style `UNKILLABLE`; when no function is running it
 returns `NOTBUSY`. This prevents cancellation after partial mutation.
 
+`SCRIPT KILL` uses the same safety model for EVAL/EVALSHA/EVAL_RO/EVALSHA_RO. A
+script is killable until its first writable nested dataset command is dispatched;
+after that KILL returns Redis-style `UNKILLABLE`. Idle KILL returns `NOTBUSY`, and
+read-only EVAL variants remain killable for their entire execution. See
+[docs/SCRIPT-KILL.md](docs/SCRIPT-KILL.md).
+
 Current boundaries are intentional and documented rather than silently emulated:
 
 - scripts/functions run in an embedded Lua 5.1-compatible runtime, not Redis's exact Lua VM;
@@ -82,8 +88,8 @@ Current boundaries are intentional and documented rather than silently emulated:
 - Function-local Lua variables are not serialized and reset when a library is
   restored or reconstructed after process restart;
 - only the `no-writes` function flag is supported in this milestone;
-- `SCRIPT KILL`, `SCRIPT DEBUG`, exact Redis command-flag/ACL/OOM behavior, and
-  every Lua edge case still need differential hardening.
+- `SCRIPT DEBUG`, exact Redis command-flag/ACL/OOM behavior, and every Lua edge
+  case still need differential hardening.
 
 Scripts and function calls are atomic with respect to other SnugKV clients because
 they execute under the same command-serialization boundary as transactions. Lua

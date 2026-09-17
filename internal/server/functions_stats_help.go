@@ -199,6 +199,9 @@ func (s *Server) executeFunctionHelp(args [][]byte) ([]byte, error) {
 }
 
 func (s *Server) executeFunctionIntrospection(args [][]byte) ([]byte, bool, error) {
+	if response, handled, err := s.executeScriptIntrospection(args); handled {
+		return response, true, err
+	}
 	if isFunctionStatsCommand(args) {
 		response, err := s.executeFunctionStats(args)
 		return response, true, err
