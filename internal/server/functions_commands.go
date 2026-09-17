@@ -442,7 +442,7 @@ func (r *functionRegistry) list(pattern string, withCode bool) []byte {
 			fn := lib.functions[strings.ToLower(functionName)]
 			flagReplies := make([][]byte, 0, len(fn.flags))
 			for _, flag := range fn.flags {
-				flagReplies = append(flagReplies, formatBulkString([]byte(flag)))
+				flagReplies = append(flagReplies, []byte("+"+flag+"\r\n"))
 			}
 			description := nullBulk()
 			if fn.hasDescription {
