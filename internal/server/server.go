@@ -1170,6 +1170,34 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 
 			return array(entries...), nil
 
+		case "GETKEYS":
+			if len(args) < 3 {
+				return nil, errors.New(
+					"ERR wrong number of arguments for 'command|getkeys' command",
+				)
+			}
+
+			refs, err := commandKeys(args[2:])
+			if err != nil {
+				return nil, err
+			}
+
+			return commandGetKeysReply(refs), nil
+
+		case "GETKEYSANDFLAGS":
+			if len(args) < 3 {
+				return nil, errors.New(
+					"ERR wrong number of arguments for 'command|getkeysandflags' command",
+				)
+			}
+
+			refs, err := commandKeys(args[2:])
+			if err != nil {
+				return nil, err
+			}
+
+			return commandGetKeysAndFlagsReply(refs), nil
+
 		default:
 			return nil, errors.New("ERR unknown subcommand")
 		}
