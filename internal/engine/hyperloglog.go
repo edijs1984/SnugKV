@@ -8,24 +8,24 @@ import (
 )
 
 const (
-	hllPrecision       = 14
-	hllRegisters       = 1 << hllPrecision
-	hllIndexMask       = hllRegisters - 1
-	hllQ               = 64 - hllPrecision
-	hllBits            = 6
-	hllRegisterMax     = (1 << hllBits) - 1
-	hllHeaderSize      = 16
-	hllDenseBytes      = (hllRegisters*hllBits + 7) / 8
-	hllDenseSize       = hllHeaderSize + hllDenseBytes
-	hllDenseEncoding   = byte(0)
-	hllSparseEncoding  = byte(1)
-	hllSparseMaxBytes  = 3000 // Redis default hll-sparse-max-bytes.
-	hllSparseValueMax  = 32
-	hllSparseValueRun  = 4
-	hllSparseZeroRun   = 64
-	hllSparseXZeroRun  = 16384
-	hllAlphaInfinity   = 0.721347520444481703680
-	hllHashSeed uint64 = 0xadc83b19
+	hllPrecision             = 14
+	hllRegisters             = 1 << hllPrecision
+	hllIndexMask             = hllRegisters - 1
+	hllQ                     = 64 - hllPrecision
+	hllBits                  = 6
+	hllRegisterMax           = (1 << hllBits) - 1
+	hllHeaderSize            = 16
+	hllDenseBytes            = (hllRegisters*hllBits + 7) / 8
+	hllDenseSize             = hllHeaderSize + hllDenseBytes
+	hllDenseEncoding         = byte(0)
+	hllSparseEncoding        = byte(1)
+	hllSparseMaxBytes        = 3000 // Redis default hll-sparse-max-bytes.
+	hllSparseValueMax        = 32
+	hllSparseValueRun        = 4
+	hllSparseZeroRun         = 64
+	hllSparseXZeroRun        = 16384
+	hllAlphaInfinity         = 0.721347520444481703680
+	hllHashSeed       uint64 = 0xadc83b19
 )
 
 var (

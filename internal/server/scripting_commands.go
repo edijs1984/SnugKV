@@ -307,7 +307,8 @@ func scriptCommandForbidden(args [][]byte) bool {
 	case "EVAL", "EVALSHA", "SCRIPT",
 		"MULTI", "EXEC", "DISCARD", "WATCH", "UNWATCH",
 		"SUBSCRIBE", "UNSUBSCRIBE", "PSUBSCRIBE", "PUNSUBSCRIBE", "SSUBSCRIBE", "SUNSUBSCRIBE", "RESET",
-		"QUIT", "SELECT", "HELLO", "COMMAND", "INFO", "MEMORY":
+		"QUIT", "SELECT", "HELLO", "COMMAND", "INFO", "MEMORY",
+		"CLIENT", "CONFIG":
 		return true
 	default:
 		return false

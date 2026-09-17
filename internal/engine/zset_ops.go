@@ -295,11 +295,15 @@ func zsetScoreRangeItems(items []ZSetItem, min, max ZSetScoreBound, reverse bool
 	}
 	if !reverse {
 		for _, item := range items {
-			if appendItem(item) { break }
+			if appendItem(item) {
+				break
+			}
 		}
 	} else {
-		for i := len(items)-1; i >= 0; i-- {
-			if appendItem(items[i]) { break }
+		for i := len(items) - 1; i >= 0; i-- {
+			if appendItem(items[i]) {
+				break
+			}
 		}
 	}
 	return out

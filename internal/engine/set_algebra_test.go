@@ -30,9 +30,9 @@ func TestSetAlgebraMissingAndWrongType(t *testing.T) {
 	assertSetMembersEqual(t, mustSetDiff(t, s, []string{"a", "missing"}), "a", "b")
 
 	for name, fn := range map[string]func() error{
-		"union": func() error { _, err := s.SetUnion([]string{"a", "plain"}); return err },
+		"union":     func() error { _, err := s.SetUnion([]string{"a", "plain"}); return err },
 		"intersect": func() error { _, err := s.SetIntersect([]string{"missing", "plain"}); return err },
-		"diff": func() error { _, err := s.SetDiff([]string{"missing", "plain"}); return err },
+		"diff":      func() error { _, err := s.SetDiff([]string{"missing", "plain"}); return err },
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := fn(); err == nil || !strings.HasPrefix(err.Error(), "WRONGTYPE") {

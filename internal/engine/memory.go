@@ -13,6 +13,19 @@ import (
 
 var ErrOOM = errors.New("OOM command not allowed when used memory exceeds max_memory")
 
+type memoryAdmission uint8
+
+const (
+	enforceMemoryLimit memoryAdmission = iota
+	allowOverMemoryLimit
+)
+
+func (s *Store) exceedsMemoryLimitLocked(next uint64, admission memoryAdmission) bool {
+	return admission == enforceMemoryLimit &&
+		s.memory.max > 0 &&
+		next > s.memory.max
+}
+
 // Reservations track owned engine allocations, not total process RSS.
 var entryStructBytes = uint64(unsafe.Sizeof(entry{}))
 var entryMetaBytes = uint64(unsafe.Sizeof(entryMeta{}))
@@ -79,15 +92,15 @@ func (s *Store) Memory() MemoryStats {
 	s.memory.mu.Lock()
 	defer s.memory.mu.Unlock()
 	return MemoryStats{
-		AccountedBytes:       s.memory.used,
-		MaxBytes:             s.memory.max,
-		IndexReservedBytes:   s.memory.index,
-		EntryBytes:           s.memory.entries,
-		ArenaBytes:           s.memory.arenas,
-		ArenaPayloadBytes:    s.memory.arenaPayload,
-		ArenaLiveBlockBytes:  s.memory.arenaLiveBlocks,
-		SchemaBytes:          s.memory.schemas,
-		MetaBytes:            s.memory.metas,
+		AccountedBytes:      s.memory.used,
+		MaxBytes:            s.memory.max,
+		IndexReservedBytes:  s.memory.index,
+		EntryBytes:          s.memory.entries,
+		ArenaBytes:          s.memory.arenas,
+		ArenaPayloadBytes:   s.memory.arenaPayload,
+		ArenaLiveBlockBytes: s.memory.arenaLiveBlocks,
+		SchemaBytes:         s.memory.schemas,
+		MetaBytes:           s.memory.metas,
 	}
 }
 
@@ -212,14 +225,14 @@ func (s *Store) decode(sh *shard, e entry) []byte {
 // publish is called with the owning shard locked. Index reservations remain
 // charged after deletion because Go maps can retain their bucket allocation.
 func (s *Store) publish(sh *shard, key string, e preparedEntry) error {
-	return s.publishRecord(sh, key, e, true)
+	return s.publishRecord(sh, key, e, enforceMemoryLimit)
 }
 
 func (s *Store) publishRecord(
 	sh *shard,
 	key string,
 	e preparedEntry,
-	enforce bool,
+	admission memoryAdmission,
 ) error {
 	old, exists := sh.get(key)
 
@@ -278,7 +291,7 @@ func (s *Store) publishRecord(
 		}
 	}
 
-	if enforce && s.memory.max > 0 && next > s.memory.max {
+	if s.exceedsMemoryLimitLocked(next, admission) {
 		if newSchema != nil {
 			sh.shapes.ReleaseRecord(newSchema, e.data)
 		}

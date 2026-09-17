@@ -11,7 +11,7 @@ import (
 const maxPackedZSetBytes = 32 << 20
 
 const (
-	zsetModeIntDelta    byte = 1 << 0
+	zsetModeIntDelta     byte = 1 << 0
 	zsetModeMemberPrefix byte = 1 << 1
 )
 

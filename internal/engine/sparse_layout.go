@@ -5,12 +5,12 @@ package engine
 // than another memory total; Memory() and Layout() remain the source of byte
 // accounting.
 type SparseLayoutStats struct {
-	ShardCount       uint64
-	ActiveShards     uint64
-	EntrySlotsUsed   uint64
-	EntryCapacity    uint64
-	EntryFreeSlots   uint64
-	ArenaSegments    uint64
+	ShardCount        uint64
+	ActiveShards      uint64
+	EntrySlotsUsed    uint64
+	EntryCapacity     uint64
+	EntryFreeSlots    uint64
+	ArenaSegments     uint64
 	ArenaActiveShards uint64
 }
 

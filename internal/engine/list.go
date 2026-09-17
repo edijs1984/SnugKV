@@ -102,8 +102,12 @@ func (s *Store) listLogicalValue(sh *shard, e entry) ([]byte, error) {
 	return encodePackedList(elements)
 }
 
-func (s *Store) ListPushLeft(key string, values [][]byte) (int64, error) { return s.listPush(key, values, true) }
-func (s *Store) ListPushRight(key string, values [][]byte) (int64, error) { return s.listPush(key, values, false) }
+func (s *Store) ListPushLeft(key string, values [][]byte) (int64, error) {
+	return s.listPush(key, values, true)
+}
+func (s *Store) ListPushRight(key string, values [][]byte) (int64, error) {
+	return s.listPush(key, values, false)
+}
 
 func (s *Store) listPush(key string, values [][]byte, left bool) (int64, error) {
 	if len(values) == 0 {
@@ -156,8 +160,12 @@ func (s *Store) listPush(key string, values [][]byte, left bool) (int64, error) 
 	return int64(len(result)), nil
 }
 
-func (s *Store) ListPopLeft(key string, count int) ([][]byte, error) { return s.listPop(key, count, true) }
-func (s *Store) ListPopRight(key string, count int) ([][]byte, error) { return s.listPop(key, count, false) }
+func (s *Store) ListPopLeft(key string, count int) ([][]byte, error) {
+	return s.listPop(key, count, true)
+}
+func (s *Store) ListPopRight(key string, count int) ([][]byte, error) {
+	return s.listPop(key, count, false)
+}
 
 func (s *Store) listPop(key string, count int, left bool) ([][]byte, error) {
 	if count < 0 {

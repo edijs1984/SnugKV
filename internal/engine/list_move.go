@@ -122,7 +122,7 @@ func (s *Store) ListMove(source, destination string, sourceLeft, destinationLeft
 	}
 	updates[destination] = updatedDestination
 
-	if err := s.applyPreparedBatchLocked(updates, deletions, true); err != nil {
+	if err := s.applyPreparedBatchLocked(updates, deletions, enforceMemoryLimit); err != nil {
 		return nil, false, err
 	}
 	return moved, true, nil

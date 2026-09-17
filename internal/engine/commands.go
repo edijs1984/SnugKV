@@ -193,7 +193,7 @@ func (s *Store) MSet(keys []string, values [][]byte) error {
 	s.memory.mu.Lock()
 	defer s.memory.mu.Unlock()
 	next := s.memory.used - before - oldMetaBytes + after + newMetaBytes + extra + extraEntries + extraArena
-	if s.memory.max > 0 && next > s.memory.max {
+	if s.exceedsMemoryLimitLocked(next, enforceMemoryLimit) {
 		return ErrOOM
 	}
 	s.memory.used = next
@@ -342,7 +342,7 @@ func (s *Store) MSetNX(keys []string, values [][]byte) (bool, error) {
 		extraEntries +
 		extraArena
 
-	if s.memory.max > 0 && next > s.memory.max {
+	if s.exceedsMemoryLimitLocked(next, enforceMemoryLimit) {
 		return false, ErrOOM
 	}
 

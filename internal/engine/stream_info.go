@@ -45,8 +45,8 @@ type StreamInfoResult struct {
 	RecordedFirstEntryID StreamID
 	FirstEntry           *StreamEntry
 	LastEntry            *StreamEntry
-	Entries               []StreamEntry
-	GroupInfos            []StreamInfoGroup
+	Entries              []StreamEntry
+	GroupInfos           []StreamInfoGroup
 }
 
 func cloneStreamEntryPtr(entry StreamEntry) *StreamEntry {

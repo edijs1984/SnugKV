@@ -101,7 +101,7 @@ func (s *Store) SetMove(source, destination string, member []byte) (bool, error)
 		updates[destination] = updated
 	}
 
-	if err := s.applyPreparedBatchLocked(updates, deletions, true); err != nil {
+	if err := s.applyPreparedBatchLocked(updates, deletions, enforceMemoryLimit); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -280,7 +280,11 @@ func randomDistinctSetIndexes(cardinality, count int) ([]int, error) {
 // applyPreparedBatchLocked preflights a small multi-key batch against maxmemory
 // and then publishes it with all shards already locked. Growth simulation keeps
 // old arena allocations live, making admission conservative until publication.
-func (s *Store) applyPreparedBatchLocked(updates map[string]preparedEntry, deletions map[string]bool, enforce bool) error {
+func (s *Store) applyPreparedBatchLocked(
+	updates map[string]preparedEntry,
+	deletions map[string]bool,
+	admission memoryAdmission,
+) error {
 	var before, after, beforeMeta, afterMeta, extraIndex, extraEntries, extraArena uint64
 	allocations := make(map[*shard][]int)
 	growth := make(map[*shard]int)
@@ -319,7 +323,7 @@ func (s *Store) applyPreparedBatchLocked(updates map[string]preparedEntry, delet
 
 	s.memory.mu.Lock()
 	next := s.memory.used - before - beforeMeta + after + afterMeta + extraIndex + extraEntries + extraArena
-	if enforce && s.memory.max > 0 && next > s.memory.max {
+	if s.exceedsMemoryLimitLocked(next, admission) {
 		s.memory.mu.Unlock()
 		return ErrOOM
 	}
@@ -329,7 +333,7 @@ func (s *Store) applyPreparedBatchLocked(updates map[string]preparedEntry, delet
 		s.remove(s.shardFor(key), key)
 	}
 	for key, prepared := range updates {
-		if err := s.publishRecord(s.shardFor(key), key, prepared, false); err != nil {
+		if err := s.publishRecord(s.shardFor(key), key, prepared, allowOverMemoryLimit); err != nil {
 			return err
 		}
 	}

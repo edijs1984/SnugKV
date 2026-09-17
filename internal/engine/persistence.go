@@ -205,7 +205,7 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 	for _, key := range ordered {
 		e := updates[key]
 		sh := s.shardFor(key)
-		if err := s.publishRecord(sh, key, e, false); err != nil {
+		if err := s.publishRecord(sh, key, e, allowOverMemoryLimit); err != nil {
 			return err
 		}
 		if !isNativeContainerType(e.valueType) {

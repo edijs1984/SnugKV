@@ -158,8 +158,11 @@ func scriptCommandWritesOrReplicates(args [][]byte) bool {
 	}
 	// Redis treats PUBLISH/SPUBLISH as MAY_REPLICATE, so they are forbidden by
 	// EVAL_RO/FCALL_RO even though they do not mutate the keyspace.
+	//
+	// PFCOUNT is also considered RW by Redis scripting semantics because it may
+	// change the HyperLogLog's internal representation and propagate that change.
 	switch cmd {
-	case "PUBLISH", "SPUBLISH":
+	case "PUBLISH", "SPUBLISH", "PFCOUNT":
 		return true
 	default:
 		return false

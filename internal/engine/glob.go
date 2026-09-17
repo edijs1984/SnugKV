@@ -6,12 +6,12 @@ package engine
 // code points.
 //
 // Supported syntax:
-//   *      zero or more bytes
-//   ?      exactly one byte
-//   [abc]  character class
-//   [a-z]  character range
-//   [^x]   negated class (also accepts [!x])
-//   \\x     escape the next byte
+//   - zero or more bytes
+//     ?      exactly one byte
+//     [abc]  character class
+//     [a-z]  character range
+//     [^x]   negated class (also accepts [!x])
+//     \\x     escape the next byte
 func redisGlobMatch(pattern, value []byte) bool {
 	var match func(pi, vi int) bool
 	match = func(pi, vi int) bool {
