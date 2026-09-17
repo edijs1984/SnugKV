@@ -37,6 +37,13 @@ func (s *Server) ExecuteWithCancel(args [][]byte, cancel <-chan struct{}) (respo
 	}
 	defer func() { s.metrics.Observe(name, time.Since(start), resultErr != nil) }()
 
+	// Redis allows FUNCTION STATS while a function is busy. It therefore cannot
+	// wait on durableMu, which is intentionally held for the whole FCALL. HELP is
+	// also pure introspection and can use the same direct path.
+	if response, handled, err := s.executeFunctionIntrospection(args); handled {
+		return response, err
+	}
+
 	// Blocking commands must not retain durableMu while sleeping. They wait
 	// outside the command-serialization critical section, then execute the
 	// eventual non-blocking mutation through executeDurable below.
@@ -55,6 +62,12 @@ func (s *Server) ExecuteWithCancel(args [][]byte, cancel <-chan struct{}) (respo
 func (s *Server) executeDurable(args [][]byte) ([]byte, error) {
 	s.durableMu.Lock()
 	defer s.durableMu.Unlock()
+
+	finishRunning := func() {}
+	if isFunctionCallCommand(args) {
+		finishRunning = beginRunningFunction(s, args)
+	}
+	defer finishRunning()
 
 	// WATCH must observe every logical change, including a change that is later
 	// restored to the original value by another command. Refresh both before and

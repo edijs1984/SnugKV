@@ -60,7 +60,7 @@ for current boundaries, [PLAN.md](PLAN.md) for the remaining roadmap, and
 - Pub/Sub: `SUBSCRIBE`, `UNSUBSCRIBE`, `PSUBSCRIBE`, `PUNSUBSCRIBE`, `PUBLISH`, `SSUBSCRIBE`, `SUNSUBSCRIBE`, `SPUBLISH`, and `PUBSUB` classic/sharded introspection.
 - Transactions: `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH` with cross-client optimistic locking and EXEC error semantics.
 - Scripting: `EVAL`, `EVALSHA`, `EVAL_RO`, `EVALSHA_RO`, `SCRIPT LOAD`, `SCRIPT EXISTS`, `SCRIPT FLUSH`; Lua `KEYS`/`ARGV`, `redis.call`, `redis.pcall`, `redis.error_reply`, `redis.status_reply`, and `redis.sha1hex` are available.
-- Functions: `FUNCTION LOAD [REPLACE]`, `FUNCTION LIST [LIBRARYNAME pattern] [WITHCODE]`, `FUNCTION DELETE`, `FUNCTION FLUSH [SYNC|ASYNC]`, `FUNCTION DUMP`, `FUNCTION RESTORE <payload> [APPEND|REPLACE|FLUSH]`, `FCALL`, and `FCALL_RO`; `redis.register_function()` supports positional registration and table registration with the `no-writes` flag.
+- Functions: `FUNCTION LOAD [REPLACE]`, `FUNCTION LIST [LIBRARYNAME pattern] [WITHCODE]`, `FUNCTION DELETE`, `FUNCTION FLUSH [SYNC|ASYNC]`, `FUNCTION DUMP`, `FUNCTION RESTORE <payload> [APPEND|REPLACE|FLUSH]`, `FUNCTION STATS`, `FUNCTION HELP`, `FCALL`, and `FCALL_RO`; `redis.register_function()` supports positional registration and table registration with the `no-writes` flag.
 - JSON: `JSON.SET`, `JSON.GET`, `JSON.TYPE`, `JSON.DEL`.
 - Administration: `FLUSHDB`, `FLUSHALL`, `MEMORY`, `SNUG.ENCODING`, `SNUG.MEMORY`, `SNUG.STATS`, `SNUG.COMPACT`, `SNUG.POLICY`, `SNUG.AOFREWRITE`, `SNUG.SHAPES`, `SNUG.CANDIDATES`, `SNUG.TYPE`.
 
@@ -97,6 +97,13 @@ SnugKV currently uses its own versioned `SNUGF001` payload rather than Redis's R
 Function payload bytes, so payloads are not cross-restorable between Redis and
 SnugKV yet. See [docs/FUNCTION-DUMP-RESTORE.md](docs/FUNCTION-DUMP-RESTORE.md).
 
+`FUNCTION STATS` returns Redis-shaped RESP2 metadata for the currently running
+FCALL plus Lua engine library/function counts. It remains available while an
+FCALL holds the normal command-serialization mutex, so another client can inspect
+the live function name, original command vector, and elapsed `duration_ms`.
+`FUNCTION HELP` exposes the Redis-style Functions subcommand help surface. See
+[docs/FUNCTION-STATS-HELP.md](docs/FUNCTION-STATS-HELP.md).
+
 With logical AOF enabled, resulting database changes from one writable EVAL or
 FCALL are persisted as one frame. Writes completed before a later Lua runtime
 error remain applied and durable, matching Redis's non-rollback execution model.
@@ -106,9 +113,9 @@ configured persistence file. Function-local Lua VM variables are reconstructed
 from source and therefore reset after restore/restart; arbitrary live VM state is
 not serialized.
 
-Remaining scripting/function management gaps include `FUNCTION STATS/KILL/HELP`,
-`SCRIPT KILL`/`DEBUG`, the broader Redis function-flag surface, exact Redis RDB
-byte compatibility for Function DUMP/RESTORE payloads, and full Redis
+Remaining scripting/function management gaps include `FUNCTION KILL`, `SCRIPT
+KILL`/`DEBUG`, the broader Redis function-flag surface, exact Redis RDB byte
+compatibility for Function DUMP/RESTORE payloads, and full Redis
 Lua/ACL/command-flag parity.
 
 ## SORT compatibility

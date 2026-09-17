@@ -10,6 +10,8 @@ All notable changes to SnugKV will be documented in this file.
   `FCALL_RO`, read-only enforcement, function-local Lua state, and `no-writes`.
 - `FUNCTION DUMP` / `FUNCTION RESTORE` with checksum-protected versioned payloads,
   default `APPEND`, plus `FLUSH` and `REPLACE` restore policies.
+- `FUNCTION STATS` with live running-function metadata and Lua engine
+  library/function counts, plus Redis-style `FUNCTION HELP` output.
 - Durable Redis Function library restoration across restart when AOF or snapshot
   persistence is configured. SnugKV stores the current function registry in an
   atomic sidecar next to the configured persistence file.
@@ -58,6 +60,8 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Hardened
 
+- `FUNCTION STATS` bypasses the normal durability mutex so it remains observable
+  from another client while an FCALL is running.
 - Function dump payload checksum validation and atomic restore-policy validation;
   corrupt payloads do not modify the current function registry.
 - Function persistence uses atomic temp-file replacement plus file/directory fsync,
@@ -82,6 +86,9 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Verified
 
+- `FUNCTION STATS` tests cover exact idle RESP2 shape, live function
+  name/command/duration metadata, engine counts, and non-blocking access while the
+  durability mutex is held; `FUNCTION HELP` and arity errors are covered too.
 - `FUNCTION DUMP`/`RESTORE` tests cover round trips, APPEND collision rejection,
   REPLACE, FLUSH, checksum corruption, invalid policies, restart restoration, and
   persisted empty registries after `FUNCTION FLUSH`.

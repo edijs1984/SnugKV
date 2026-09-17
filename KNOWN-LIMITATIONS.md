@@ -25,7 +25,7 @@ documented scope.
 
 Major Redis-compatible features still not implemented or incomplete:
 
-- remaining Function management such as `FUNCTION STATS`, `KILL`, and `HELP`;
+- remaining Function management: `FUNCTION KILL`;
 - full Lua/Functions parity (`SCRIPT KILL/DEBUG`, broader function flags, exact command flags/ACL behavior);
 - Redis-RDB byte compatibility for `FUNCTION DUMP` / `RESTORE` payloads;
 - cross-database COPY and broader migration/transfer command scope;
@@ -48,10 +48,17 @@ The implemented scripting surface is `EVAL`, `EVALSHA`, `EVAL_RO`, `EVALSHA_RO`,
 Redis Functions support includes `FUNCTION LOAD [REPLACE]`, `FUNCTION LIST
 [LIBRARYNAME pattern] [WITHCODE]`, `FUNCTION DELETE`, `FUNCTION FLUSH
 [SYNC|ASYNC]`, `FUNCTION DUMP`, `FUNCTION RESTORE [APPEND|REPLACE|FLUSH]`,
-`FCALL`, and `FCALL_RO`. `redis.register_function()` supports the common
-positional form and table-form registration with `description` and the
-`no-writes` flag. Loaded library Lua state is retained while the process is
-running, so library-local state can persist across calls.
+`FUNCTION STATS`, `FUNCTION HELP`, `FCALL`, and `FCALL_RO`.
+`redis.register_function()` supports the common positional form and table-form
+registration with `description` and the `no-writes` flag. Loaded library Lua state
+is retained while the process is running, so library-local state can persist
+across calls.
+
+`FUNCTION STATS` can be queried from another client while an FCALL is executing.
+It reports the active function name, original command vector, elapsed duration,
+and Lua engine library/function counts without waiting on the normal global
+command-serialization mutex. `FUNCTION HELP` returns the Redis-style Functions
+subcommand help surface.
 
 Current boundaries are intentional and documented rather than silently emulated:
 
@@ -71,7 +78,7 @@ Current boundaries are intentional and documented rather than silently emulated:
 - Function-local Lua variables are not serialized and reset when a library is
   restored or reconstructed after process restart;
 - only the `no-writes` function flag is supported in this milestone;
-- `SCRIPT KILL`, `SCRIPT DEBUG`, `FUNCTION STATS/KILL/HELP`, exact Redis
+- `FUNCTION KILL`, `SCRIPT KILL`, `SCRIPT DEBUG`, exact Redis
   command-flag/ACL/OOM behavior, and every Lua edge case still need differential
   hardening.
 
@@ -146,9 +153,9 @@ queued MULTI commands; `PUBLISH` and `SPUBLISH` remain ordinary queueable comman
 - The modern GEO command set has focused command-level compatibility tests; large
   dataset differential/performance testing is intentionally still pending.
 - Lua scripting/read-only variants and Functions core have focused unit,
-  durability, transaction, restart-persistence, and live Redis differential
-  coverage; deeper command-flag/ACL/OOM and remaining function-management
-  auditing remains.
+  durability, transaction, restart-persistence, live introspection, and live Redis
+  differential coverage; deeper command-flag/ACL/OOM and remaining
+  function-management auditing remains.
 - `FUNCTION DUMP`/`RESTORE` command policy/error semantics have automated coverage,
   but byte-level payload compatibility with Redis is intentionally not claimed.
 
