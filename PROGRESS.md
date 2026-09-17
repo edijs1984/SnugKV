@@ -5,18 +5,50 @@
 SnugKV now has a broad single-node RESP2 command surface with native HASH, SET,
 LIST, ZSET, and STREAM types, logical durability, memory accounting, adaptive
 scalar encoding, observability, operational tooling, classic/sharded Pub/Sub,
-Redis-style transactions with optimistic locking, HyperLogLog, modern GEO, a
-bounded Lua scripting core, `SORT` / `SORT_RO`, and single-database `COPY`.
+Redis-style transactions with optimistic locking, HyperLogLog, modern GEO,
+read/write Lua scripting, Redis Functions through `FUNCTION KILL`, `SORT` /
+`SORT_RO`, and single-database `COPY`.
 
 The current engineering focus has moved from building the core native datatype
 set to finishing remaining Redis compatibility/tooling families and validating
-release behavior. The main remaining application-level gaps are Redis Functions
-and full scripting parity, migration/transfer scope beyond COPY, RESP3, and
-client/tooling compatibility. Streams are broadly implemented through Redis 8.2
-reference-policy behavior; a final Streams differential edge-case audit remains
-useful.
+release behavior. The main remaining application-level gaps are `SCRIPT KILL` /
+`SCRIPT DEBUG`, broader Function flags and deeper scripting command-flag/ACL/OOM
+parity, migration/transfer scope beyond COPY, RESP3, and client/tooling
+compatibility. Streams are broadly implemented through Redis 8.2 reference-policy
+behavior; a final Streams differential edge-case audit remains useful.
 
 ## Recently completed
+
+### Redis Functions and read-only scripting
+
+- `EVAL_RO` and `EVALSHA_RO` share the scripting cache/key/argv path with EVAL but
+  reject nested commands that write or may replicate, including PUBLISH/SPUBLISH.
+- `FUNCTION LOAD [REPLACE]`, `LIST`, `DELETE`, `FLUSH`, `FCALL`, and `FCALL_RO`
+  are implemented on persistent library-local Lua VMs.
+- Table-form `redis.register_function()` supports descriptions and the `no-writes`
+  flag; FCALL_RO and `no-writes` functions use the same write barrier as EVAL_RO.
+- `FUNCTION DUMP` / `RESTORE` implement default APPEND plus REPLACE/FLUSH restore
+  policy and checksum validation using the documented versioned `SNUGF001` payload.
+- Function library definitions survive restart when AOF or snapshot persistence is
+  configured, using an atomic checksummed sidecar separate from user keyspace data.
+- `FUNCTION STATS` exposes the active Function name, command vector, duration, and
+  engine counts without blocking behind the global durability mutex; `FUNCTION
+  HELP` exposes the Functions help surface.
+- `FUNCTION KILL` now cancels a running FCALL/FCALL_RO before its first dataset
+  write boundary, returns `NOTBUSY` when idle, and returns `UNKILLABLE` after a
+  writable nested command has been dispatched.
+- KILL and the first write synchronize on the same running-function state, closing
+  the race where cancellation could otherwise report success immediately before a
+  write slipped through.
+- Writable FCALL changes are persisted in one logical AOF frame; writes completed
+  before a later runtime error remain applied and durable.
+- Live Redis differential testing covered EVAL_RO/EVALSHA_RO, FCALL/FCALL_RO,
+  `no-writes`, persistent library-local state, LOAD REPLACE, DELETE/FLUSH, and
+  FUNCTION LIST metadata. The RESP type for `no-writes` flags was corrected to
+  match Redis simple-string encoding.
+- Remaining scripting work is `SCRIPT KILL` / `SCRIPT DEBUG`, broader Function
+  flags, exact Redis-RDB Function payload bytes, and deeper command-flag/ACL/OOM
+  parity.
 
 ### COPY
 
@@ -44,8 +76,10 @@ useful.
 - Focused automated coverage includes basic/no-op/REPLACE cases, option/error
   handling, TTL preservation, deep-copy independence, native container types,
   restart persistence, OOM rollback, transactions, and WATCH invalidation.
-- Direct Redis differential testing is the remaining COPY validation step before
-  making a stronger parity claim.
+- Direct Redis 6379 vs SnugKV 6380 differential testing matched return values,
+  tested error wording, TTL behavior, LIST/SET/ZSET type preservation, REPLACE,
+  and deep-copy independence. `DB 1` remains the intentional single-database
+  boundary.
 
 ### SORT / SORT_RO
 
@@ -74,7 +108,8 @@ useful.
 
 ### Lua scripting core
 
-- `EVAL` and `EVALSHA` with Redis-style `numkeys`, `KEYS`, and `ARGV` handling.
+- `EVAL`, `EVALSHA`, `EVAL_RO`, and `EVALSHA_RO` with Redis-style `numkeys`,
+  `KEYS`, and `ARGV` handling.
 - `SCRIPT LOAD`, `SCRIPT EXISTS`, and `SCRIPT FLUSH [SYNC|ASYNC]` with a volatile
   per-server SHA-1 cache.
 - Embedded Lua 5.1-compatible runtime with filesystem/process libraries removed.
@@ -95,9 +130,10 @@ useful.
   preventing internal type-guard panics and returning Lua error tables instead.
 - Manual Redis comparison confirmed basic EVAL replies, KEYS/ARGV handling,
   SET/GET through `redis.call`, SCRIPT LOAD/EXISTS/FLUSH, identical script SHA-1,
-  exact `NOSCRIPT` behavior, and writes surviving later Lua runtime errors.
+  exact `NOSCRIPT` behavior, writes surviving later Lua runtime errors, and
+  read-only nested-write rejection.
 - Redis reports wrong-arity nested commands as `ERR Wrong number of args calling
-  Redis command from script`; SnugKV now matches that wording for the Lua bridge.
+  Redis command from script`; SnugKV matches that wording for the Lua bridge.
   Runtime-error stack text remains VM-specific, while command/write semantics match.
 - Each script has a five-second execution limit. Blocking, connection/subscription,
   transaction, nested scripting, and SnugKV administrative commands are rejected
@@ -233,7 +269,8 @@ TTL sidecars, and compact arena segment descriptors.
   request limits, deadlines, connection limits, and graceful shutdown.
 - Sharded collision-safe indexing, segmented arenas, expiration, compaction,
   explicit max-memory accounting, OOM rollback, and sampled LRU eviction.
-- String, numeric, bit, expiration, key, JSON, HyperLogLog, GEO, scripting, SORT, COPY, and administration commands.
+- String, numeric, bit, expiration, key, JSON, HyperLogLog, GEO, scripting,
+  Functions, SORT, COPY, and administration commands.
 - Native HASH, SET, LIST, and ZSET with broad Redis-style command coverage.
 - Blocking LIST/ZSET/STREAM waits register before readiness checks and use
   waiter/wakeup signaling instead of polling.
@@ -241,8 +278,9 @@ TTL sidecars, and compact arena segment descriptors.
   queued RESP bytes.
 - Logical AOF/snapshot persistence with checksums, restart recovery,
   truncated-final-frame handling, corruption rejection, online AOF rewrite,
-  atomic transaction-frame persistence, atomic logical script frames,
-  destination-only SORT STORE persistence, and destination-only COPY persistence.
+  atomic transaction-frame persistence, atomic logical script/FCALL frames,
+  Function registry restart sidecars, destination-only SORT STORE persistence,
+  and destination-only COPY persistence.
 - Prometheus metrics, separate loopback-only administration listener, Docker,
   Make targets, CI, benchmark harnesses, and soak tooling.
 
@@ -267,9 +305,15 @@ Recent real-server verification includes:
 - GEO parity for the Sicily examples and score formatting;
 - SORT/SORT_RO parity for LIST/SET/ZSET sources, BY/GET/hash patterns, nosort,
   STORE/TTL behavior, missing values, and exact tested error replies;
+- COPY parity for DB0 return values/errors, TTL, native type preservation,
+  REPLACE, and independent-copy behavior;
 - Lua parity for basic EVAL/KEYS/ARGV, SET/GET via `redis.call`, script cache
   load/exists/flush/EVALSHA, exact SHA/NOSCRIPT behavior, partial writes before
-  runtime errors, and Redis-specific nested-command wrong-arity wording;
+  runtime errors, Redis-specific nested-command wrong-arity wording, and read-only
+  nested-write rejection;
+- Functions parity for FCALL/FCALL_RO, `no-writes`, persistent local state,
+  LOAD REPLACE, DELETE/FLUSH, and LIST metadata formatting;
+- end-to-end Function-library restart persistence on a live SnugKV process;
 - transaction queue-time EXECABORT behavior;
 - runtime WRONGTYPE inside EXEC while later queued work still commits;
 - two-client WATCH invalidation and change-then-restore invalidation;
@@ -297,7 +341,8 @@ when evaluating CPU tradeoffs.
 
 ## Remaining engineering work
 
-1. Redis Functions and remaining scripting parity (`EVAL_RO`, `SCRIPT KILL/DEBUG`, command-flag/ACL semantics, differential testing).
+1. Remaining scripting parity: `SCRIPT KILL/DEBUG`, broader Function flags,
+   command-flag/ACL/OOM semantics, and optional Redis-RDB Function payload parity.
 2. Migration/transfer scope beyond single-database COPY.
 3. RESP3 and CLIENT/CONFIG/ACL/COMMAND tooling compatibility.
 4. Differential Redis edge-case audit for the completed Streams surface.
