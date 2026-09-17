@@ -91,6 +91,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if err = listener.ConfigureFunctionPersistence(cfg.AOFPath, cfg.SnapshotPath); err != nil {
+		listener.Close()
+		log.Fatal(err)
+	}
 	if cfg.AdminAddr != "" {
 		if err = listener.OpenAdmin(cfg.AdminAddr); err != nil {
 			listener.Close()
