@@ -6,6 +6,13 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Added
 
+- Redis Functions core with `FUNCTION LOAD/LIST/DELETE/FLUSH`, `FCALL`,
+  `FCALL_RO`, read-only enforcement, function-local Lua state, and `no-writes`.
+- `FUNCTION DUMP` / `FUNCTION RESTORE` with checksum-protected versioned payloads,
+  default `APPEND`, plus `FLUSH` and `REPLACE` restore policies.
+- Durable Redis Function library restoration across restart when AOF or snapshot
+  persistence is configured. SnugKV stores the current function registry in an
+  atomic sidecar next to the configured persistence file.
 - Native HASH datatype with packed SH1 storage, adaptive shared field-shape storage,
   numeric operations, scan, random-field support, TTL/rename integration, and
   logical persistence.
@@ -51,6 +58,10 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Hardened
 
+- Function dump payload checksum validation and atomic restore-policy validation;
+  corrupt payloads do not modify the current function registry.
+- Function persistence uses atomic temp-file replacement plus file/directory fsync,
+  and startup rejects corrupt durable function state.
 - Atomic max-memory rollback for native container mutations and multi-key stores.
 - AOF restart coverage for HASH, SET, LIST, and ZSET mutations.
 - Blocking LIST and ZSET commands wait outside the durability mutex.
@@ -71,6 +82,9 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Verified
 
+- `FUNCTION DUMP`/`RESTORE` tests cover round trips, APPEND collision rejection,
+  REPLACE, FLUSH, checksum corruption, invalid policies, restart restoration, and
+  persisted empty registries after `FUNCTION FLUSH`.
 - Full race suite, `go vet`, and RESP fuzz are green for the native datatype work.
 - Cross-datatype scalar regression tests cover GET/GETSET/GETEX, append/range,
   numeric, bitmap, `SET ... GET`, `MGET`, `GETDEL`, and `BITOP` behavior.

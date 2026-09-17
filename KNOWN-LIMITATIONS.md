@@ -25,9 +25,9 @@ documented scope.
 
 Major Redis-compatible features still not implemented or incomplete:
 
-- remaining Function management such as `FUNCTION DUMP`, `RESTORE`, `STATS`, `KILL`, and `HELP`;
+- remaining Function management such as `FUNCTION STATS`, `KILL`, and `HELP`;
 - full Lua/Functions parity (`SCRIPT KILL/DEBUG`, broader function flags, exact command flags/ACL behavior);
-- durable restoration of loaded Function libraries across SnugKV restart;
+- Redis-RDB byte compatibility for `FUNCTION DUMP` / `RESTORE` payloads;
 - cross-database COPY and broader migration/transfer command scope;
 - RESP3;
 - broad CLIENT / CONFIG / ACL compatibility;
@@ -45,10 +45,11 @@ The implemented scripting surface is `EVAL`, `EVALSHA`, `EVAL_RO`, `EVALSHA_RO`,
 `KEYS` and `ARGV` and can use `redis.call`, `redis.pcall`, `redis.error_reply`,
 `redis.status_reply`, and `redis.sha1hex`.
 
-Redis Functions core support includes `FUNCTION LOAD [REPLACE]`, `FUNCTION LIST
+Redis Functions support includes `FUNCTION LOAD [REPLACE]`, `FUNCTION LIST
 [LIBRARYNAME pattern] [WITHCODE]`, `FUNCTION DELETE`, `FUNCTION FLUSH
-[SYNC|ASYNC]`, `FCALL`, and `FCALL_RO`. `redis.register_function()` supports the
-common positional form and table-form registration with `description` and the
+[SYNC|ASYNC]`, `FUNCTION DUMP`, `FUNCTION RESTORE [APPEND|REPLACE|FLUSH]`,
+`FCALL`, and `FCALL_RO`. `redis.register_function()` supports the common
+positional form and table-form registration with `description` and the
 `no-writes` flag. Loaded library Lua state is retained while the process is
 running, so library-local state can persist across calls.
 
@@ -62,12 +63,17 @@ Current boundaries are intentional and documented rather than silently emulated:
 - `EVAL_RO`, `EVALSHA_RO`, `FCALL_RO`, and `no-writes` functions reject write or
   replication-capable commands, including `PUBLISH`/`SPUBLISH`;
 - the EVAL SHA cache is volatile and process-local;
-- Function libraries are process-local and are currently lost on restart even
-  though keyspace mutations caused by writable FCALL are persisted normally;
+- when AOF or snapshot persistence is configured, Function library definitions are
+  restored across restart from a checksum-protected atomic sidecar; without either
+  persistence mode configured, Function libraries remain process-local and volatile;
+- `FUNCTION DUMP` uses SnugKV's versioned `SNUGF001` payload rather than Redis RDB
+  Function bytes, so Redis and SnugKV dump payloads are not cross-restorable;
+- Function-local Lua variables are not serialized and reset when a library is
+  restored or reconstructed after process restart;
 - only the `no-writes` function flag is supported in this milestone;
-- `SCRIPT KILL`, `SCRIPT DEBUG`, `FUNCTION DUMP/RESTORE/STATS/KILL/HELP`, exact
-  Redis command-flag/ACL/OOM behavior, and every Lua edge case still need
-  differential hardening.
+- `SCRIPT KILL`, `SCRIPT DEBUG`, `FUNCTION STATS/KILL/HELP`, exact Redis
+  command-flag/ACL/OOM behavior, and every Lua edge case still need differential
+  hardening.
 
 Scripts and function calls are atomic with respect to other SnugKV clients because
 they execute under the same command-serialization boundary as transactions. Lua
@@ -106,8 +112,9 @@ and can replace any destination type with `REPLACE`.
 SnugKV exposes only database 0. `COPY ... DB 0` is accepted, while every nonzero
 DB index is rejected with `ERR DB index is out of range`; cross-database COPY is
 not emulated. Migration/transfer commands and multi-database semantics remain out
-of scope for the current single-node target. Direct Redis differential testing of
-COPY option/error/type/TTL behavior remains a final compatibility-hardening step.
+of scope for the current single-node target. The documented DB0 COPY surface has
+been manually differentially tested against Redis for return values, errors, TTL,
+native type preservation, REPLACE, and deep-copy independence.
 
 Modern GEO commands are implemented, but deprecated `GEORADIUS`,
 `GEORADIUSBYMEMBER`, `GEORADIUS_RO`, and `GEORADIUSBYMEMBER_RO` aliases are not.
@@ -139,10 +146,11 @@ queued MULTI commands; `PUBLISH` and `SPUBLISH` remain ordinary queueable comman
 - The modern GEO command set has focused command-level compatibility tests; large
   dataset differential/performance testing is intentionally still pending.
 - Lua scripting/read-only variants and Functions core have focused unit,
-  durability, transaction, and CI coverage; deeper Redis command-flag/ACL/OOM and
-  function-management differential auditing remains.
-- COPY has focused option/type/TTL/durability/OOM/transaction coverage; a live
-  Redis differential pass remains before stronger parity claims.
+  durability, transaction, restart-persistence, and live Redis differential
+  coverage; deeper command-flag/ACL/OOM and remaining function-management
+  auditing remains.
+- `FUNCTION DUMP`/`RESTORE` command policy/error semantics have automated coverage,
+  but byte-level payload compatibility with Redis is intentionally not claimed.
 
 ## Deployment topology
 
@@ -160,9 +168,14 @@ writable FCALL mutations including partial writes before runtime errors,
 destination-only persistence/replay for `SORT ... STORE`, and destination-only
 COPY persistence.
 
-Loaded Function libraries themselves are not yet part of the persistence format,
-so applications must reload Function code after a SnugKV restart before calling
-those functions again.
+When AOF or snapshot persistence is configured, Function library definitions are
+stored separately from user keyspace records in an atomic checksummed sidecar
+(`<aof>.functions`, or `<snapshot>.functions` when AOF is disabled). Successful
+`FUNCTION LOAD`, `DELETE`, `FLUSH`, and `RESTORE` rewrite the complete durable
+registry snapshot. Startup validates and compiles the sidecar before exposing the
+restored Functions; corrupt durable Function state causes recovery to fail rather
+than silently dropping libraries. This sidecar write path is synchronous and does
+not inherit the main AOF `everysec`/`no` fsync relaxation.
 
 For alpha use:
 
