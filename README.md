@@ -59,7 +59,8 @@ for current boundaries, [PLAN.md](PLAN.md) for the remaining roadmap, and
 - STREAM: `XADD`, `XLEN`, `XRANGE`, `XREVRANGE`, `XDEL`, `XDELEX`, `XTRIM`, `XREAD`, `XGROUP`, `XREADGROUP`, `XACK`, `XACKDEL`, `XPENDING`, `XCLAIM`, `XAUTOCLAIM`, `XINFO`; Redis 8.2 `KEEPREF` / `DELREF` / `ACKED` reference policies are supported.
 - Pub/Sub: `SUBSCRIBE`, `UNSUBSCRIBE`, `PSUBSCRIBE`, `PUNSUBSCRIBE`, `PUBLISH`, `SSUBSCRIBE`, `SUNSUBSCRIBE`, `SPUBLISH`, and `PUBSUB` classic/sharded introspection.
 - Transactions: `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH` with cross-client optimistic locking and EXEC error semantics.
-- Scripting: `EVAL`, `EVALSHA`, `SCRIPT LOAD`, `SCRIPT EXISTS`, `SCRIPT FLUSH`; Lua `KEYS`/`ARGV`, `redis.call`, `redis.pcall`, `redis.error_reply`, `redis.status_reply`, and `redis.sha1hex` are available.
+- Scripting: `EVAL`, `EVALSHA`, `EVAL_RO`, `EVALSHA_RO`, `SCRIPT LOAD`, `SCRIPT EXISTS`, `SCRIPT FLUSH`; Lua `KEYS`/`ARGV`, `redis.call`, `redis.pcall`, `redis.error_reply`, `redis.status_reply`, and `redis.sha1hex` are available.
+- Functions: `FUNCTION LOAD [REPLACE]`, `FUNCTION LIST [LIBRARYNAME pattern] [WITHCODE]`, `FUNCTION DELETE`, `FUNCTION FLUSH [SYNC|ASYNC]`, `FCALL`, and `FCALL_RO`; `redis.register_function()` supports positional registration and table registration with the `no-writes` flag.
 - JSON: `JSON.SET`, `JSON.GET`, `JSON.TYPE`, `JSON.DEL`.
 - Administration: `FLUSHDB`, `FLUSHALL`, `MEMORY`, `SNUG.ENCODING`, `SNUG.MEMORY`, `SNUG.STATS`, `SNUG.COMPACT`, `SNUG.POLICY`, `SNUG.AOFREWRITE`, `SNUG.SHAPES`, `SNUG.CANDIDATES`, `SNUG.TYPE`.
 
@@ -67,13 +68,15 @@ Blocking LIST, ZSET, `XREAD`, and `XREADGROUP` commands use waiter/wakeup paths
 rather than polling, and sleeping blockers do not hold the global durability
 mutex. RESP3 is not implemented; see [COMPATIBILITY.md](COMPATIBILITY.md).
 
-## Lua scripting core
+## Lua scripting and Functions
 
 SnugKV embeds a Lua 5.1-compatible runtime for the common Redis scripting path.
-`EVAL` and `EVALSHA` execute under the same global command-serialization boundary
-as ordinary writes and `MULTI`/`EXEC`, so another client cannot interleave a
-command halfway through a script. `EVAL` and `SCRIPT LOAD` populate a volatile
-SHA-1 script cache; `SCRIPT FLUSH [SYNC|ASYNC]` clears it.
+`EVAL`, `EVALSHA`, `EVAL_RO`, and `EVALSHA_RO` execute under the same global
+command-serialization boundary as ordinary writes and `MULTI`/`EXEC`, so another
+client cannot interleave a command halfway through a script. `EVAL`/`EVAL_RO`
+and `SCRIPT LOAD` populate a volatile SHA-1 script cache; `SCRIPT FLUSH
+[SYNC|ASYNC]` clears it. Read-only script variants reject commands that mutate
+or replicate state, including `PUBLISH`/`SPUBLISH`.
 
 The script bridge maps RESP2 values to/from Lua and supports ordinary nonblocking
 data/key commands through `redis.call` and `redis.pcall`. Blocking commands,
@@ -81,11 +84,20 @@ connection/subscription state, transactions, nested scripting, and SnugKV admin
 commands are intentionally rejected from inside scripts. Filesystem/process Lua
 libraries are not exposed, and each script has a five-second execution limit.
 
-With logical AOF enabled, the resulting database changes from one script are
-persisted as one frame. Writes completed before a later Lua runtime error remain
-applied and durable, matching Redis's non-rollback script behavior. Redis
-Functions (`FUNCTION`/`FCALL`), `EVAL_RO`/`EVALSHA_RO`, and `SCRIPT KILL`/`DEBUG`
-are not part of this first scripting slice.
+Redis Functions core support includes Lua libraries loaded with `FUNCTION LOAD`,
+global function-name lookup through `FCALL`/`FCALL_RO`, library replacement,
+listing/deletion/flushing, persistent library-local Lua state while the process
+is running, and table-form `redis.register_function()` metadata with the
+`no-writes` flag. `FCALL_RO` and `no-writes` functions use the same write/replication
+barrier as `EVAL_RO`.
+
+With logical AOF enabled, resulting database changes from one writable EVAL or
+FCALL are persisted as one frame. Writes completed before a later Lua runtime
+error remain applied and durable, matching Redis's non-rollback execution model.
+Function libraries themselves are currently process-local and are not yet restored
+from SnugKV persistence after restart. `FUNCTION DUMP/RESTORE/STATS/KILL/HELP`,
+`SCRIPT KILL`/`DEBUG`, the broader Redis function-flag surface, and exact Redis
+Lua/ACL/command-flag parity remain outside this milestone.
 
 ## SORT compatibility
 
@@ -169,12 +181,13 @@ optimizer.
 
 ## Major remaining compatibility work
 
-The next large Redis gaps are Redis Functions/full scripting parity, migration
-scope, RESP3, and client/tooling compatibility (`CLIENT`, `CONFIG`, ACL/auth,
-COMMAND metadata). Deprecated `GEORADIUS*` compatibility is not part of the modern
-GEO surface yet. A final differential Redis edge-case audit remains useful for
-Streams, but there is no known core Streams command-family gap. See
-[COMPATIBILITY.md](COMPATIBILITY.md) and GitHub issue #55.
+The next large Redis gaps are remaining scripting/function management and exact
+command-flag/ACL parity, migration scope, RESP3, and client/tooling compatibility
+(`CLIENT`, `CONFIG`, ACL/auth, COMMAND metadata). Deprecated `GEORADIUS*`
+compatibility is not part of the modern GEO surface yet. A final differential
+Redis edge-case audit remains useful for Streams, but there is no known core
+Streams command-family gap. See [COMPATIBILITY.md](COMPATIBILITY.md) and GitHub
+issue #55.
 
 ## License
 
