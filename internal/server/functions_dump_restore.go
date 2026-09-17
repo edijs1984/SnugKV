@@ -61,7 +61,7 @@ func decodeFunctionDump(data []byte) ([]string, error) {
 	length := int(binary.LittleEndian.Uint32(data[len(functionDumpMagic) : len(functionDumpMagic)+4]))
 	payloadStart := len(functionDumpMagic) + 4
 	payloadEnd := payloadStart + length
-	if length < 0 || payloadEnd+4 != len(data) {
+	if payloadEnd+4 != len(data) {
 		return nil, errors.New("ERR DUMP payload version or checksum are wrong")
 	}
 	want := binary.LittleEndian.Uint32(data[payloadEnd:])
@@ -152,6 +152,7 @@ func (r *functionRegistry) restoreCompiled(libs []*functionLibrary, policy strin
 			if existing := r.functions[lower]; existing != nil && (old == nil || existing.library != old) {
 				return errors.New("ERR Function " + fn.name + " already exists")
 			}
+		}
 	}
 
 	for name, lib := range incomingLibraries {
@@ -165,6 +166,7 @@ func (r *functionRegistry) restoreCompiled(libs []*functionLibrary, policy strin
 		for lower, fn := range lib.functions {
 			r.functions[lower] = fn
 		}
+	}
 	return nil
 }
 
