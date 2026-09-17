@@ -2,7 +2,10 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"strings"
+
+	lua "github.com/yuin/gopher-lua"
 )
 
 var errFunctionKilled = errors.New("ERR Script killed by user with SCRIPT KILL...")
@@ -33,7 +36,6 @@ func markRunningFunctionWrite(s *Server) error {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	if state.active == nil {
-		// EVAL uses the same Lua bridge but is not governed by FUNCTION KILL.
 		return nil
 	}
 	if state.active.killed {
@@ -41,6 +43,55 @@ func markRunningFunctionWrite(s *Server) error {
 	}
 	state.active.writeDirty = true
 	return nil
+}
+
+// luaRedisCallFunction mirrors the ordinary Lua bridge but gates dataset writes
+// through the running-function state before dispatch. That gate is what makes
+// FUNCTION KILL atomic with respect to the first write.
+func (s *Server) luaRedisCallFunction(protected bool) lua.LGFunction {
+	return func(L *lua.LState) int {
+		if L.GetTop() < 1 {
+			return luaPushCommandError(L, protected, errors.New("ERR Please specify at least one argument for redis.call()"))
+		}
+		args := make([][]byte, 0, L.GetTop())
+		for i := 1; i <= L.GetTop(); i++ {
+			arg, err := luaCommandArg(L.Get(i))
+			if err != nil {
+				return luaPushCommandError(L, protected, fmt.Errorf("ERR %v", err))
+			}
+			args = append(args, arg)
+		}
+		if scriptCommandForbidden(args) {
+			return luaPushCommandError(L, protected, errors.New("ERR This Redis command is not allowed from script"))
+		}
+		if err := queuedCommandValidation(args); err != nil {
+			if strings.Contains(err.Error(), "wrong number of arguments") {
+				err = errors.New("ERR Wrong number of args calling Redis command from script")
+			}
+			return luaPushCommandError(L, protected, err)
+		}
+		if scriptCommandWritesDataset(args) {
+			if err := markRunningFunctionWrite(s); err != nil {
+				return luaPushCommandError(L, protected, err)
+			}
+		}
+
+		result, err := s.executePressureMode(args, false)
+		if err != nil {
+			return luaPushCommandError(L, protected, err)
+		}
+		s.signalListAvailability(args, result)
+		s.signalZSetAvailability(args, result)
+		s.signalStreamAvailability(args, result)
+		s.refreshWatchesLocked()
+
+		value, err := respToLuaValue(L, result)
+		if err != nil {
+			return luaPushCommandError(L, protected, fmt.Errorf("ERR internal script reply decode failed: %v", err))
+		}
+		L.Push(value)
+		return 1
+	}
 }
 
 func (s *Server) executeFunctionKill(args [][]byte) ([]byte, error) {
