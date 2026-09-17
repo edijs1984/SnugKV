@@ -8,8 +8,8 @@ import (
 )
 
 func (s *Server) executePressureCommand(args [][]byte) ([]byte, error) {
-	if response, handled, err := s.executeFunctionDumpRestore(args); handled {
-		return response, err
+	if len(args) > 0 && strings.EqualFold(string(args[0]), "FUNCTION") {
+		return s.executeFunctionTopLevel(args)
 	}
 	if isFunctionCommand(args) {
 		if scriptExecutionActive(s) {
