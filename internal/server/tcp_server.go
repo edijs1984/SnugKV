@@ -13,6 +13,7 @@ import (
 	"snugkv/internal/resp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -20,11 +21,13 @@ type TCPServer struct {
 	admin                    *TCPServer
 	adminOnly, ownsOptimizer bool
 	inputBytes, outputBytes  uint64
+	nextClientID             uint64
 	listener                 net.Listener
 	server                   *Server
 	config                   config.Config
 	mu                       sync.Mutex
 	connections              map[net.Conn]struct{}
+	clients                  map[uint64]*clientSession
 	closing                  bool
 	wg                       sync.WaitGroup
 	closeOnce                sync.Once
@@ -47,7 +50,7 @@ func ListenWithJournal(c config.Config, store *engine.Store, journal Journal) (*
 	if err != nil {
 		return nil, err
 	}
-	s := &TCPServer{ownsOptimizer: true, listener: ln, server: New(store), config: c, connections: make(map[net.Conn]struct{}), done: make(chan struct{})}
+	s := &TCPServer{ownsOptimizer: true, listener: ln, server: New(store), config: c, connections: make(map[net.Conn]struct{}), clients: make(map[uint64]*clientSession), done: make(chan struct{})}
 	if c.Encoding {
 		opt, err := optimizer.New(store, optimizer.Default())
 		if err != nil {
@@ -152,6 +155,16 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 	txSession := newTransactionSession(s.server)
 	defer txSession.close()
 
+	clientID := atomic.AddUint64(&s.nextClientID, 1)
+	clientSession := newClientSession(
+		clientID,
+		peer,
+		peer.RemoteAddr().String(),
+		peer.LocalAddr().String(),
+	)
+	s.registerClient(clientSession)
+	defer s.unregisterClient(clientSession.id)
+
 	decoder, _ := resp.NewDecoder(bufio.NewReader(conn), s.config.Limits())
 	for {
 		if pubSession.active() {
@@ -175,6 +188,8 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			_ = writer.write([]byte("-ERR invalid RESP\r\n"))
 			return
 		}
+		clientSession.touch(msg)
+
 		if s.adminOnly && !adminAllowed(msg) {
 			if writer.write([]byte("-ERR command is unavailable on admin listener\r\n")) != nil {
 				return
@@ -196,6 +211,16 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				}
 				continue
 			}
+		}
+
+		if handled, clientResponse, clientErr := s.executeClientConnectionCommand(clientSession, msg); handled {
+			if clientErr != nil {
+				clientResponse = errorResponse(clientErr)
+			}
+			if writer.write(clientResponse) != nil {
+				return
+			}
+			continue
 		}
 
 		// RESP2 subscribed clients remain in Pub/Sub mode. This must run before
@@ -237,9 +262,25 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 		var result []byte
 		if isBlockingListCommand(msg) || isBlockingZSetCommand(msg) || isBlockingStreamCommand(msg) {
 			disconnected, stopWatch := watchConnectionDisconnect(peer)
-			result, err = s.server.ExecuteWithCancel(msg, disconnected)
+			unblock := clientSession.beginBlocking()
+
+			cancel, stopMerge := mergeClientCancel(disconnected, unblock)
+			result, err = s.server.ExecuteWithCancel(msg, cancel)
+
+			stopMerge()
 			stopWatch()
-			if errors.Is(err, errBlockingClientGone) {
+
+			unblockMode, wasUnblocked := clientSession.endBlocking()
+
+			if errors.Is(err, errBlockingClientGone) && wasUnblocked {
+				switch unblockMode {
+				case clientUnblockError:
+					result = []byte("-UNBLOCKED client unblocked via CLIENT UNBLOCK\r\n")
+				default:
+					result = clientBlockingTimeoutResponse(msg)
+				}
+				err = nil
+			} else if errors.Is(err, errBlockingClientGone) {
 				return
 			}
 		} else {

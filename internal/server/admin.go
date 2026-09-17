@@ -20,7 +20,15 @@ func (s *TCPServer) OpenAdmin(addr string) error {
 	if err != nil {
 		return err
 	}
-	child := &TCPServer{listener: ln, server: s.server, config: s.config, connections: make(map[net.Conn]struct{}), done: make(chan struct{}), adminOnly: true}
+	child := &TCPServer{
+		listener:    ln,
+		server:      s.server,
+		config:      s.config,
+		connections: make(map[net.Conn]struct{}),
+		clients:     make(map[uint64]*clientSession),
+		done:        make(chan struct{}),
+		adminOnly:   true,
+	}
 	s.mu.Lock()
 	if s.closing || s.admin != nil {
 		s.mu.Unlock()
