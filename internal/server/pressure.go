@@ -8,6 +8,16 @@ import (
 )
 
 func (s *Server) executePressureCommand(args [][]byte) ([]byte, error) {
+	if isFunctionCommand(args) {
+		if scriptExecutionActive(s) {
+			return nil, errors.New("ERR This Redis command is not allowed from script")
+		}
+		if isFunctionCallCommand(args) {
+			leave := enterScriptExecution(s)
+			defer leave()
+		}
+		return s.executeFunctionCommand(args)
+	}
 	if isReadOnlyScriptEvalCommand(args) {
 		if scriptExecutionActive(s) {
 			return nil, errors.New("ERR This Redis command is not allowed from script")
@@ -96,11 +106,10 @@ func (s *Server) executePressureMode(args [][]byte, journalEvictions bool) ([]by
 	if !errors.Is(err, engine.ErrOOM) || s.eviction == "" || s.eviction == "noeviction" {
 		return result, err
 	}
-	// A script can successfully mutate data before a later redis.call() hits OOM.
-	// Re-running the whole script would repeat those earlier side effects, so only
-	// nested ordinary commands are eligible for eviction/retry. Read-only script
-	// invocations are also never retried as a whole.
-	if isScriptEvalCommand(args) || isReadOnlyScriptEvalCommand(args) {
+	// A script/function can successfully mutate data before a later redis.call()
+	// hits OOM. Re-running the whole invocation would repeat those earlier side
+	// effects, so only nested ordinary commands are eligible for eviction/retry.
+	if isScriptEvalCommand(args) || isReadOnlyScriptEvalCommand(args) || isFunctionCallCommand(args) {
 		return result, err
 	}
 	cmd := strings.ToUpper(string(args[0]))
