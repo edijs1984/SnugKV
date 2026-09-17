@@ -9,9 +9,10 @@ GitHub issue #55 tracks command-family compatibility work.
 The single-node RESP2 engine, logical persistence, memory accounting, optimizer,
 observability, packaging, HASH, SET, LIST, ZSET, broad STREAM/consumer-group
 support, classic/sharded Pub/Sub, Redis-style transactions/WATCH, HyperLogLog,
-modern GEO, the common Lua scripting path including read-only execution, Redis
-Functions core/management through `FUNCTION KILL`, `SORT` / `SORT_RO`, and
-single-database `COPY` are implemented.
+modern GEO, the common Lua scripting path including read-only execution and
+`SCRIPT KILL`, Redis Functions core/management through `FUNCTION KILL`, the
+standalone-safe Function flag subset, `SORT` / `SORT_RO`, single-database `COPY`,
+and the current CLIENT management/tooling slice are implemented.
 
 Streams include core reads/writes, blocking `XREAD`, consumer groups,
 `XREADGROUP`, PEL inspection/acknowledgement, claims/autoclaims, XINFO,
@@ -25,14 +26,22 @@ cross-client WATCH invalidation including change-then-restore, expiration
 invalidation, nonblocking execution of blocking commands inside MULTI, and one
 logical AOF frame for transaction results.
 
-Lua scripting now includes `EVAL`, `EVALSHA`, `EVAL_RO`, `EVALSHA_RO`, `SCRIPT
-LOAD/EXISTS/FLUSH`, `KEYS`/`ARGV`, the common `redis.call`/`redis.pcall` bridge,
-RESP2/Lua reply conversion, volatile SHA-1 caching, a bounded runtime,
+Lua scripting includes `EVAL`, `EVALSHA`, `EVAL_RO`, `EVALSHA_RO`, `SCRIPT
+LOAD/EXISTS/FLUSH/KILL`, `KEYS`/`ARGV`, the common `redis.call`/`redis.pcall`
+bridge, RESP2/Lua reply conversion, volatile SHA-1 caching, a bounded runtime,
 MULTI/EXEC integration, WATCH invalidation, and one-frame logical AOF persistence
 for script results. Redis Functions include load/list/delete/flush,
-`FCALL`/`FCALL_RO`, DUMP/RESTORE, restart persistence, STATS/HELP, and KILL with
-Redis-style NOTBUSY/UNKILLABLE safety semantics. `SCRIPT KILL` / `SCRIPT DEBUG`,
-broader Function flags, and deeper command-flag/ACL/OOM parity remain.
+`FCALL`/`FCALL_RO`, DUMP/RESTORE, restart persistence, STATS/HELP, KILL with
+Redis-style NOTBUSY/UNKILLABLE safety semantics, and the standalone-safe flags
+`no-writes`, `allow-stale`, `no-cluster`, and `allow-cross-slot-keys`.
+`SCRIPT DEBUG`, exact `allow-oom`, and deeper command-flag/ACL/OOM parity remain.
+
+The current CLIENT slice includes `ID`, `GETNAME`, `SETNAME`, `SETINFO`, `INFO`,
+`LIST`, `LIST ID`, `LIST TYPE NORMAL`, `KILL ID [SKIPME]`, `UNBLOCK
+[TIMEOUT|ERROR]`, and `HELP`. It uses a concurrency-safe connection registry and
+has live Redis differential coverage for multi-client introspection, targeted
+kill/unblock, self-kill, connection survival, invalid IDs/reasons, and tested
+arity/error semantics.
 
 `SORT` / `SORT_RO` support LIST/SET/ZSET sources, numeric and ALPHA ordering,
 BY/LIMIT/GET/ASC/DESC options, string/hash external patterns, BY-constant native
@@ -123,6 +132,7 @@ and 24-byte arena segment descriptors.
 - [x] `EVAL` and `EVALSHA` with Redis-style key/argument splitting.
 - [x] `EVAL_RO` and `EVALSHA_RO` with nested write/replication rejection.
 - [x] `SCRIPT LOAD`, `SCRIPT EXISTS`, and `SCRIPT FLUSH [SYNC|ASYNC]`.
+- [x] `SCRIPT KILL` with safe pre-write cancellation, `NOTBUSY`, and `UNKILLABLE` semantics.
 - [x] Volatile SHA-1 cache populated by `SCRIPT LOAD` and successfully compiled `EVAL` scripts.
 - [x] Lua 5.1-compatible runtime with `KEYS`, `ARGV`, `redis.call`, `redis.pcall`, `redis.error_reply`, `redis.status_reply`, and `redis.sha1hex`.
 - [x] RESP2/Lua conversions for integers, strings, arrays, null/false, status replies, and error replies.
@@ -135,11 +145,26 @@ and 24-byte arena segment descriptors.
 - [x] Function-library restart persistence through the dedicated atomic sidecar.
 - [x] `FUNCTION STATS` / `HELP`.
 - [x] `FUNCTION KILL` with `NOTBUSY`, safe cancellation before the first write boundary, and `UNKILLABLE` after it.
+- [x] Standalone-safe Function flags: `no-writes`, `allow-stale`, `no-cluster`, `allow-cross-slot-keys`.
 - [x] Live Redis differential audit for read-only scripting and Functions core behavior through LIST metadata formatting.
-- [ ] `SCRIPT KILL`, `SCRIPT DEBUG`, and broader SCRIPT subcommand parity.
-- [ ] Broader Function flags beyond `no-writes`.
+- [ ] `SCRIPT DEBUG` with real Redis LDB-style semantics rather than a placeholder.
+- [ ] Exact scoped `allow-oom` memory-admission semantics.
 - [ ] Exact Redis RDB byte compatibility for `FUNCTION DUMP` / `RESTORE` payloads.
 - [ ] Deeper differential audit of command flags, ACL semantics, and OOM/eviction behavior.
+
+### CLIENT compatibility
+
+- [x] `CLIENT ID`, `GETNAME`, `SETNAME`.
+- [x] `CLIENT SETINFO LIB-NAME|LIB-VER`.
+- [x] `CLIENT INFO` and `CLIENT LIST`.
+- [x] `CLIENT LIST ID <id> [<id> ...]` and `CLIENT LIST TYPE NORMAL`.
+- [x] `CLIENT KILL ID <id> [SKIPME YES|NO]`.
+- [x] `CLIENT UNBLOCK <id> [TIMEOUT|ERROR]`.
+- [x] `CLIENT HELP` for the implemented surface.
+- [x] Concurrency-safe registry on main/admin listeners and targeted blocked-client cancellation.
+- [x] Live Redis differential audit plus race/vet/fuzz/build/admin-listener validation.
+- [ ] Advanced tracking/caching/redirection CLIENT features if required by real clients/tooling.
+- [ ] Additional client classes beyond NORMAL when matching topology/features exist.
 
 ### SORT / SORT_RO
 
@@ -230,20 +255,21 @@ and 24-byte arena segment descriptors.
 
 - [x] HyperLogLog: `PFADD`, `PFCOUNT`, `PFMERGE`.
 - [x] Modern GEO: `GEOADD`, `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH`, `GEOSEARCHSTORE`.
-- [x] Lua scripting core including `EVAL_RO` / `EVALSHA_RO` and common `redis.*` bridge.
-- [x] Redis Functions core/management through `FUNCTION KILL`, plus restart persistence.
+- [x] Lua scripting core including `EVAL_RO` / `EVALSHA_RO`, `SCRIPT KILL`, and common `redis.*` bridge.
+- [x] Redis Functions core/management through `FUNCTION KILL`, restart persistence, and the standalone-safe Function flags.
 - [x] `SORT` / `SORT_RO`.
 - [x] `COPY` for DB 0 with `REPLACE`, TTL/type preservation, durability, transactions, OOM safety, and direct Redis differential audit.
-- [ ] Remaining scripting parity/hardening: `SCRIPT KILL/DEBUG`, broader Function flags, command-flag/ACL/OOM parity, and optional Redis-RDB Function payload compatibility.
+- [x] CLIENT management/tooling slice through LIST filters, KILL, and UNBLOCK with direct Redis differential audit.
+- [ ] Remaining scripting parity/hardening: `SCRIPT DEBUG`, exact `allow-oom`, command-flag/ACL/OOM parity, and optional Redis-RDB Function payload compatibility.
 - [ ] Migration/transfer command scope beyond single-node COPY.
 
 ### P2 — client/tooling compatibility
 
-- [ ] RESP3.
-- [ ] CLIENT subcommands needed by major Redis clients.
+- [ ] COMMAND metadata completeness — next target; tracked in issue #90.
 - [ ] CONFIG compatibility needed by common tooling.
 - [ ] ACL/authentication scope.
-- [ ] COMMAND metadata completeness.
+- [ ] RESP3.
+- [ ] Advanced CLIENT tracking/caching/redirection features if required.
 - [ ] Equivalent proactive blocked-client disconnect detection for non-Linux server builds if cross-platform parity is required.
 
 ### P3 — memory/performance validation
