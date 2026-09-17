@@ -39,10 +39,7 @@ func isScriptKillCommand(args [][]byte) bool {
 	return len(args) >= 2 && strings.EqualFold(string(args[0]), "SCRIPT") && strings.EqualFold(string(args[1]), "KILL")
 }
 
-func beginRunningScript(s *Server, args [][]byte) func() {
-	if !isScriptEvalCommand(args) && !isReadOnlyScriptEvalCommand(args) {
-		return func() {}
-	}
+func beginRunningScript(s *Server) func() {
 	ctx, cancel := context.WithCancel(context.Background())
 	entry := &runningScript{ctx: ctx, cancel: cancel}
 	state := runningScriptStateForServer(s)
@@ -93,6 +90,86 @@ func markRunningScriptWrite(s *Server) error {
 	return nil
 }
 
+func (s *Server) executeKillableScripting(args [][]byte) ([]byte, error) {
+	if len(args) < 3 {
+		cmd := "eval"
+		if len(args) > 0 {
+			cmd = strings.ToLower(string(args[0]))
+		}
+		return nil, fmt.Errorf("ERR wrong number of arguments for '%s' command", cmd)
+	}
+	cmd := strings.ToUpper(string(args[0]))
+	readOnly := cmd == "EVAL_RO" || cmd == "EVALSHA_RO"
+	bySHA := cmd == "EVALSHA" || cmd == "EVALSHA_RO"
+	if cmd != "EVAL" && cmd != "EVALSHA" && cmd != "EVAL_RO" && cmd != "EVALSHA_RO" {
+		return nil, fmt.Errorf("ERR unknown command '%s'", cmd)
+	}
+
+	keys, argv, err := parseEvalArguments(args)
+	if err != nil {
+		return nil, err
+	}
+	cache := scriptCacheForServer(s)
+	source := string(args[1])
+	sha := ""
+	if bySHA {
+		sha = strings.ToLower(source)
+		var ok bool
+		source, ok = cache.get(sha)
+		if !ok {
+			return nil, errors.New("NOSCRIPT No matching script. Please use EVAL.")
+		}
+	} else {
+		if err := validateLuaScript(source); err != nil {
+			return nil, fmt.Errorf("ERR Error compiling script (new function): %v", err)
+		}
+		sha = cache.put(source)
+	}
+
+	finish := beginRunningScript(s)
+	defer finish()
+	return s.runKillableLuaScript(source, sha, keys, argv, readOnly)
+}
+
+func (s *Server) runKillableLuaScript(source, sha string, keys, argv [][]byte, readOnly bool) ([]byte, error) {
+	L := newScriptLuaState()
+	defer L.Close()
+
+	ctx, cancel := context.WithTimeout(runningScriptContext(s), scriptExecutionLimit)
+	defer cancel()
+	L.SetContext(ctx)
+	L.SetGlobal("KEYS", luaBytesTable(L, keys))
+	L.SetGlobal("ARGV", luaBytesTable(L, argv))
+	if readOnly {
+		L.SetGlobal("redis", s.luaRedisModuleReadOnly(L))
+	} else {
+		L.SetGlobal("redis", s.luaRedisModuleKillable(L))
+	}
+
+	fn, err := L.LoadString(source)
+	if err != nil {
+		return nil, fmt.Errorf("ERR Error compiling script (new function): %v", err)
+	}
+	L.Push(fn)
+	if err := L.PCall(0, 1, nil); err != nil {
+		if runningScriptWasKilled(s) || errors.Is(ctx.Err(), context.Canceled) {
+			return nil, errScriptKilled
+		}
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return nil, errors.New("ERR Script timed out")
+		}
+		if sha == "" {
+			sha = scriptSHA(source)
+		}
+		return nil, fmt.Errorf("ERR Error running script (call to f_%s): %v", sha, err)
+	}
+	if runningScriptWasKilled(s) {
+		return nil, errScriptKilled
+	}
+	result := L.Get(-1)
+	return luaValueToRESP(result)
+}
+
 func (s *Server) luaRedisModuleKillable(L *lua.LState) *lua.LTable {
 	module := L.NewTable()
 	L.SetFuncs(module, map[string]lua.LGFunction{
@@ -118,7 +195,7 @@ func (s *Server) luaRedisCallKillable(protected bool) lua.LGFunction {
 			}
 			args = append(args, arg)
 		}
-		if scriptCommandForbidden(args) {
+		if scriptCommandForbidden(args) || isReadOnlyScriptEvalCommand(args) {
 			return luaPushCommandError(L, protected, errors.New("ERR This Redis command is not allowed from script"))
 		}
 		if err := queuedCommandValidation(args); err != nil {
