@@ -15,6 +15,17 @@ func isFunctionKillCommand(args [][]byte) bool {
 	return len(args) >= 2 && strings.EqualFold(string(args[0]), "FUNCTION") && strings.EqualFold(string(args[1]), "KILL")
 }
 
+func ensureRunningFunction(s *Server, args [][]byte) func() {
+	state := runningFunctionStateForServer(s)
+	state.mu.RLock()
+	active := state.active != nil
+	state.mu.RUnlock()
+	if active {
+		return func() {}
+	}
+	return beginRunningFunction(s, args)
+}
+
 func scriptCommandWritesDataset(args [][]byte) bool {
 	if len(args) == 0 {
 		return false
