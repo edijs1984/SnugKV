@@ -40,7 +40,7 @@ func TestEvalRORejectsWriteCommands(t *testing.T) {
 func TestEvalROPCallReturnsWriteError(t *testing.T) {
 	s := New(engine.New())
 	got := execute(t, s, "EVAL_RO", "local r=redis.pcall('SET','ro:key','value'); return r.err", "0")
-	want := "$57\r\nERR Write commands are not allowed from read-only scripts.\r\n"
+	want := "$58\r\nERR Write commands are not allowed from read-only scripts.\r\n"
 	if got != want {
 		t.Fatalf("EVAL_RO redis.pcall write error = %q, want %q", got, want)
 	}
@@ -54,7 +54,7 @@ func TestEvalRORejectsPublishSideEffects(t *testing.T) {
 	for _, command := range []string{"PUBLISH", "SPUBLISH"} {
 		script := "local r=redis.pcall('" + command + "','channel','message'); return r.err"
 		got := execute(t, s, "EVAL_RO", script, "0")
-		want := "$57\r\nERR Write commands are not allowed from read-only scripts.\r\n"
+		want := "$58\r\nERR Write commands are not allowed from read-only scripts.\r\n"
 		if got != want {
 			t.Fatalf("%s from EVAL_RO = %q, want %q", command, got, want)
 		}
