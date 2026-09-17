@@ -18,6 +18,7 @@ func (s *Server) executePressureCommand(args [][]byte) ([]byte, error) {
 		if isFunctionCallCommand(args) {
 			leave := enterScriptExecution(s)
 			defer leave()
+			return s.executeKillableFunctionCall(args)
 		}
 		return s.executeFunctionCommand(args)
 	}

@@ -60,7 +60,7 @@ for current boundaries, [PLAN.md](PLAN.md) for the remaining roadmap, and
 - Pub/Sub: `SUBSCRIBE`, `UNSUBSCRIBE`, `PSUBSCRIBE`, `PUNSUBSCRIBE`, `PUBLISH`, `SSUBSCRIBE`, `SUNSUBSCRIBE`, `SPUBLISH`, and `PUBSUB` classic/sharded introspection.
 - Transactions: `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH` with cross-client optimistic locking and EXEC error semantics.
 - Scripting: `EVAL`, `EVALSHA`, `EVAL_RO`, `EVALSHA_RO`, `SCRIPT LOAD`, `SCRIPT EXISTS`, `SCRIPT FLUSH`; Lua `KEYS`/`ARGV`, `redis.call`, `redis.pcall`, `redis.error_reply`, `redis.status_reply`, and `redis.sha1hex` are available.
-- Functions: `FUNCTION LOAD [REPLACE]`, `FUNCTION LIST [LIBRARYNAME pattern] [WITHCODE]`, `FUNCTION DELETE`, `FUNCTION FLUSH [SYNC|ASYNC]`, `FUNCTION DUMP`, `FUNCTION RESTORE <payload> [APPEND|REPLACE|FLUSH]`, `FUNCTION STATS`, `FUNCTION HELP`, `FCALL`, and `FCALL_RO`; `redis.register_function()` supports positional registration and table registration with the `no-writes` flag.
+- Functions: `FUNCTION LOAD [REPLACE]`, `FUNCTION LIST [LIBRARYNAME pattern] [WITHCODE]`, `FUNCTION DELETE`, `FUNCTION FLUSH [SYNC|ASYNC]`, `FUNCTION DUMP`, `FUNCTION RESTORE <payload> [APPEND|REPLACE|FLUSH]`, `FUNCTION STATS`, `FUNCTION KILL`, `FUNCTION HELP`, `FCALL`, and `FCALL_RO`; `redis.register_function()` supports positional registration and table registration with the `no-writes` flag.
 - JSON: `JSON.SET`, `JSON.GET`, `JSON.TYPE`, `JSON.DEL`.
 - Administration: `FLUSHDB`, `FLUSHALL`, `MEMORY`, `SNUG.ENCODING`, `SNUG.MEMORY`, `SNUG.STATS`, `SNUG.COMPACT`, `SNUG.POLICY`, `SNUG.AOFREWRITE`, `SNUG.SHAPES`, `SNUG.CANDIDATES`, `SNUG.TYPE`.
 
@@ -104,6 +104,12 @@ the live function name, original command vector, and elapsed `duration_ms`.
 `FUNCTION HELP` exposes the Redis-style Functions subcommand help surface. See
 [docs/FUNCTION-STATS-HELP.md](docs/FUNCTION-STATS-HELP.md).
 
+`FUNCTION KILL` can cancel a currently running FCALL/FCALL_RO before the
+invocation crosses its first dataset-write boundary. Once a writable nested
+command has been dispatched the invocation becomes `UNKILLABLE`, matching Redis's
+safety rule against stopping a function after partial mutation. Idle KILL returns
+`NOTBUSY`. See [docs/FUNCTION-KILL.md](docs/FUNCTION-KILL.md).
+
 With logical AOF enabled, resulting database changes from one writable EVAL or
 FCALL are persisted as one frame. Writes completed before a later Lua runtime
 error remain applied and durable, matching Redis's non-rollback execution model.
@@ -113,10 +119,9 @@ configured persistence file. Function-local Lua VM variables are reconstructed
 from source and therefore reset after restore/restart; arbitrary live VM state is
 not serialized.
 
-Remaining scripting/function management gaps include `FUNCTION KILL`, `SCRIPT
-KILL`/`DEBUG`, the broader Redis function-flag surface, exact Redis RDB byte
-compatibility for Function DUMP/RESTORE payloads, and full Redis
-Lua/ACL/command-flag parity.
+Remaining scripting/function management gaps include `SCRIPT KILL`/`DEBUG`, the
+broader Redis function-flag surface, exact Redis RDB byte compatibility for
+Function DUMP/RESTORE payloads, and full Redis Lua/ACL/command-flag parity.
 
 ## SORT compatibility
 

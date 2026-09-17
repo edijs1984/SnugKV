@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"sync"
@@ -8,9 +9,13 @@ import (
 )
 
 type runningFunction struct {
-	name    string
-	command [][]byte
-	started time.Time
+	name       string
+	command    [][]byte
+	started    time.Time
+	ctx        context.Context
+	cancel     context.CancelFunc
+	writeDirty bool
+	killed     bool
 }
 
 type runningFunctionState struct {
@@ -45,10 +50,13 @@ func beginRunningFunction(s *Server, args [][]byte) func() {
 	if fn := functionRegistryForServer(s).lookup(name); fn != nil {
 		name = fn.name
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	entry := &runningFunction{
 		name:    name,
 		command: cloneFunctionCommand(args),
 		started: time.Now(),
+		ctx:     ctx,
+		cancel:  cancel,
 	}
 	state := runningFunctionStateForServer(s)
 	state.mu.Lock()
@@ -60,7 +68,25 @@ func beginRunningFunction(s *Server, args [][]byte) func() {
 			state.active = nil
 		}
 		state.mu.Unlock()
+		cancel()
 	}
+}
+
+func runningFunctionContext(s *Server) context.Context {
+	state := runningFunctionStateForServer(s)
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+	if state.active == nil {
+		return context.Background()
+	}
+	return state.active.ctx
+}
+
+func runningFunctionWasKilled(s *Server) bool {
+	state := runningFunctionStateForServer(s)
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+	return state.active != nil && state.active.killed
 }
 
 func isFunctionStatsCommand(args [][]byte) bool {
@@ -179,6 +205,10 @@ func (s *Server) executeFunctionIntrospection(args [][]byte) ([]byte, bool, erro
 	}
 	if isFunctionHelpCommand(args) {
 		response, err := s.executeFunctionHelp(args)
+		return response, true, err
+	}
+	if isFunctionKillCommand(args) {
+		response, err := s.executeFunctionKill(args)
 		return response, true, err
 	}
 	return nil, false, nil
