@@ -328,22 +328,52 @@ func (s *TCPServer) executeClientConnectionCommand(
 		return true, formatBulkString([]byte(line)), nil
 
 	case "LIST":
-		if len(args) != 2 {
-			return true, nil, errors.New(
-				"ERR syntax error",
-			)
-		}
-
 		now := time.Now()
 		snapshots := s.clientSnapshots()
 
-		var b strings.Builder
-		for _, snapshot := range snapshots {
-			b.WriteString(formatClientInfo(snapshot, now))
-			b.WriteByte('\n')
+		if len(args) == 2 {
+			return true, formatClientListResponse(snapshots, now), nil
 		}
 
-		return true, formatBulkString([]byte(b.String())), nil
+		if len(args) >= 4 && strings.EqualFold(string(args[2]), "ID") {
+			ids := make(map[uint64]struct{}, len(args)-3)
+
+			for _, raw := range args[3:] {
+				id, err := strconv.ParseUint(string(raw), 10, 64)
+				if err != nil {
+					return true, nil, errors.New(
+						"ERR value is not an integer or out of range",
+					)
+				}
+
+				ids[id] = struct{}{}
+			}
+
+			filtered := make([]clientSnapshot, 0, len(snapshots))
+
+			for _, snapshot := range snapshots {
+				if _, ok := ids[snapshot.id]; ok {
+					filtered = append(filtered, snapshot)
+				}
+			}
+
+			return true, formatClientListResponse(filtered, now), nil
+		}
+
+		if len(args) == 4 && strings.EqualFold(string(args[2]), "TYPE") {
+			typeName := strings.ToUpper(string(args[3]))
+
+			switch typeName {
+			case "NORMAL":
+				return true, formatClientListResponse(snapshots, now), nil
+			default:
+				return true, nil, errors.New(
+					"ERR Unknown client type '" + string(args[3]) + "'",
+				)
+			}
+		}
+
+		return true, nil, errors.New("ERR syntax error")
 
 	case "KILL":
 		return s.executeClientKill(session, args)
@@ -373,6 +403,12 @@ func (s *TCPServer) executeClientKill(
 	current *clientSession,
 	args [][]byte,
 ) (bool, []byte, error) {
+	if len(args) == 2 {
+		return true, nil, errors.New(
+			"ERR wrong number of arguments for 'client|kill' command",
+		)
+	}
+
 	if len(args) < 4 {
 		return true, nil, errors.New(
 			"ERR syntax error",
@@ -479,6 +515,20 @@ func (s *TCPServer) executeClientUnblock(
 	}
 
 	return true, integer(1), nil
+}
+
+func formatClientListResponse(
+	snapshots []clientSnapshot,
+	now time.Time,
+) []byte {
+	var b strings.Builder
+
+	for _, snapshot := range snapshots {
+		b.WriteString(formatClientInfo(snapshot, now))
+		b.WriteByte('\n')
+	}
+
+	return formatBulkString([]byte(b.String()))
 }
 
 func formatClientInfo(

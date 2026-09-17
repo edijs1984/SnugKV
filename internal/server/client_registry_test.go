@@ -307,3 +307,96 @@ func TestClientBlockingTimeoutResponses(t *testing.T) {
 		})
 	}
 }
+
+func TestClientListIDFilter(t *testing.T) {
+	s := &TCPServer{
+		clients:     make(map[uint64]*clientSession),
+		connections: make(map[net.Conn]struct{}),
+	}
+
+	c1, a1, b1 := testClientSession(101, "one")
+	defer a1.Close()
+	defer b1.Close()
+
+	c2, a2, b2 := testClientSession(102, "two")
+	defer a2.Close()
+	defer b2.Close()
+
+	s.registerClient(c1)
+	s.registerClient(c2)
+
+	_, response, err := s.executeClientConnectionCommand(
+		c1,
+		clientArgs("CLIENT", "LIST", "ID", "102"),
+	)
+	if err != nil {
+		t.Fatalf("CLIENT LIST ID: %v", err)
+	}
+
+	text := string(response)
+
+	if strings.Contains(text, "id=101") {
+		t.Fatalf("CLIENT LIST ID unexpectedly included id=101: %q", text)
+	}
+
+	if !strings.Contains(text, "id=102") {
+		t.Fatalf("CLIENT LIST ID missing id=102: %q", text)
+	}
+}
+
+func TestClientListTypeNormal(t *testing.T) {
+	s := &TCPServer{
+		clients:     make(map[uint64]*clientSession),
+		connections: make(map[net.Conn]struct{}),
+	}
+
+	c, a, b := testClientSession(201, "normal")
+	defer a.Close()
+	defer b.Close()
+
+	s.registerClient(c)
+
+	_, response, err := s.executeClientConnectionCommand(
+		c,
+		clientArgs("CLIENT", "LIST", "TYPE", "NORMAL"),
+	)
+	if err != nil {
+		t.Fatalf("CLIENT LIST TYPE NORMAL: %v", err)
+	}
+
+	if !strings.Contains(string(response), "id=201") {
+		t.Fatalf("CLIENT LIST TYPE NORMAL missing client: %q", response)
+	}
+}
+
+func TestClientKillWrongArity(t *testing.T) {
+	s := &TCPServer{
+		clients:     make(map[uint64]*clientSession),
+		connections: make(map[net.Conn]struct{}),
+	}
+
+	c, a, b := testClientSession(301, "")
+	defer a.Close()
+	defer b.Close()
+
+	s.registerClient(c)
+
+	_, _, err := s.executeClientConnectionCommand(
+		c,
+		clientArgs("CLIENT", "KILL"),
+	)
+
+	if err == nil {
+		t.Fatal("expected CLIENT KILL arity error")
+	}
+
+	want := "ERR wrong number of arguments for 'client|kill' command"
+
+	if err.Error() != want {
+		t.Fatalf(
+			"CLIENT KILL error = %q, want %q",
+			err.Error(),
+			want,
+		)
+	}
+}
