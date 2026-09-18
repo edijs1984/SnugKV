@@ -1,8 +1,11 @@
 package server
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -257,6 +260,12 @@ func (s *Server) executeACL(
 
 		return integer(s.acl.DeleteUsers(names...)), nil
 
+	case "DRYRUN":
+		return s.executeACLDryRun(args)
+
+	case "GENPASS":
+		return executeACLGenPass(args)
+
 	case "HELP":
 		if len(args) != 2 {
 			return nil, errors.New(
@@ -417,4 +426,149 @@ func aclHelpReply() []byte {
 	}
 
 	return array(items...)
+}
+
+func aclDryRunCommandAllowed(user *ACLUser, command string) bool {
+	command = strings.ToLower(command)
+
+	if allowed, exists := user.CommandAllow[command]; exists {
+		return allowed
+	}
+
+	return user.AllCommands
+}
+
+func aclDryRunKeyAllowed(user *ACLUser, key string) bool {
+	if user.AllKeys {
+		return true
+	}
+
+	for _, pattern := range user.KeyPatterns {
+		if aclGlobMatch(pattern, key) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (s *Server) executeACLDryRun(args [][]byte) ([]byte, error) {
+	// ACL DRYRUN <username> <command> [<arg> ...]
+	if len(args) < 4 {
+		return nil, errors.New(
+			"ERR wrong number of arguments for 'acl|dryrun' command",
+		)
+	}
+
+	username := string(args[2])
+
+	user, ok := s.acl.GetUser(username)
+	if !ok {
+		return nil, fmt.Errorf(
+			"ERR User '%s' not found",
+			username,
+		)
+	}
+
+	commandArgs := args[3:]
+
+	if len(commandArgs) == 0 {
+		return nil, errors.New(
+			"ERR wrong number of arguments for 'acl|dryrun' command",
+		)
+	}
+
+	commandName := strings.ToUpper(string(commandArgs[0]))
+
+	info, exists := commandTable[commandName]
+	if !exists {
+		return nil, fmt.Errorf(
+			"ERR Command '%s' not found",
+			commandName,
+		)
+	}
+
+	if len(commandArgs) < info.min ||
+		(info.max > 0 && len(commandArgs) > info.max) {
+		return nil, fmt.Errorf(
+			"ERR wrong number of arguments for '%s' command",
+			strings.ToLower(commandName),
+		)
+	}
+
+	canonical := aclCanonicalCommand(commandArgs)
+
+	// Redis DRYRUN evaluates the user's ACL rules even when that user is
+	// currently disabled. It does not perform authentication-state checks.
+	if !aclDryRunCommandAllowed(user, canonical) {
+		return formatBulkString([]byte(fmt.Sprintf(
+			"User %s has no permissions to run the '%s' command",
+			username,
+			canonical,
+		))), nil
+	}
+
+	refs, err := commandKeys(commandArgs)
+	if err == nil {
+		for _, ref := range refs {
+			key := string(ref.value)
+
+			if !aclDryRunKeyAllowed(user, key) {
+				return formatBulkString([]byte(fmt.Sprintf(
+					"User %s has no permissions to access the '%s' key",
+					username,
+					key,
+				))), nil
+			}
+		}
+	}
+
+	return []byte("+OK\r\n"), nil
+}
+
+func executeACLGenPass(args [][]byte) ([]byte, error) {
+	if len(args) > 3 {
+		return nil, errors.New(
+			"ERR unknown subcommand or wrong number of arguments for 'GENPASS'. Try ACL HELP.",
+		)
+	}
+
+	bits := 256
+
+	if len(args) == 3 {
+		parsed, err := strconv.Atoi(string(args[2]))
+		if err != nil {
+			return nil, errors.New(
+				"ERR value is not an integer or out of range",
+			)
+		}
+
+		bits = parsed
+	}
+
+	if bits <= 0 || bits > 4096 {
+		return nil, errors.New(
+			"ERR ACL GENPASS argument must be the number of bits for the output password, a positive number up to 4096",
+		)
+	}
+
+	// Redis exposes generated passwords as hexadecimal. Allocate enough
+	// random bytes to provide at least the requested number of bits, then
+	// truncate the textual representation to ceil(bits / 4) hex digits.
+	byteCount := (bits + 7) / 8
+	hexChars := (bits + 3) / 4
+
+	random := make([]byte, byteCount)
+
+	if _, err := rand.Read(random); err != nil {
+		return nil, errors.New("ERR secure random generation failed")
+	}
+
+	encoded := hex.EncodeToString(random)
+
+	if len(encoded) > hexChars {
+		encoded = encoded[:hexChars]
+	}
+
+	return formatBulkString([]byte(encoded)), nil
 }

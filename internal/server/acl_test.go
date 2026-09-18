@@ -1,6 +1,9 @@
 package server
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestACLDefaultUser(t *testing.T) {
 	acl := NewACL()
@@ -438,5 +441,255 @@ func TestACLQueuedCommandRecheckedAtExec(t *testing.T) {
 
 	if err.Error() != want {
 		t.Fatalf("got %q want %q", err.Error(), want)
+	}
+}
+
+func TestACLDryRunAllowed(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("snugdry", []string{
+		"on",
+		"nopass",
+		"+get",
+		"resetkeys",
+		"~allowed:*",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Server{acl: acl}
+
+	got, err := s.executeACLDryRun([][]byte{
+		[]byte("ACL"),
+		[]byte("DRYRUN"),
+		[]byte("snugdry"),
+		[]byte("GET"),
+		[]byte("allowed:key"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(got) != "+OK\r\n" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestACLDryRunDeniedCommand(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("snugdry", []string{
+		"on",
+		"nopass",
+		"+get",
+		"allkeys",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Server{acl: acl}
+
+	got, err := s.executeACLDryRun([][]byte{
+		[]byte("ACL"),
+		[]byte("DRYRUN"),
+		[]byte("snugdry"),
+		[]byte("SET"),
+		[]byte("allowed:key"),
+		[]byte("value"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := "$56\r\nUser snugdry has no permissions to run the 'set' command\r\n"
+
+	if string(got) != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
+func TestACLDryRunDeniedKey(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("snugdry", []string{
+		"on",
+		"nopass",
+		"+get",
+		"resetkeys",
+		"~allowed:*",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Server{acl: acl}
+
+	got, err := s.executeACLDryRun([][]byte{
+		[]byte("ACL"),
+		[]byte("DRYRUN"),
+		[]byte("snugdry"),
+		[]byte("GET"),
+		[]byte("denied:key"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := "$62\r\nUser snugdry has no permissions to access the 'denied:key' key\r\n"
+
+	if string(got) != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
+func TestACLDryRunDisabledUserStillEvaluatesRules(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("snugdry", []string{
+		"off",
+		"nopass",
+		"+get",
+		"allkeys",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Server{acl: acl}
+
+	got, err := s.executeACLDryRun([][]byte{
+		[]byte("ACL"),
+		[]byte("DRYRUN"),
+		[]byte("snugdry"),
+		[]byte("GET"),
+		[]byte("allowed:key"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(got) != "+OK\r\n" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestACLDryRunMissingUser(t *testing.T) {
+	s := &Server{acl: NewACL()}
+
+	_, err := s.executeACLDryRun([][]byte{
+		[]byte("ACL"),
+		[]byte("DRYRUN"),
+		[]byte("missing"),
+		[]byte("GET"),
+		[]byte("key"),
+	})
+
+	if err == nil {
+		t.Fatal("expected missing-user error")
+	}
+
+	if got, want := err.Error(), "ERR User 'missing' not found"; got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
+func TestACLGenPassLengths(t *testing.T) {
+	tests := []struct {
+		args [][]byte
+		want int
+	}{
+		{
+			args: [][]byte{
+				[]byte("ACL"),
+				[]byte("GENPASS"),
+			},
+			want: 64,
+		},
+		{
+			args: [][]byte{
+				[]byte("ACL"),
+				[]byte("GENPASS"),
+				[]byte("1"),
+			},
+			want: 1,
+		},
+		{
+			args: [][]byte{
+				[]byte("ACL"),
+				[]byte("GENPASS"),
+				[]byte("4"),
+			},
+			want: 1,
+		},
+		{
+			args: [][]byte{
+				[]byte("ACL"),
+				[]byte("GENPASS"),
+				[]byte("8"),
+			},
+			want: 2,
+		},
+		{
+			args: [][]byte{
+				[]byte("ACL"),
+				[]byte("GENPASS"),
+				[]byte("16"),
+			},
+			want: 4,
+		},
+	}
+
+	for _, tc := range tests {
+		reply, err := executeACLGenPass(tc.args)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// RESP bulk:
+		// $<length>\r\n<payload>\r\n
+		parts := strings.Split(string(reply), "\r\n")
+		if len(parts) < 3 {
+			t.Fatalf("invalid bulk reply %q", reply)
+		}
+
+		payload := parts[1]
+
+		if len(payload) != tc.want {
+			t.Fatalf(
+				"GENPASS payload length=%d want=%d payload=%q",
+				len(payload),
+				tc.want,
+				payload,
+			)
+		}
+
+		for _, c := range payload {
+			if !strings.ContainsRune("0123456789abcdef", c) {
+				t.Fatalf("non-hex GENPASS output %q", payload)
+			}
+		}
+	}
+}
+
+func TestACLGenPassInvalidBits(t *testing.T) {
+	for _, bits := range []string{"0", "-1", "4097"} {
+		_, err := executeACLGenPass([][]byte{
+			[]byte("ACL"),
+			[]byte("GENPASS"),
+			[]byte(bits),
+		})
+
+		if err == nil {
+			t.Fatalf("GENPASS %s unexpectedly succeeded", bits)
+		}
+
+		want := "ERR ACL GENPASS argument must be the number of bits for the output password, a positive number up to 4096"
+
+		if err.Error() != want {
+			t.Fatalf(
+				"GENPASS %s got %q want %q",
+				bits,
+				err.Error(),
+				want,
+			)
+		}
 	}
 }
