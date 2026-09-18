@@ -130,7 +130,7 @@ func TestFunctionNameCollisionAndValidation(t *testing.T) {
 	if _, err := s.Execute([][]byte{[]byte("FUNCTION"), []byte("LOAD"), []byte("redis.register_function('x', function() return 1 end)")}); err == nil || !strings.Contains(err.Error(), "Missing library metadata") {
 		t.Fatalf("missing metadata error = %v", err)
 	}
-	unsupported := "#!lua name=badflag\nredis.register_function{function_name='x',callback=function() return 1 end,flags={'allow-oom'}}"
+	unsupported := "#!lua name=badflag\nredis.register_function{function_name='x',callback=function() return 1 end,flags={'future-flag'}}"
 	if _, err := s.Execute([][]byte{[]byte("FUNCTION"), []byte("LOAD"), []byte(unsupported)}); err == nil || !strings.Contains(err.Error(), "unsupported function flag") {
 		t.Fatalf("unsupported flag error = %v", err)
 	}
