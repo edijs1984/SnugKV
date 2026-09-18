@@ -5,7 +5,7 @@ const HOST = process.env.REDIS_HOST || "127.0.0.1";
 const PORT = Number(process.env.REDIS_PORT || 6380);
 const TARGET = process.env.TARGET_NAME || "snugkv";
 const URL = `redis://${HOST}:${PORT}`;
-const prefix = `compat:resp3:node:${Date.now()}:${Math.random().toString(16).slice(2)}`;
+const basePrefix = `compat:resp3:node:${Date.now()}:${Math.random().toString(16).slice(2)}`;
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -18,6 +18,7 @@ function asArray(value) {
 }
 
 async function exerciseRaw(client, label, send) {
+  const prefix = `${basePrefix}:${label}`;
   assert((await send(["PING"])) === "PONG", `${label}: PING failed`);
 
   await send(["SET", `${prefix}:string`, "hello"]);
@@ -65,6 +66,7 @@ async function exerciseRaw(client, label, send) {
 }
 
 async function testIORedis() {
+  const prefix = `${basePrefix}:ioredis`;
   const client = new Redis({
     host: HOST,
     port: PORT,
@@ -95,6 +97,7 @@ async function testIORedis() {
 }
 
 async function testNodeRedis() {
+  const prefix = `${basePrefix}:node-redis`;
   const client = createClient({
     url: URL,
     RESP: 3,
@@ -124,6 +127,7 @@ async function testNodeRedis() {
 }
 
 async function reconnect() {
+  const prefix = `${basePrefix}:reconnect`;
   const one = createClient({ url: URL, RESP: 3, socket: { reconnectStrategy: false } });
   await one.connect();
   await one.set(`${prefix}:reconnect`, "survives");
