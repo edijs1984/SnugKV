@@ -543,7 +543,11 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			unblock := clientSession.beginBlocking()
 
 			cancel, stopMerge := mergeClientCancel(disconnected, unblock)
-			result, err = s.server.ExecuteWithCancel(msg, cancel)
+			result, err = s.server.executeWithCancelForSession(
+				msg,
+				cancel,
+				authSession,
+			)
 
 			stopMerge()
 			stopWatch()
@@ -562,7 +566,10 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				return
 			}
 		} else {
-			result, err = s.server.Execute(msg)
+			result, err = s.server.executeForSession(
+				msg,
+				authSession,
+			)
 		}
 		if err != nil {
 			result = errorResponse(err)
