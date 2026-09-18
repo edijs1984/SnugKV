@@ -307,7 +307,8 @@ Details: `docs/ACL-COMPATIBILITY.md`.
 - [ ] Deeper dynamic SORT/script/Function ACL edge audits.
 - [x] Core RESP3 protocol support and Redis 8.2 differential validation.
 - [x] Broad Redis 8.2 RESP3 command-shape differential sweep across the implemented surface.
-- [ ] RESP3 client-library smoke coverage and attribute-frame support if required.
+- [x] RESP3 client-library smoke coverage across ioredis 6, node-redis 6, redis-py, and go-redis v9, validated against both SnugKV and Redis 8.2.
+- [ ] RESP3 attribute-frame support if future supported commands require it.
 - [ ] Advanced CLIENT tracking/caching/redirection features if required.
 - [ ] Equivalent proactive blocked-client disconnect detection for non-Linux server builds if cross-platform parity is required.
 

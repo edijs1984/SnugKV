@@ -110,6 +110,7 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Verified
 
+- Real-client RESP3 smoke coverage with ioredis 6, node-redis 6 (including reconnect), redis-py, and go-redis v9. The same harness passes against SnugKV and the Redis 8.2 oracle.
 - Redis 8.2 Streams differential audit covering explicit/automatic/partial IDs,
   range bounds, exact/approximate trim grammar, consumer-group creation/SETID/
   ENTRIESREAD/lag, XREADGROUP/XPENDING, XCLAIM/XAUTOCLAIM, XINFO, consumer
