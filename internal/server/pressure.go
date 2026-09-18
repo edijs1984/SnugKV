@@ -25,6 +25,37 @@ func (s *Server) rejectDenyOOMCommand(args [][]byte) error {
 	return nil
 }
 
+func (s *Server) withNonDenyOOMBypass(
+	args [][]byte,
+	run func() ([]byte, error),
+) ([]byte, error) {
+	if len(args) == 0 || s.eviction != "noeviction" {
+		return run()
+	}
+
+	name := strings.ToUpper(string(args[0]))
+	if commandDenyOOM(name) {
+		return run()
+	}
+
+	memory := s.store.Memory()
+	if memory.MaxBytes == 0 || memory.AccountedBytes <= memory.MaxBytes {
+		return run()
+	}
+
+	// Redis allows commands without the denyoom flag to execute while already
+	// over maxmemory. Some SnugKV data-structure rewrites may temporarily need
+	// allocation even for logically shrinking/non-growing commands (for example
+	// LPOP or RENAME). FCALL/EXEC command execution is serialized under
+	// durableMu, so this temporary admission bypass is not observable by an
+	// unrelated command.
+	maxMemory := s.store.MaxMemory()
+	s.store.SetMaxMemory(0)
+	defer s.store.SetMaxMemory(maxMemory)
+
+	return run()
+}
+
 func (s *Server) executePressureCommand(args [][]byte) ([]byte, error) {
 	if len(args) > 0 && strings.EqualFold(string(args[0]), "FUNCTION") {
 		return s.executeFunctionTopLevel(args)
@@ -129,7 +160,12 @@ func (s *Server) executePressureMode(args [][]byte, journalEvictions bool) ([]by
 		return nil, err
 	}
 
-	result, err := s.executePressureCommand(args)
+	result, err := s.withNonDenyOOMBypass(
+		args,
+		func() ([]byte, error) {
+			return s.executePressureCommand(args)
+		},
+	)
 	if !errors.Is(err, engine.ErrOOM) || s.eviction == "" || s.eviction == "noeviction" {
 		return result, err
 	}
