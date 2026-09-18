@@ -40,6 +40,13 @@ differential edge-case audit remains useful.
 
 ## Recently completed
 
+- Broad RESP3 Redis 8.2 structural sweep: ZSET score doubles/pair replies, GEO
+  coordinate doubles, XREAD/XREADGROUP maps, XINFO maps, FUNCTION STATS maps,
+  CLIENT INFO verbatim strings, CONFIG GET maps, and null-bearing replies all
+  matched the Redis oracle. The final structural diff contained only expected
+  HELLO module metadata and SCAN dataset/order differences. The sweep also exposed
+  and fixed independent XINFO GROUPS entries-read/lag inference semantics.
+
 - Core RESP3 protocol support: per-connection `HELLO 3` / `HELLO 2` switching,
   RESP3 null/map/set/double/verbatim shapes for the audited surface, nested
   COMMAND INFO and ACL GETUSER conversions, and RESP3 Pub/Sub push frames with
@@ -429,7 +436,7 @@ when evaluating CPU tradeoffs.
 
 ## Remaining engineering work
 
-1. Broader RESP3 command-shape/attribute/client-library differential hardening.
+1. Optional RESP3 client-library smoke coverage and attribute-frame support if required.
 2. Deeper dynamic SORT/script/Function ACL edge audits.
 3. `SCRIPT DEBUG`, exact `allow-oom`, deeper command-flag/OOM semantics, and
    optional Redis-RDB Function payload parity.
