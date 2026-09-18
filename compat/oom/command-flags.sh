@@ -23,25 +23,44 @@ cleanup() {
 }
 trap cleanup EXIT
 
+expect_raw() {
+  local expected="$1"
+  shift
+  local got
+  got="$(redis "$@" 2>&1 || true)"
+  if [[ "$got" != "$expected" ]]; then
+    echo "HARNESS SETUP FAILURE: redis $*" >&2
+    echo "  got:      $got" >&2
+    echo "  expected: $expected" >&2
+    exit 1
+  fi
+}
+
 prepare() {
   # Seed from a known non-OOM state regardless of the server's incoming
   # maxmemory setting. Previous OOM audits may intentionally leave a tiny
   # runtime maxmemory configured.
-  redis CONFIG SET maxmemory 0 >/dev/null
-  redis CONFIG SET maxmemory-policy noeviction >/dev/null
-  redis FLUSHDB >/dev/null
+  expect_raw "OK" CONFIG SET maxmemory 0
+  expect_raw "0" CONFIG GET maxmemory
+  expect_raw "OK" CONFIG SET maxmemory-policy noeviction
+  expect_raw "OK" FLUSHDB
 
-  redis SET oom:str value >/dev/null
-  redis SET oom:counter 1 >/dev/null
-  redis SET oom:expire value EX 3600 >/dev/null
-  redis HSET oom:hash field value >/dev/null
-  redis SADD oom:set member >/dev/null
-  redis RPUSH oom:list a b >/dev/null
-  redis ZADD oom:zset 1 member >/dev/null
+  expect_raw "OK" SET oom:str value
+  expect_raw "OK" SET oom:counter 1
+  expect_raw "OK" SET oom:expire value EX 3600
+  expect_raw "1" HSET oom:hash field value
+  expect_raw "1" SADD oom:set member
+  expect_raw "2" RPUSH oom:list a b
+  expect_raw "1" ZADD oom:zset 1 member
   redis XADD oom:stream 1-0 field value >/dev/null
-  redis PFADD oom:hll member >/dev/null
-  redis RPUSH oom:sort 2 1 >/dev/null
-  redis SET oom:copy-src value >/dev/null
+  expect_raw "1" PFADD oom:hll member
+  expect_raw "2" RPUSH oom:sort 2 1
+  expect_raw "OK" SET oom:copy-src value
+
+  expect_raw "1" EXISTS oom:str
+  expect_raw "1" EXISTS oom:hash
+  expect_raw "1" EXISTS oom:list
+  expect_raw "1" EXISTS oom:stream
 }
 
 enter_oom() {
