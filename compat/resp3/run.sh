@@ -19,7 +19,11 @@ echo
 echo "== redis-py =="
 (
   cd "$ROOT/compat/python"
-  REDIS_HOST="$HOST" REDIS_PORT="$PORT" TARGET_NAME="$TARGET" python3 resp3_smoke.py
+  PYTHON="python3"
+  if [[ -x ".venv/bin/python" ]]; then
+    PYTHON=".venv/bin/python"
+  fi
+  REDIS_HOST="$HOST" REDIS_PORT="$PORT" TARGET_NAME="$TARGET" "$PYTHON" resp3_smoke.py
 )
 
 echo
