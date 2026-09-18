@@ -45,7 +45,7 @@ for current boundaries, [PLAN.md](PLAN.md) for the remaining roadmap, and
 ## Supported command surface
 
 - Connection: `PING`, `ECHO`, `QUIT`, `SELECT 0`, `HELLO 2`, `INFO`, `DBSIZE`, `COMMAND`; CLIENT management/introspection includes `CLIENT ID`, `GETNAME`, `SETNAME`, `SETINFO`, `INFO`, `LIST`, `LIST ID`, `LIST TYPE NORMAL`, `KILL ID`, `UNBLOCK`, and `HELP`.
-- Authentication / ACL: `AUTH`; `ACL WHOAMI`, `USERS`, `GETUSER`, `LIST`, `SETUSER`, `DELUSER`, `CAT`, `DRYRUN`, `GENPASS`, `LOG`, `SAVE`, `LOAD`, and `HELP`; command/category/key-pattern authorization, transaction re-authorization, ACL logging, and optional ACL-file persistence/startup restore are implemented.
+- Authentication / ACL: `AUTH`; `ACL WHOAMI`, `USERS`, `GETUSER`, `LIST`, `SETUSER`, `DELUSER`, `CAT`, `DRYRUN`, `GENPASS`, `LOG`, `SAVE`, `LOAD`, and `HELP`; command/category, key-pattern, channel-pattern, selector authorization, transaction re-authorization, ACL logging, and optional ACL-file persistence/startup restore are implemented.
 - Keys: `DEL`, `UNLINK`, `EXISTS`, `TYPE`, `TOUCH`, `KEYS`, `SCAN`, `RANDOMKEY`, `RENAME`, `RENAMENX`, `COPY`.
 - Strings: `SET`, `GET`, `GETSET`, `GETDEL`, `GETEX`, `SETNX`, `SETEX`, `PSETEX`, `MSET`, `MSETNX`, `MGET`, `APPEND`, `STRLEN`, `GETRANGE`, `SETRANGE`.
 - Numeric: `INCR`, `INCRBY`, `DECR`, `DECRBY`, `INCRBYFLOAT`.
@@ -151,24 +151,32 @@ Advanced CLIENT tracking/caching/redirection features are not implemented yet.
 
 ## Authentication and ACL compatibility
 
-SnugKV implements Redis-style username/password authentication plus the core ACL
-management surface: `AUTH`, `ACL WHOAMI`, `USERS`, `GETUSER`, `LIST`,
-`SETUSER`, `DELUSER`, `CAT`, `DRYRUN`, `GENPASS`, `LOG`, `SAVE`,
-`LOAD`, and `HELP`. Command authorization supports explicit commands and
-Redis 8.2 command categories, key authorization reuses SnugKV's command-key
-metadata (including dynamic-key commands), and ACL failures while queuing MULTI
-mark the transaction dirty. Queued commands are authorized again at EXEC time so
-ACL rule changes take effect before execution.
+SnugKV implements Redis-style username/password authentication plus the audited
+single-node ACL management and enforcement surface: `AUTH`, `ACL WHOAMI`,
+`USERS`, `GETUSER`, `LIST`, `SETUSER`, `DELUSER`, `CAT`, `DRYRUN`,
+`GENPASS`, `LOG`, `SAVE`, `LOAD`, and `HELP`. Authorization covers
+explicit commands, Redis 8.2 command categories, key patterns, Pub/Sub channel
+patterns, and ACL selectors. Selector evaluation preserves Redis's rule-set
+semantics: the root rule set or one complete selector must authorize the command,
+all referenced keys, and channels together.
 
-`ACL LOG` records authentication, command, and key denials, aggregates repeated
-equivalent violations, and returns newest-first Redis-shaped entries. When
-`acl_file` is configured, `ACL SAVE` writes password hashes rather than
-plaintext, `ACL LOAD` replaces the active ACL only after the whole file parses,
-and startup loads the ACL file before accepting clients; malformed configured ACL
-files fail startup closed.
+The audited SETUSER surface includes reset/nopass/resetpass, clear-text password
+addition/removal, exact hash addition/removal and validation, allcommands/
+nocommands, allkeys/resetkeys, allchannels/resetchannels, sanitize-payload/
+skip-sanitize-payload, selector parsing/serialization, and left-to-right modifier
+ordering. ACL failures while queuing MULTI dirty the transaction, and queued
+commands are re-authorized at EXEC time.
 
-Current ACL boundaries are channel-pattern enforcement, ACL selectors, and some
-less-common SETUSER modifiers such as password-hash removal/reset variants. See
+`ACL LOG` records authentication, command, key, and channel denials and aggregates
+repeated equivalent violations. When `acl_file` is configured, `ACL SAVE`
+writes password hashes and selector/channel rules, `ACL LOAD` replaces the active
+ACL only after the whole file parses, and startup restores the ACL before serving
+clients; malformed configured ACL files fail startup closed.
+
+Direct Redis 8.2 differential audits matched the documented core, channel,
+SETUSER-modifier, and selector surfaces. Deeper audits for dynamic SORT external
+keys and scripting/function policy edge cases remain optional hardening rather
+than a known core ACL feature gap. See
 [docs/ACL-COMPATIBILITY.md](docs/ACL-COMPATIBILITY.md).
 
 ## SORT compatibility
@@ -253,9 +261,7 @@ optimizer.
 
 ## Major remaining compatibility work
 
-COMMAND metadata and the common CONFIG tooling surface are complete, and core
-AUTH/ACL enforcement plus ACL-file persistence are implemented. The next ACL work
-is the remaining channel/selector/SETUSER edge surface. Other significant gaps are
+COMMAND metadata, common CONFIG tooling, and the audited single-node AUTH/ACL milestone are complete. Other significant gaps are
 `SCRIPT DEBUG`, exact `allow-oom` semantics, migration scope beyond DB0 COPY,
 RESP3, advanced CLIENT tracking/caching, and optional Redis-RDB Function payload
 compatibility. Deprecated `GEORADIUS*`

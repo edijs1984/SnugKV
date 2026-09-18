@@ -1,3 +1,18 @@
+
+
+## ACL compatibility completion
+
+The audited single-node Redis 8.2 ACL milestone is complete. Coverage now includes
+AUTH/user management, command/category/key rules, classic and sharded Pub/Sub
+channel patterns, SETUSER reset/password/hash/alias/sanitize modifiers, selectors
+with atomic root-or-selector rule-set evaluation, DRYRUN, LOG, MULTI/EXEC
+re-authorization, ACL SAVE/LOAD, and restart persistence. Live differential
+scripts for channel rules, SETUSER modifiers, and selectors produced matching
+Redis/SnugKV output after final error-string hardening.
+
+RESP3 is the next major compatibility milestone; RESP2 remains the current
+production protocol until that work lands.
+
 # Progress
 
 ## Current milestone
