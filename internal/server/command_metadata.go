@@ -485,6 +485,29 @@ func commandInfoArity(info commandInfo) int {
 	return -info.min
 }
 
+func commandDenyOOM(name string) bool {
+	switch strings.ToUpper(name) {
+	case "SET", "SETNX", "SETEX", "PSETEX",
+		"GETSET", "APPEND",
+		"INCR", "INCRBY", "DECR", "DECRBY", "INCRBYFLOAT",
+		"MSET", "MSETNX",
+		"HSET",
+		"SADD",
+		"LPUSH", "RPUSH",
+		"ZADD",
+		"XADD",
+		"PFADD",
+		"GEOADD",
+		"BITOP",
+		"COPY",
+		"SORT",
+		"ZUNIONSTORE", "ZINTERSTORE", "ZDIFFSTORE":
+		return true
+	default:
+		return false
+	}
+}
+
 func commandInfoFlags(
 	name string,
 	info commandInfo,
@@ -492,6 +515,15 @@ func commandInfoFlags(
 	switch name {
 	case "GET":
 		return []string{"readonly", "fast"}
+
+	case "TOUCH":
+		return []string{"readonly", "fast"}
+
+	case "EXPIRE", "PERSIST", "HDEL", "SREM", "LPOP", "ZREM", "XDEL":
+		return []string{"write", "fast"}
+
+	case "HSET", "SADD", "LPUSH", "ZADD":
+		return []string{"write", "denyoom", "fast"}
 
 	case "SET", "COPY":
 		return []string{"write", "denyoom"}
@@ -553,6 +585,9 @@ func commandInfoFlags(
 	}
 
 	if info.write {
+		if commandDenyOOM(name) {
+			return []string{"write", "denyoom"}
+		}
 		return []string{"write"}
 	}
 

@@ -11,7 +11,7 @@ import (
 	"unsafe"
 )
 
-var ErrOOM = errors.New("OOM command not allowed when used memory exceeds max_memory")
+var ErrOOM = errors.New("OOM command not allowed when used memory > 'maxmemory'.")
 
 type memoryAdmission uint8
 

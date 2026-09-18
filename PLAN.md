@@ -153,9 +153,9 @@ and 24-byte arena segment descriptors.
 - [x] Standalone-safe Function flags: `no-writes`, `allow-stale`, `no-cluster`, `allow-cross-slot-keys`.
 - [x] Live Redis differential audit for read-only scripting and Functions core behavior through LIST metadata formatting.
 - [ ] `SCRIPT DEBUG` with real Redis LDB-style semantics rather than a placeholder.
-- [ ] Exact scoped `allow-oom` memory-admission semantics.
+- [x] Exact scoped `allow-oom` memory-admission semantics.
 - [ ] Exact Redis RDB byte compatibility for `FUNCTION DUMP` / `RESTORE` payloads.
-- [ ] Deeper differential audit of command flags, ACL semantics, and OOM/eviction behavior.
+- [x] Dynamic scripting/Function/SORT ACL audit and command-flag/OOM admission parity audit against Redis 8.2; eviction-policy-specific scripting behavior remains separate future work.
 
 ### Authentication / ACL compatibility
 
@@ -292,7 +292,7 @@ Details: `docs/ACL-COMPATIBILITY.md`.
 - [x] `SORT` / `SORT_RO`.
 - [x] `COPY` for DB 0 with `REPLACE`, TTL/type preservation, durability, transactions, OOM safety, and direct Redis differential audit.
 - [x] CLIENT management/tooling slice through LIST filters, KILL, and UNBLOCK with direct Redis differential audit.
-- [ ] Remaining scripting parity/hardening: `SCRIPT DEBUG`, command-flag/OOM parity,
+- [ ] Remaining scripting parity/hardening: `SCRIPT DEBUG`, eviction-policy-specific scripting behavior,
   and optional Redis-RDB Function payload compatibility.
 - [x] Redis 8.2 Function `allow-oom` semantics, including OOM entry gating,
   `no-writes` interaction, scoped memory-admission bypass, and live differential audit.

@@ -7,6 +7,64 @@ import (
 	"strings"
 )
 
+func (s *Server) rejectDenyOOMCommand(args [][]byte) error {
+	if len(args) == 0 || s.eviction != "noeviction" {
+		return nil
+	}
+
+	name := strings.ToUpper(string(args[0]))
+	if !commandDenyOOM(name) {
+		return nil
+	}
+
+	memory := s.store.Memory()
+	if memory.MaxBytes > 0 && memory.AccountedBytes > memory.MaxBytes {
+		return engine.ErrOOM
+	}
+
+	return nil
+}
+
+func (s *Server) withNonDenyOOMBypass(
+	args [][]byte,
+	run func() ([]byte, error),
+) ([]byte, error) {
+	if len(args) == 0 || s.eviction != "noeviction" {
+		return run()
+	}
+
+	name := strings.ToUpper(string(args[0]))
+	info, ok := commandTable[name]
+	if !ok ||
+		!info.write ||
+		commandDenyOOM(name) ||
+		isScriptEvalCommand(args) ||
+		isReadOnlyScriptEvalCommand(args) ||
+		isFunctionCallCommand(args) {
+
+		return run()
+	}
+
+	memory := s.store.Memory()
+	if memory.MaxBytes == 0 || memory.AccountedBytes <= memory.MaxBytes {
+		return run()
+	}
+
+	// Redis allows ordinary write commands without the denyoom flag to execute
+	// while already over maxmemory. Some SnugKV data-structure rewrites may
+	// temporarily need allocation even for logically shrinking/non-growing
+	// commands (for example LPOP or RENAME).
+	//
+	// Control-plane commands such as CONFIG and scripting/Function invocations
+	// are deliberately excluded: they either do not need engine admission or
+	// have their own Redis-specific OOM entry semantics.
+	maxMemory := s.store.MaxMemory()
+	s.store.SetMaxMemory(0)
+	defer s.store.SetMaxMemory(maxMemory)
+
+	return run()
+}
+
 func (s *Server) executePressureCommand(args [][]byte) ([]byte, error) {
 	if len(args) > 0 && strings.EqualFold(string(args[0]), "FUNCTION") {
 		return s.executeFunctionTopLevel(args)
@@ -107,7 +165,16 @@ func (s *Server) executeTransactionPressure(args [][]byte) ([]byte, error) {
 }
 
 func (s *Server) executePressureMode(args [][]byte, journalEvictions bool) ([]byte, error) {
-	result, err := s.executePressureCommand(args)
+	if err := s.rejectDenyOOMCommand(args); err != nil {
+		return nil, err
+	}
+
+	result, err := s.withNonDenyOOMBypass(
+		args,
+		func() ([]byte, error) {
+			return s.executePressureCommand(args)
+		},
+	)
 	if !errors.Is(err, engine.ErrOOM) || s.eviction == "" || s.eviction == "noeviction" {
 		return result, err
 	}
