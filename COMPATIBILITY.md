@@ -6,7 +6,7 @@ the public compatibility boundary; issue #55 tracks the implementation backlog.
 
 ## Current status
 
-SnugKV is a single-node RESP2 datastore with native STRING-style scalar storage,
+SnugKV is a single-node RESP2/RESP3 datastore with native STRING-style scalar storage,
 HASH, SET, LIST, ZSET, and STREAM semantics. The broad Streams and consumer-group
 surface is implemented, including blocking reads, pending-entry management,
 claiming, XINFO introspection, lifetime stream metadata, MAXLEN/MINID trimming,
@@ -22,10 +22,14 @@ LOAD/LIST/DELETE/FLUSH`, `DUMP`, `RESTORE`, `STATS`, `KILL`, `HELP`, `FCALL`,
 `FCALL_RO`), `SORT` / `SORT_RO`, single-database `COPY`, and the current CLIENT
 management/tooling slice are also implemented.
 
-COMMAND metadata, common CONFIG tooling, and the audited single-node AUTH/ACL
-surface are complete. ACL enforcement covers commands/categories, keys, Pub/Sub
-channels, selectors, transactions, DRYRUN/LOG, SETUSER modifier parity, and
-ACL-file persistence. The largest remaining Redis compatibility areas are RESP3,
+COMMAND metadata, common CONFIG tooling, the audited single-node AUTH/ACL
+surface, and the core RESP3 protocol milestone are complete. ACL enforcement
+covers commands/categories, keys, Pub/Sub channels, selectors, transactions,
+DRYRUN/LOG, SETUSER modifier parity, and ACL-file persistence. RESP3 now includes
+per-connection protocol state, `HELLO 3`, protocol switching, the RESP3 reply
+shapes required by the audited surface, and RESP3 Pub/Sub pushes/subscribed-mode
+semantics. Broader command-by-command RESP3 and client-library differential
+coverage remains hardening work. The largest remaining compatibility areas include
 `SCRIPT DEBUG`, exact `allow-oom` behavior, migration/transfer scope, and advanced
 CLIENT tracking/caching features. Replication, Sentinel-style failover, and Cluster
 remain outside the current single-node scope.
@@ -45,13 +49,16 @@ library is implemented.
 
 ## RESP protocol support
 
-RESP2 is supported and recommended. Binary-safe bulk strings, empty values,
+RESP2 remains fully supported. Binary-safe bulk strings, empty values,
 fragmented frames, pipelining, reconnect behavior, and RESP parser fuzzing are
 covered by tests.
 
-Clients that default to RESP3 should explicitly select RESP2. RESP3 is not
-currently implemented; `HELLO 3` intentionally returns `NOPROTO unsupported
-protocol version`.
+RESP3 is supported per connection through `HELLO 3`, with switching back through
+`HELLO 2`. The audited surface covers RESP3 nulls, maps, sets, doubles, verbatim
+strings, nested COMMAND/ACL structures, and classic/pattern/sharded Pub/Sub push
+frames. RESP3 subscribers may continue executing ordinary commands, matching the
+Redis 8.2 behavior exercised in the differential audit. RESP3 attribute frames
+and a full command-by-command/client-library RESP3 audit are not yet claimed.
 
 ## Redis family status
 
@@ -75,7 +82,7 @@ protocol version`.
 | CONFIG | Broad tooling support | GET/SET/RESETSTAT/REWRITE/HELP for supported SnugKV settings with runtime mutation and restart persistence |
 | CLIENT | Partial | ID/name/setinfo/info/list/list filters/kill/unblock/help implemented and differentially tested; tracking/caching/redirection not implemented |
 | COMMAND metadata | Supported for implemented surface | Redis-shaped INFO/DOCS/GETKEYS/GETKEYSANDFLAGS, parent/subcommand metadata, dynamic key extraction, differential audit complete |
-| RESP3 | Not implemented | RESP2 only |
+| RESP3 | Core support | `HELLO 3`, protocol switching, audited null/map/set/double/verbatim reply shapes and Pub/Sub push semantics; broader command/client differential audit remains |
 | Replication / Sentinel / Cluster | Not implemented | Outside current single-node scope |
 
 ## HASH
@@ -272,9 +279,11 @@ PUBSUB CHANNELS NUMSUB NUMPAT SHARDCHANNELS SHARDNUMSUB HELP
 
 Classic and sharded Pub/Sub use separate subscription namespaces. Pattern
 subscriptions use the same Redis-style binary-safe glob matcher as SCAN. RESP2
-subscribed-mode command restrictions, subscribed `PING`, `RESET`, asynchronous
-socket pushes, disconnect cleanup, and serialized complete-response writes are
-covered by TCP/race tests.
+subscribed-mode command restrictions remain intact. Under RESP3, subscription
+confirmations and message deliveries use push frames and subscribed clients may
+continue executing ordinary commands; `PING` follows normal RESP3 command behavior.
+`RESET`, disconnect cleanup, and serialized complete-response writes are covered
+by TCP/race tests and Redis 8.2 differential checks.
 
 ## Transactions
 
@@ -500,7 +509,7 @@ Prioritized backlog:
    modifiers, and deeper dynamic-key/scripting edge audits.
 2. `SCRIPT DEBUG`, exact `allow-oom`, and deeper scripting command-flag/OOM parity.
 3. Migration/transfer scope beyond single-database `COPY`.
-4. RESP3 where required by clients/tooling.
+4. Broader RESP3 command-shape, attribute, and client-library differential hardening.
 5. Advanced CLIENT tracking/caching/redirection features where real clients require them.
 6. Differential hardening for the completed Streams surface.
 7. Optional Redis-RDB byte compatibility for Function DUMP/RESTORE payloads.
