@@ -9,6 +9,12 @@ redis() {
   redis-cli -h "$HOST" -p "$PORT" --raw "$@"
 }
 
+user_redis() {
+  local user="$1"
+  shift
+  redis-cli -h "$HOST" -p "$PORT" --raw --no-auth-warning --user "$user" --pass "" "$@"
+}
+
 section() {
   printf '\n== %s ==\n' "$1"
 }
@@ -31,38 +37,38 @@ cleanup
 
 section "nested command denial"
 redis ACL SETUSER acl_script_cmd on nopass resetkeys '~*' nocommands +eval
-redis --user acl_script_cmd EVAL "return redis.call('GET','allowed:key')" 0 2>&1 || true
+user_redis acl_script_cmd EVAL "return redis.call('GET','allowed:key')" 0 2>&1 || true
 
 section "nested key denial"
 redis ACL SETUSER acl_script_key on nopass resetkeys '~allowed:*' nocommands +eval +get
-redis --user acl_script_key EVAL "return redis.call('GET','denied:key')" 0 2>&1 || true
+user_redis acl_script_key EVAL "return redis.call('GET','denied:key')" 0 2>&1 || true
 
 section "read-only nested key denial"
 redis ACL SETUSER acl_script_ro on nopass resetkeys '~allowed:*' nocommands +eval_ro +get
-redis --user acl_script_ro EVAL_RO "return redis.call('GET','denied:key')" 0 2>&1 || true
+user_redis acl_script_ro EVAL_RO "return redis.call('GET','denied:key')" 0 2>&1 || true
 
 section "function nested key denial"
 redis FUNCTION LOAD "#!lua name=acltest
 redis.register_function('read_denied', function(keys,args) return redis.call('GET','denied:key') end)" >/dev/null
 redis ACL SETUSER acl_fn_key on nopass resetkeys '~allowed:*' nocommands +fcall +get
-redis --user acl_fn_key FCALL read_denied 0 2>&1 || true
+user_redis acl_fn_key FCALL read_denied 0 2>&1 || true
 
 section "SORT split-selector denial"
 redis RPUSH acl:src 1 2 >/dev/null
 redis SET acl:weight_1 2 >/dev/null
 redis SET acl:weight_2 1 >/dev/null
 redis ACL SETUSER acl_sort_split on nopass resetkeys '~acl:src' nocommands +sort '(~acl:weight_* +sort)'
-redis --user acl_sort_split SORT acl:src BY 'acl:weight_*' 2>&1 || true
+user_redis acl_sort_split SORT acl:src BY 'acl:weight_*' 2>&1 || true
 
 section "SORT complete-selector allow"
 redis SET acl:name_1 one >/dev/null
 redis SET acl:name_2 two >/dev/null
 redis ACL SETUSER acl_sort_ok on nopass resetkeys nocommands '(~acl:src ~acl:weight_* ~acl:name_* +sort)'
-redis --user acl_sort_ok SORT acl:src BY 'acl:weight_*' GET 'acl:name_*' 2>&1 || true
+user_redis acl_sort_ok SORT acl:src BY 'acl:weight_*' GET 'acl:name_*' 2>&1 || true
 
 section "nested SORT dynamic-key denial"
 redis ACL SETUSER acl_script_sort on nopass resetkeys '~acl:src' nocommands +eval +sort
-redis --user acl_script_sort EVAL "return redis.call('SORT','acl:src','BY','acl:weight_*')" 0 2>&1 || true
+user_redis acl_script_sort EVAL "return redis.call('SORT','acl:src','BY','acl:weight_*')" 0 2>&1 || true
 
 echo
 echo "dynamic ACL differential complete: $TARGET"
