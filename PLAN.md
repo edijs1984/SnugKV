@@ -9,7 +9,7 @@ GitHub issue #55 tracks command-family compatibility work.
 The single-node RESP2 engine, logical persistence, memory accounting, optimizer,
 observability, packaging, HASH, SET, LIST, ZSET, broad STREAM/consumer-group
 support, classic/sharded Pub/Sub, Redis-style transactions/WATCH, HyperLogLog,
-modern GEO, the common Lua scripting path including read-only execution and
+modern GEO, CONFIG runtime/tooling compatibility, the common Lua scripting path including read-only execution and
 `SCRIPT KILL`, Redis Functions core/management through `FUNCTION KILL`, the
 standalone-safe Function flag subset, `SORT` / `SORT_RO`, single-database `COPY`,
 and the current CLIENT management/tooling slice are implemented.
@@ -34,7 +34,7 @@ for script results. Redis Functions include load/list/delete/flush,
 `FCALL`/`FCALL_RO`, DUMP/RESTORE, restart persistence, STATS/HELP, KILL with
 Redis-style NOTBUSY/UNKILLABLE safety semantics, and the standalone-safe flags
 `no-writes`, `allow-stale`, `no-cluster`, and `allow-cross-slot-keys`.
-`SCRIPT DEBUG`, exact `allow-oom`, and deeper command-flag/ACL/OOM parity remain.
+`SCRIPT DEBUG`, exact `allow-oom`, and deeper command-flag/ACL/OOM parity remain. CONFIG now supports GET/SET/RESETSTAT/REWRITE/HELP for SnugKV-backed settings, live maxmemory/maxmemory-policy/maxclients/appendfsync mutation, Redis-shaped COMMAND metadata/docs, atomic JSON rewrite, and restart persistence. SnugKV intentionally reports one logical database and advertises only real settings/policies.
 
 The current CLIENT slice includes `ID`, `GETNAME`, `SETNAME`, `SETINFO`, `INFO`,
 `LIST`, `LIST ID`, `LIST TYPE NORMAL`, `KILL ID [SKIPME]`, `UNBLOCK
@@ -265,9 +265,9 @@ and 24-byte arena segment descriptors.
 
 ### P2 — client/tooling compatibility
 
-- [ ] COMMAND metadata completeness — next target; tracked in issue #90.
-- [ ] CONFIG compatibility needed by common tooling.
-- [ ] ACL/authentication scope.
+- [x] COMMAND metadata completeness — completed in issue #90.
+- [x] CONFIG compatibility for common tooling: GET/SET/RESETSTAT/REWRITE/HELP, runtime maxmemory/policy/maxclients/appendfsync, COMMAND INFO/DOCS metadata, JSON rewrite/restart persistence.
+- [ ] ACL/authentication scope — next target.
 - [ ] RESP3.
 - [ ] Advanced CLIENT tracking/caching/redirection features if required.
 - [ ] Equivalent proactive blocked-client disconnect detection for non-Linux server builds if cross-platform parity is required.
