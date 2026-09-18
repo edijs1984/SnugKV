@@ -4,7 +4,8 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "smoke": "node smoke.cjs"
+    "smoke": "node smoke.cjs",
+    "smoke:resp3": "node resp3-smoke.cjs"
   },
   "keywords": [],
   "author": "",
