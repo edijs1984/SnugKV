@@ -94,7 +94,6 @@ func trimStreamMaxLenPolicy(state *packedStream, maxLen, limit int, policy Strea
 			kept = append(kept, item)
 			continue
 		}
-		noteStreamDeleted(state, item.ID)
 		deletedIDs[item.ID] = struct{}{}
 		deleted++
 	}
@@ -127,7 +126,6 @@ func trimStreamMinIDPolicy(state *packedStream, minID StreamID, limit int, polic
 			kept = append(kept, item)
 			continue
 		}
-		noteStreamDeleted(state, item.ID)
 		deletedIDs[item.ID] = struct{}{}
 		deleted++
 	}
@@ -360,16 +358,28 @@ func (s *Store) StreamAckDelete(key, groupName string, ids []StreamID, policy St
 	}
 	changed := false
 	for i, id := range ids {
+		changedForID := false
+
 		if streamRemoveOnePendingRef(&state.Groups[gi], id) {
 			changed = true
+			changedForID = true
 		}
+
 		if policy == StreamRefDelete {
-			if streamRemovePendingRefs(&state, map[StreamID]struct{}{id: {}}) > 0 {
+			if streamRemovePendingRefs(
+				&state,
+				map[StreamID]struct{}{id: {}},
+			) > 0 {
 				changed = true
+				changedForID = true
 			}
 		}
+
 		index := streamEntryIndex(state.Entries, id)
 		if index < 0 {
+			if changedForID {
+				statuses[i] = 1
+			}
 			continue
 		}
 		if policy == StreamRefAcked && !streamAckedByAllGroups(&state, id) {

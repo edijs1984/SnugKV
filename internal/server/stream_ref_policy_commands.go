@@ -134,7 +134,9 @@ func parseXTrimWithRefPolicy(args [][]byte) (string, int, engine.StreamID, int, 
 		return "", 0, engine.StreamID{}, 0, engine.StreamRefKeep, errors.New("ERR syntax error")
 	}
 	i := 3
+	approximate := false
 	if i < len(args) && (string(args[i]) == "~" || string(args[i]) == "=") {
+		approximate = string(args[i]) == "~"
 		i++
 	}
 	if i >= len(args) {
@@ -144,6 +146,13 @@ func parseXTrimWithRefPolicy(args [][]byte) (string, int, engine.StreamID, int, 
 	minID := engine.StreamID{}
 	var err error
 	if strategy == "MAXLEN" {
+		rawMaxLen := string(args[i])
+
+		if n, parseErr := strconv.ParseInt(rawMaxLen, 10, 64); parseErr == nil && n < 0 {
+			return "", 0, engine.StreamID{}, 0, engine.StreamRefKeep,
+				errors.New("ERR The MAXLEN argument must be >= 0.")
+		}
+
 		maxLen, err = parseNonNegativeInt(args[i])
 	} else {
 		minID, err = parseStreamMinID(args[i])
@@ -167,6 +176,9 @@ func parseXTrimWithRefPolicy(args [][]byte) (string, int, engine.StreamID, int, 
 			continue
 		}
 		if strings.EqualFold(string(args[i]), "LIMIT") {
+			if !approximate {
+				return "", 0, engine.StreamID{}, 0, policy, errors.New("ERR syntax error, LIMIT cannot be used without the special ~ option")
+			}
 			if seenLimit || i+1 >= len(args) {
 				return "", 0, engine.StreamID{}, 0, policy, errors.New("ERR syntax error")
 			}

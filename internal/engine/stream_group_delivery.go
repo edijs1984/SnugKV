@@ -91,6 +91,15 @@ func (s *Store) StreamGroupRead(keys []string, groupName, consumer string, curso
 		entries := make([]StreamEntry, 0)
 
 		if cursors[i].New {
+			if group.EntriesRead < 0 {
+				if inferred := inferStreamGroupEntriesRead(
+					state,
+					group.LastDeliveredID,
+				); inferred >= 0 {
+					group.EntriesRead = inferred
+				}
+			}
+
 			for _, item := range state.Entries {
 				if !group.LastDeliveredID.less(item.ID) {
 					continue

@@ -31,7 +31,7 @@ func TestStreamV3MinIDAndLifetimeMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(info)
-	for _, want := range []string{"entries-added", ":5\r\n", "max-deleted-entry-id", "$3\r\n4-0\r\n"} {
+	for _, want := range []string{"entries-added", ":5\r\n", "max-deleted-entry-id", "$3\r\n2-0\r\n"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("XINFO STREAM missing %q: %q", want, text)
 		}

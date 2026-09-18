@@ -83,7 +83,7 @@ func TestXAckDelReferencePolicies(t *testing.T) {
 		t.Fatalf("KEEPREF = %q", response)
 	}
 	response = mustStreamPolicyExec(t, s, "XACKDEL", "events", "g2", "IDS", "1", "2-0", "DELREF")
-	if string(response) != "*1\r\n:-1\r\n" {
+	if string(response) != "*1\r\n:1\r\n" {
 		t.Fatalf("dangling DELREF = %q", response)
 	}
 	pending := mustStreamPolicyExec(t, s, "XPENDING", "events", "g2")

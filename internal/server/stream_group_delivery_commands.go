@@ -198,11 +198,30 @@ func (s *Server) executeXPending(args [][]byte) ([]byte, error) {
 			minReply = formatBulkString([]byte(summary.MinID.String()))
 			maxReply = formatBulkString([]byte(summary.MaxID.String()))
 		}
-		consumers := make([][]byte, 0, len(summary.Consumers))
-		for _, item := range summary.Consumers {
-			consumers = append(consumers, array(formatBulkString([]byte(item.Name)), formatBulkString([]byte(strconv.FormatInt(item.Count, 10)))))
+		var consumersReply []byte
+
+		if summary.Count == 0 {
+			consumersReply = []byte("*-1\r\n")
+		} else {
+			consumers := make([][]byte, 0, len(summary.Consumers))
+			for _, item := range summary.Consumers {
+				consumers = append(
+					consumers,
+					array(
+						formatBulkString([]byte(item.Name)),
+						formatBulkString([]byte(strconv.FormatInt(item.Count, 10))),
+					),
+				)
+			}
+			consumersReply = array(consumers...)
 		}
-		return array(integer(summary.Count), minReply, maxReply, array(consumers...)), nil
+
+		return array(
+			integer(summary.Count),
+			minReply,
+			maxReply,
+			consumersReply,
+		), nil
 	}
 
 	i := 3

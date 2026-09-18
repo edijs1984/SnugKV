@@ -380,7 +380,6 @@ func trimStreamMaxLen(state *packedStream, maxLen, limit int) int {
 	if limit > 0 && remove > limit {
 		remove = limit
 	}
-	noteStreamDeleted(state, state.Entries[remove-1].ID)
 	state.Entries = state.Entries[remove:]
 	return remove
 }
@@ -396,7 +395,6 @@ func trimStreamMinID(state *packedStream, minID StreamID, limit int) int {
 	if remove == 0 {
 		return 0
 	}
-	noteStreamDeleted(state, state.Entries[remove-1].ID)
 	state.Entries = state.Entries[remove:]
 	return remove
 }

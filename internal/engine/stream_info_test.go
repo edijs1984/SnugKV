@@ -146,10 +146,9 @@ func TestStreamGroupInfoInfersEntriesReadFromZero(t *testing.T) {
 		)
 	}
 
-	if groups[0].EntriesRead == nil ||
-		*groups[0].EntriesRead != 0 {
+	if groups[0].EntriesRead != nil {
 		t.Fatalf(
-			"entries-read = %#v, want 0",
+			"entries-read = %#v, want nil",
 			groups[0].EntriesRead,
 		)
 	}

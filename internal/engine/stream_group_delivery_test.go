@@ -115,7 +115,7 @@ func TestStreamGroupHistoryReturnsNullPayloadForDeletedEntry(t *testing.T) {
 	}
 }
 
-func TestStreamGroupDeleteConsumerOrphansPendingUntilAck(t *testing.T) {
+func TestStreamGroupDeleteConsumerRemovesPending(t *testing.T) {
 	s := New()
 	addTestStreamEntry(t, s, "events", "1-0")
 	if err := s.StreamGroupCreate("events", "workers", "0-0", false, 0); err != nil {
@@ -124,16 +124,19 @@ func TestStreamGroupDeleteConsumerOrphansPendingUntilAck(t *testing.T) {
 	if _, err := s.StreamGroupRead([]string{"events"}, "workers", "c1", []StreamGroupReadCursor{{New: true}}, 10, false); err != nil {
 		t.Fatal(err)
 	}
-	orphaned, err := s.StreamGroupDeleteConsumer("events", "workers", "c1")
-	if err != nil || orphaned != 1 {
-		t.Fatalf("delete consumer = %d, %v", orphaned, err)
+
+	removed, err := s.StreamGroupDeleteConsumer("events", "workers", "c1")
+	if err != nil || removed != 1 {
+		t.Fatalf("delete consumer = %d, %v", removed, err)
 	}
+
 	summary, err := s.StreamGroupPendingSummary("events", "workers")
-	if err != nil || summary.Count != 1 || len(summary.Consumers) != 0 {
-		t.Fatalf("orphan summary = %#v, %v", summary, err)
+	if err != nil || summary.Count != 0 {
+		t.Fatalf("pending summary = %#v, %v", summary, err)
 	}
+
 	acked, err := s.StreamGroupAck("events", "workers", []StreamID{{Millis: 1}})
-	if err != nil || acked != 1 {
-		t.Fatalf("ack orphan = %d, %v", acked, err)
+	if err != nil || acked != 0 {
+		t.Fatalf("ack removed pending = %d, %v", acked, err)
 	}
 }

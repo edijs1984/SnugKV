@@ -127,7 +127,7 @@ func parseStreamCount(args [][]byte, start int) (int, error) {
 		return 0, errors.New("ERR syntax error")
 	}
 	n, err := strconv.ParseInt(string(args[start+1]), 10, 64)
-	if err != nil || n <= 0 || int64(int(n)) != n {
+	if err != nil || n < 0 || int64(int(n)) != n {
 		return 0, errors.New("ERR value is not an integer or out of range")
 	}
 	return int(n), nil
@@ -206,6 +206,10 @@ func (s *Server) executeStream(args [][]byte) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+		if count == 0 {
+			return []byte("*-1\r\n"), nil
+		}
+
 		entries, err := s.store.StreamRange(key, start, end, count, reverse)
 		if err != nil {
 			return nil, err
@@ -233,7 +237,9 @@ func (s *Server) executeStream(args [][]byte) ([]byte, error) {
 			return nil, errors.New("ERR syntax error")
 		}
 		i := 3
+		approximate := false
 		if i < len(args) && (string(args[i]) == "~" || string(args[i]) == "=") {
+			approximate = string(args[i]) == "~"
 			i++
 		}
 		if i >= len(args) {
@@ -246,6 +252,9 @@ func (s *Server) executeStream(args [][]byte) ([]byte, error) {
 			if i+2 != len(args) || !strings.EqualFold(string(args[i]), "LIMIT") {
 				return nil, errors.New("ERR syntax error")
 			}
+			if !approximate {
+				return nil, errors.New("ERR syntax error, LIMIT cannot be used without the special ~ option")
+			}
 			var err error
 			limit, err = parseNonNegativeInt(args[i+1])
 			if err != nil {
@@ -257,6 +266,18 @@ func (s *Server) executeStream(args [][]byte) ([]byte, error) {
 			return nil, errors.New("ERR syntax error")
 		}
 		if strategy == "MAXLEN" {
+			rawMaxLen, parseErr := strconv.ParseInt(
+				string(args[thresholdIndex]),
+				10,
+				64,
+			)
+
+			if parseErr == nil && rawMaxLen < 0 {
+				return nil, errors.New(
+					"ERR The MAXLEN argument must be >= 0.",
+				)
+			}
+
 			maxLen, err := parseNonNegativeInt(args[thresholdIndex])
 			if err != nil {
 				return nil, err

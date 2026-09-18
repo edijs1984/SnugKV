@@ -66,20 +66,23 @@ func TestXReadGroupNOACKAndDeletedPendingPayload(t *testing.T) {
 	}
 }
 
-func TestXGroupDelConsumerLeavesOrphanPending(t *testing.T) {
+func TestXGroupDelConsumerRemovesPending(t *testing.T) {
 	s := New(engine.New())
 	execute(t, s, "XADD", "events", "1-0", "v", "one")
 	execute(t, s, "XGROUP", "CREATE", "events", "workers", "0-0")
 	execute(t, s, "XREADGROUP", "GROUP", "workers", "c1", "STREAMS", "events", ">")
+
 	if got := execute(t, s, "XGROUP", "DELCONSUMER", "events", "workers", "c1"); got != ":1\r\n" {
 		t.Fatalf("DELCONSUMER=%q", got)
 	}
+
 	got := execute(t, s, "XPENDING", "events", "workers")
-	if !strings.HasPrefix(got, "*4\r\n:1\r\n") || !strings.HasSuffix(got, "*0\r\n") {
-		t.Fatalf("orphan XPENDING=%q", got)
+	if got != "*4\r\n:0\r\n$-1\r\n$-1\r\n*-1\r\n" {
+		t.Fatalf("XPENDING after DELCONSUMER=%q", got)
 	}
-	if got := execute(t, s, "XACK", "events", "workers", "1-0"); got != ":1\r\n" {
-		t.Fatalf("ack orphan=%q", got)
+
+	if got := execute(t, s, "XACK", "events", "workers", "1-0"); got != ":0\r\n" {
+		t.Fatalf("ack removed pending=%q", got)
 	}
 }
 

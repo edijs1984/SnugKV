@@ -83,9 +83,15 @@ func streamInfoConsumer(group streamGroup, consumer streamConsumer, nowMS int64,
 	if idle < 0 {
 		idle = 0
 	}
-	inactive := nowMS - consumer.ActiveAt
-	if inactive < 0 {
-		inactive = 0
+	inactive := int64(-1)
+	activeTime := int64(-1)
+
+	if consumer.ActiveAt > 0 {
+		inactive = nowMS - consumer.ActiveAt
+		if inactive < 0 {
+			inactive = 0
+		}
+		activeTime = consumer.ActiveAt
 	}
 	return StreamInfoConsumer{
 		Name:           consumer.Name,
@@ -93,7 +99,7 @@ func streamInfoConsumer(group streamGroup, consumer streamConsumer, nowMS int64,
 		IdleMillis:     idle,
 		InactiveMillis: inactive,
 		SeenTime:       consumer.SeenAt,
-		ActiveTime:     consumer.ActiveAt,
+		ActiveTime:     activeTime,
 		PendingEntries: cappedStreamInfoPending(pending, count),
 	}
 }
@@ -108,8 +114,22 @@ func streamInfoGroup(state packedStream, group streamGroup, nowMS int64, count i
 	if group.EntriesRead >= 0 {
 		entriesRead := group.EntriesRead
 		result.EntriesRead = &entriesRead
-		if uint64(entriesRead) <= state.EntriesAdded && state.EntriesAdded <= math.MaxInt64 {
+
+		if uint64(entriesRead) <= state.EntriesAdded &&
+			state.EntriesAdded <= math.MaxInt64 {
 			lag := int64(state.EntriesAdded) - entriesRead
+			result.Lag = &lag
+		}
+	} else {
+		inferred := inferStreamGroupEntriesRead(
+			state,
+			group.LastDeliveredID,
+		)
+
+		if inferred >= 0 &&
+			uint64(inferred) <= state.EntriesAdded &&
+			state.EntriesAdded <= math.MaxInt64 {
+			lag := int64(state.EntriesAdded) - inferred
 			result.Lag = &lag
 		}
 	}

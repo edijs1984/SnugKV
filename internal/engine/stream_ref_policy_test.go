@@ -105,7 +105,7 @@ func TestStreamAckDeleteReferencePolicies(t *testing.T) {
 		t.Fatal("KEEPREF did not preserve other-group PEL reference")
 	}
 	statuses, err = s.StreamAckDelete("events", "g2", []StreamID{{Millis: 2}}, StreamRefDelete)
-	if err != nil || statuses[0] != -1 {
+	if err != nil || statuses[0] != 1 {
 		t.Fatalf("dangling DELREF statuses=%v err=%v", statuses, err)
 	}
 	if pendingCount(t, s, "g2") != 2 {
@@ -162,7 +162,7 @@ func TestStreamAddWithDeleteRefTrimming(t *testing.T) {
 		t.Fatalf("PEL after XADD DELREF = %d, want 1", pendingCount(t, s, "g1"))
 	}
 	info, err := s.StreamInfo("events", false, 0)
-	if err != nil || info.Length != 2 || info.MaxDeletedEntryID.String() != "3-0" {
+	if err != nil || info.Length != 2 || info.MaxDeletedEntryID.String() != "0-0" {
 		t.Fatalf("stream info=%#v err=%v", info, err)
 	}
 }

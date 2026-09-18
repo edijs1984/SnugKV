@@ -122,12 +122,6 @@ func (s *Store) StreamGroupCreate(key, group, idSpec string, mkstream bool, entr
 	if err != nil {
 		return err
 	}
-	if entriesRead == -1 {
-		entriesRead = inferStreamGroupEntriesRead(
-			state,
-			id,
-		)
-	}
 
 	state.Groups = append(
 		state.Groups,
@@ -214,11 +208,7 @@ func (s *Store) StreamGroupSetID(key, group, idSpec string, entriesRead *int64) 
 	if entriesRead != nil {
 		state.Groups[index].EntriesRead = *entriesRead
 	} else {
-		state.Groups[index].EntriesRead =
-			inferStreamGroupEntriesRead(
-				state,
-				id,
-			)
+		state.Groups[index].EntriesRead = -1
 	}
 
 	return s.publishStreamStateLocked(
@@ -295,12 +285,21 @@ func (s *Store) StreamGroupDeleteConsumer(key, group, consumer string) (int64, e
 		return 0, nil
 	}
 	var orphanedPending int64
-	for i := range groupState.Pending {
-		if groupState.Pending[i].Consumer == consumer {
+	keptPending := groupState.Pending[:0]
+
+	for _, pending := range groupState.Pending {
+		if pending.Consumer == consumer {
 			orphanedPending++
-			groupState.Pending[i].Consumer = ""
+			continue
 		}
+
+		keptPending = append(
+			keptPending,
+			pending,
+		)
 	}
+
+	groupState.Pending = keptPending
 	copy(groupState.Consumers[consumerIndex:], groupState.Consumers[consumerIndex+1:])
 	groupState.Consumers = groupState.Consumers[:len(groupState.Consumers)-1]
 	if err := s.publishStreamStateLocked(sh, key, e, state); err != nil {

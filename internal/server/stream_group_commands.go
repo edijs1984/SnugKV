@@ -29,7 +29,7 @@ func parseEntriesReadOption(args [][]byte, start int) (*int64, int, error) {
 		return nil, start, errors.New("ERR syntax error")
 	}
 	value, err := strconv.ParseInt(string(args[start+1]), 10, 64)
-	if err != nil || value < 0 {
+	if err != nil || value < -1 {
 		return nil, start, errors.New("ERR value is not an integer or out of range")
 	}
 	return &value, start + 2, nil

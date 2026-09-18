@@ -590,7 +590,9 @@ func errorResponse(err error) []byte {
 		!strings.HasPrefix(message, "INVALIDOBJ ") &&
 		!strings.HasPrefix(message, "NOAUTH ") &&
 		!strings.HasPrefix(message, "WRONGPASS ") &&
-		!strings.HasPrefix(message, "NOPERM ") {
+		!strings.HasPrefix(message, "NOPERM ") &&
+		!strings.HasPrefix(message, "BUSYGROUP ") &&
+		!strings.HasPrefix(message, "NOGROUP ") {
 		message = "ERR " + message
 	}
 	return []byte("-" + message + "\r\n")

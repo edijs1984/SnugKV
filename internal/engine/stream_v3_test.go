@@ -37,7 +37,7 @@ func TestStreamV3LifetimeMetadataAndMinID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.EntriesAdded != 7 || info.Length != 2 || info.MaxDeletedEntryID != (StreamID{Millis: 5}) {
+	if info.EntriesAdded != 7 || info.Length != 2 || info.MaxDeletedEntryID != (StreamID{Millis: 2}) {
 		t.Fatalf("info = %+v", info)
 	}
 	if err := s.StreamGroupCreate("events", "workers", "0-0", false, 0); err != nil {
