@@ -107,9 +107,12 @@ All notable changes to SnugKV will be documented in this file.
 ### Verified
 
 - Redis 8.2 RESP3 differential audits covering HELLO negotiation/options/errors,
-  null-bearing replies, HGETALL maps, SMEMBERS sets, ZRANGE WITHSCORES doubles,
-  INFO verbatim strings, COMMAND INFO/ACL GETUSER nested structures, and RESP3
-  classic/pattern/sharded Pub/Sub pushes plus ordinary commands while subscribed.
+  null-bearing replies, HGETALL maps, SMEMBERS sets, ZSET score doubles/pair
+  replies, GEO coordinate doubles, XREAD/XREADGROUP and XINFO maps, FUNCTION STATS
+  and CONFIG GET maps, INFO/CLIENT INFO verbatim strings, COMMAND INFO/ACL GETUSER
+  nested structures, and RESP3 classic/pattern/sharded Pub/Sub pushes plus ordinary
+  commands while subscribed. The final broad structural diff contained only
+  expected HELLO module metadata and SCAN dataset/order differences.
 - Live Redis 8.2 differential audits for COMMAND metadata/key discovery, CONFIG
   common tooling, and the ACL surface including command/key/category rules,
   channel patterns, SETUSER modifiers, selectors, transaction re-authorization,
