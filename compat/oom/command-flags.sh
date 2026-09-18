@@ -34,7 +34,7 @@ prepare() {
   redis SADD oom:set member >/dev/null
   redis RPUSH oom:list a b >/dev/null
   redis ZADD oom:zset 1 member >/dev/null
-  redis XADD oom:stream '*' field value >/dev/null
+  redis XADD oom:stream 1-0 field value >/dev/null
   redis PFADD oom:hll member >/dev/null
   redis RPUSH oom:sort 2 1 >/dev/null
   redis SET oom:copy-src value >/dev/null
@@ -83,7 +83,7 @@ case_cmd "HDEL while OOM" HDEL oom:hash field
 case_cmd "SREM while OOM" SREM oom:set member
 case_cmd "LPOP while OOM" LPOP oom:list
 case_cmd "ZREM while OOM" ZREM oom:zset member
-case_cmd "XDEL while OOM" XDEL oom:stream 0-0
+case_cmd "XDEL while OOM" XDEL oom:stream 1-0
 case_cmd "PFCOUNT while OOM" PFCOUNT oom:hll
 
 case_cmd "SET new key while OOM" SET oom:new value
