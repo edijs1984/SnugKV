@@ -222,12 +222,7 @@ func parseRegisteredFunction(L *lua.LState) (
 				case "allow-cross-slot-keys":
 					allowCrossSlotKeys = true
 				case "allow-oom":
-					// Do not silently claim Redis ALLOW_OOM semantics yet.
-					// Redis permits commands that would normally be rejected in
-					// OOM state, while SnugKV still applies its normal max-memory
-					// admission rules to nested commands.
-					return "", nil, "", false, nil, false, false, false, false, false,
-						fmt.Errorf("unsupported function flag: %s", flag)
+					allowOom = true
 				default:
 					return "", nil, "", false, nil, false, false, false, false, false,
 						fmt.Errorf("unsupported function flag: %s", flag)
