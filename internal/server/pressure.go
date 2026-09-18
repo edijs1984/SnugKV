@@ -34,7 +34,14 @@ func (s *Server) withNonDenyOOMBypass(
 	}
 
 	name := strings.ToUpper(string(args[0]))
-	if commandDenyOOM(name) {
+	info, ok := commandTable[name]
+	if !ok ||
+		!info.write ||
+		commandDenyOOM(name) ||
+		isScriptEvalCommand(args) ||
+		isReadOnlyScriptEvalCommand(args) ||
+		isFunctionCallCommand(args) {
+
 		return run()
 	}
 
@@ -43,12 +50,14 @@ func (s *Server) withNonDenyOOMBypass(
 		return run()
 	}
 
-	// Redis allows commands without the denyoom flag to execute while already
-	// over maxmemory. Some SnugKV data-structure rewrites may temporarily need
-	// allocation even for logically shrinking/non-growing commands (for example
-	// LPOP or RENAME). FCALL/EXEC command execution is serialized under
-	// durableMu, so this temporary admission bypass is not observable by an
-	// unrelated command.
+	// Redis allows ordinary write commands without the denyoom flag to execute
+	// while already over maxmemory. Some SnugKV data-structure rewrites may
+	// temporarily need allocation even for logically shrinking/non-growing
+	// commands (for example LPOP or RENAME).
+	//
+	// Control-plane commands such as CONFIG and scripting/Function invocations
+	// are deliberately excluded: they either do not need engine admission or
+	// have their own Redis-specific OOM entry semantics.
 	maxMemory := s.store.MaxMemory()
 	s.store.SetMaxMemory(0)
 	defer s.store.SetMaxMemory(maxMemory)
@@ -218,23 +227,3 @@ func (s *Server) executePressureMode(args [][]byte, journalEvictions bool) ([]by
 			excluded[string(args[i])] = true
 		}
 	}
-	s.store.CleanupExpiredLimit(1024)
-	s.store.Compact(64 << 20)
-	result, err = s.executePressureCommand(args)
-	for n := 0; n < 128 && errors.Is(err, engine.ErrOOM); n++ {
-		key, ok := s.store.Victim(excluded, s.eviction == "volatile-lru")
-		if !ok {
-			break
-		}
-		if journalEvictions && s.journal != nil {
-			if journalErr := s.journal.Append([]persistence.Record{{Key: []byte(key), Deleted: true}}); journalErr != nil {
-				s.durabilityFailed = true
-				return nil, errors.New("ERR persistence append failed during eviction")
-			}
-		}
-		s.store.Evict(key)
-		s.store.Compact(64 << 20)
-		result, err = s.executePressureCommand(args)
-	}
-	return result, err
-}
