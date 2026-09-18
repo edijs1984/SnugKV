@@ -3,8 +3,9 @@
 SnugKV is a single-node RESP2 in-memory datastore written in Go. It focuses on
 Redis-compatible application workloads, memory-efficient native containers,
 exact byte round trips, bounded protocol handling, sharded concurrency,
-expiration, memory limits, eviction, logical persistence, and a bounded Lua
-scripting core.
+expiration, memory limits, eviction, logical persistence, a bounded Lua
+scripting core, Redis-shaped command/config tooling, and Redis-style
+authentication/ACL enforcement for the implemented single-node surface.
 
 Use Go 1.27 or newer:
 
@@ -44,6 +45,7 @@ for current boundaries, [PLAN.md](PLAN.md) for the remaining roadmap, and
 ## Supported command surface
 
 - Connection: `PING`, `ECHO`, `QUIT`, `SELECT 0`, `HELLO 2`, `INFO`, `DBSIZE`, `COMMAND`; CLIENT management/introspection includes `CLIENT ID`, `GETNAME`, `SETNAME`, `SETINFO`, `INFO`, `LIST`, `LIST ID`, `LIST TYPE NORMAL`, `KILL ID`, `UNBLOCK`, and `HELP`.
+- Authentication / ACL: `AUTH`; `ACL WHOAMI`, `USERS`, `GETUSER`, `LIST`, `SETUSER`, `DELUSER`, `CAT`, `DRYRUN`, `GENPASS`, `LOG`, `SAVE`, `LOAD`, and `HELP`; command/category/key-pattern authorization, transaction re-authorization, ACL logging, and optional ACL-file persistence/startup restore are implemented.
 - Keys: `DEL`, `UNLINK`, `EXISTS`, `TYPE`, `TOUCH`, `KEYS`, `SCAN`, `RANDOMKEY`, `RENAME`, `RENAMENX`, `COPY`.
 - Strings: `SET`, `GET`, `GETSET`, `GETDEL`, `GETEX`, `SETNX`, `SETEX`, `PSETEX`, `MSET`, `MSETNX`, `MGET`, `APPEND`, `STRLEN`, `GETRANGE`, `SETRANGE`.
 - Numeric: `INCR`, `INCRBY`, `DECR`, `DECRBY`, `INCRBYFLOAT`.
@@ -130,7 +132,9 @@ not serialized.
 
 Remaining scripting/function management gaps include `SCRIPT DEBUG`, exact
 `allow-oom` scoped admission, exact Redis RDB byte compatibility for Function
-DUMP/RESTORE payloads, and full Redis Lua/ACL/command-flag parity.
+DUMP/RESTORE payloads, and deeper Redis Lua/command-flag/OOM parity. ACL command
+and key authorization is implemented, while channel/selector ACL semantics remain
+a separate compatibility boundary.
 
 ## CLIENT compatibility
 
@@ -145,6 +149,28 @@ connection survival, invalid IDs/reasons, and tested arity/error semantics. See
 
 Advanced CLIENT tracking/caching/redirection features are not implemented yet.
 
+## Authentication and ACL compatibility
+
+SnugKV implements Redis-style username/password authentication plus the core ACL
+management surface: `AUTH`, `ACL WHOAMI`, `USERS`, `GETUSER`, `LIST`,
+`SETUSER`, `DELUSER`, `CAT`, `DRYRUN`, `GENPASS`, `LOG`, `SAVE`,
+`LOAD`, and `HELP`. Command authorization supports explicit commands and
+Redis 8.2 command categories, key authorization reuses SnugKV's command-key
+metadata (including dynamic-key commands), and ACL failures while queuing MULTI
+mark the transaction dirty. Queued commands are authorized again at EXEC time so
+ACL rule changes take effect before execution.
+
+`ACL LOG` records authentication, command, and key denials, aggregates repeated
+equivalent violations, and returns newest-first Redis-shaped entries. When
+`acl_file` is configured, `ACL SAVE` writes password hashes rather than
+plaintext, `ACL LOAD` replaces the active ACL only after the whole file parses,
+and startup loads the ACL file before accepting clients; malformed configured ACL
+files fail startup closed.
+
+Current ACL boundaries are channel-pattern enforcement, ACL selectors, and some
+less-common SETUSER modifiers such as password-hash removal/reset variants. See
+[docs/ACL-COMPATIBILITY.md](docs/ACL-COMPATIBILITY.md).
+
 ## SORT compatibility
 
 `SORT` and `SORT_RO` accept LIST, SET, and ZSET sources. The implemented option
@@ -157,8 +183,8 @@ fields (`user:*->score`).
 
 SnugKV uses bytewise comparison for `ALPHA`. Redis can use locale-aware collation
 for non-STORE ALPHA replies, so locale-sensitive/non-ASCII order is not claimed
-to be byte-for-byte identical yet. ACL/Cluster restrictions around dynamic
-external patterns are also outside the current single-node/no-ACL scope.
+to be byte-for-byte identical yet. Redis Cluster slot restrictions and some dynamic external-key ACL nuances remain
+outside the current single-node compatibility scope.
 
 ## COPY compatibility
 
@@ -227,10 +253,12 @@ optimizer.
 
 ## Major remaining compatibility work
 
-The next major tooling target is COMMAND metadata completeness. Other significant
-gaps are CONFIG/ACL compatibility, `SCRIPT DEBUG`, exact `allow-oom` semantics,
-migration scope beyond DB0 COPY, RESP3, advanced CLIENT tracking/caching, and
-optional Redis-RDB Function payload compatibility. Deprecated `GEORADIUS*`
+COMMAND metadata and the common CONFIG tooling surface are complete, and core
+AUTH/ACL enforcement plus ACL-file persistence are implemented. The next ACL work
+is the remaining channel/selector/SETUSER edge surface. Other significant gaps are
+`SCRIPT DEBUG`, exact `allow-oom` semantics, migration scope beyond DB0 COPY,
+RESP3, advanced CLIENT tracking/caching, and optional Redis-RDB Function payload
+compatibility. Deprecated `GEORADIUS*`
 compatibility is not part of the modern GEO surface yet. A final differential
 Redis edge-case audit remains useful for Streams, but there is no known core
 Streams command-family gap. See [COMPATIBILITY.md](COMPATIBILITY.md) and GitHub
