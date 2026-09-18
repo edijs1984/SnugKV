@@ -1,5 +1,13 @@
 # Scripting and Redis Functions Differential Audit
 
+
+> **Historical audit note:** this document records the earlier core differential
+> slice. Since this audit, SnugKV added FUNCTION DUMP/RESTORE/STATS/KILL/HELP,
+> SCRIPT KILL, Function restart persistence, read-only hardening, COMMAND/CONFIG
+> tooling, and core AUTH/ACL enforcement. For the current surface use
+> `README.md`, `COMPATIBILITY.md`, `PROGRESS.md`, and
+> `docs/ACL-COMPATIBILITY.md`.
+
 Date: 2026-09-17
 
 This records a live Redis 6379 versus SnugKV 6380 comparison for the read-only Lua scripting and Redis Functions core added in PR #82, plus the follow-up FUNCTION LIST wire fix in PR #83.
