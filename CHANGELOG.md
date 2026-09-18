@@ -103,9 +103,19 @@ All notable changes to SnugKV will be documented in this file.
 - Exact RESP maximum-bulk boundary behavior.
 - Lazy JSON-shape store allocation.
 - Persistence restart and corruption recovery tests.
+- Redis 8.2 Streams edge-case parity fixes for XACKDEL dangling-reference status,
+  trim lifetime metadata, XRANGE COUNT 0, XTRIM LIMIT/negative-MAXLEN errors,
+  group ENTRIESREAD/lag handling, DELCONSUMER PEL cleanup, inactive consumer
+  metadata, empty XPENDING replies, and BUSYGROUP/NOGROUP error classes.
 
 ### Verified
 
+- Redis 8.2 Streams differential audit covering explicit/automatic/partial IDs,
+  range bounds, exact/approximate trim grammar, consumer-group creation/SETID/
+  ENTRIESREAD/lag, XREADGROUP/XPENDING, XCLAIM/XAUTOCLAIM, XINFO, consumer
+  lifecycle, and KEEPREF/DELREF/ACKED reference policies. The only documented
+  remaining diffs are implementation-specific approximate-`~` trim granularity
+  and Redis-internal radix-tree diagnostic counts.
 - Redis 8.2 RESP3 differential audits covering HELLO negotiation/options/errors,
   null-bearing replies, HGETALL maps, SMEMBERS sets, ZSET score doubles/pair
   replies, GEO coordinate doubles, XREAD/XREADGROUP and XINFO maps, FUNCTION STATS
