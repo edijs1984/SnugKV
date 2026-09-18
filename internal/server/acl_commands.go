@@ -260,6 +260,20 @@ func (s *Server) executeACL(
 
 		return integer(s.acl.DeleteUsers(names...)), nil
 
+	case "CAT":
+		if len(args) > 3 {
+			return nil, errors.New(
+				"ERR unknown subcommand or wrong number of arguments for 'CAT'. Try ACL HELP.",
+			)
+		}
+
+		category := ""
+		if len(args) == 3 {
+			category = string(args[2])
+		}
+
+		return aclCategoryReply(category)
+
 	case "DRYRUN":
 		return s.executeACLDryRun(args)
 

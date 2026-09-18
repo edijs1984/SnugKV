@@ -693,3 +693,192 @@ func TestACLGenPassInvalidBits(t *testing.T) {
 		}
 	}
 }
+
+func TestACLCatAll(t *testing.T) {
+	reply, err := aclCategoryReply("")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := string(reply)
+
+	for _, category := range []string{
+		"keyspace",
+		"read",
+		"write",
+		"string",
+		"hash",
+		"list",
+		"set",
+		"sortedset",
+		"stream",
+		"scripting",
+		"json",
+	} {
+		if !strings.Contains(text, category) {
+			t.Fatalf("missing category %q", category)
+		}
+	}
+}
+
+func TestACLCatUnknown(t *testing.T) {
+	_, err := aclCategoryReply("does-not-exist")
+
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	want := "ERR Unknown category 'does-not-exist'"
+
+	if err.Error() != want {
+		t.Fatalf("got %q want %q", err.Error(), want)
+	}
+}
+
+func TestACLCatStringContainsGET(t *testing.T) {
+	reply, err := aclCategoryReply("string")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(string(reply), "get") {
+		t.Fatalf("GET missing from string category: %q", reply)
+	}
+}
+
+func TestACLCatTransaction(t *testing.T) {
+	reply, err := aclCategoryReply("transaction")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := string(reply)
+
+	for _, command := range []string{
+		"multi",
+		"exec",
+		"discard",
+		"watch",
+		"unwatch",
+	} {
+		if !strings.Contains(text, command) {
+			t.Fatalf("%s missing from transaction category", command)
+		}
+	}
+}
+
+func TestACLCatWriteDoesNotContainGET(t *testing.T) {
+	reply, err := aclCategoryReply("write")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(string(reply), "\r\nget\r\n") {
+		t.Fatal("GET unexpectedly classified as write")
+	}
+}
+
+func TestACLCatReadDoesNotExposeNonReadCommands(t *testing.T) {
+	reply, err := aclCategoryReply("read")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := string(reply)
+
+	for _, command := range []string{
+		"info",
+		"memory",
+		"publish",
+		"subscribe",
+		"psubscribe",
+		"pubsub",
+		"function",
+		"script",
+		"eval_ro",
+		"evalsha_ro",
+		"fcall_ro",
+	} {
+		needle := "\r\n" + command + "\r\n"
+
+		if strings.Contains(text, needle) {
+			t.Fatalf(
+				"%s unexpectedly classified as read",
+				command,
+			)
+		}
+	}
+}
+
+func TestACLCatWriteDoesNotExposeScriptingCommands(t *testing.T) {
+	reply, err := aclCategoryReply("write")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := string(reply)
+
+	for _, command := range []string{
+		"eval",
+		"evalsha",
+		"fcall",
+		"xgroup",
+	} {
+		needle := "\r\n" + command + "\r\n"
+
+		if strings.Contains(text, needle) {
+			t.Fatalf(
+				"%s unexpectedly classified as write",
+				command,
+			)
+		}
+	}
+}
+
+func TestACLCatScriptingDoesNotExposeUmbrellaCommands(t *testing.T) {
+	reply, err := aclCategoryReply("scripting")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := string(reply)
+
+	for _, command := range []string{
+		"function",
+		"script",
+	} {
+		needle := "\r\n" + command + "\r\n"
+
+		if strings.Contains(text, needle) {
+			t.Fatalf(
+				"%s unexpectedly exposed in scripting category",
+				command,
+			)
+		}
+	}
+}
+
+func TestACLCatSnugCommandsNotMisclassified(t *testing.T) {
+	for _, category := range []string{
+		"read",
+		"write",
+		"fast",
+		"slow",
+		"dangerous",
+	} {
+		reply, err := aclCategoryReply(category)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if strings.Contains(
+			strings.ToLower(string(reply)),
+			"snug.",
+		) {
+			t.Fatalf(
+				"Snug-specific command leaked into Redis category %s",
+				category,
+			)
+		}
+	}
+}
