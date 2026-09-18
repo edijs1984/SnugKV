@@ -394,7 +394,13 @@ func (session *transactionSession) exec() ([]byte, error) {
 		if s.journal != nil && s.durabilityFailed && info.write {
 			err = errors.New("ERR persistence is unavailable; restart after repairing storage")
 		} else {
-			result, err = s.executeQueuedCommandLocked(command)
+			result, err = s.withExecutionACLContextLocked(
+				session.auth,
+				command,
+				func() ([]byte, error) {
+					return s.executeQueuedCommandLocked(command)
+				},
+			)
 		}
 		if err != nil {
 			result = errorResponse(err)
