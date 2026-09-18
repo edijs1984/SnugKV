@@ -39,7 +39,7 @@ for script results. Redis Functions include load/list/delete/flush,
 `FCALL`/`FCALL_RO`, DUMP/RESTORE, restart persistence, STATS/HELP, KILL with
 Redis-style NOTBUSY/UNKILLABLE safety semantics, and the standalone-safe flags
 `no-writes`, `allow-stale`, `no-cluster`, and `allow-cross-slot-keys`.
-`SCRIPT DEBUG`, exact `allow-oom`, and deeper scripting/OOM policy parity remain. CONFIG now supports GET/SET/RESETSTAT/REWRITE/HELP for SnugKV-backed settings, live maxmemory/maxmemory-policy/maxclients/appendfsync mutation, Redis-shaped COMMAND metadata/docs, atomic JSON rewrite, and restart persistence. SnugKV intentionally reports one logical database and advertises only real settings/policies.
+`SCRIPT DEBUG` and broader scripting/OOM policy parity remain. Redis 8.2 `allow-oom` Function semantics are implemented and audited. CONFIG now supports GET/SET/RESETSTAT/REWRITE/HELP for SnugKV-backed settings, live maxmemory/maxmemory-policy/maxclients/appendfsync mutation, Redis-shaped COMMAND metadata/docs, atomic JSON rewrite, and restart persistence. SnugKV intentionally reports one logical database and advertises only real settings/policies.
 
 The current CLIENT slice includes `ID`, `GETNAME`, `SETNAME`, `SETINFO`, `INFO`,
 `LIST`, `LIST ID`, `LIST TYPE NORMAL`, `KILL ID [SKIPME]`, `UNBLOCK
@@ -292,8 +292,10 @@ Details: `docs/ACL-COMPATIBILITY.md`.
 - [x] `SORT` / `SORT_RO`.
 - [x] `COPY` for DB 0 with `REPLACE`, TTL/type preservation, durability, transactions, OOM safety, and direct Redis differential audit.
 - [x] CLIENT management/tooling slice through LIST filters, KILL, and UNBLOCK with direct Redis differential audit.
-- [ ] Remaining scripting parity/hardening: `SCRIPT DEBUG`, exact `allow-oom`,
-  command-flag/OOM parity, and optional Redis-RDB Function payload compatibility.
+- [ ] Remaining scripting parity/hardening: `SCRIPT DEBUG`, command-flag/OOM parity,
+  and optional Redis-RDB Function payload compatibility.
+- [x] Redis 8.2 Function `allow-oom` semantics, including OOM entry gating,
+  `no-writes` interaction, scoped memory-admission bypass, and live differential audit.
 - [x] Dynamic scripting/Function/SORT ACL edge audit against Redis 8.2, including
   nested redis.call authorization and the full-key-scope requirement for wildcard
   SORT BY/GET patterns.
