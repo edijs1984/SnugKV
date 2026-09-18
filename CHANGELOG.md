@@ -80,6 +80,10 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Hardened
 
+- Dynamic ACL enforcement for nested Lua/Function command execution, including
+  caller ACL propagation through EVAL/EVALSHA, EVAL_RO/EVALSHA_RO, FCALL, and
+  FCALL_RO. Wildcard external SORT BY/GET now matches Redis 8.2 by requiring
+  full key scope in one complete root rule set or selector.
 - `FUNCTION STATS` bypasses the normal durability mutex so it remains observable
   from another client while an FCALL is running.
 - Function dump payload checksum validation and atomic restore-policy validation;
@@ -110,6 +114,10 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Verified
 
+- Dynamic ACL differential audit against Redis 8.2 covering nested command/key
+  denial in Lua and Functions, selector atomicity, wildcard external SORT BY/GET
+  denial, all-key selector success, and nested SORT inside Lua. Remaining
+  differences are limited to Lua/Function runtime error formatting.
 - Real-client RESP3 smoke coverage with ioredis 6, node-redis 6 (including reconnect), redis-py, and go-redis v9. The same harness passes against SnugKV and the Redis 8.2 oracle.
 - Redis 8.2 Streams differential audit covering explicit/automatic/partial IDs,
   range bounds, exact/approximate trim grammar, consumer-group creation/SETID/
