@@ -293,8 +293,10 @@ Details: `docs/ACL-COMPATIBILITY.md`.
 - [x] `COPY` for DB 0 with `REPLACE`, TTL/type preservation, durability, transactions, OOM safety, and direct Redis differential audit.
 - [x] CLIENT management/tooling slice through LIST filters, KILL, and UNBLOCK with direct Redis differential audit.
 - [ ] Remaining scripting parity/hardening: `SCRIPT DEBUG`, exact `allow-oom`,
-  command-flag/OOM parity, scripting-specific ACL edge audits, and optional
-  Redis-RDB Function payload compatibility.
+  command-flag/OOM parity, and optional Redis-RDB Function payload compatibility.
+- [x] Dynamic scripting/Function/SORT ACL edge audit against Redis 8.2, including
+  nested redis.call authorization and the full-key-scope requirement for wildcard
+  SORT BY/GET patterns.
 - [ ] Migration/transfer command scope beyond single-node COPY.
 
 ### P2 — client/tooling compatibility
@@ -304,7 +306,7 @@ Details: `docs/ACL-COMPATIBILITY.md`.
 - [x] Core ACL/authentication scope: AUTH, ACL management, command/category/key rules,
   transaction enforcement, LOG, SAVE/LOAD, and startup ACL-file persistence.
 - [x] Audited ACL channel patterns, selectors, SETUSER modifier hardening, and persistence.
-- [ ] Deeper dynamic SORT/script/Function ACL edge audits.
+- [x] Deeper dynamic SORT/script/Function ACL edge audits.
 - [x] Core RESP3 protocol support and Redis 8.2 differential validation.
 - [x] Broad Redis 8.2 RESP3 command-shape differential sweep across the implemented surface.
 - [x] RESP3 client-library smoke coverage across ioredis 6, node-redis 6, redis-py, and go-redis v9, validated against both SnugKV and Redis 8.2.
