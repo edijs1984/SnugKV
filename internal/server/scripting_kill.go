@@ -204,13 +204,21 @@ func (s *Server) luaRedisCallKillable(protected bool) lua.LGFunction {
 			}
 			return luaPushCommandError(L, protected, err)
 		}
+		if err := s.authorizeExecutionNestedCommand(args); err != nil {
+			return luaPushCommandError(L, protected, err)
+		}
 		if scriptCommandWritesDataset(args) {
 			if err := markRunningScriptWrite(s); err != nil {
 				return luaPushCommandError(L, protected, err)
 			}
 		}
 
-		result, err := s.executePressureMode(args, false)
+		result, err := s.withNestedExecutionCommand(
+			args,
+			func() ([]byte, error) {
+				return s.executePressureMode(args, false)
+			},
+		)
 		if err != nil {
 			return luaPushCommandError(L, protected, err)
 		}
