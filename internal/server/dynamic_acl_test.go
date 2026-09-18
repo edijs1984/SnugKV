@@ -219,7 +219,7 @@ func TestSortDynamicKeyACLRequiresSameRuleSet(t *testing.T) {
 		"weight_*",
 	)
 
-	if err == nil || err.Error() != "NOPERM No permissions to access a key" {
+	if err == nil || err.Error() != "ERR BY option of SORT denied due to insufficient ACL permissions." {
 		t.Fatalf("SORT split-selector ACL error = %v", err)
 	}
 }
@@ -334,7 +334,7 @@ func TestSortDynamicACLInsideLuaUsesNestedSortContext(t *testing.T) {
 
 	if err == nil || !strings.Contains(
 		err.Error(),
-		"NOPERM No permissions to access a key",
+		"ERR BY option of SORT denied due to insufficient ACL permissions.",
 	) {
 		t.Fatalf("nested SORT dynamic-key ACL error = %v", err)
 	}
