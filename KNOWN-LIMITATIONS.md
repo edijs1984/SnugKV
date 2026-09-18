@@ -1,6 +1,6 @@
 # Known Limitations
 
-SnugKV is currently an alpha-stage, single-node RESP2 datastore. It has broad
+SnugKV is currently an alpha-stage, single-node RESP2/RESP3 datastore. It has broad
 coverage across the common Redis datatype families, including Streams, Pub/Sub,
 transactions, HyperLogLog, modern GEO, Lua scripting/read-only scripting, Redis
 Functions core/management, `SORT` / `SORT_RO`, single-database `COPY`, and the
@@ -8,10 +8,10 @@ current CLIENT tooling slice, but it is not a complete Redis replacement.
 
 ## Protocol
 
-- RESP2 is supported.
-- RESP3 is not implemented.
-- `HELLO 3` is intentionally rejected.
-- Clients that default to RESP3 should be configured to use RESP2.
+- RESP2 is supported and remains regression-covered.
+- RESP3 can be negotiated with `HELLO 3`; `HELLO 2` switches the connection back.
+- The audited RESP3 surface includes null/map/set/double/verbatim reply forms used by current commands, nested COMMAND/ACL shapes, and Pub/Sub push frames.
+- RESP3 attributes and exhaustive command-by-command/client-library RESP3 parity are not yet claimed.
 
 See [COMPATIBILITY.md](COMPATIBILITY.md).
 
@@ -28,8 +28,8 @@ Major Redis-compatible features still not implemented or incomplete:
 - full Lua/Functions parity (`SCRIPT DEBUG`, `allow-oom`, exact command flags/ACL behavior);
 - Redis-RDB byte compatibility for `FUNCTION DUMP` / `RESTORE` payloads;
 - cross-database COPY and broader migration/transfer command scope;
-- RESP3;
-- ACL channel-pattern/selectors and remaining uncommon SETUSER modifiers;
+- broader RESP3 command/client differential hardening and unused RESP3 types/attributes;
+- deeper dynamic SORT/script/Function ACL-policy edge auditing;
 - advanced CLIENT tracking/caching/redirection features;
 - replication;
 - Sentinel-style failover;
@@ -109,14 +109,11 @@ transaction enforcement, `SAVE`/`LOAD`, and configured ACL-file startup restore.
 Password persistence uses hashes rather than plaintext, failed ACL-file loads are
 atomic, and malformed configured ACL files fail startup closed.
 
-The remaining ACL compatibility boundaries are:
-
-- channel-pattern enforcement and full `allchannels` / `resetchannels` behavior;
-- ACL selectors and selector serialization;
-- less-common SETUSER reset/removal modifiers, including complete hash-removal parity;
-- exact non-default GETUSER/LIST channel presentation;
-- deeper auditing for dynamically resolved SORT external keys and scripting/
-  Function ACL-policy edge cases.
+The audited ACL surface includes channel patterns, `allchannels` /
+`resetchannels`, selector parsing/serialization and root-or-selector evaluation,
+and the hardened SETUSER reset/password/hash/sanitize modifier set. Remaining ACL
+work is deeper auditing for dynamically resolved SORT external keys and scripting/
+Function ACL-policy edge cases rather than a known core ACL feature gap.
 
 See [docs/ACL-COMPATIBILITY.md](docs/ACL-COMPATIBILITY.md).
 

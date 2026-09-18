@@ -293,9 +293,10 @@ Details: `docs/ACL-COMPATIBILITY.md`.
 - [x] CONFIG compatibility for common tooling: GET/SET/RESETSTAT/REWRITE/HELP, runtime maxmemory/policy/maxclients/appendfsync, COMMAND INFO/DOCS metadata, JSON rewrite/restart persistence.
 - [x] Core ACL/authentication scope: AUTH, ACL management, command/category/key rules,
   transaction enforcement, LOG, SAVE/LOAD, and startup ACL-file persistence.
-- [ ] ACL hardening: channel patterns, selectors, remaining uncommon SETUSER
-  modifiers, and deeper dynamic-key/scripting edge audits.
-- [ ] RESP3.
+- [x] Audited ACL channel patterns, selectors, SETUSER modifier hardening, and persistence.
+- [ ] Deeper dynamic SORT/script/Function ACL edge audits.
+- [x] Core RESP3 protocol support and Redis 8.2 differential validation.
+- [ ] Broader RESP3 command-shape/attribute/client-library differential coverage.
 - [ ] Advanced CLIENT tracking/caching/redirection features if required.
 - [ ] Equivalent proactive blocked-client disconnect detection for non-Linux server builds if cross-platform parity is required.
 
@@ -336,9 +337,10 @@ Before treating a feature as complete:
 
 ### RESP3
 
-- [ ] Add per-connection RESP protocol state and accept `HELLO 3`.
-- [ ] Implement RESP3 scalar/null/boolean/double/bignum/container encoders needed by SnugKV replies.
-- [ ] Convert command reply shapes that differ between RESP2 and RESP3 without changing RESP2 behavior.
-- [ ] Implement RESP3 Pub/Sub push frames and validate subscribed-mode command behavior.
-- [ ] Audit `HELLO 3` metadata, AUTH/SETNAME option behavior, protocol switching, and errors against Redis 8.2.
-- [ ] Add RESP3 client compatibility coverage for redis-cli and supported client libraries while keeping RESP2 regression coverage green.
+- [x] Add per-connection RESP protocol state and accept `HELLO 3` / switch back with `HELLO 2`.
+- [x] Implement the RESP3 scalar/null/double/container/verbatim encodings required by the audited SnugKV reply surface.
+- [x] Convert audited command reply shapes that differ between RESP2 and RESP3 without changing RESP2 behavior (`HGETALL`, `SMEMBERS`, `ZRANGE ... WITHSCORES`, `INFO`, COMMAND/ACL nested structures, null-bearing replies).
+- [x] Implement RESP3 Pub/Sub push frames and Redis 8.2 subscribed-mode behavior for classic, pattern, and sharded Pub/Sub.
+- [x] Audit `HELLO 3` metadata shape, AUTH/SETNAME option behavior, protocol switching, and tested errors against Redis 8.2.
+- [x] Keep the full race suite and RESP2 Pub/Sub regression coverage green after RESP3 support.
+- [ ] Expand command-by-command RESP3 differential coverage, unused RESP3 types/attributes, and supported client-library RESP3 smoke tests.

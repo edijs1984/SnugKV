@@ -10,14 +10,15 @@ re-authorization, ACL SAVE/LOAD, and restart persistence. Live differential
 scripts for channel rules, SETUSER modifiers, and selectors produced matching
 Redis/SnugKV output after final error-string hardening.
 
-RESP3 is the next major compatibility milestone; RESP2 remains the current
-production protocol until that work lands.
+Core RESP3 support has landed alongside RESP2. Redis 8.2 differential audits now
+cover HELLO negotiation/switching, protocol-dependent reply shapes, nested
+COMMAND/ACL structures, and classic/pattern/sharded Pub/Sub push semantics.
 
 # Progress
 
 ## Current milestone
 
-SnugKV now has a broad single-node RESP2 command surface with native HASH, SET,
+SnugKV now has a broad single-node RESP2/RESP3 command surface with native HASH, SET,
 LIST, ZSET, and STREAM types, logical durability, memory accounting, adaptive
 scalar encoding, observability, operational tooling, classic/sharded Pub/Sub,
 Redis-style transactions with optimistic locking, HyperLogLog, modern GEO,
@@ -29,14 +30,21 @@ slice.
 COMMAND metadata/tooling and the common CONFIG compatibility milestone are
 complete. Core AUTH/ACL support is also implemented through command/category/key
 authorization, transaction enforcement, ACL LOG, SAVE/LOAD, and startup ACL-file
-persistence. The current compatibility focus is the remaining ACL
-channel/selector/uncommon-modifier edge surface, followed by RESP3, exact
-`allow-oom` semantics, `SCRIPT DEBUG`, migration/transfer scope beyond COPY, and
-advanced CLIENT tracking/caching only where real clients require it. Streams are
+persistence. The audited ACL core and core RESP3 protocol milestone are complete. The current
+compatibility focus is broader RESP3 command/client differential hardening, exact
+`allow-oom` semantics, `SCRIPT DEBUG`, migration/transfer scope beyond COPY, deeper
+dynamic SORT/script/Function ACL audits, and advanced CLIENT tracking/caching only
+where real clients require it. Streams are
 broadly implemented through Redis 8.2 reference-policy behavior; a final Streams
 differential edge-case audit remains useful.
 
 ## Recently completed
+
+- Core RESP3 protocol support: per-connection `HELLO 3` / `HELLO 2` switching,
+  RESP3 null/map/set/double/verbatim shapes for the audited surface, nested
+  COMMAND INFO and ACL GETUSER conversions, and RESP3 Pub/Sub push frames with
+  Redis 8.2 subscribed-mode behavior. Direct Redis-vs-SnugKV oracle runs matched
+  the targeted wire types; full race tests and RESP2 Pub/Sub regressions remained green.
 
 ### COMMAND, CONFIG, and ACL compatibility
 
@@ -421,12 +429,11 @@ when evaluating CPU tradeoffs.
 
 ## Remaining engineering work
 
-1. ACL hardening: channel patterns, selectors, remaining uncommon SETUSER
-   modifiers, and deeper dynamic SORT/script/Function ACL edge audits.
-2. `SCRIPT DEBUG`, exact `allow-oom`, deeper command-flag/OOM semantics, and
+1. Broader RESP3 command-shape/attribute/client-library differential hardening.
+2. Deeper dynamic SORT/script/Function ACL edge audits.
+3. `SCRIPT DEBUG`, exact `allow-oom`, deeper command-flag/OOM semantics, and
    optional Redis-RDB Function payload parity.
-3. Migration/transfer scope beyond single-database COPY.
-4. RESP3 and advanced CLIENT tracking/caching/redirection where required.
+4. Migration/transfer scope beyond single-database COPY and advanced CLIENT tracking/caching/redirection where required.
 5. Differential Redis edge-case audit for the completed Streams surface.
 6. Optional legacy `GEORADIUS*` aliases if real client usage requires them.
 7. Fresh release-scale benchmarks, multi-run variance, million-record datasets,

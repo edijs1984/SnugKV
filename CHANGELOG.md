@@ -6,6 +6,10 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Added
 
+- Core RESP3 support with per-connection `HELLO 3` negotiation, `HELLO 2` switching,
+  protocol-aware null/map/set/double/verbatim reply shapes, nested COMMAND/ACL
+  RESP3 structures, and classic/pattern/sharded Pub/Sub push frames while
+  preserving RESP2 behavior.
 - Redis 8.2-shaped COMMAND tooling for the implemented surface, including ten-field
   `COMMAND INFO`, `COMMAND DOCS`, `GETKEYS`, `GETKEYSANDFLAGS`, parent/
   subcommand metadata, and dynamic key extraction for variable-key commands.
@@ -102,6 +106,10 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Verified
 
+- Redis 8.2 RESP3 differential audits covering HELLO negotiation/options/errors,
+  null-bearing replies, HGETALL maps, SMEMBERS sets, ZRANGE WITHSCORES doubles,
+  INFO verbatim strings, COMMAND INFO/ACL GETUSER nested structures, and RESP3
+  classic/pattern/sharded Pub/Sub pushes plus ordinary commands while subscribed.
 - Live Redis 8.2 differential audits for COMMAND metadata/key discovery, CONFIG
   common tooling, and the ACL surface including command/key/category rules,
   channel patterns, SETUSER modifiers, selectors, transaction re-authorization,

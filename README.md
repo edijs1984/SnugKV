@@ -1,6 +1,6 @@
 # SnugKV
 
-SnugKV is a single-node RESP2 in-memory datastore written in Go. It focuses on
+SnugKV is a single-node RESP2/RESP3 in-memory datastore written in Go. It focuses on
 Redis-compatible application workloads, memory-efficient native containers,
 exact byte round trips, bounded protocol handling, sharded concurrency,
 expiration, memory limits, eviction, logical persistence, a bounded Lua
@@ -26,8 +26,9 @@ Run it with Docker Compose:
 docker compose up --build
 ```
 
-The server then listens on `127.0.0.1:6380`. A RESP2 client such as
-`redis-cli` can be used directly:
+The server then listens on `127.0.0.1:6380`. RESP2 clients such as
+`redis-cli` can be used directly, and connections can negotiate RESP3 with
+`HELLO 3`:
 
 ```sh
 redis-cli -p 6380 ping
@@ -44,7 +45,7 @@ for current boundaries, [PLAN.md](PLAN.md) for the remaining roadmap, and
 
 ## Supported command surface
 
-- Connection: `PING`, `ECHO`, `QUIT`, `SELECT 0`, `HELLO 2`, `INFO`, `DBSIZE`, `COMMAND`; CLIENT management/introspection includes `CLIENT ID`, `GETNAME`, `SETNAME`, `SETINFO`, `INFO`, `LIST`, `LIST ID`, `LIST TYPE NORMAL`, `KILL ID`, `UNBLOCK`, and `HELP`.
+- Connection: `PING`, `ECHO`, `QUIT`, `SELECT 0`, `HELLO 2`, `HELLO 3`, `INFO`, `DBSIZE`, `COMMAND`; CLIENT management/introspection includes `CLIENT ID`, `GETNAME`, `SETNAME`, `SETINFO`, `INFO`, `LIST`, `LIST ID`, `LIST TYPE NORMAL`, `KILL ID`, `UNBLOCK`, and `HELP`.
 - Authentication / ACL: `AUTH`; `ACL WHOAMI`, `USERS`, `GETUSER`, `LIST`, `SETUSER`, `DELUSER`, `CAT`, `DRYRUN`, `GENPASS`, `LOG`, `SAVE`, `LOAD`, and `HELP`; command/category, key-pattern, channel-pattern, selector authorization, transaction re-authorization, ACL logging, and optional ACL-file persistence/startup restore are implemented.
 - Keys: `DEL`, `UNLINK`, `EXISTS`, `TYPE`, `TOUCH`, `KEYS`, `SCAN`, `RANDOMKEY`, `RENAME`, `RENAMENX`, `COPY`.
 - Strings: `SET`, `GET`, `GETSET`, `GETDEL`, `GETEX`, `SETNX`, `SETEX`, `PSETEX`, `MSET`, `MSETNX`, `MGET`, `APPEND`, `STRLEN`, `GETRANGE`, `SETRANGE`.
@@ -68,7 +69,11 @@ for current boundaries, [PLAN.md](PLAN.md) for the remaining roadmap, and
 
 Blocking LIST, ZSET, `XREAD`, and `XREADGROUP` commands use waiter/wakeup paths
 rather than polling, and sleeping blockers do not hold the global durability
-mutex. RESP3 is not implemented; see [COMPATIBILITY.md](COMPATIBILITY.md).
+mutex. RESP3 connection negotiation, protocol switching, null/map/set/double/
+verbatim reply forms used by the current surface, and RESP3 Pub/Sub push semantics
+are implemented while RESP2 behavior remains preserved. See
+[COMPATIBILITY.md](COMPATIBILITY.md) and
+[docs/RESP3-COMPATIBILITY.md](docs/RESP3-COMPATIBILITY.md).
 
 ## Lua scripting and Functions
 
@@ -261,10 +266,11 @@ optimizer.
 
 ## Major remaining compatibility work
 
-COMMAND metadata, common CONFIG tooling, and the audited single-node AUTH/ACL milestone are complete. Other significant gaps are
+COMMAND metadata, common CONFIG tooling, the audited single-node AUTH/ACL milestone,
+and the core RESP3 protocol milestone are complete. Other significant gaps are
 `SCRIPT DEBUG`, exact `allow-oom` semantics, migration scope beyond DB0 COPY,
-RESP3, advanced CLIENT tracking/caching, and optional Redis-RDB Function payload
-compatibility. Deprecated `GEORADIUS*`
+advanced CLIENT tracking/caching, optional Redis-RDB Function payload compatibility,
+and broader RESP3 command/client differential hardening. Deprecated `GEORADIUS*`
 compatibility is not part of the modern GEO surface yet. A final differential
 Redis edge-case audit remains useful for Streams, but there is no known core
 Streams command-family gap. See [COMPATIBILITY.md](COMPATIBILITY.md) and GitHub
