@@ -135,7 +135,21 @@ func (s *Server) executeKillableFunctionCall(args [][]byte) ([]byte, error) {
 	if fn == nil {
 		return nil, errors.New("ERR Function not found")
 	}
-	return s.runKillableRegisteredFunction(fn, keys, argv, readOnly || fn.noWrites)
+	if err := s.rejectFunctionInvocationOOM(fn); err != nil {
+		return nil, err
+	}
+
+	return s.withFunctionOOMBypass(
+		fn,
+		func() ([]byte, error) {
+			return s.runKillableRegisteredFunction(
+				fn,
+				keys,
+				argv,
+				readOnly || fn.noWrites,
+			)
+		},
+	)
 }
 
 func (s *Server) runKillableRegisteredFunction(fn *registeredFunction, keys, argv [][]byte, readOnly bool) ([]byte, error) {
