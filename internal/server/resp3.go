@@ -355,6 +355,120 @@ func resp3AdaptCommand(
 			}
 		}
 
+	case "ZSCORE", "ZINCRBY":
+		if out, ok :=
+			resp3DoubleFromBulk(data); ok {
+			return out
+		}
+
+	case "ZMSCORE":
+		if out, ok :=
+			resp3ArrayBulkDoubles(data); ok {
+			return out
+		}
+
+	case "ZRANDMEMBER":
+		if hasRESPCommandArgument(
+			args[2:],
+			"WITHSCORES",
+		) {
+			if out, ok :=
+				resp3MemberScorePairs(data); ok {
+				return out
+			}
+		}
+
+	case "ZPOPMIN", "ZPOPMAX":
+		if out, ok :=
+			resp3MemberScorePairs(data); ok {
+			return out
+		}
+
+	case "GEOPOS":
+		if out, ok :=
+			resp3GeoPos(data); ok {
+			return out
+		}
+
+	case "GEOSEARCH":
+		if out, ok :=
+			resp3GeoSearch(
+				args[2:],
+				data,
+			); ok {
+			return out
+		}
+
+	case "XREAD", "XREADGROUP":
+		if out, ok :=
+			resp3StreamReadMap(data); ok {
+			return out
+		}
+
+	case "XINFO":
+		if len(args) >= 2 {
+			switch strings.ToUpper(
+				string(args[1]),
+			) {
+			case "STREAM":
+				if out, ok :=
+					resp3FlatArrayMap(
+						data,
+					); ok {
+					return out
+				}
+
+			case "GROUPS", "CONSUMERS":
+				if out, ok :=
+					resp3ArrayOfFlatMaps(
+						data,
+					); ok {
+					return out
+				}
+			}
+		}
+
+	case "FUNCTION":
+		if len(args) >= 2 &&
+			strings.EqualFold(
+				string(args[1]),
+				"STATS",
+			) {
+			if out, ok :=
+				resp3FunctionStats(data); ok {
+				return out
+			}
+		}
+
+	case "CLIENT":
+		if len(args) >= 2 &&
+			strings.EqualFold(
+				string(args[1]),
+				"INFO",
+			) {
+			if payload, ok :=
+				resp2BulkPayload(data); ok {
+				return resp3Verbatim(
+					"txt",
+					payload,
+				)
+			}
+		}
+
+	case "CONFIG":
+		if len(args) >= 2 &&
+			strings.EqualFold(
+				string(args[1]),
+				"GET",
+			) {
+			if out, ok :=
+				resp3MapFromFlatArray(
+					data,
+				); ok {
+				return out
+			}
+		}
+
 	case "HGETALL":
 		if out, ok := resp3MapFromFlatArray(data); ok {
 			return out
@@ -1144,4 +1258,361 @@ func resp3PubSubPush(
 	}
 
 	return out
+}
+
+func resp3DoubleFromBulk(
+	data []byte,
+) ([]byte, bool) {
+	payload, ok := resp2BulkPayload(data)
+	if !ok {
+		return nil, false
+	}
+
+	out := make(
+		[]byte,
+		0,
+		len(payload)+3,
+	)
+
+	out = append(out, ',')
+	out = append(out, payload...)
+	out = append(out, '\r', '\n')
+
+	return out, true
+}
+
+func resp3ArrayBulkDoubles(
+	data []byte,
+) ([]byte, bool) {
+	items, ok := resp2ArrayElements(data)
+	if !ok {
+		return nil, false
+	}
+
+	out := []byte(
+		fmt.Sprintf(
+			"*%d\r\n",
+			len(items),
+		),
+	)
+
+	for _, item := range items {
+		if bytes.Equal(
+			item,
+			[]byte("$-1\r\n"),
+		) {
+			out = append(
+				out,
+				resp3Null()...,
+			)
+			continue
+		}
+
+		value, ok :=
+			resp3DoubleFromBulk(item)
+		if !ok {
+			return nil, false
+		}
+
+		out = append(out, value...)
+	}
+
+	return out, true
+}
+
+func resp3MemberScorePairs(
+	data []byte,
+) ([]byte, bool) {
+	return resp3ZSetRangeWithScores(data)
+}
+
+func resp3GeoPos(
+	data []byte,
+) ([]byte, bool) {
+	items, ok := resp2ArrayElements(data)
+	if !ok {
+		return nil, false
+	}
+
+	out := []byte(
+		fmt.Sprintf(
+			"*%d\r\n",
+			len(items),
+		),
+	)
+
+	for _, item := range items {
+		if resp2IsNull(item) {
+			out = append(
+				out,
+				resp3Null()...,
+			)
+			continue
+		}
+
+		coords, ok :=
+			resp2ArrayElements(item)
+		if !ok || len(coords) != 2 {
+			return nil, false
+		}
+
+		out = append(
+			out,
+			[]byte("*2\r\n")...,
+		)
+
+		for _, coord := range coords {
+			value, ok :=
+				resp3DoubleFromBulk(coord)
+			if !ok {
+				return nil, false
+			}
+
+			out = append(
+				out,
+				value...,
+			)
+		}
+	}
+
+	return out, true
+}
+
+func resp3GeoSearch(
+	args [][]byte,
+	data []byte,
+) ([]byte, bool) {
+	if !hasRESPCommandArgument(
+		args,
+		"WITHCOORD",
+	) {
+		return nil, false
+	}
+
+	rows, ok := resp2ArrayElements(data)
+	if !ok {
+		return nil, false
+	}
+
+	out := []byte(
+		fmt.Sprintf(
+			"*%d\r\n",
+			len(rows),
+		),
+	)
+
+	for _, row := range rows {
+		fields, ok :=
+			resp2ArrayElements(row)
+		if !ok || len(fields) == 0 {
+			return nil, false
+		}
+
+		out = append(
+			out,
+			[]byte(
+				fmt.Sprintf(
+					"*%d\r\n",
+					len(fields),
+				),
+			)...,
+		)
+
+		for i, field := range fields {
+			if i != len(fields)-1 {
+				out = append(
+					out,
+					resp3AdaptBasic(field)...,
+				)
+				continue
+			}
+
+			coords, ok :=
+				resp2ArrayElements(field)
+			if !ok || len(coords) != 2 {
+				return nil, false
+			}
+
+			out = append(
+				out,
+				[]byte("*2\r\n")...,
+			)
+
+			for _, coord := range coords {
+				value, ok :=
+					resp3DoubleFromBulk(coord)
+				if !ok {
+					return nil, false
+				}
+
+				out = append(
+					out,
+					value...,
+				)
+			}
+		}
+	}
+
+	return out, true
+}
+
+func resp3StreamReadMap(
+	data []byte,
+) ([]byte, bool) {
+	streams, ok := resp2ArrayElements(data)
+	if !ok {
+		return nil, false
+	}
+
+	out := []byte(
+		fmt.Sprintf(
+			"%%%d\r\n",
+			len(streams),
+		),
+	)
+
+	for _, stream := range streams {
+		fields, ok :=
+			resp2ArrayElements(stream)
+		if !ok || len(fields) != 2 {
+			return nil, false
+		}
+
+		out = append(
+			out,
+			resp3AdaptBasic(fields[0])...,
+		)
+
+		out = append(
+			out,
+			resp3AdaptBasic(fields[1])...,
+		)
+	}
+
+	return out, true
+}
+
+func resp3ArrayOfFlatMaps(
+	data []byte,
+) ([]byte, bool) {
+	items, ok := resp2ArrayElements(data)
+	if !ok {
+		return nil, false
+	}
+
+	out := []byte(
+		fmt.Sprintf(
+			"*%d\r\n",
+			len(items),
+		),
+	)
+
+	for _, item := range items {
+		value, ok :=
+			resp3FlatArrayMap(item)
+		if !ok {
+			return nil, false
+		}
+
+		out = append(
+			out,
+			value...,
+		)
+	}
+
+	return out, true
+}
+
+func resp3FunctionStats(
+	data []byte,
+) ([]byte, bool) {
+	fields, ok := resp2ArrayElements(data)
+	if !ok ||
+		len(fields)%2 != 0 {
+		return nil, false
+	}
+
+	out := []byte(
+		fmt.Sprintf(
+			"%%%d\r\n",
+			len(fields)/2,
+		),
+	)
+
+	for i := 0; i < len(fields); i += 2 {
+		key, ok := resp2BulkPayload(
+			fields[i],
+		)
+		if !ok {
+			return nil, false
+		}
+
+		out = append(
+			out,
+			resp3AdaptBasic(fields[i])...,
+		)
+
+		if string(key) != "engines" {
+			out = append(
+				out,
+				resp3AdaptBasic(
+					fields[i+1],
+				)...,
+			)
+			continue
+		}
+
+		engines, ok :=
+			resp2ArrayElements(fields[i+1])
+		if !ok ||
+			len(engines)%2 != 0 {
+			return nil, false
+		}
+
+		out = append(
+			out,
+			[]byte(
+				fmt.Sprintf(
+					"%%%d\r\n",
+					len(engines)/2,
+				),
+			)...,
+		)
+
+		for j := 0; j < len(engines); j += 2 {
+			out = append(
+				out,
+				resp3AdaptBasic(
+					engines[j],
+				)...,
+			)
+
+			stats, ok :=
+				resp3FlatArrayMap(
+					engines[j+1],
+				)
+			if !ok {
+				return nil, false
+			}
+
+			out = append(
+				out,
+				stats...,
+			)
+		}
+	}
+
+	return out, true
+}
+
+func resp2IsNull(
+	data []byte,
+) bool {
+	return bytes.Equal(
+		data,
+		[]byte("$-1\r\n"),
+	) || bytes.Equal(
+		data,
+		[]byte("*-1\r\n"),
+	)
 }

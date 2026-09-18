@@ -400,3 +400,298 @@ func TestRESP3PubSubPushNull(t *testing.T) {
 		)
 	}
 }
+
+func TestRESP3ZScoreDouble(t *testing.T) {
+	got := resp3AdaptCommand(
+		[][]byte{
+			[]byte("ZSCORE"),
+			[]byte("z"),
+			[]byte("a"),
+		},
+		formatBulkString(
+			[]byte("1.5"),
+		),
+	)
+
+	want := []byte(",1.5\r\n")
+
+	if !bytes.Equal(got, want) {
+		t.Fatalf(
+			"got %q want %q",
+			got,
+			want,
+		)
+	}
+}
+
+func TestRESP3ZMSCoreDoubles(t *testing.T) {
+	input := array(
+		formatBulkString(
+			[]byte("1.5"),
+		),
+		nullBulk(),
+		formatBulkString(
+			[]byte("2.5"),
+		),
+	)
+
+	got := resp3AdaptCommand(
+		[][]byte{
+			[]byte("ZMSCORE"),
+			[]byte("z"),
+			[]byte("a"),
+			[]byte("missing"),
+			[]byte("b"),
+		},
+		input,
+	)
+
+	want := []byte(
+		"*3\r\n" +
+			",1.5\r\n" +
+			"_\r\n" +
+			",2.5\r\n",
+	)
+
+	if !bytes.Equal(got, want) {
+		t.Fatalf(
+			"got %q want %q",
+			got,
+			want,
+		)
+	}
+}
+
+func TestRESP3ZPopPairs(t *testing.T) {
+	input := array(
+		formatBulkString(
+			[]byte("a"),
+		),
+		formatBulkString(
+			[]byte("1.5"),
+		),
+	)
+
+	got := resp3AdaptCommand(
+		[][]byte{
+			[]byte("ZPOPMIN"),
+			[]byte("z"),
+		},
+		input,
+	)
+
+	want := []byte(
+		"*1\r\n" +
+			"*2\r\n" +
+			"$1\r\na\r\n" +
+			",1.5\r\n",
+	)
+
+	if !bytes.Equal(got, want) {
+		t.Fatalf(
+			"got %q want %q",
+			got,
+			want,
+		)
+	}
+}
+
+func TestRESP3GeoPosDoubles(t *testing.T) {
+	input := array(
+		array(
+			formatBulkString(
+				[]byte("13.1"),
+			),
+			formatBulkString(
+				[]byte("38.1"),
+			),
+		),
+		[]byte("*-1\r\n"),
+	)
+
+	got := resp3AdaptCommand(
+		[][]byte{
+			[]byte("GEOPOS"),
+			[]byte("geo"),
+			[]byte("a"),
+			[]byte("missing"),
+		},
+		input,
+	)
+
+	want := []byte(
+		"*2\r\n" +
+			"*2\r\n" +
+			",13.1\r\n" +
+			",38.1\r\n" +
+			"_\r\n",
+	)
+
+	if !bytes.Equal(got, want) {
+		t.Fatalf(
+			"got %q want %q",
+			got,
+			want,
+		)
+	}
+}
+
+func TestRESP3XReadMap(t *testing.T) {
+	input := array(
+		array(
+			formatBulkString(
+				[]byte("stream"),
+			),
+			array(),
+		),
+	)
+
+	got := resp3AdaptCommand(
+		[][]byte{
+			[]byte("XREAD"),
+			[]byte("STREAMS"),
+			[]byte("stream"),
+			[]byte("0"),
+		},
+		input,
+	)
+
+	want := []byte(
+		"%1\r\n" +
+			"$6\r\nstream\r\n" +
+			"*0\r\n",
+	)
+
+	if !bytes.Equal(got, want) {
+		t.Fatalf(
+			"got %q want %q",
+			got,
+			want,
+		)
+	}
+}
+
+func TestRESP3XInfoStreamMap(t *testing.T) {
+	input := array(
+		formatBulkString(
+			[]byte("length"),
+		),
+		integer(2),
+		formatBulkString(
+			[]byte("groups"),
+		),
+		integer(1),
+	)
+
+	got := resp3AdaptCommand(
+		[][]byte{
+			[]byte("XINFO"),
+			[]byte("STREAM"),
+			[]byte("s"),
+		},
+		input,
+	)
+
+	if len(got) == 0 ||
+		got[0] != '%' {
+		t.Fatalf(
+			"XINFO STREAM is not map: %q",
+			got,
+		)
+	}
+}
+
+func TestRESP3FunctionStatsMap(t *testing.T) {
+	input := array(
+		formatBulkString(
+			[]byte("running_script"),
+		),
+		nullBulk(),
+
+		formatBulkString(
+			[]byte("engines"),
+		),
+		array(
+			formatBulkString(
+				[]byte("LUA"),
+			),
+			array(
+				formatBulkString(
+					[]byte("libraries_count"),
+				),
+				integer(0),
+
+				formatBulkString(
+					[]byte("functions_count"),
+				),
+				integer(0),
+			),
+		),
+	)
+
+	got := resp3AdaptCommand(
+		[][]byte{
+			[]byte("FUNCTION"),
+			[]byte("STATS"),
+		},
+		input,
+	)
+
+	if len(got) == 0 ||
+		got[0] != '%' {
+		t.Fatalf(
+			"FUNCTION STATS is not map: %q",
+			got,
+		)
+	}
+}
+
+func TestRESP3ClientInfoVerbatim(t *testing.T) {
+	input := formatBulkString(
+		[]byte("id=1 resp=3"),
+	)
+
+	got := resp3AdaptCommand(
+		[][]byte{
+			[]byte("CLIENT"),
+			[]byte("INFO"),
+		},
+		input,
+	)
+
+	if len(got) == 0 ||
+		got[0] != '=' {
+		t.Fatalf(
+			"CLIENT INFO is not verbatim: %q",
+			got,
+		)
+	}
+}
+
+func TestRESP3ConfigGetMap(t *testing.T) {
+	input := array(
+		formatBulkString(
+			[]byte("maxmemory"),
+		),
+		formatBulkString(
+			[]byte("0"),
+		),
+	)
+
+	got := resp3AdaptCommand(
+		[][]byte{
+			[]byte("CONFIG"),
+			[]byte("GET"),
+			[]byte("maxmemory"),
+		},
+		input,
+	)
+
+	if len(got) == 0 ||
+		got[0] != '%' {
+		t.Fatalf(
+			"CONFIG GET is not map: %q",
+			got,
+		)
+	}
+}
