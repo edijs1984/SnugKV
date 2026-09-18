@@ -22,12 +22,12 @@ LOAD/LIST/DELETE/FLUSH`, `DUMP`, `RESTORE`, `STATS`, `KILL`, `HELP`, `FCALL`,
 `FCALL_RO`), `SORT` / `SORT_RO`, single-database `COPY`, and the current CLIENT
 management/tooling slice are also implemented.
 
-COMMAND metadata and common CONFIG tooling are complete, and core AUTH/ACL
-authentication, command/category/key enforcement, ACL logging, and ACL-file
-persistence are implemented. The largest remaining Redis compatibility areas are
-the remaining ACL channel/selector edge surface, `SCRIPT DEBUG`, exact
-`allow-oom` behavior, RESP3, migration/transfer scope, and advanced CLIENT
-tracking/caching features. Replication, Sentinel-style failover, and Cluster
+COMMAND metadata, common CONFIG tooling, and the audited single-node AUTH/ACL
+surface are complete. ACL enforcement covers commands/categories, keys, Pub/Sub
+channels, selectors, transactions, DRYRUN/LOG, SETUSER modifier parity, and
+ACL-file persistence. The largest remaining Redis compatibility areas are RESP3,
+`SCRIPT DEBUG`, exact `allow-oom` behavior, migration/transfer scope, and advanced
+CLIENT tracking/caching features. Replication, Sentinel-style failover, and Cluster
 remain outside the current single-node scope.
 
 ## Client compatibility
@@ -71,7 +71,7 @@ protocol version`.
 | HyperLogLog | Supported | `PFADD`, `PFCOUNT`, `PFMERGE`; Redis-compatible serialized HLL strings |
 | GEO | Modern surface supported | `GEOADD`, `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH`, `GEOSEARCHSTORE`; deprecated `GEORADIUS*` commands are not implemented |
 | Lua scripting / Functions | Partial | `EVAL*`, read-only EVAL, SCRIPT load/exists/flush/kill, Functions core/management, restart persistence and standalone-safe flags; SCRIPT DEBUG, allow-oom and deeper command-flag/OOM parity remain |
-| AUTH / ACL | Broad core support | Named authentication, command/category/key rules, transaction enforcement, CAT/DRYRUN/GENPASS/LOG, SAVE/LOAD, startup ACL-file restore; channel/selectors remain partial |
+| AUTH / ACL | Audited single-node support | Named authentication, command/category/key/channel rules, selectors, transaction enforcement, CAT/DRYRUN/GENPASS/LOG, SAVE/LOAD, startup ACL-file restore, and Redis 8.2 differential coverage |
 | CONFIG | Broad tooling support | GET/SET/RESETSTAT/REWRITE/HELP for supported SnugKV settings with runtime mutation and restart persistence |
 | CLIENT | Partial | ID/name/setinfo/info/list/list filters/kill/unblock/help implemented and differentially tested; tracking/caching/redirection not implemented |
 | COMMAND metadata | Supported for implemented surface | Redis-shaped INFO/DOCS/GETKEYS/GETKEYSANDFLAGS, parent/subcommand metadata, dynamic key extraction, differential audit complete |
