@@ -41,10 +41,10 @@ Node dependencies are already declared in `compat/node/package.json`.
 
 ```sh
 # SnugKV
-REDIS_PORT=6380 TARGET_NAME=snugkv ./compat/resp3/run.sh
+REDIS_PORT=6380 TARGET_NAME=snugkv bash compat/resp3/run.sh
 
 # Redis 8.2 oracle
-REDIS_PORT=6390 TARGET_NAME=redis82 ./compat/resp3/run.sh
+REDIS_PORT=6390 TARGET_NAME=redis82 bash compat/resp3/run.sh
 ```
 
 You can also run one client directly:
