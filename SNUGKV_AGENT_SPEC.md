@@ -1,8 +1,8 @@
 # SnugKV
 
-## Agent-Ready Product and Engineering Specification
+## Foundational Product and Engineering Specification
 
-**Status:** Draft specification, version 0.1  
+**Status:** Historical/foundational specification; current implementation status is tracked in `README.md`, `COMPATIBILITY.md`, `PLAN.md`, and `PROGRESS.md`  
 **Implementation language:** Go  
 **Product category:** Redis-compatible, memory-efficient in-memory data store  
 **Primary differentiator:** Transparent, reversible and workload-aware value encoding  
@@ -10,9 +10,11 @@
 
 ---
 
-## 1. Instructions for coding agents
+## 1. Implementation guidance
 
-This file is the authoritative implementation brief for SnugKV. An agent working on the project must read this entire file before editing code.
+This file records the original product constraints, storage invariants, and architectural direction that shaped SnugKV. It is no longer the authoritative command roadmap: the implementation has intentionally grown well beyond the original version-0.1 surface.
+
+Before editing code, use the current repository state plus `COMPATIBILITY.md`, `PLAN.md`, `PROGRESS.md`, and the focused documents under `docs/` as the source of truth for implemented commands, compatibility status, and next work. Where this historical specification conflicts with those current sources, the current sources win.
 
 Agents must follow these rules:
 
@@ -129,17 +131,20 @@ SnugKV therefore needs a policy engine rather than one universal codec. It must 
 3. Provide Prometheus-compatible operational metrics.
 4. Allow operators to disable individual codecs or automatic re-encoding.
 
-### 4.3 Non-goals for version 1
+### 4.3 Long-term scope boundaries
+
+The implementation has exceeded several original v0.1 non-goals, including Lua
+scripting, Redis Functions, Streams, Pub/Sub, transactions, CONFIG/COMMAND
+tooling, and AUTH/ACL support. Current boundaries are:
 
 - full Redis command compatibility;
 - Redis Cluster compatibility;
 - multi-node replication or automatic failover;
-- Lua scripting;
-- arbitrary modules;
-- distributed transactions;
+- arbitrary Redis modules;
+- distributed transactions across nodes;
 - multi-database support beyond database `0`;
-- a query language;
-- JSON document mutation by path;
+- a general query language;
+- complete RedisJSON-compatible document mutation semantics;
 - semantic modification of values passed through ordinary `SET`;
 - persistent storage competitive with dedicated disk databases;
 - claiming a fixed compression ratio for all workloads.
@@ -207,11 +212,16 @@ SnugKV must also behave sensibly for incompressible values. Random or already co
 
 ### 7.1 Compatibility promise
 
-Version 1 targets RESP2 and a small set of Redis commands. Existing Redis clients should be able to connect for supported operations without a custom SDK.
+SnugKV targets RESP2 and a broad single-node Redis-compatible command surface. Existing Redis clients should be able to connect for supported operations without a custom SDK. The current supported surface is maintained in `README.md` and `COMPATIBILITY.md`.
 
 Compatibility is behavioral only for explicitly supported commands. Unsupported commands return a clear error and must never silently approximate different semantics.
 
-### 7.2 Minimum supported commands
+### 7.2 Historical minimum command baseline
+
+The list below is the original minimum baseline, not the current complete command
+surface. The implementation now includes native HASH/SET/LIST/ZSET/STREAM,
+Pub/Sub, transactions, scripting/Functions, HyperLogLog, GEO, SORT/COPY,
+COMMAND/CONFIG tooling, CLIENT management, and AUTH/ACL support.
 
 #### Connection and diagnostics
 
