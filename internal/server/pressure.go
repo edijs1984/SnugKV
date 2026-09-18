@@ -227,3 +227,23 @@ func (s *Server) executePressureMode(args [][]byte, journalEvictions bool) ([]by
 			excluded[string(args[i])] = true
 		}
 	}
+	s.store.CleanupExpiredLimit(1024)
+	s.store.Compact(64 << 20)
+	result, err = s.executePressureCommand(args)
+	for n := 0; n < 128 && errors.Is(err, engine.ErrOOM); n++ {
+		key, ok := s.store.Victim(excluded, s.eviction == "volatile-lru")
+		if !ok {
+			break
+		}
+		if journalEvictions && s.journal != nil {
+			if journalErr := s.journal.Append([]persistence.Record{{Key: []byte(key), Deleted: true}}); journalErr != nil {
+				s.durabilityFailed = true
+				return nil, errors.New("ERR persistence append failed during eviction")
+			}
+		}
+		s.store.Evict(key)
+		s.store.Compact(64 << 20)
+		result, err = s.executePressureCommand(args)
+	}
+	return result, err
+}
