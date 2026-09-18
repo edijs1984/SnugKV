@@ -296,7 +296,8 @@ Details: `docs/ACL-COMPATIBILITY.md`.
 - [x] Audited ACL channel patterns, selectors, SETUSER modifier hardening, and persistence.
 - [ ] Deeper dynamic SORT/script/Function ACL edge audits.
 - [x] Core RESP3 protocol support and Redis 8.2 differential validation.
-- [ ] Broader RESP3 command-shape/attribute/client-library differential coverage.
+- [x] Broad Redis 8.2 RESP3 command-shape differential sweep across the implemented surface.
+- [ ] RESP3 client-library smoke coverage and attribute-frame support if required.
 - [ ] Advanced CLIENT tracking/caching/redirection features if required.
 - [ ] Equivalent proactive blocked-client disconnect detection for non-Linux server builds if cross-platform parity is required.
 
@@ -343,4 +344,5 @@ Before treating a feature as complete:
 - [x] Implement RESP3 Pub/Sub push frames and Redis 8.2 subscribed-mode behavior for classic, pattern, and sharded Pub/Sub.
 - [x] Audit `HELLO 3` metadata shape, AUTH/SETNAME option behavior, protocol switching, and tested errors against Redis 8.2.
 - [x] Keep the full race suite and RESP2 Pub/Sub regression coverage green after RESP3 support.
-- [ ] Expand command-by-command RESP3 differential coverage, unused RESP3 types/attributes, and supported client-library RESP3 smoke tests.
+- [x] Expand command-by-command RESP3 differential coverage across ZSET/GEO/Streams/tooling reply shapes.
+- [ ] Add supported client-library RESP3 smoke tests and attributes/unused types only when required.
