@@ -228,4 +228,6 @@ Important intentional boundaries remain:
 - `SCRIPT DEBUG` remains intentionally deferred until real LDB-style semantics exist.
 - Future new commands must add accurate metadata rather than inheriting generic approximations.
 
-Issue #90 is complete. The next client/tooling compatibility target is common `CONFIG` support, followed by ACL/authentication scope.
+Issue #90 is complete. The subsequent common `CONFIG` milestone and core
+AUTH/ACL milestone have also been completed; see `docs/CONFIG-COMPATIBILITY.md`
+and `docs/ACL-COMPATIBILITY.md`.
