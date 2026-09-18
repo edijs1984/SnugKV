@@ -146,6 +146,34 @@ func (s *Server) authorizeConnectionCommand(
 		)
 	}
 
+	if kind := sortExternalACLPatternKind(args); kind != "" {
+		fullScope := aclRuleCommandAllowed(
+			user.AllCommands,
+			user.CommandAllow,
+			canonical,
+		) && user.AllKeys
+
+		if !fullScope {
+			for _, selector := range user.Selectors {
+				if aclRuleCommandAllowed(
+					selector.AllCommands,
+					selector.CommandAllow,
+					canonical,
+				) && selector.AllKeys {
+					fullScope = true
+					break
+				}
+			}
+		}
+
+		if !fullScope {
+			return fmt.Errorf(
+				"ERR %s option of SORT denied due to insufficient ACL permissions.",
+				kind,
+			)
+		}
+	}
+
 	refs, err := commandKeys(args)
 	if err == nil && len(refs) > 0 {
 		keyPossible := true
