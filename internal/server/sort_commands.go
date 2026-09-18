@@ -107,6 +107,33 @@ func parseSortOptions(args [][]byte, readOnly bool) (sortOptions, error) {
 	return options, nil
 }
 
+func sortExternalACLPatternKind(args [][]byte) string {
+	if len(args) < 2 {
+		return ""
+	}
+
+	readOnly := strings.EqualFold(string(args[0]), "SORT_RO")
+	options, err := parseSortOptions(args[2:], readOnly)
+	if err != nil {
+		return ""
+	}
+
+	if options.hasBy && bytes.IndexByte(options.by, '*') >= 0 {
+		return "BY"
+	}
+
+	for _, pattern := range options.get {
+		if bytes.Equal(pattern, []byte("#")) {
+			continue
+		}
+		if bytes.IndexByte(pattern, '*') >= 0 {
+			return "GET"
+		}
+	}
+
+	return ""
+}
+
 func sortStoreDestination(args [][]byte) (string, bool) {
 	if len(args) < 2 || !strings.EqualFold(string(args[0]), "SORT") {
 		return "", false
