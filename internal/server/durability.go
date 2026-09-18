@@ -18,7 +18,14 @@ type Journal interface {
 func (s *Server) SetJournal(j Journal) { s.journal = j }
 
 func (s *Server) Execute(args [][]byte) ([]byte, error) {
-	return s.ExecuteWithCancel(args, nil)
+	return s.executeWithCancelSession(args, nil, nil)
+}
+
+func (s *Server) executeForSession(
+	args [][]byte,
+	session *authSession,
+) ([]byte, error) {
+	return s.executeWithCancelSession(args, nil, session)
 }
 
 // ExecuteWithCancel is identical to Execute except that blocking commands also
@@ -26,6 +33,22 @@ func (s *Server) Execute(args [][]byte) ([]byte, error) {
 // The TCP server uses this to release per-connection waiters when a peer goes
 // away without changing the behavior of direct/in-process callers.
 func (s *Server) ExecuteWithCancel(args [][]byte, cancel <-chan struct{}) (response []byte, resultErr error) {
+	return s.executeWithCancelSession(args, cancel, nil)
+}
+
+func (s *Server) executeWithCancelForSession(
+	args [][]byte,
+	cancel <-chan struct{},
+	session *authSession,
+) ([]byte, error) {
+	return s.executeWithCancelSession(args, cancel, session)
+}
+
+func (s *Server) executeWithCancelSession(
+	args [][]byte,
+	cancel <-chan struct{},
+	session *authSession,
+) (response []byte, resultErr error) {
 	atomic.AddUint64(&s.commands, 1)
 	start := time.Now()
 	name := "unknown"
@@ -56,12 +79,21 @@ func (s *Server) ExecuteWithCancel(args [][]byte, cancel <-chan struct{}) (respo
 	if isBlockingStreamCommand(args) {
 		return s.executeBlockingStream(args, cancel)
 	}
-	return s.executeDurable(args)
+	return s.executeDurableForSession(args, session)
 }
 
 func (s *Server) executeDurable(args [][]byte) ([]byte, error) {
+	return s.executeDurableForSession(args, nil)
+}
+
+func (s *Server) executeDurableForSession(
+	args [][]byte,
+	session *authSession,
+) ([]byte, error) {
 	s.durableMu.Lock()
 	defer s.durableMu.Unlock()
+
+	return s.withExecutionACLContextLocked(session, args, func() ([]byte, error) {
 
 	finishRunning := func() {}
 	if isFunctionCallCommand(args) {
@@ -77,6 +109,7 @@ func (s *Server) executeDurable(args [][]byte) ([]byte, error) {
 	result, err := s.executeDurableLocked(args)
 	s.refreshWatchesLocked()
 	return result, err
+	})
 }
 
 // executeDurableLocked executes one command while durableMu is already held.
