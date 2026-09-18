@@ -270,7 +270,7 @@ COMMAND metadata, common CONFIG tooling, the audited single-node AUTH/ACL milest
 and the core RESP3 protocol milestone are complete. Other significant gaps are
 `SCRIPT DEBUG`, exact `allow-oom` semantics, migration scope beyond DB0 COPY,
 advanced CLIENT tracking/caching, optional Redis-RDB Function payload compatibility,
-and broader RESP3 command/client differential hardening. Deprecated `GEORADIUS*`
+and optional RESP3 client-library/attribute hardening. Deprecated `GEORADIUS*`
 compatibility is not part of the modern GEO surface yet. A final differential
 Redis edge-case audit remains useful for Streams, but there is no known core
 Streams command-family gap. See [COMPATIBILITY.md](COMPATIBILITY.md) and GitHub

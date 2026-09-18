@@ -11,7 +11,7 @@ current CLIENT tooling slice, but it is not a complete Redis replacement.
 - RESP2 is supported and remains regression-covered.
 - RESP3 can be negotiated with `HELLO 3`; `HELLO 2` switches the connection back.
 - The audited RESP3 surface includes null/map/set/double/verbatim reply forms used by current commands, nested COMMAND/ACL shapes, and Pub/Sub push frames.
-- RESP3 attributes and exhaustive command-by-command/client-library RESP3 parity are not yet claimed.
+- The broad Redis 8.2 command-shape differential sweep is complete; RESP3 attributes and exhaustive client-library-specific parity are not yet claimed.
 
 See [COMPATIBILITY.md](COMPATIBILITY.md).
 
@@ -28,7 +28,7 @@ Major Redis-compatible features still not implemented or incomplete:
 - full Lua/Functions parity (`SCRIPT DEBUG`, `allow-oom`, exact command flags/ACL behavior);
 - Redis-RDB byte compatibility for `FUNCTION DUMP` / `RESTORE` payloads;
 - cross-database COPY and broader migration/transfer command scope;
-- broader RESP3 command/client differential hardening and unused RESP3 types/attributes;
+- optional RESP3 client-library smoke coverage and unused RESP3 types/attributes if required;
 - deeper dynamic SORT/script/Function ACL-policy edge auditing;
 - advanced CLIENT tracking/caching/redirection features;
 - replication;

@@ -6,7 +6,8 @@ the same connection back to RESP2.
 
 ## Implemented and audited
 
-The current Redis 8.2 differential audit covers:
+Redis 8.2 differential audits now cover both the core protocol paths and a broad
+command-shape sweep across the implemented surface:
 
 - per-connection protocol state;
 - `HELLO`, `HELLO 2`, and `HELLO 3`;
@@ -14,19 +15,27 @@ The current Redis 8.2 differential audit covers:
 - RESP3 nulls for missing values, including nested nulls such as `MGET`;
 - RESP3 maps for `HELLO 3`, `HGETALL`, and `ACL GETUSER`;
 - RESP3 sets for `SMEMBERS` and the nested set fields in `COMMAND INFO`;
-- RESP3 doubles and nested pair arrays for `ZRANGE ... WITHSCORES`;
-- RESP3 verbatim strings for `INFO`;
+- RESP3 doubles and nested pair arrays for ZSET score commands, including
+  `ZSCORE`, `ZMSCORE`, `ZINCRBY`, `ZRANGE ... WITHSCORES`,
+  `ZRANDMEMBER ... WITHSCORES`, and pop replies;
+- RESP3 verbatim strings for `INFO` and `CLIENT INFO`;
 - nested RESP3 maps/sets used by `COMMAND INFO` key specifications;
+- RESP3 GEO coordinate doubles for `GEOPOS` and `GEOSEARCH ... WITHCOORD`;
+- RESP3 maps for `XREAD`, `XREADGROUP`, `XINFO STREAM`,
+  `XINFO GROUPS`, `XINFO CONSUMERS`, `FUNCTION STATS`, and `CONFIG GET`;
 - classic, pattern, and sharded Pub/Sub push frames;
 - RESP3 subscribed clients continuing to execute ordinary commands;
 - unsubscribe-with-no-active-subscriptions pushes containing RESP3 null;
 - `RESET` returning to ordinary command behavior;
 - protocol-specific behavior without regressing the existing RESP2 Pub/Sub path.
 
-The audited Redis-vs-SnugKV differences were content-specific rather than RESP3
-wire-shape defects: SnugKV reports its own server/version/module metadata and
-INFO body, connection IDs naturally differ, and SCAN ordering is implementation
-dependent.
+The final broad structural diff contained no known RESP3 wire-shape defects.
+Remaining observed differences were content/environment specific: SnugKV reports
+its own server/version/module metadata, Redis may advertise installed modules,
+connection IDs naturally differ, and SCAN result ordering/cardinality depends on
+the current dataset. During the sweep, an independent Streams semantic gap in
+`XINFO GROUPS` entries-read/lag inference was also fixed; that was not a RESP3
+framing defect.
 
 ## Architecture
 
@@ -43,11 +52,10 @@ remain active.
 
 ## Remaining RESP3 hardening
 
-Core RESP3 support is implemented, but SnugKV does not claim exhaustive RESP3
-parity yet. Remaining work includes:
+Core RESP3 support and the broad command-shape differential sweep are complete.
+SnugKV still does not claim exhaustive RESP3 protocol parity. Remaining optional
+hardening includes:
 
-- a broader command-by-command Redis differential sweep for less common reply
-  shapes;
 - supported client-library smoke tests while explicitly using RESP3;
 - RESP3 attribute-frame behavior if future implemented commands require it;
 - unused RESP3 scalar/container types only when the SnugKV command surface needs

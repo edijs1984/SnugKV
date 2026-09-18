@@ -28,8 +28,9 @@ covers commands/categories, keys, Pub/Sub channels, selectors, transactions,
 DRYRUN/LOG, SETUSER modifier parity, and ACL-file persistence. RESP3 now includes
 per-connection protocol state, `HELLO 3`, protocol switching, the RESP3 reply
 shapes required by the audited surface, and RESP3 Pub/Sub pushes/subscribed-mode
-semantics. Broader command-by-command RESP3 and client-library differential
-coverage remains hardening work. The largest remaining compatibility areas include
+semantics. The broad Redis 8.2 command-shape differential sweep is complete; remaining
+RESP3 work is optional client-library smoke coverage and attribute/unused-type
+support only where required. The largest remaining compatibility areas include
 `SCRIPT DEBUG`, exact `allow-oom` behavior, migration/transfer scope, and advanced
 CLIENT tracking/caching features. Replication, Sentinel-style failover, and Cluster
 remain outside the current single-node scope.
@@ -57,8 +58,8 @@ RESP3 is supported per connection through `HELLO 3`, with switching back through
 `HELLO 2`. The audited surface covers RESP3 nulls, maps, sets, doubles, verbatim
 strings, nested COMMAND/ACL structures, and classic/pattern/sharded Pub/Sub push
 frames. RESP3 subscribers may continue executing ordinary commands, matching the
-Redis 8.2 behavior exercised in the differential audit. RESP3 attribute frames
-and a full command-by-command/client-library RESP3 audit are not yet claimed.
+Redis 8.2 behavior exercised in the differential audit. The broad command-shape audit is complete. RESP3 attribute frames and exhaustive
+client-library-specific parity are not yet claimed.
 
 ## Redis family status
 
@@ -82,7 +83,7 @@ and a full command-by-command/client-library RESP3 audit are not yet claimed.
 | CONFIG | Broad tooling support | GET/SET/RESETSTAT/REWRITE/HELP for supported SnugKV settings with runtime mutation and restart persistence |
 | CLIENT | Partial | ID/name/setinfo/info/list/list filters/kill/unblock/help implemented and differentially tested; tracking/caching/redirection not implemented |
 | COMMAND metadata | Supported for implemented surface | Redis-shaped INFO/DOCS/GETKEYS/GETKEYSANDFLAGS, parent/subcommand metadata, dynamic key extraction, differential audit complete |
-| RESP3 | Core support | `HELLO 3`, protocol switching, audited null/map/set/double/verbatim reply shapes and Pub/Sub push semantics; broader command/client differential audit remains |
+| RESP3 | Broad audited support | `HELLO 3`, protocol switching, audited null/map/set/double/verbatim reply shapes, Streams/tooling maps, GEO/ZSET numeric forms, and Pub/Sub push semantics; optional client/attribute hardening remains |
 | Replication / Sentinel / Cluster | Not implemented | Outside current single-node scope |
 
 ## HASH
@@ -509,7 +510,7 @@ Prioritized backlog:
    modifiers, and deeper dynamic-key/scripting edge audits.
 2. `SCRIPT DEBUG`, exact `allow-oom`, and deeper scripting command-flag/OOM parity.
 3. Migration/transfer scope beyond single-database `COPY`.
-4. Broader RESP3 command-shape, attribute, and client-library differential hardening.
+4. Optional RESP3 client-library smoke coverage and attribute-frame support if required.
 5. Advanced CLIENT tracking/caching/redirection features where real clients require them.
 6. Differential hardening for the completed Streams surface.
 7. Optional Redis-RDB byte compatibility for Function DUMP/RESTORE payloads.
