@@ -412,6 +412,10 @@ func aclRuleSetAllows(
 		return false
 	}
 
+	if sortExternalACLPatternKind(args) != "" && !allKeys {
+		return false
+	}
+
 	refs, err := commandKeys(args)
 	if err == nil {
 		for _, ref := range refs {
