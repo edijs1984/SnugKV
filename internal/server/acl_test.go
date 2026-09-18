@@ -3,6 +3,7 @@ package server
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestACLDefaultUser(t *testing.T) {
@@ -880,5 +881,583 @@ func TestACLCatSnugCommandsNotMisclassified(t *testing.T) {
 				category,
 			)
 		}
+	}
+}
+
+func TestACLLogEmpty(t *testing.T) {
+	log := NewACLLog()
+
+	reply := aclLogReply(log.Entries(10))
+
+	if string(reply) != "*0\r\n" {
+		t.Fatalf("got %q", reply)
+	}
+}
+
+func TestACLLogNewestFirst(t *testing.T) {
+	log := NewACLLog()
+
+	log.Add(
+		"auth",
+		"AUTH",
+		"user1",
+		"client-one",
+	)
+
+	log.Add(
+		"command",
+		"set",
+		"user2",
+		"client-two",
+	)
+
+	entries := log.Entries(10)
+
+	if len(entries) != 2 {
+		t.Fatalf("got %d entries", len(entries))
+	}
+
+	if entries[0].Reason != "command" {
+		t.Fatalf(
+			"newest reason=%q",
+			entries[0].Reason,
+		)
+	}
+
+	if entries[1].Reason != "auth" {
+		t.Fatalf(
+			"oldest reason=%q",
+			entries[1].Reason,
+		)
+	}
+}
+
+func TestACLLogLimit(t *testing.T) {
+	log := NewACLLog()
+
+	log.Add("auth", "AUTH", "a", "")
+	log.Add("command", "set", "b", "")
+	log.Add("key", "secret", "c", "")
+
+	entries := log.Entries(2)
+
+	if len(entries) != 2 {
+		t.Fatalf("got %d entries", len(entries))
+	}
+
+	if entries[0].Reason != "key" {
+		t.Fatalf(
+			"first=%q",
+			entries[0].Reason,
+		)
+	}
+
+	if entries[1].Reason != "command" {
+		t.Fatalf(
+			"second=%q",
+			entries[1].Reason,
+		)
+	}
+}
+
+func TestACLLogZeroAndNegative(t *testing.T) {
+	log := NewACLLog()
+
+	log.Add("auth", "AUTH", "user", "")
+
+	if got := log.Entries(0); len(got) != 0 {
+		t.Fatalf("LOG 0 returned %d entries", len(got))
+	}
+
+	if got := log.Entries(-1); len(got) != 0 {
+		t.Fatalf(
+			"LOG -1 returned %d entries",
+			len(got),
+		)
+	}
+}
+
+func TestACLLogReset(t *testing.T) {
+	log := NewACLLog()
+
+	log.Add("auth", "AUTH", "user", "")
+
+	log.Reset()
+
+	if got := log.Entries(10); len(got) != 0 {
+		t.Fatalf(
+			"got %d entries after reset",
+			len(got),
+		)
+	}
+}
+
+func TestACLLogRESPShape(t *testing.T) {
+	log := NewACLLog()
+
+	log.Add(
+		"key",
+		"denied:key",
+		"loguser",
+		"id=1 cmd=get user=loguser",
+	)
+
+	reply := string(
+		aclLogReply(log.Entries(1)),
+	)
+
+	if !strings.HasPrefix(reply, "*1\r\n*20\r\n") {
+		t.Fatalf(
+			"unexpected RESP shape %q",
+			reply,
+		)
+	}
+
+	for _, field := range []string{
+		"count",
+		"reason",
+		"key",
+		"context",
+		"toplevel",
+		"object",
+		"denied:key",
+		"username",
+		"loguser",
+		"age-seconds",
+		"client-info",
+		"entry-id",
+		"timestamp-created",
+		"timestamp-last-updated",
+	} {
+		if !strings.Contains(reply, field) {
+			t.Fatalf(
+				"missing %q in %q",
+				field,
+				reply,
+			)
+		}
+	}
+}
+
+func TestACLLogAggregatesEquivalentEntries(t *testing.T) {
+	log := NewACLLog()
+
+	log.Add(
+		"command",
+		"set",
+		"logagg",
+		"client-one",
+	)
+
+	first := log.Entries(10)
+
+	if len(first) != 1 {
+		t.Fatalf("initial entries=%d", len(first))
+	}
+
+	firstID := first[0].EntryID
+	firstCreated := first[0].TimestampCreated
+
+	time.Sleep(time.Millisecond)
+
+	log.Add(
+		"command",
+		"set",
+		"logagg",
+		"client-two",
+	)
+
+	time.Sleep(time.Millisecond)
+
+	log.Add(
+		"command",
+		"set",
+		"logagg",
+		"client-three",
+	)
+
+	entries := log.Entries(10)
+
+	if len(entries) != 1 {
+		t.Fatalf(
+			"expected aggregation into 1 entry, got %d",
+			len(entries),
+		)
+	}
+
+	entry := entries[0]
+
+	if entry.Count != 3 {
+		t.Fatalf(
+			"count=%d want=3",
+			entry.Count,
+		)
+	}
+
+	if entry.EntryID != firstID {
+		t.Fatalf(
+			"entry id changed: got=%d want=%d",
+			entry.EntryID,
+			firstID,
+		)
+	}
+
+	if entry.TimestampCreated != firstCreated {
+		t.Fatalf(
+			"timestamp-created changed: got=%d want=%d",
+			entry.TimestampCreated,
+			firstCreated,
+		)
+	}
+
+	if entry.TimestampLastUpdated <= firstCreated {
+		t.Fatalf(
+			"timestamp-last-updated=%d created=%d",
+			entry.TimestampLastUpdated,
+			firstCreated,
+		)
+	}
+
+	if entry.ClientInfo != "client-three" {
+		t.Fatalf(
+			"client-info=%q want latest client",
+			entry.ClientInfo,
+		)
+	}
+}
+
+func TestACLLogDifferentObjectsDoNotAggregate(t *testing.T) {
+	log := NewACLLog()
+
+	log.Add("key", "denied:a", "logagg", "a")
+	log.Add("key", "denied:b", "logagg", "b")
+	log.Add("key", "denied:c", "logagg", "c")
+
+	entries := log.Entries(10)
+
+	if len(entries) != 3 {
+		t.Fatalf(
+			"entries=%d want=3",
+			len(entries),
+		)
+	}
+
+	if entries[0].Object != "denied:c" ||
+		entries[1].Object != "denied:b" ||
+		entries[2].Object != "denied:a" {
+		t.Fatalf(
+			"wrong order: %#v",
+			entries,
+		)
+	}
+
+	for _, entry := range entries {
+		if entry.Count != 1 {
+			t.Fatalf(
+				"%s count=%d",
+				entry.Object,
+				entry.Count,
+			)
+		}
+	}
+}
+
+func TestACLLogAuthFailuresAggregate(t *testing.T) {
+	log := NewACLLog()
+
+	log.Add("auth", "AUTH", "logagg", "client-1")
+	log.Add("auth", "AUTH", "logagg", "client-2")
+	log.Add("auth", "AUTH", "logagg", "client-3")
+
+	entries := log.Entries(10)
+
+	if len(entries) != 1 {
+		t.Fatalf(
+			"entries=%d want=1",
+			len(entries),
+		)
+	}
+
+	if entries[0].Count != 3 {
+		t.Fatalf(
+			"count=%d want=3",
+			entries[0].Count,
+		)
+	}
+
+	if entries[0].ClientInfo != "client-3" {
+		t.Fatalf(
+			"client-info=%q",
+			entries[0].ClientInfo,
+		)
+	}
+}
+
+func TestACLLogUpdatedEntryMovesToFront(t *testing.T) {
+	log := NewACLLog()
+
+	log.Add("command", "set", "user", "one")
+	log.Add("key", "secret", "user", "two")
+
+	// Update the older command entry.
+	log.Add("command", "set", "user", "three")
+
+	entries := log.Entries(10)
+
+	if len(entries) != 2 {
+		t.Fatalf("entries=%d", len(entries))
+	}
+
+	if entries[0].Reason != "command" ||
+		entries[0].Object != "set" {
+		t.Fatalf(
+			"updated entry was not moved to front: %#v",
+			entries,
+		)
+	}
+
+	if entries[0].Count != 2 {
+		t.Fatalf(
+			"count=%d want=2",
+			entries[0].Count,
+		)
+	}
+}
+
+func TestACLCategoryRead(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("reader", []string{
+		"on",
+		"nopass",
+		"-@all",
+		"+@read",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !acl.CommandAllowed("reader", "get") {
+		t.Fatal("GET should be allowed by +@read")
+	}
+
+	if !acl.CommandAllowed("reader", "mget") {
+		t.Fatal("MGET should be allowed by +@read")
+	}
+
+	if acl.CommandAllowed("reader", "set") {
+		t.Fatal("SET should not be allowed by +@read")
+	}
+}
+
+func TestACLCategoryWrite(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("writer", []string{
+		"on",
+		"nopass",
+		"-@all",
+		"+@write",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !acl.CommandAllowed("writer", "set") {
+		t.Fatal("SET should be allowed by +@write")
+	}
+
+	if acl.CommandAllowed("writer", "get") {
+		t.Fatal("GET should not be allowed by +@write")
+	}
+}
+
+func TestACLCategoryString(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("strings", []string{
+		"on",
+		"nopass",
+		"-@all",
+		"+@string",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !acl.CommandAllowed("strings", "get") {
+		t.Fatal("GET should be allowed by +@string")
+	}
+
+	if !acl.CommandAllowed("strings", "set") {
+		t.Fatal("SET should be allowed by +@string")
+	}
+
+	if acl.CommandAllowed("strings", "hget") {
+		t.Fatal("HGET should not be allowed by +@string")
+	}
+}
+
+func TestACLCategoryOrderStringThenMinusWrite(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("ordered", []string{
+		"on",
+		"nopass",
+		"-@all",
+		"+@string",
+		"-@write",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !acl.CommandAllowed("ordered", "get") {
+		t.Fatal("GET should remain allowed")
+	}
+
+	if acl.CommandAllowed("ordered", "set") {
+		t.Fatal("SET should be denied by later -@write")
+	}
+
+	if acl.CommandAllowed("ordered", "incr") {
+		t.Fatal("INCR should be denied by later -@write")
+	}
+}
+
+func TestACLCategoryOrderMinusWriteThenString(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("ordered", []string{
+		"on",
+		"nopass",
+		"-@all",
+		"-@write",
+		"+@string",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !acl.CommandAllowed("ordered", "get") {
+		t.Fatal("GET should be allowed")
+	}
+
+	if !acl.CommandAllowed("ordered", "set") {
+		t.Fatal("SET should be restored by later +@string")
+	}
+
+	if !acl.CommandAllowed("ordered", "incr") {
+		t.Fatal("INCR should be restored by later +@string")
+	}
+}
+
+func TestACLCategoryExplicitCommandOverridesCategory(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("reader", []string{
+		"on",
+		"nopass",
+		"-@all",
+		"+@read",
+		"-get",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if acl.CommandAllowed("reader", "get") {
+		t.Fatal("later -get should override +@read")
+	}
+
+	if !acl.CommandAllowed("reader", "mget") {
+		t.Fatal("MGET should remain allowed")
+	}
+}
+
+func TestACLCategoryExplicitCommandRestoresPermission(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("user", []string{
+		"on",
+		"nopass",
+		"+@all",
+		"-@read",
+		"+get",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !acl.CommandAllowed("user", "get") {
+		t.Fatal("later +get should restore GET")
+	}
+
+	if acl.CommandAllowed("user", "mget") {
+		t.Fatal("MGET should remain denied by -@read")
+	}
+
+	if !acl.CommandAllowed("user", "set") {
+		t.Fatal("SET should remain allowed from +@all")
+	}
+}
+
+func TestACLCategoryDangerousRemoval(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("safe", []string{
+		"on",
+		"nopass",
+		"+@all",
+		"-@dangerous",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !acl.CommandAllowed("safe", "get") {
+		t.Fatal("GET should remain allowed")
+	}
+
+	if acl.CommandAllowed("safe", "keys") {
+		t.Fatal("KEYS should be denied by -@dangerous")
+	}
+
+	if acl.CommandAllowed("safe", "flushdb") {
+		t.Fatal("FLUSHDB should be denied by -@dangerous")
+	}
+}
+
+func TestACLCategoryCaseInsensitive(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("reader", []string{
+		"on",
+		"nopass",
+		"-@all",
+		"+@READ",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !acl.CommandAllowed("reader", "get") {
+		t.Fatal("+@READ should allow GET")
+	}
+}
+
+func TestACLInvalidCategory(t *testing.T) {
+	acl := NewACL()
+
+	err := acl.SetUser("invalid", []string{
+		"on",
+		"nopass",
+		"-@all",
+		"+@does-not-exist",
+	})
+
+	if err == nil {
+		t.Fatal("expected invalid category error")
+	}
+
+	want := "ERR Error in ACL SETUSER modifier '+@does-not-exist': Unknown command or category name in ACL"
+
+	if err.Error() != want {
+		t.Fatalf(
+			"got %q want %q",
+			err.Error(),
+			want,
+		)
 	}
 }

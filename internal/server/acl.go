@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -164,6 +165,29 @@ func (a *ACL) SetUser(name string, rules []string) error {
 		return errors.New("ERR invalid username")
 	}
 
+	// Validate category names before changing any user state. Redis rejects
+	// ACL SETUSER with an unknown category instead of partially applying the
+	// preceding category rules.
+	for _, rule := range rules {
+		lower := strings.ToLower(rule)
+
+		if strings.HasPrefix(lower, "+@") ||
+			strings.HasPrefix(lower, "-@") {
+			category := lower[2:]
+
+			if category == "all" {
+				continue
+			}
+
+			if _, ok := redisACLCategoryCommands[category]; !ok {
+				return fmt.Errorf(
+					"ERR Error in ACL SETUSER modifier '%s': Unknown command or category name in ACL",
+					rule,
+				)
+			}
+		}
+	}
+
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -244,6 +268,56 @@ func (a *ACL) SetUser(name string, rules []string) error {
 			u.AllCommands = false
 			u.CommandAllow = make(map[string]bool)
 			u.CommandRules = []string{"-@all"}
+
+		case strings.HasPrefix(strings.ToLower(rule), "+@"):
+			category := strings.ToLower(
+				strings.TrimPrefix(
+					strings.ToLower(rule),
+					"+@",
+				),
+			)
+
+			commands, ok := aclCommandsForCategory(category)
+			if !ok {
+				return fmt.Errorf(
+					"ERR Error in ACL SETUSER modifier '%s': Unknown command or category name in ACL",
+					rule,
+				)
+			}
+
+			for _, command := range commands {
+				u.CommandAllow[command] = true
+			}
+
+			u.CommandRules = append(
+				u.CommandRules,
+				"+@"+category,
+			)
+
+		case strings.HasPrefix(strings.ToLower(rule), "-@"):
+			category := strings.ToLower(
+				strings.TrimPrefix(
+					strings.ToLower(rule),
+					"-@",
+				),
+			)
+
+			commands, ok := aclCommandsForCategory(category)
+			if !ok {
+				return fmt.Errorf(
+					"ERR Error in ACL SETUSER modifier '%s': Unknown command or category name in ACL",
+					rule,
+				)
+			}
+
+			for _, command := range commands {
+				u.CommandAllow[command] = false
+			}
+
+			u.CommandRules = append(
+				u.CommandRules,
+				"-@"+category,
+			)
 
 		case strings.HasPrefix(rule, "+"):
 			command := strings.ToLower(strings.TrimPrefix(rule, "+"))
@@ -381,4 +455,73 @@ func aclGlobMatch(pattern, value string) bool {
 	}
 
 	return match(0, 0)
+}
+
+func aclCommandsForCategory(category string) ([]string, bool) {
+	redisCommands, ok := redisACLCategoryCommands[strings.ToLower(category)]
+	if !ok {
+		return nil, false
+	}
+
+	seen := make(map[string]struct{})
+
+	for redisCommand := range redisCommands {
+		command := strings.ToLower(redisCommand)
+
+		if separator := strings.IndexByte(command, '|'); separator >= 0 {
+			parent := command[:separator]
+			subcommand := command[separator+1:]
+
+			// ACL authorization is granular by subcommand.
+			if parent == "acl" {
+				if aclSubcommandSupported(subcommand) {
+					seen[command] = struct{}{}
+				}
+
+				continue
+			}
+
+			// Other command families are currently authorized
+			// at their top-level command name.
+			if _, supported := commandTable[strings.ToUpper(parent)]; supported {
+				seen[parent] = struct{}{}
+			}
+
+			continue
+		}
+
+		if _, supported := commandTable[strings.ToUpper(command)]; supported {
+			seen[command] = struct{}{}
+		}
+	}
+
+	commands := make([]string, 0, len(seen))
+
+	for command := range seen {
+		commands = append(commands, command)
+	}
+
+	sort.Strings(commands)
+
+	return commands, true
+}
+
+func aclSubcommandSupported(subcommand string) bool {
+	switch strings.ToLower(subcommand) {
+	case "whoami",
+		"users",
+		"getuser",
+		"list",
+		"setuser",
+		"deluser",
+		"cat",
+		"dryrun",
+		"genpass",
+		"log",
+		"help":
+		return true
+
+	default:
+		return false
+	}
 }

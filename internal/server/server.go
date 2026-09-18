@@ -18,6 +18,7 @@ import (
 
 type Server struct {
 	acl              *ACL
+	aclLog           *ACLLog
 	eviction         string
 	metrics          *stats.Registry
 	optimizer        *optimizer.Optimizer
@@ -41,6 +42,7 @@ func New(store *engine.Store) *Server {
 		store:   store,
 		metrics: stats.New(),
 		acl:     NewACL(),
+		aclLog:  NewACLLog(),
 	}
 }
 

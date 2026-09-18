@@ -263,6 +263,27 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			response, authErr := s.server.executeAUTH(authSession, msg)
 
 			if authErr != nil {
+				if strings.HasPrefix(
+					authErr.Error(),
+					"WRONGPASS ",
+				) {
+					username := "default"
+
+					if len(msg) >= 3 {
+						username = string(msg[1])
+					}
+
+					s.server.aclLog.Add(
+						"auth",
+						"AUTH",
+						username,
+						aclLogClientInfo(
+							clientSession,
+							authSession,
+						),
+					)
+				}
+
 				response = errorResponse(authErr)
 			}
 
@@ -278,6 +299,35 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			// queued because ACL authorization failed. EXEC must subsequently
 			// abort the entire transaction.
 			txSession.markACLFailure()
+
+			message := authErr.Error()
+
+			switch {
+			case strings.HasPrefix(message, "NOPERM User "):
+				s.server.aclLog.Add(
+					"command",
+					aclCanonicalCommand(msg),
+					authSession.username,
+					aclLogClientInfo(
+						clientSession,
+						authSession,
+					),
+				)
+
+			case message == "NOPERM No permissions to access a key":
+				s.server.aclLog.Add(
+					"key",
+					s.server.firstDeniedACLKey(
+						authSession.username,
+						msg,
+					),
+					authSession.username,
+					aclLogClientInfo(
+						clientSession,
+						authSession,
+					),
+				)
+			}
 
 			if writer.write(errorResponse(authErr)) != nil {
 				return

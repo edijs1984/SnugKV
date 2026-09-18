@@ -280,6 +280,42 @@ func (s *Server) executeACL(
 	case "GENPASS":
 		return executeACLGenPass(args)
 
+	case "LOG":
+		if len(args) > 3 {
+			return nil, errors.New(
+				"ERR unknown subcommand or wrong number of arguments for 'LOG'. Try ACL HELP.",
+			)
+		}
+
+		if len(args) == 3 &&
+			strings.EqualFold(string(args[2]), "RESET") {
+			s.aclLog.Reset()
+			return []byte("+OK\r\n"), nil
+		}
+
+		limit := int64(10)
+
+		if len(args) == 3 {
+			parsed, err := strconv.ParseInt(
+				string(args[2]),
+				10,
+				64,
+			)
+			if err != nil {
+				return nil, errors.New(
+					"ERR value is not an integer or out of range",
+				)
+			}
+
+			limit = parsed
+		}
+
+		if limit <= 0 {
+			return array(), nil
+		}
+
+		return aclLogReply(s.aclLog.Entries(limit)), nil
+
 	case "HELP":
 		if len(args) != 2 {
 			return nil, errors.New(
@@ -585,4 +621,24 @@ func executeACLGenPass(args [][]byte) ([]byte, error) {
 	}
 
 	return formatBulkString([]byte(encoded)), nil
+}
+
+func (s *Server) firstDeniedACLKey(
+	username string,
+	args [][]byte,
+) string {
+	refs, err := commandKeys(args)
+	if err != nil {
+		return ""
+	}
+
+	for _, ref := range refs {
+		key := string(ref.value)
+
+		if !s.acl.KeyAllowed(username, key) {
+			return key
+		}
+	}
+
+	return ""
 }
