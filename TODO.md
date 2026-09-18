@@ -1,5 +1,12 @@
 # SnugKV TODO
 
+> **Historical backlog:** this file preserves early planning material and many
+> checkboxes below no longer reflect the implemented repository. Current status
+> and next work are authoritative in `README.md`, `COMPATIBILITY.md`, `PLAN.md`,
+> `PROGRESS.md`, and GitHub issue #55. In particular, RESP3, AUTH/ACL, and the
+> documented Streams Redis 8.2 differential audit are complete for their current
+> scoped milestones.
+
 ## Goal
 
 Expand SnugKV from the current Redis-compatible string/TTL subset into a broadly compatible Redis alternative while keeping SnugKV's advantages:
