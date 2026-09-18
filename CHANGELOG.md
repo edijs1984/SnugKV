@@ -6,6 +6,9 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Added
 
+- Redis 8.2 Function `allow-oom` flag with OOM-entry gating, scoped nested-command
+  memory-admission bypass, `no-writes` interaction, FUNCTION LIST exposure, and
+  live Redis differential coverage.
 - Core RESP3 support with per-connection `HELLO 3` negotiation, `HELLO 2` switching,
   protocol-aware null/map/set/double/verbatim reply shapes, nested COMMAND/ACL
   RESP3 structures, and classic/pattern/sharded Pub/Sub push frames while
@@ -114,6 +117,9 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Verified
 
+- Redis 8.2 Function allow-oom differential audit covering plain FCALL rejection
+  while already OOM, allow-oom reads/writes, no-writes entry behavior,
+  FCALL_RO behavior, deletion while OOM, and post-invocation bypass restoration.
 - Dynamic ACL differential audit against Redis 8.2 covering nested command/key
   denial in Lua and Functions, selector atomicity, wildcard external SORT BY/GET
   denial, all-key selector success, and nested SORT inside Lua. Remaining
