@@ -142,5 +142,3 @@ func getenv(key, fallback string) string {
 	}
 	return fallback
 }
-
-var _ = strconv.IntSize
