@@ -32,6 +32,7 @@ type Server struct {
 	configSetMaxClients  func(int)
 	configMu             sync.RWMutex
 	configSetAppendFsync func(string) error
+	configRewrite        func() error
 }
 
 func New(store *engine.Store) *Server { return &Server{store: store, metrics: stats.New()} }

@@ -86,6 +86,24 @@ func ListenWithJournal(c config.Config, store *engine.Store, journal Journal) (*
 	}
 	s.server.configAppendOnly = c.AOFPath != ""
 
+	s.server.configRewrite = func() error {
+		s.mu.Lock()
+		effective := s.config
+		s.mu.Unlock()
+
+		// Pull values from the components that actually enforce mutable
+		// CONFIG settings instead of trusting a stale startup copy.
+		effective.MaxMemory = s.server.store.MaxMemory()
+
+		s.server.configMu.RLock()
+		effective.Fsync = s.server.configAppendFsync
+		s.server.configMu.RUnlock()
+
+		effective.EvictionPolicy = s.server.eviction
+
+		return config.Rewrite(effective)
+	}
+
 	s.server.configGetMaxClients = func() int {
 		s.mu.Lock()
 		defer s.mu.Unlock()

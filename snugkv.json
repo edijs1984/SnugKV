@@ -1,0 +1,23 @@
+{
+  "listen": "127.0.0.1:6380",
+  "admin_listen": "127.0.0.1:6381",
+
+  "encoding": true,
+  "compression": true,
+  "json_shape": true,
+  "go_memory_limit": 134217728,
+
+  "eviction_policy": "noeviction",
+  "fsync": "everysec",
+  "max_memory": 0,
+
+  "shards": 256,
+  "max_connections": 10000,
+
+  "read_timeout_ms": 30000,
+  "write_timeout_ms": 30000,
+  "max_request_bytes": 67108864,
+  "max_bulk_bytes": 33554432,
+  "max_arguments": 1024,
+  "cleanup_interval_ms": 100
+}

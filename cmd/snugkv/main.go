@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"snugkv/internal/config"
 	"snugkv/internal/engine"
 	"snugkv/internal/persistence"
@@ -46,6 +47,7 @@ func main() {
 	flag.IntVar(&cfg.MaxArguments, "max-arguments", cfg.MaxArguments, "maximum command arguments")
 	flag.Int64Var(&cfg.CleanupIntervalMS, "cleanup-interval-ms", cfg.CleanupIntervalMS, "expiration cleanup interval")
 	flag.Uint64Var(&cfg.MaxMemory, "max-memory", cfg.MaxMemory, "accounted memory budget in bytes, zero unlimited")
+	flag.Int64Var(&cfg.GoMemoryLimit, "go-memory-limit", cfg.GoMemoryLimit, "Go runtime soft memory limit in bytes, zero preserves the existing runtime/GOMEMLIMIT setting")
 	flag.BoolVar(&cfg.Encoding, "encoding", cfg.Encoding, "enable verified cheap codecs")
 	flag.StringVar(&cfg.AOFPath, "aof", cfg.AOFPath, "append-only file path (optional)")
 	flag.StringVar(&cfg.SnapshotPath, "snapshot", cfg.SnapshotPath, "snapshot file path (optional)")
@@ -61,6 +63,9 @@ func main() {
 	}
 	if err = cfg.Validate(); err != nil {
 		log.Fatal(err)
+	}
+	if cfg.GoMemoryLimit > 0 {
+		debug.SetMemoryLimit(cfg.GoMemoryLimit)
 	}
 	store, err := engine.NewWithOptions(engine.Options{Shards: cfg.Shards, MaxMemory: cfg.MaxMemory, Encoding: cfg.Encoding, ShapeEncoding: cfg.JSONShape, Compression: cfg.Compression})
 	if err != nil {

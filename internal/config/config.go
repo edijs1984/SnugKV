@@ -14,6 +14,7 @@ import (
 )
 
 type Config struct {
+	SourcePath        string `json:"-"`
 	AdminAddr         string `json:"admin_listen"`
 	EvictionPolicy    string `json:"eviction_policy"`
 	MetricsAddr       string `json:"metrics_listen"`
@@ -23,6 +24,7 @@ type Config struct {
 	SnapshotPath      string `json:"snapshot_path"`
 	Fsync             string `json:"fsync"`
 	MaxMemory         uint64 `json:"max_memory"`
+	GoMemoryLimit     int64  `json:"go_memory_limit"`
 	Encoding          bool   `json:"encoding"`
 	ListenAddr        string `json:"listen"`
 	Shards            int    `json:"shards"`
@@ -42,6 +44,9 @@ func (c Config) Limits() resp.Limits {
 	return resp.Limits{MaxRequestBytes: c.MaxRequestBytes, MaxBulkBytes: c.MaxBulkBytes, MaxArguments: c.MaxArguments}
 }
 func (c Config) Validate() error {
+	if c.GoMemoryLimit < 0 {
+		return errors.New("go_memory_limit must not be negative")
+	}
 	if c.AdminAddr != "" && c.AdminAddr == c.ListenAddr {
 		return errors.New("admin and public listen addresses must differ")
 	}
@@ -111,6 +116,8 @@ func (c Config) Validate() error {
 // Load uses strict JSON over defaults. Environment overrides are applied separately.
 func Load(path string) (Config, error) {
 	c := Default()
+	c.SourcePath = path
+
 	if path == "" {
 		return c, nil
 	}
@@ -163,6 +170,13 @@ func (c *Config) ApplyEnv() error {
 			return errors.New("invalid SNUGKV_MAX_MEMORY")
 		}
 		c.MaxMemory = n
+	}
+	if v, ok := os.LookupEnv("SNUGKV_GO_MEMORY_LIMIT"); ok {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 0 {
+			return errors.New("invalid SNUGKV_GO_MEMORY_LIMIT")
+		}
+		c.GoMemoryLimit = n
 	}
 	if v, ok := os.LookupEnv("SNUGKV_ENCODING"); ok {
 		b, err := strconv.ParseBool(v)

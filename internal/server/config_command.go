@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -167,11 +168,26 @@ func (s *Server) executeConfig(
 			)
 		}
 
-		// SnugKV currently does not retain the source JSON config path
-		// inside the runtime server. Do not claim persistence occurred.
-		return nil, errors.New(
-			"ERR The server is running without a config file",
-		)
+		if s.configRewrite == nil {
+			return nil, errors.New(
+				"ERR The server is running without a config file",
+			)
+		}
+
+		if err := s.configRewrite(); err != nil {
+			if err.Error() == "The server is running without a config file" {
+				return nil, errors.New(
+					"ERR The server is running without a config file",
+				)
+			}
+
+			return nil, fmt.Errorf(
+				"ERR Rewriting config file: %v",
+				err,
+			)
+		}
+
+		return []byte("+OK\r\n"), nil
 
 	default:
 		return nil, fmt.Errorf(
@@ -184,11 +200,9 @@ func (s *Server) executeConfig(
 func (s *Server) configGet(
 	patternArgs [][]byte,
 ) []byte {
-	items := make([][]byte, 0)
-
-	// Redis accepts multiple patterns. A parameter matching more than
-	// one requested pattern is returned only once.
-	seen := make(map[string]struct{})
+	matched := make(
+		map[string]runtimeConfigEntry,
+	)
 
 	for _, rawPattern := range patternArgs {
 		pattern := strings.ToLower(
@@ -196,10 +210,6 @@ func (s *Server) configGet(
 		)
 
 		for _, entry := range runtimeConfigEntries {
-			if _, ok := seen[entry.name]; ok {
-				continue
-			}
-
 			if !configPatternMatch(
 				pattern,
 				entry.name,
@@ -207,18 +217,43 @@ func (s *Server) configGet(
 				continue
 			}
 
-			seen[entry.name] = struct{}{}
-
-			items = append(
-				items,
-				formatBulkString(
-					[]byte(entry.name),
-				),
-				formatBulkString(
-					[]byte(entry.value(s)),
-				),
-			)
+			matched[entry.name] = entry
 		}
+	}
+
+	names := make(
+		[]string,
+		0,
+		len(matched),
+	)
+
+	for name := range matched {
+		names = append(
+			names,
+			name,
+		)
+	}
+
+	sort.Strings(names)
+
+	items := make(
+		[][]byte,
+		0,
+		len(names)*2,
+	)
+
+	for _, name := range names {
+		entry := matched[name]
+
+		items = append(
+			items,
+			formatBulkString(
+				[]byte(name),
+			),
+			formatBulkString(
+				[]byte(entry.value(s)),
+			),
+		)
 	}
 
 	return array(items...)
