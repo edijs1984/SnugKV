@@ -179,6 +179,10 @@ func (s *Server) lookupSortPattern(pattern, subst []byte) ([]byte, bool, error) 
 	keyBytes = append(keyBytes, pattern[star+1:keyEnd]...)
 	key := string(keyBytes)
 
+	if err := s.authorizeExecutionDynamicKey(key); err != nil {
+		return nil, false, err
+	}
+
 	if field != nil {
 		t, ok := s.store.ValueTypeOf(key)
 		if !ok || t != engine.TypeHash {
