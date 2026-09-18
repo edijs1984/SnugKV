@@ -1,27 +1,27 @@
 # COMMAND compatibility
 
-This document records SnugKV's current Redis `COMMAND` introspection surface and the live differential work completed against Redis on ports 6379/6380.
+This document records SnugKV's current Redis `COMMAND` introspection surface after the completed Redis 8.2 differential audit.
 
-## Implemented surface
+## Status
 
-The following introspection commands are implemented:
+The COMMAND compatibility milestone tracked in issue #90 is complete for SnugKV's implemented single-node RESP2 surface.
+
+Implemented introspection commands:
 
 - `COMMAND`
 - `COMMAND COUNT`
-- `COMMAND INFO <command ...>`
-- `COMMAND DOCS [command ...]` for the implemented/documented subset
+- `COMMAND INFO [command ...]`
+- `COMMAND DOCS [command ...]` for SnugKV's implemented/documented surface
 - `COMMAND GETKEYS <command ...>`
 - `COMMAND GETKEYSANDFLAGS <command ...>`
 
-`commandTable` remains the authoritative runtime registry for command arity, fixed key positions, and coarse read/write classification. New introspection helpers derive Redis wire metadata from that table and from the existing command parsers rather than creating a second execution registry.
+The runtime registry currently contains 207 top-level commands after package initialization. Redis 8.2 exposes a larger command count because it implements command families and subcommands that SnugKV intentionally does not expose.
 
-## Runtime command inventory
-
-The current runtime registry contains 207 commands after package initialization. The earlier raw `case` grep count is intentionally not treated as a command count because it also captures subcommands and option tokens from nested switches.
+`commandTable` remains the authoritative runtime registry for command validation, arity, fixed key positions, and coarse read/write classification. Introspection metadata builds on that registry and on existing command parsers rather than creating an independent execution registry.
 
 ## GETKEYS / GETKEYSANDFLAGS
 
-Fixed-key extraction reuses the existing `first` / `last` / `step` metadata. Dynamic extraction is implemented for the currently audited variable-key families, including:
+Fixed-key extraction reuses existing `first` / `last` / `step` metadata. Dynamic extraction is implemented for the audited variable-key families:
 
 - `EVAL`, `EVALSHA`, `EVAL_RO`, `EVALSHA_RO`
 - `FCALL`, `FCALL_RO`
@@ -32,20 +32,20 @@ Fixed-key extraction reuses the existing `first` / `last` / `step` metadata. Dyn
 - `ZMPOP`, `BZMPOP`
 - `XREAD`, `XREADGROUP`
 
-The dynamic paths deliberately reuse SnugKV's existing parsers where possible. This keeps key discovery aligned with actual execution grammar rather than duplicating option parsing in the metadata layer.
+The final live Redis 8.2 differential matched the sampled key lists and key flags.
 
-Live Redis differential testing matched the audited key lists and key flags. Notable Redis-compatible flag behavior includes:
+Notable compatible classifications include:
 
 - `SET`: `OW update`
 - `DEL`: `RM delete`
 - `COPY`: source `RO access`, destination `OW update`
 - `ZMPOP` / `BZMPOP`: `RW access delete`
 - `XREAD`: `RO access`
-- `XREADGROUP`: Redis key-spec metadata is also `RO access`, even though consumer-group bookkeeping can mutate internal stream-group state
+- `XREADGROUP`: `RO access` key-spec classification, matching Redis even though consumer-group bookkeeping mutates internal group state
 
 ## COMMAND INFO
 
-`COMMAND INFO` now returns the Redis 7+/8 ten-field shape:
+`COMMAND INFO` returns the Redis 7+/8 ten-field shape:
 
 1. command name
 2. arity
@@ -58,7 +58,20 @@ Live Redis differential testing matched the audited key lists and key flags. Not
 9. key specifications
 10. subcommands
 
-The audited sample has live Redis parity for:
+`COMMAND INFO` with no command names returns all registered top-level SnugKV command metadata.
+
+Direct canonical subcommand lookup is supported using names such as:
+
+- `COMMAND|COUNT`
+- `CLIENT|ID`
+- `FUNCTION|LOAD`
+- `SCRIPT|KILL`
+
+Parent metadata is implemented for `COMMAND`, `CLIENT`, `FUNCTION`, and `SCRIPT`. Parent field 10 advertises only subcommands actually implemented by SnugKV; unsupported Redis-only surfaces such as `CLIENT TRACKING` and deferred `SCRIPT DEBUG` are not fabricated.
+
+The completed INFO differential covers both the original sample and the later broad hardening sample.
+
+Original audited sample:
 
 - `GET`
 - `SET`
@@ -71,23 +84,88 @@ The audited sample has live Redis parity for:
 - `PFADD`
 - `GEOADD`
 
-The audit covered command flags, ACL categories, tips, key specs, dynamic `keynum` specs, notes, RESP wire types, and Redis simple-string/bulk-string distinctions. Examples of corrected details include:
+Final hardening sample additionally matched Redis 8.2 for:
 
-- `SET` key-spec note and `variable_flags`
-- EVAL/FCALL worst-case `RW access update` note
+- `BITOP`
+- `EVALSHA`, `EVAL_RO`, `EVALSHA_RO`
+- `FCALL_RO`
+- `SORT_RO`
+- `ZUNION`, `ZINTER`, `ZDIFF`, `ZINTERCARD`
+- `ZUNIONSTORE`, `ZINTERSTORE`, `ZDIFFSTORE`
+- `ZMPOP`, `BZMPOP`
+- `XREAD`, `XREADGROUP`
+- implemented `COMMAND|*`, `CLIENT|*`, `FUNCTION|*`, and `SCRIPT|*` child metadata
+
+The audit covered arity, command flags, ACL categories, tips, notes, fixed/dynamic key specs, keyword/range specs, and RESP2 wire types.
+
+Examples of Redis-specific details now represented include:
+
+- `SET` `variable_flags` and optional-GET key-spec note
+- EVAL/FCALL worst-case key-usage notes
+- read-only EVAL/FCALL `readonly` command flags and RO/ACCESS key specs
 - `DEL` multi-shard tips
-- `XADD` `nondeterministic_output` bulk-string tip and trimming note
-- `PFADD` key flag `RW insert`
+- `BITOP` destination/source split key specs
+- ZSET algebra `keynum` metadata
+- ZSET store destination/source split metadata
+- `ZMPOP` / `BZMPOP` movable-key and delete semantics
+- `XREAD` / `XREADGROUP` incomplete keyword-based STREAMS specs
+- `XADD` nondeterministic-output tip and trimming note
+- `PFADD` `RW insert`
 - `COPY` separate source/destination key specs
-- `SORT` fixed source plus unknown BY/GET and STORE key specs
+- `SORT` / `SORT_RO` fixed source plus unknown pattern/store key specs
 
-Field 10 is currently empty for parent commands. Parent/subcommand metadata for commands such as `CLIENT`, `FUNCTION`, `SCRIPT`, and `COMMAND` is the main remaining `COMMAND INFO` gap.
+## Parent / subcommand metadata
+
+Supported child metadata is stored independently from top-level dispatch while remaining queryable by canonical full names.
+
+Current advertised child surface:
+
+### COMMAND
+
+- `COMMAND|COUNT`
+- `COMMAND|INFO`
+- `COMMAND|DOCS`
+- `COMMAND|GETKEYS`
+- `COMMAND|GETKEYSANDFLAGS`
+
+### CLIENT
+
+- `CLIENT|ID`
+- `CLIENT|GETNAME`
+- `CLIENT|SETNAME`
+- `CLIENT|SETINFO`
+- `CLIENT|INFO`
+- `CLIENT|LIST`
+- `CLIENT|KILL`
+- `CLIENT|UNBLOCK`
+- `CLIENT|HELP`
+
+### FUNCTION
+
+- `FUNCTION|LOAD`
+- `FUNCTION|LIST`
+- `FUNCTION|DELETE`
+- `FUNCTION|FLUSH`
+- `FUNCTION|DUMP`
+- `FUNCTION|RESTORE`
+- `FUNCTION|STATS`
+- `FUNCTION|KILL`
+- `FUNCTION|HELP`
+
+### SCRIPT
+
+- `SCRIPT|LOAD`
+- `SCRIPT|EXISTS`
+- `SCRIPT|FLUSH`
+- `SCRIPT|KILL`
+
+This intentionally differs from Redis where Redis exposes additional subcommands SnugKV does not implement.
 
 ## COMMAND DOCS
 
-`COMMAND DOCS` supports requested command filtering, preserves requested order, omits unknown commands, and returns an empty array when no requested command is known, matching the audited Redis behavior.
+`COMMAND DOCS` supports requested command filtering, preserves requested order, omits unknown commands, and returns an empty array when none of the requested commands are known.
 
-The metadata model supports recursive documentary argument trees, including:
+The metadata model supports recursive documentary argument trees with:
 
 - `name`
 - `type`
@@ -95,29 +173,28 @@ The metadata model supports recursive documentary argument trees, including:
 - `token`
 - `since`
 - `key_spec_index`
-- Redis-style argument `flags` arrays (`optional`, `multiple`)
+- argument flags such as `optional` and `multiple`
 - nested `arguments`
 - command `history`
+- `oneof` and `block` structures
 
-The following commands were live-differentially aligned in the audited subset:
+The documented surface was expanded during the final audit to include the previously abbreviated/missing implemented families, including:
 
-- `GET`
-- `SET`
-- `DEL`
-- `COPY`
-- `EVAL`
-- `FCALL`
-- `XADD`
-- `PFADD`
-- `GEOADD`
+- `BITOP`
+- EVAL/EVALSHA read/write variants
+- FCALL/FCALL_RO
+- SORT/SORT_RO
+- ZSET algebra/store/pop families
+- XREAD/XREADGROUP
+- Redis 8.2 XADD `KEEPREF` / `DELREF` / `ACKED` documentary history/options
 
-This includes the rich nested documentation trees for `SET`, `XADD`, and `GEOADD`, including `oneof` and `block` structures, option tokens, `since` metadata, history arrays, and optional/multiple flags.
+The earlier rich-documentation parity for `GET`, `SET`, `DEL`, `COPY`, `XADD`, `PFADD`, and `GEOADD` remains.
 
-`COMMAND DOCS` is intentionally documented only for the current metadata subset rather than fabricating Redis documentation for all 207 registered commands.
+SnugKV intentionally documents its implemented surface instead of cloning documentation for commands or subcommands it does not support.
 
 ## Validation completed
 
-During the implementation slices, focused COMMAND metadata tests were run together with the normal repository gates:
+The final COMMAND work passed:
 
 ```text
 go test -race -count=1 ./internal/server
@@ -127,18 +204,28 @@ go test ./internal/resp -run '^$' -fuzz FuzzReadCommand -fuzztime=10s
 go build ./cmd/snugkv
 ```
 
-Live Redis 6379 vs SnugKV 6380 differential checks were also performed for:
+Live Redis 8.2 vs SnugKV differential testing covered:
 
 - fixed and dynamic key extraction
-- GETKEYSANDFLAGS key classifications
-- ten-field `COMMAND INFO` reply shape and wire types
-- selected command flags / ACL categories / tips / key specs
-- `COMMAND DOCS` filtering, unknown-command behavior, recursive arguments, histories, and token metadata
+- `GETKEYSANDFLAGS` classifications
+- ten-field INFO shape and wire types
+- parent/subcommand INFO hierarchy
+- direct canonical child INFO lookups
+- unsupported-child omission
+- command flags, ACL categories, tips, notes and key specs
+- DOCS filtering and unknown-command behavior
+- recursive argument structures, histories, tokens and key-spec indexes
+- the broader INFO hardening sample listed above
 
-## Remaining work before closing issue #90
+## Compatibility boundary
 
-- audit and implement parent/subcommand metadata for `COMMAND`, `CLIENT`, `FUNCTION`, and `SCRIPT`
-- perform one broader final differential audit across the implemented command registry
-- keep future command additions wired through the authoritative metadata/key-extraction path
+COMMAND introspection is complete for the audited implemented surface, not a claim that SnugKV implements all Redis 8.2 commands.
 
-After that, the next roadmap target is common `CONFIG` compatibility, followed by ACL/authentication scope.
+Important intentional boundaries remain:
+
+- SnugKV exposes 207 top-level runtime commands rather than Redis 8.2's larger registry.
+- Unsupported Redis-only CLIENT subcommands are not advertised.
+- `SCRIPT DEBUG` remains intentionally deferred until real LDB-style semantics exist.
+- Future new commands must add accurate metadata rather than inheriting generic approximations.
+
+Issue #90 is complete. The next client/tooling compatibility target is common `CONFIG` support, followed by ACL/authentication scope.
