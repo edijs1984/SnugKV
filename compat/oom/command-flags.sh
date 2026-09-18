@@ -41,7 +41,14 @@ prepare() {
   # maxmemory setting. Previous OOM audits may intentionally leave a tiny
   # runtime maxmemory configured.
   expect_raw "OK" CONFIG SET maxmemory 0
-  expect_raw "0" CONFIG GET maxmemory
+  local maxmemory
+  maxmemory="$(redis CONFIG GET maxmemory | tail -n1)"
+  if [[ "$maxmemory" != "0" ]]; then
+    echo "HARNESS SETUP FAILURE: CONFIG GET maxmemory" >&2
+    echo "  got:      $maxmemory" >&2
+    echo "  expected: 0" >&2
+    exit 1
+  fi
   expect_raw "OK" CONFIG SET maxmemory-policy noeviction
   expect_raw "OK" FLUSHDB
 
