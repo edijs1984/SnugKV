@@ -7,6 +7,24 @@ import (
 	"strings"
 )
 
+func (s *Server) rejectDenyOOMCommand(args [][]byte) error {
+	if len(args) == 0 || s.eviction != "noeviction" {
+		return nil
+	}
+
+	name := strings.ToUpper(string(args[0]))
+	if !commandDenyOOM(name) {
+		return nil
+	}
+
+	memory := s.store.Memory()
+	if memory.MaxBytes > 0 && memory.AccountedBytes > memory.MaxBytes {
+		return engine.ErrOOM
+	}
+
+	return nil
+}
+
 func (s *Server) executePressureCommand(args [][]byte) ([]byte, error) {
 	if len(args) > 0 && strings.EqualFold(string(args[0]), "FUNCTION") {
 		return s.executeFunctionTopLevel(args)
@@ -107,6 +125,10 @@ func (s *Server) executeTransactionPressure(args [][]byte) ([]byte, error) {
 }
 
 func (s *Server) executePressureMode(args [][]byte, journalEvictions bool) ([]byte, error) {
+	if err := s.rejectDenyOOMCommand(args); err != nil {
+		return nil, err
+	}
+
 	result, err := s.executePressureCommand(args)
 	if !errors.Is(err, engine.ErrOOM) || s.eviction == "" || s.eviction == "noeviction" {
 		return result, err
