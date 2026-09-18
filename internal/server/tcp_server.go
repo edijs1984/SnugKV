@@ -218,7 +218,10 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 		return err
 	})
 	defer pubSession.close()
+	authSession := newAuthSession(s.server.acl)
+
 	txSession := newTransactionSession(s.server)
+	txSession.auth = authSession
 	defer txSession.close()
 
 	clientID := atomic.AddUint64(&s.nextClientID, 1)
@@ -255,6 +258,47 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			return
 		}
 		clientSession.touch(msg)
+
+		if len(msg) > 0 && strings.EqualFold(string(msg[0]), "AUTH") {
+			response, authErr := s.server.executeAUTH(authSession, msg)
+
+			if authErr != nil {
+				response = errorResponse(authErr)
+			}
+
+			if writer.write(response) != nil {
+				return
+			}
+
+			continue
+		}
+
+		if authErr := s.server.authorizeConnectionCommand(authSession, msg); authErr != nil {
+			// Redis marks a MULTI transaction dirty when a command cannot be
+			// queued because ACL authorization failed. EXEC must subsequently
+			// abort the entire transaction.
+			txSession.markACLFailure()
+
+			if writer.write(errorResponse(authErr)) != nil {
+				return
+			}
+
+			continue
+		}
+
+		if len(msg) > 0 && strings.EqualFold(string(msg[0]), "ACL") {
+			response, aclErr := s.server.executeACL(authSession, msg)
+
+			if aclErr != nil {
+				response = errorResponse(aclErr)
+			}
+
+			if writer.write(response) != nil {
+				return
+			}
+
+			continue
+		}
 
 		if s.adminOnly && !adminAllowed(msg) {
 			if writer.write([]byte("-ERR command is unavailable on admin listener\r\n")) != nil {
@@ -369,7 +413,16 @@ func (s *TCPServer) write(conn net.Conn, response []byte) error {
 func errorResponse(err error) []byte {
 	message := strings.TrimSpace(err.Error())
 	message = strings.NewReplacer("\r", " ", "\n", " ").Replace(message)
-	if !strings.HasPrefix(message, "ERR ") && !strings.HasPrefix(message, "NOPROTO ") && !strings.HasPrefix(message, "NOSCRIPT ") && !strings.HasPrefix(message, "OOM ") && !strings.HasPrefix(message, "WRONGTYPE ") && !strings.HasPrefix(message, "EXECABORT ") && !strings.HasPrefix(message, "INVALIDOBJ ") {
+	if !strings.HasPrefix(message, "ERR ") &&
+		!strings.HasPrefix(message, "NOPROTO ") &&
+		!strings.HasPrefix(message, "NOSCRIPT ") &&
+		!strings.HasPrefix(message, "OOM ") &&
+		!strings.HasPrefix(message, "WRONGTYPE ") &&
+		!strings.HasPrefix(message, "EXECABORT ") &&
+		!strings.HasPrefix(message, "INVALIDOBJ ") &&
+		!strings.HasPrefix(message, "NOAUTH ") &&
+		!strings.HasPrefix(message, "WRONGPASS ") &&
+		!strings.HasPrefix(message, "NOPERM ") {
 		message = "ERR " + message
 	}
 	return []byte("-" + message + "\r\n")

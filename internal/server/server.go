@@ -17,6 +17,7 @@ import (
 )
 
 type Server struct {
+	acl              *ACL
 	eviction         string
 	metrics          *stats.Registry
 	optimizer        *optimizer.Optimizer
@@ -35,7 +36,13 @@ type Server struct {
 	configRewrite        func() error
 }
 
-func New(store *engine.Store) *Server { return &Server{store: store, metrics: stats.New()} }
+func New(store *engine.Store) *Server {
+	return &Server{
+		store:   store,
+		metrics: stats.New(),
+		acl:     NewACL(),
+	}
+}
 
 type commandInfo struct {
 	min, max, first, last, step int
@@ -52,6 +59,8 @@ var commandTable = map[string]commandInfo{
 	"SNUG.SHAPES":     {1, 2, 0, 0, 0, false},
 	"SNUG.STATS":      {1, 1, 0, 0, 0, false},
 	"SNUG.POLICY":     {2, 2, 1, 1, 1, false},
+	"AUTH":            {1, 3, 0, 0, 0, false},
+	"ACL":             {1, 0, 0, 0, 0, false},
 	"PING":            {1, 2, 0, 0, 0, false}, "ECHO": {2, 2, 0, 0, 0, false}, "QUIT": {1, 1, 0, 0, 0, false},
 	"SELECT": {2, 2, 0, 0, 0, false}, "HELLO": {2, 2, 0, 0, 0, false}, "INFO": {1, 2, 0, 0, 0, false},
 	"DBSIZE": {1, 1, 0, 0, 0, false}, "COMMAND": {1, 0, 0, 0, 0, false},

@@ -28,6 +28,7 @@ func init() {
 
 type transactionSession struct {
 	server     *Server
+	auth       *authSession
 	multi      bool
 	queueDirty bool
 	queue      [][][]byte
@@ -51,7 +52,16 @@ func transactionRegistryForServer(s *Server) *transactionWatchRegistry {
 }
 
 func newTransactionSession(s *Server) *transactionSession {
-	return &transactionSession{server: s, watched: make(map[string]persistence.Record)}
+	return &transactionSession{
+		server:  s,
+		watched: make(map[string]persistence.Record),
+	}
+}
+
+func (session *transactionSession) markACLFailure() {
+	if session.multi {
+		session.queueDirty = true
+	}
 }
 
 func cloneCommand(args [][]byte) [][]byte {
@@ -329,13 +339,31 @@ func (session *transactionSession) exec() ([]byte, error) {
 	s := session.server
 	s.durableMu.Lock()
 	defer s.durableMu.Unlock()
+
 	if !session.multi {
 		return nil, errors.New("ERR EXEC without MULTI")
 	}
+
 	if session.queueDirty {
 		session.clearMultiLocked()
 		session.clearWatchLocked()
 		return nil, errors.New("EXECABORT Transaction discarded because of previous errors.")
+	}
+
+	// Redis re-checks ACL rules at EXEC time. A command that was legal when it
+	// was queued must not execute if the user's ACL rules were changed before
+	// EXEC.
+	if session.auth != nil {
+		for _, command := range session.queue {
+			if err := s.authorizeConnectionCommand(session.auth, command); err != nil {
+				session.clearMultiLocked()
+				session.clearWatchLocked()
+
+				return nil, errors.New(
+					"NOPERM ACLs rules changed between the moment the transaction was accumulated and the EXEC call. This command is no longer allowed for the following reason: no permission to execute the command or subcommand",
+				)
+			}
+		}
 	}
 
 	s.refreshWatchesLocked()
