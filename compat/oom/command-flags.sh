@@ -24,7 +24,11 @@ cleanup() {
 trap cleanup EXIT
 
 prepare() {
-  restore_limits
+  # Seed from a known non-OOM state regardless of the server's incoming
+  # maxmemory setting. Previous OOM audits may intentionally leave a tiny
+  # runtime maxmemory configured.
+  redis CONFIG SET maxmemory 0 >/dev/null
+  redis CONFIG SET maxmemory-policy noeviction >/dev/null
   redis FLUSHDB >/dev/null
 
   redis SET oom:str value >/dev/null
