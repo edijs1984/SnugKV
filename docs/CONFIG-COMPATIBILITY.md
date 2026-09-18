@@ -88,6 +88,14 @@ Redis-shaped parent/subcommand metadata and documentary output are implemented f
 
 The captured Redis 8.2 arities, flags, ACL categories, tips, histories, argument trees, and supported subcommand ordering are represented for this implemented surface.
 
+## ACL file startup configuration
+
+ACL persistence is configured through SnugKV's strict JSON/environment startup
+configuration using `acl_file` / `SNUGKV_ACL_FILE`. It is intentionally not
+listed as a live CONFIG SET parameter in this milestone because changing the
+authoritative ACL file path at runtime has separate security and lifecycle
+semantics. See `docs/ACL-COMPATIBILITY.md`.
+
 ## Intentional compatibility boundaries
 
 SnugKV does not expose hundreds of Redis-specific settings that have no corresponding runtime feature.
