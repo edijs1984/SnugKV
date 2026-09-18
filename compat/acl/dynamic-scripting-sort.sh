@@ -25,7 +25,7 @@ reset_acl_user() {
 }
 
 cleanup() {
-  redis ACL DELUSER acl_script_cmd acl_script_key acl_script_ro acl_fn_key acl_sort_split acl_sort_ok acl_script_sort >/dev/null 2>&1 || true
+  redis ACL DELUSER acl_script_cmd acl_script_key acl_script_ro acl_fn_key acl_sort_split acl_sort_partial acl_sort_allkeys acl_script_sort >/dev/null 2>&1 || true
   redis DEL acl:src acl:weight_1 acl:weight_2 acl:name_1 acl:name_2 >/dev/null 2>&1 || true
   redis FUNCTION FLUSH >/dev/null 2>&1 || true
 }
@@ -60,11 +60,15 @@ redis SET acl:weight_2 1 >/dev/null
 redis ACL SETUSER acl_sort_split on nopass resetkeys '~acl:src' nocommands +sort '(~acl:weight_* +sort)'
 user_redis acl_sort_split SORT acl:src BY 'acl:weight_*' 2>&1 || true
 
-section "SORT complete-selector allow"
+section "SORT partial complete-selector denial"
 redis SET acl:name_1 one >/dev/null
 redis SET acl:name_2 two >/dev/null
-redis ACL SETUSER acl_sort_ok on nopass resetkeys nocommands '(~acl:src ~acl:weight_* ~acl:name_* +sort)'
-user_redis acl_sort_ok SORT acl:src BY 'acl:weight_*' GET 'acl:name_*' 2>&1 || true
+redis ACL SETUSER acl_sort_partial on nopass resetkeys nocommands '(~acl:src ~acl:weight_* ~acl:name_* +sort)'
+user_redis acl_sort_partial SORT acl:src BY 'acl:weight_*' GET 'acl:name_*' 2>&1 || true
+
+section "SORT allkeys-selector allow"
+redis ACL SETUSER acl_sort_allkeys on nopass resetkeys nocommands '(~* +sort)'
+user_redis acl_sort_allkeys SORT acl:src BY 'acl:weight_*' GET 'acl:name_*' 2>&1 || true
 
 section "nested SORT dynamic-key denial"
 redis ACL SETUSER acl_script_sort on nopass resetkeys '~acl:src' nocommands +eval +sort
