@@ -3,9 +3,41 @@ package engine
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
+
+func inferStreamGroupEntriesRead(
+	state packedStream,
+	id StreamID,
+) int64 {
+	if id.equal(StreamID{}) {
+		return 0
+	}
+
+	if state.EntriesAdded > math.MaxInt64 {
+		return -1
+	}
+
+	// Redis can infer the logical read counter when the group points
+	// at the stream's last generated entry.
+	if id.equal(state.LastID) {
+		return int64(state.EntriesAdded)
+	}
+
+	// The current first entry is also a non-arbitrary position when
+	// there have been no deletions/trims that would make its logical
+	// position ambiguous.
+	if len(state.Entries) > 0 &&
+		id.equal(state.Entries[0].ID) &&
+		state.MaxDeletedID.equal(StreamID{}) &&
+		state.EntriesAdded == uint64(len(state.Entries)) {
+		return 1
+	}
+
+	return -1
+}
 
 func streamGroupIndex(groups []streamGroup, name string) int {
 	for i := range groups {
@@ -90,7 +122,21 @@ func (s *Store) StreamGroupCreate(key, group, idSpec string, mkstream bool, entr
 	if err != nil {
 		return err
 	}
-	state.Groups = append(state.Groups, streamGroup{Name: group, LastDeliveredID: id, EntriesRead: entriesRead})
+	if entriesRead == -1 {
+		entriesRead = inferStreamGroupEntriesRead(
+			state,
+			id,
+		)
+	}
+
+	state.Groups = append(
+		state.Groups,
+		streamGroup{
+			Name:            group,
+			LastDeliveredID: id,
+			EntriesRead:     entriesRead,
+		},
+	)
 
 	if !exists {
 		packed, err := encodePackedStream(state)
@@ -164,10 +210,23 @@ func (s *Store) StreamGroupSetID(key, group, idSpec string, entriesRead *int64) 
 		return err
 	}
 	state.Groups[index].LastDeliveredID = id
+
 	if entriesRead != nil {
 		state.Groups[index].EntriesRead = *entriesRead
+	} else {
+		state.Groups[index].EntriesRead =
+			inferStreamGroupEntriesRead(
+				state,
+				id,
+			)
 	}
-	return s.publishStreamStateLocked(sh, key, e, state)
+
+	return s.publishStreamStateLocked(
+		sh,
+		key,
+		e,
+		state,
+	)
 }
 
 func (s *Store) StreamGroupCreateConsumer(key, group, consumer string) (int64, error) {

@@ -91,3 +91,235 @@ func TestStreamInfoErrors(t *testing.T) {
 		t.Fatalf("wrongtype error = %v", err)
 	}
 }
+
+func TestStreamGroupInfoInfersEntriesReadFromZero(t *testing.T) {
+	s := New()
+
+	if _, _, err := s.StreamAdd(
+		"events",
+		"*",
+		[]StreamField{
+			{
+				Field: []byte("f"),
+				Value: []byte("1"),
+			},
+		},
+		StreamAddOptions{},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := s.StreamAdd(
+		"events",
+		"*",
+		[]StreamField{
+			{
+				Field: []byte("f"),
+				Value: []byte("2"),
+			},
+		},
+		StreamAddOptions{},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.StreamGroupCreate(
+		"events",
+		"workers",
+		"0-0",
+		false,
+		-1,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	groups, err :=
+		s.StreamGroupsInfo("events")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(groups) != 1 {
+		t.Fatalf(
+			"groups = %d, want 1",
+			len(groups),
+		)
+	}
+
+	if groups[0].EntriesRead == nil ||
+		*groups[0].EntriesRead != 0 {
+		t.Fatalf(
+			"entries-read = %#v, want 0",
+			groups[0].EntriesRead,
+		)
+	}
+
+	if groups[0].Lag == nil ||
+		*groups[0].Lag != 2 {
+		t.Fatalf(
+			"lag = %#v, want 2",
+			groups[0].Lag,
+		)
+	}
+
+	results, err := s.StreamGroupRead(
+		[]string{"events"},
+		"workers",
+		"c1",
+		[]StreamGroupReadCursor{
+			{New: true},
+		},
+		1,
+		false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(results) != 1 ||
+		len(results[0].Entries) != 1 {
+		t.Fatalf(
+			"results = %#v",
+			results,
+		)
+	}
+
+	groups, err =
+		s.StreamGroupsInfo("events")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if groups[0].EntriesRead == nil ||
+		*groups[0].EntriesRead != 1 {
+		t.Fatalf(
+			"entries-read after read = %#v, want 1",
+			groups[0].EntriesRead,
+		)
+	}
+
+	if groups[0].Lag == nil ||
+		*groups[0].Lag != 1 {
+		t.Fatalf(
+			"lag after read = %#v, want 1",
+			groups[0].Lag,
+		)
+	}
+}
+
+func TestStreamGroupUnknownEntriesReadRecoversAtEnd(t *testing.T) {
+	s := New()
+
+	first, _, err := s.StreamAdd(
+		"events",
+		"*",
+		[]StreamField{
+			{
+				Field: []byte("f"),
+				Value: []byte("1"),
+			},
+		},
+		StreamAddOptions{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := s.StreamAdd(
+		"events",
+		"*",
+		[]StreamField{
+			{
+				Field: []byte("f"),
+				Value: []byte("2"),
+			},
+		},
+		StreamAddOptions{},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	// An arbitrary ID intentionally leaves entries-read unknown.
+	arbitrary := first.String()
+
+	if err := s.StreamGroupCreate(
+		"events",
+		"workers",
+		arbitrary,
+		false,
+		-1,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	// Force the unknown state for this recovery test because a first-entry
+	// position may itself be inferable on a pristine stream.
+	state, _, err :=
+		s.streamInfoState("events")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(state.Groups) != 1 {
+		t.Fatal("missing group")
+	}
+
+	key := "events"
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+
+	entry, ok := sh.get(key)
+	if !ok {
+		sh.mu.Unlock()
+		t.Fatal("missing stream")
+	}
+
+	state.Groups[0].EntriesRead = -1
+
+	if err := s.publishStreamStateLocked(
+		sh,
+		key,
+		entry,
+		state,
+	); err != nil {
+		sh.mu.Unlock()
+		t.Fatal(err)
+	}
+
+	sh.mu.Unlock()
+
+	if _, err := s.StreamGroupRead(
+		[]string{"events"},
+		"workers",
+		"c1",
+		[]StreamGroupReadCursor{
+			{New: true},
+		},
+		10,
+		false,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	groups, err :=
+		s.StreamGroupsInfo("events")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if groups[0].EntriesRead == nil ||
+		*groups[0].EntriesRead != 2 {
+		t.Fatalf(
+			"recovered entries-read = %#v, want 2",
+			groups[0].EntriesRead,
+		)
+	}
+
+	if groups[0].Lag == nil ||
+		*groups[0].Lag != 0 {
+		t.Fatalf(
+			"recovered lag = %#v, want 0",
+			groups[0].Lag,
+		)
+	}
+}

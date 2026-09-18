@@ -2,6 +2,7 @@ package engine
 
 import (
 	"errors"
+	"math"
 	"sort"
 	"time"
 )
@@ -98,6 +99,12 @@ func (s *Store) StreamGroupRead(keys []string, groupName, consumer string, curso
 				group.LastDeliveredID = item.ID
 				if group.EntriesRead >= 0 {
 					group.EntriesRead++
+				} else if item.ID.equal(state.LastID) &&
+					state.EntriesAdded <= math.MaxInt64 {
+					// Redis restores lag tracking when an
+					// unknown group catches up to the stream.
+					group.EntriesRead =
+						int64(state.EntriesAdded)
 				}
 				if !noAck {
 					group.Pending = append(group.Pending, streamPending{ID: item.ID, Consumer: consumer, DeliveredAt: nowMS, Deliveries: 1})
