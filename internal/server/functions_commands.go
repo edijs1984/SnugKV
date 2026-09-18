@@ -538,7 +538,21 @@ func (s *Server) executeFCall(args [][]byte, readOnly bool) ([]byte, error) {
 	if fn == nil {
 		return nil, errors.New("ERR Function not found")
 	}
-	return s.runRegisteredFunction(fn, keys, argv, readOnly || fn.noWrites)
+	if err := s.rejectFunctionInvocationOOM(fn); err != nil {
+		return nil, err
+	}
+
+	return s.withFunctionOOMBypass(
+		fn,
+		func() ([]byte, error) {
+			return s.runRegisteredFunction(
+				fn,
+				keys,
+				argv,
+				readOnly || fn.noWrites,
+			)
+		},
+	)
 }
 
 func (s *Server) runRegisteredFunction(fn *registeredFunction, keys, argv [][]byte, readOnly bool) ([]byte, error) {
