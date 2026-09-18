@@ -1129,24 +1129,60 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			return integer(int64(len(commandTable))), nil
 
 		case "INFO":
-			if len(args) < 3 {
-				return nil, errors.New("ERR wrong number of arguments for 'command|info' command")
+			if len(args) == 2 {
+				names := make([]string, 0, len(commandTable))
+
+				for name := range commandTable {
+					names = append(names, name)
+				}
+
+				sort.Strings(names)
+
+				entries := make(
+					[][]byte,
+					0,
+					len(names),
+				)
+
+				for _, name := range names {
+					entries = append(
+						entries,
+						commandEntry(name),
+					)
+				}
+
+				return array(entries...), nil
 			}
 
-			entries := make([][]byte, 0, len(args)-2)
+			entries := make(
+				[][]byte,
+				0,
+				len(args)-2,
+			)
 
 			for _, arg := range args[2:] {
-				name := strings.ToUpper(string(arg))
+				name := strings.ToUpper(
+					string(arg),
+				)
 
-				if _, ok := commandTable[name]; !ok {
-					entries = append(entries, nullBulk())
+				if !commandInfoSupported(name) {
+					entries = append(
+						entries,
+						nullBulk(),
+					)
 					continue
 				}
 
-				entries = append(entries, commandEntry(name))
+				entries = append(
+					entries,
+					commandEntry(name),
+				)
 			}
 
 			return array(entries...), nil
+
+		case "DOCS":
+			return commandDocsReply(args[2:]), nil
 
 		case "GETKEYS":
 			if len(args) < 3 {

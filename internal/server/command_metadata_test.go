@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -573,6 +574,540 @@ func TestCommandInfoTipsUseBulkStrings(t *testing.T) {
 		if !bytes.Contains(reply, want) {
 			t.Fatalf(
 				"COMMAND INFO %s tips are not bulk strings: %q",
+				name,
+				reply,
+			)
+		}
+	}
+}
+
+func TestCommandDocsGet(t *testing.T) {
+	reply := commandDocsReply(
+		[][]byte{
+			[]byte("GET"),
+		},
+	)
+
+	for _, want := range [][]byte{
+		[]byte("$3\r\nget\r\n"),
+		[]byte("$7\r\nsummary\r\n"),
+		[]byte("$5\r\nsince\r\n"),
+		[]byte("$5\r\ngroup\r\n"),
+		[]byte("$10\r\ncomplexity\r\n"),
+		[]byte("$9\r\narguments\r\n"),
+		[]byte("$14\r\nkey_spec_index\r\n"),
+	} {
+		if !bytes.Contains(reply, want) {
+			t.Fatalf(
+				"COMMAND DOCS GET missing %q in %q",
+				want,
+				reply,
+			)
+		}
+	}
+}
+
+func TestCommandDocsRequestedOrder(t *testing.T) {
+	reply := commandDocsReply(
+		[][]byte{
+			[]byte("SET"),
+			[]byte("GET"),
+		},
+	)
+
+	setPos := bytes.Index(
+		reply,
+		[]byte("$3\r\nset\r\n"),
+	)
+
+	getPos := bytes.Index(
+		reply,
+		[]byte("$3\r\nget\r\n"),
+	)
+
+	if setPos < 0 || getPos < 0 {
+		t.Fatalf(
+			"missing requested docs: %q",
+			reply,
+		)
+	}
+
+	if setPos >= getPos {
+		t.Fatalf(
+			"requested order not preserved: %q",
+			reply,
+		)
+	}
+}
+
+func TestCommandDocsUnknownIsOmitted(t *testing.T) {
+	reply := commandDocsReply(
+		[][]byte{
+			[]byte("DOESNOTEXIST"),
+			[]byte("GET"),
+		},
+	)
+
+	if bytes.Contains(
+		reply,
+		[]byte("doesnotexist"),
+	) {
+		t.Fatalf(
+			"unknown command unexpectedly documented: %q",
+			reply,
+		)
+	}
+
+	if !bytes.Contains(
+		reply,
+		[]byte("$3\r\nget\r\n"),
+	) {
+		t.Fatalf(
+			"known command missing: %q",
+			reply,
+		)
+	}
+}
+
+func TestCommandDocsAllOnlyAdvertisesRegisteredCommands(
+	t *testing.T,
+) {
+	reply := commandDocsReply(nil)
+
+	for name := range commandDocs {
+		if _, ok := commandTable[name]; !ok {
+			continue
+		}
+
+		want := []byte(
+			strings.ToLower(name),
+		)
+
+		if !bytes.Contains(reply, want) {
+			t.Fatalf(
+				"COMMAND DOCS missing %s",
+				name,
+			)
+		}
+	}
+}
+
+func TestCommandDocsFlagsUseRedisArrayShape(t *testing.T) {
+	reply := commandDocsReply(
+		[][]byte{
+			[]byte("DEL"),
+			[]byte("PFADD"),
+		},
+	)
+
+	for _, want := range [][]byte{
+		[]byte("$5\r\nflags\r\n"),
+		[]byte("+multiple\r\n"),
+		[]byte("+optional\r\n"),
+	} {
+		if !bytes.Contains(reply, want) {
+			t.Fatalf(
+				"COMMAND DOCS flags missing %q in %q",
+				want,
+				reply,
+			)
+		}
+	}
+
+	for _, forbidden := range [][]byte{
+		[]byte("$8\r\nmultiple\r\n:1\r\n"),
+		[]byte("$8\r\noptional\r\n:1\r\n"),
+	} {
+		if bytes.Contains(reply, forbidden) {
+			t.Fatalf(
+				"legacy argument flag encoding still present: %q",
+				reply,
+			)
+		}
+	}
+}
+
+func TestCommandDocsEvalDynamicArguments(t *testing.T) {
+	reply := commandDocsReply(
+		[][]byte{
+			[]byte("EVAL"),
+		},
+	)
+
+	for _, want := range [][]byte{
+		[]byte("$3\r\nkey\r\n"),
+		[]byte("$3\r\narg\r\n"),
+		[]byte("+optional\r\n"),
+		[]byte("+multiple\r\n"),
+	} {
+		if !bytes.Contains(reply, want) {
+			t.Fatalf(
+				"COMMAND DOCS EVAL missing %q in %q",
+				want,
+				reply,
+			)
+		}
+	}
+}
+
+func TestCommandDocsCopyOptions(t *testing.T) {
+	reply := commandDocsReply(
+		[][]byte{
+			[]byte("COPY"),
+		},
+	)
+
+	for _, want := range [][]byte{
+		[]byte("$14\r\ndestination-db\r\n"),
+		[]byte("$2\r\nDB\r\n"),
+		[]byte("$7\r\nreplace\r\n"),
+		[]byte("$7\r\nREPLACE\r\n"),
+	} {
+		if !bytes.Contains(reply, want) {
+			t.Fatalf(
+				"COMMAND DOCS COPY missing %q in %q",
+				want,
+				reply,
+			)
+		}
+	}
+}
+
+func TestCommandDocsSetRichMetadata(t *testing.T) {
+	reply := commandDocsReply(
+		[][]byte{[]byte("SET")},
+	)
+
+	for _, want := range [][]byte{
+		[]byte("$7\r\nhistory\r\n"),
+		[]byte("$9\r\ncondition\r\n"),
+		[]byte("$5\r\noneof\r\n"),
+		[]byte("$2\r\nNX\r\n"),
+		[]byte("$2\r\nXX\r\n"),
+		[]byte("$3\r\nGET\r\n"),
+		[]byte("$10\r\nexpiration\r\n"),
+		[]byte("$2\r\nEX\r\n"),
+		[]byte("$2\r\nPX\r\n"),
+		[]byte("$4\r\nEXAT\r\n"),
+		[]byte("$4\r\nPXAT\r\n"),
+		[]byte("$7\r\nKEEPTTL\r\n"),
+	} {
+		if !bytes.Contains(reply, want) {
+			t.Fatalf(
+				"COMMAND DOCS SET missing %q in %q",
+				want,
+				reply,
+			)
+		}
+	}
+}
+
+func TestCommandDocsXAddRichMetadata(t *testing.T) {
+	reply := commandDocsReply(
+		[][]byte{[]byte("XADD")},
+	)
+
+	for _, want := range [][]byte{
+		[]byte("$7\r\nhistory\r\n"),
+		[]byte("$10\r\nNOMKSTREAM\r\n"),
+		[]byte("$4\r\ntrim\r\n"),
+		[]byte("$5\r\nblock\r\n"),
+		[]byte("$8\r\nstrategy\r\n"),
+		[]byte("$6\r\nMAXLEN\r\n"),
+		[]byte("$5\r\nMINID\r\n"),
+		[]byte("$8\r\noperator\r\n"),
+		[]byte("$1\r\n=\r\n"),
+		[]byte("$1\r\n~\r\n"),
+		[]byte("$5\r\nLIMIT\r\n"),
+		[]byte("$11\r\nid-selector\r\n"),
+		[]byte("$1\r\n*\r\n"),
+		[]byte("$4\r\ndata\r\n"),
+	} {
+		if !bytes.Contains(reply, want) {
+			t.Fatalf(
+				"COMMAND DOCS XADD missing %q in %q",
+				want,
+				reply,
+			)
+		}
+	}
+}
+
+func TestCommandDocsGeoAddRichMetadata(t *testing.T) {
+	reply := commandDocsReply(
+		[][]byte{[]byte("GEOADD")},
+	)
+
+	for _, want := range [][]byte{
+		[]byte("$7\r\nhistory\r\n"),
+		[]byte("$9\r\ncondition\r\n"),
+		[]byte("$2\r\nNX\r\n"),
+		[]byte("$2\r\nXX\r\n"),
+		[]byte("$6\r\nchange\r\n"),
+		[]byte("$2\r\nCH\r\n"),
+		[]byte("$9\r\nlongitude\r\n"),
+		[]byte("$8\r\nlatitude\r\n"),
+		[]byte("$6\r\nmember\r\n"),
+	} {
+		if !bytes.Contains(reply, want) {
+			t.Fatalf(
+				"COMMAND DOCS GEOADD missing %q in %q",
+				want,
+				reply,
+			)
+		}
+	}
+}
+
+func TestCommandInfoParentHasSupportedSubcommands(t *testing.T) {
+	reply := commandInfoReply("CLIENT")
+
+	for _, want := range [][]byte{
+		[]byte("$6\r\nclient\r\n"),
+		[]byte("$9\r\nclient|id\r\n"),
+		[]byte("$11\r\nclient|list\r\n"),
+		[]byte("$11\r\nclient|kill\r\n"),
+		[]byte("$14\r\nclient|unblock\r\n"),
+	} {
+		if !bytes.Contains(reply, want) {
+			t.Fatalf(
+				"COMMAND INFO CLIENT missing %q in %q",
+				want,
+				reply,
+			)
+		}
+	}
+
+	if bytes.Contains(
+		reply,
+		[]byte("client|tracking"),
+	) {
+		t.Fatalf(
+			"unsupported CLIENT TRACKING advertised: %q",
+			reply,
+		)
+	}
+}
+
+func TestCommandInfoSubcommandLeaf(t *testing.T) {
+	reply := commandInfoReply("FUNCTION|LOAD")
+
+	for _, want := range [][]byte{
+		[]byte("$13\r\nfunction|load\r\n"),
+		[]byte("+write\r\n"),
+		[]byte("+denyoom\r\n"),
+		[]byte("+noscript\r\n"),
+		[]byte("+@scripting\r\n"),
+		[]byte("$25\r\nrequest_policy:all_shards\r\n"),
+	} {
+		if !bytes.Contains(reply, want) {
+			t.Fatalf(
+				"FUNCTION|LOAD metadata missing %q in %q",
+				want,
+				reply,
+			)
+		}
+	}
+}
+
+func TestCommandInfoParentMetadata(t *testing.T) {
+	reply := commandInfoReply("COMMAND")
+
+	for _, want := range [][]byte{
+		[]byte("+loading\r\n"),
+		[]byte("+stale\r\n"),
+		[]byte("+@slow\r\n"),
+		[]byte("+@connection\r\n"),
+		[]byte("$29\r\nnondeterministic_output_order\r\n"),
+	} {
+		if !bytes.Contains(reply, want) {
+			t.Fatalf(
+				"COMMAND parent metadata missing %q in %q",
+				want,
+				reply,
+			)
+		}
+	}
+
+	if bytes.Contains(
+		reply,
+		[]byte("+readonly\r\n"),
+	) {
+		t.Fatalf(
+			"COMMAND parent still using generic readonly metadata: %q",
+			reply,
+		)
+	}
+}
+
+func TestCommandDocsParentSubcommands(t *testing.T) {
+	reply := commandDocsReply(
+		[][]byte{
+			[]byte("SCRIPT"),
+		},
+	)
+
+	for _, want := range [][]byte{
+		[]byte("$11\r\nsubcommands\r\n"),
+		[]byte("$11\r\nscript|load\r\n"),
+		[]byte("$13\r\nscript|exists\r\n"),
+		[]byte("$12\r\nscript|flush\r\n"),
+		[]byte("$11\r\nscript|kill\r\n"),
+	} {
+		if !bytes.Contains(reply, want) {
+			t.Fatalf(
+				"COMMAND DOCS SCRIPT missing %q in %q",
+				want,
+				reply,
+			)
+		}
+	}
+
+	if bytes.Contains(
+		reply,
+		[]byte("script|debug"),
+	) {
+		t.Fatalf(
+			"unsupported SCRIPT DEBUG advertised: %q",
+			reply,
+		)
+	}
+}
+
+func TestCommandDocsSubcommandLookup(t *testing.T) {
+	reply := commandDocsReply(
+		[][]byte{
+			[]byte("COMMAND|COUNT"),
+		},
+	)
+
+	for _, want := range [][]byte{
+		[]byte("$13\r\ncommand|count\r\n"),
+		[]byte("Returns a count of commands."),
+	} {
+		if !bytes.Contains(reply, want) {
+			t.Fatalf(
+				"COMMAND DOCS COMMAND|COUNT missing %q in %q",
+				want,
+				reply,
+			)
+		}
+	}
+}
+
+func TestCommandParentsAdvertiseOnlyImplementedChildren(t *testing.T) {
+	cases := map[string][]string{
+		"COMMAND": {
+			"COMMAND|COUNT",
+			"COMMAND|INFO",
+			"COMMAND|DOCS",
+			"COMMAND|GETKEYS",
+			"COMMAND|GETKEYSANDFLAGS",
+		},
+		"CLIENT": {
+			"CLIENT|ID",
+			"CLIENT|GETNAME",
+			"CLIENT|SETNAME",
+			"CLIENT|SETINFO",
+			"CLIENT|INFO",
+			"CLIENT|LIST",
+			"CLIENT|KILL",
+			"CLIENT|UNBLOCK",
+			"CLIENT|HELP",
+		},
+		"FUNCTION": {
+			"FUNCTION|LOAD",
+			"FUNCTION|LIST",
+			"FUNCTION|DELETE",
+			"FUNCTION|FLUSH",
+			"FUNCTION|DUMP",
+			"FUNCTION|RESTORE",
+			"FUNCTION|STATS",
+			"FUNCTION|KILL",
+			"FUNCTION|HELP",
+		},
+		"SCRIPT": {
+			"SCRIPT|LOAD",
+			"SCRIPT|EXISTS",
+			"SCRIPT|FLUSH",
+			"SCRIPT|KILL",
+		},
+	}
+
+	for parent, children := range cases {
+		reply := commandInfoReply(parent)
+
+		for _, child := range children {
+			if !bytes.Contains(
+				reply,
+				[]byte(strings.ToLower(child)),
+			) {
+				t.Fatalf(
+					"%s missing %s: %q",
+					parent,
+					child,
+					reply,
+				)
+			}
+		}
+	}
+}
+
+func TestCommandInfoSupportedIncludesSubcommands(t *testing.T) {
+	for _, name := range []string{
+		"COMMAND|COUNT",
+		"COMMAND|DOCS",
+		"CLIENT|ID",
+		"CLIENT|UNBLOCK",
+		"FUNCTION|LOAD",
+		"FUNCTION|STATS",
+		"SCRIPT|LOAD",
+		"SCRIPT|KILL",
+	} {
+		if !commandInfoSupported(name) {
+			t.Fatalf(
+				"expected %s to be introspectable",
+				name,
+			)
+		}
+	}
+
+	for _, name := range []string{
+		"CLIENT|TRACKING",
+		"SCRIPT|DEBUG",
+		"DOESNOTEXIST",
+	} {
+		if commandInfoSupported(name) {
+			t.Fatalf(
+				"unsupported command unexpectedly introspectable: %s",
+				name,
+			)
+		}
+	}
+}
+
+func TestCommandInfoSubcommandMetadataIsNotNull(t *testing.T) {
+	for _, name := range []string{
+		"COMMAND|COUNT",
+		"CLIENT|ID",
+		"FUNCTION|LOAD",
+		"SCRIPT|KILL",
+	} {
+		reply := commandInfoReply(name)
+
+		if bytes.Equal(reply, nullBulk()) {
+			t.Fatalf(
+				"%s returned null metadata",
+				name,
+			)
+		}
+
+		if !bytes.Contains(
+			reply,
+			[]byte(strings.ToLower(name)),
+		) {
+			t.Fatalf(
+				"%s metadata missing canonical name: %q",
 				name,
 				reply,
 			)
