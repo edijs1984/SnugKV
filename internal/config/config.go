@@ -22,6 +22,7 @@ type Config struct {
 	JSONShape         bool   `json:"json_shape"`
 	AOFPath           string `json:"aof_path"`
 	SnapshotPath      string `json:"snapshot_path"`
+	ACLFile           string `json:"acl_file"`
 	Fsync             string `json:"fsync"`
 	MaxMemory         uint64 `json:"max_memory"`
 	GoMemoryLimit     int64  `json:"go_memory_limit"`
@@ -159,7 +160,7 @@ func (c *Config) ApplyEnv() error {
 		}
 		c.JSONShape = b
 	}
-	for name, dst := range map[string]*string{"AOF_PATH": &c.AOFPath, "SNAPSHOT_PATH": &c.SnapshotPath, "FSYNC": &c.Fsync, "EVICTION_POLICY": &c.EvictionPolicy, "METRICS_LISTEN": &c.MetricsAddr, "ADMIN_LISTEN": &c.AdminAddr} {
+	for name, dst := range map[string]*string{"AOF_PATH": &c.AOFPath, "SNAPSHOT_PATH": &c.SnapshotPath, "ACL_FILE": &c.ACLFile, "FSYNC": &c.Fsync, "EVICTION_POLICY": &c.EvictionPolicy, "METRICS_LISTEN": &c.MetricsAddr, "ADMIN_LISTEN": &c.AdminAddr} {
 		if v, ok := os.LookupEnv("SNUGKV_" + name); ok {
 			*dst = v
 		}

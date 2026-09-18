@@ -19,5 +19,6 @@
   "max_request_bytes": 67108864,
   "max_bulk_bytes": 33554432,
   "max_arguments": 1024,
-  "cleanup_interval_ms": 100
+  "cleanup_interval_ms": 100,
+  "acl_file": "/tmp/snugkv-users.acl"
 }

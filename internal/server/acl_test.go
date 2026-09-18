@@ -1,6 +1,10 @@
 package server
 
 import (
+	"os"
+	"path/filepath"
+	"snugkv/internal/config"
+	"snugkv/internal/engine"
 	"strings"
 	"testing"
 	"time"
@@ -1459,5 +1463,318 @@ func TestACLInvalidCategory(t *testing.T) {
 			err.Error(),
 			want,
 		)
+	}
+}
+
+func TestACLFileSaveLoad(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "users.acl")
+
+	acl := NewACL()
+
+	if err := acl.SetUser("persistuser", []string{
+		"on",
+		">persist-pass",
+		"resetkeys",
+		"~persist:*",
+		"-@all",
+		"+@read",
+		"+set",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := acl.SaveFile(path); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := string(data)
+
+	if !strings.Contains(
+		text,
+		"user persistuser on",
+	) {
+		t.Fatalf("missing user: %q", text)
+	}
+
+	if strings.Contains(text, "persist-pass") {
+		t.Fatal("plaintext password written to ACL file")
+	}
+
+	if !strings.Contains(text, "#") {
+		t.Fatal("password hash missing from ACL file")
+	}
+
+	acl.DeleteUsers("persistuser")
+
+	if _, ok := acl.GetUser("persistuser"); ok {
+		t.Fatal("user was not deleted")
+	}
+
+	if err := acl.LoadFile(path); err != nil {
+		t.Fatal(err)
+	}
+
+	user, ok := acl.GetUser("persistuser")
+	if !ok {
+		t.Fatal("user was not restored")
+	}
+
+	if !user.Enabled {
+		t.Fatal("restored user is disabled")
+	}
+
+	if !acl.Authenticate(
+		"persistuser",
+		"persist-pass",
+	) {
+		t.Fatal("restored password does not authenticate")
+	}
+
+	if !acl.CommandAllowed(
+		"persistuser",
+		"get",
+	) {
+		t.Fatal("restored +@read missing GET")
+	}
+
+	if !acl.CommandAllowed(
+		"persistuser",
+		"set",
+	) {
+		t.Fatal("restored +set missing SET")
+	}
+
+	if acl.CommandAllowed(
+		"persistuser",
+		"del",
+	) {
+		t.Fatal("unexpected DEL permission")
+	}
+
+	if !acl.KeyAllowed(
+		"persistuser",
+		"persist:key",
+	) {
+		t.Fatal("restored key pattern does not match")
+	}
+
+	if acl.KeyAllowed(
+		"persistuser",
+		"other:key",
+	) {
+		t.Fatal("restored key pattern is too broad")
+	}
+}
+
+func TestACLFileLoadIsAtomic(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "users.acl")
+
+	acl := NewACL()
+
+	if err := acl.SetUser("existing", []string{
+		"on",
+		"nopass",
+		"+@all",
+		"~*",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	data := []byte(
+		"user default on nopass ~* &* +@all\n" +
+			"user broken on #0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef ~* +@does-not-exist\n",
+	)
+
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := acl.LoadFile(path)
+	if err == nil {
+		t.Fatal("expected malformed ACL file error")
+	}
+
+	if _, ok := acl.GetUser("existing"); !ok {
+		t.Fatal(
+			"active ACL changed after failed LOAD",
+		)
+	}
+
+	if _, ok := acl.GetUser("broken"); ok {
+		t.Fatal(
+			"partially loaded user became active",
+		)
+	}
+}
+
+func TestACLFileAcceptsHashedPassword(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "users.acl")
+
+	hash := aclPasswordHash("secret")
+
+	data := []byte(
+		"user default on nopass ~* &* +@all\n" +
+			"user hashed on #" + hash +
+			" ~* &* -@all +get\n",
+	)
+
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	acl := NewACL()
+
+	if err := acl.LoadFile(path); err != nil {
+		t.Fatal(err)
+	}
+
+	if !acl.Authenticate("hashed", "secret") {
+		t.Fatal("hashed password was not restored")
+	}
+}
+
+func TestACLFileStartupLoad(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "users.acl")
+
+	hash := aclPasswordHash("startup-pass")
+
+	data := []byte(
+		"user default on nopass sanitize-payload ~* &* +@all\n" +
+			"user startup on sanitize-payload #" + hash +
+			" ~startup:* &* -@all +@read +set\n",
+	)
+
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	store := engine.New()
+
+	cfg := config.Default()
+	cfg.ListenAddr = "127.0.0.1:0"
+	cfg.AdminAddr = ""
+	cfg.ACLFile = path
+
+	server, err := ListenWithConfig(cfg, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	user, ok := server.server.acl.GetUser("startup")
+	if !ok {
+		t.Fatal("startup ACL user was not loaded")
+	}
+
+	if !user.Enabled {
+		t.Fatal("startup ACL user is disabled")
+	}
+
+	if !server.server.acl.Authenticate(
+		"startup",
+		"startup-pass",
+	) {
+		t.Fatal("startup password was not restored")
+	}
+
+	if !server.server.acl.CommandAllowed(
+		"startup",
+		"get",
+	) {
+		t.Fatal("startup +@read rule missing")
+	}
+
+	if !server.server.acl.CommandAllowed(
+		"startup",
+		"set",
+	) {
+		t.Fatal("startup +set rule missing")
+	}
+
+	if server.server.acl.CommandAllowed(
+		"startup",
+		"del",
+	) {
+		t.Fatal("unexpected startup DEL permission")
+	}
+
+	if !server.server.acl.KeyAllowed(
+		"startup",
+		"startup:key",
+	) {
+		t.Fatal("startup key pattern missing")
+	}
+}
+
+func TestACLFileStartupRejectsMalformedFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "users.acl")
+
+	data := []byte(
+		"user default on nopass ~* &* +@all\n" +
+			"user broken on ~* +@does-not-exist\n",
+	)
+
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	store := engine.New()
+
+	cfg := config.Default()
+	cfg.ListenAddr = "127.0.0.1:0"
+	cfg.AdminAddr = ""
+	cfg.ACLFile = path
+
+	server, err := ListenWithConfig(cfg, store)
+
+	if server != nil {
+		_ = server.Close()
+		t.Fatal("server started with malformed ACL file")
+	}
+
+	if err == nil {
+		t.Fatal("expected startup ACL error")
+	}
+
+	if !strings.Contains(
+		err.Error(),
+		"no change to the previously active ACL rules was performed",
+	) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestACLFileStartupRejectsMissingFile(t *testing.T) {
+	dir := t.TempDir()
+
+	store := engine.New()
+
+	cfg := config.Default()
+	cfg.ListenAddr = "127.0.0.1:0"
+	cfg.AdminAddr = ""
+	cfg.ACLFile = filepath.Join(
+		dir,
+		"missing-users.acl",
+	)
+
+	server, err := ListenWithConfig(cfg, store)
+
+	if server != nil {
+		_ = server.Close()
+		t.Fatal("server started with missing ACL file")
+	}
+
+	if err == nil {
+		t.Fatal("expected missing ACL file error")
 	}
 }

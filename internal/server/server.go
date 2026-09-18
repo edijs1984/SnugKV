@@ -29,6 +29,7 @@ type Server struct {
 	durabilityFailed bool
 
 	configAppendFsync    string
+	configACLFile        string
 	configAppendOnly     bool
 	configGetMaxClients  func() int
 	configSetMaxClients  func(int)

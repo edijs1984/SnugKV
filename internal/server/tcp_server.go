@@ -53,6 +53,17 @@ func ListenWithJournal(c config.Config, store *engine.Store, journal Journal) (*
 	s := &TCPServer{ownsOptimizer: true, listener: ln, server: New(store), config: c, connections: make(map[net.Conn]struct{}), clients: make(map[uint64]*clientSession), done: make(chan struct{})}
 
 	s.server.configAppendFsync = c.Fsync
+	s.server.configACLFile = c.ACLFile
+
+	// Redis loads the configured ACL file during startup. A configured ACL
+	// file is authoritative: if it cannot be read or parsed, startup must fail
+	// rather than silently falling back to the default ACL.
+	if c.ACLFile != "" {
+		if err := s.server.acl.LoadFile(c.ACLFile); err != nil {
+			_ = ln.Close()
+			return nil, err
+		}
+	}
 
 	// CONFIG SET appendfsync changes the real persistence policy when
 	// the configured journal supports runtime policy mutation.

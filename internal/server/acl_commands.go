@@ -280,6 +280,47 @@ func (s *Server) executeACL(
 	case "GENPASS":
 		return executeACLGenPass(args)
 
+	case "SAVE":
+		if len(args) != 2 {
+			return nil, errors.New(
+				"ERR wrong number of arguments for 'acl|save' command",
+			)
+		}
+
+		if s.configACLFile == "" {
+			return nil, errors.New(
+				"ERR This Redis instance is not configured to use an ACL file. You may want to specify users via the ACL SETUSER command and then issue a CONFIG REWRITE (assuming you have a Redis configuration file set) in order to store users in the Redis configuration.",
+			)
+		}
+
+		if err := s.acl.SaveFile(s.configACLFile); err != nil {
+			return nil, fmt.Errorf(
+				"ERR %s",
+				err.Error(),
+			)
+		}
+
+		return []byte("+OK\r\n"), nil
+
+	case "LOAD":
+		if len(args) != 2 {
+			return nil, errors.New(
+				"ERR wrong number of arguments for 'acl|load' command",
+			)
+		}
+
+		if s.configACLFile == "" {
+			return nil, errors.New(
+				"ERR This Redis instance is not configured to use an ACL file. You may want to specify users via the ACL SETUSER command and then issue a CONFIG REWRITE (assuming you have a Redis configuration file set) in order to store users in the Redis configuration.",
+			)
+		}
+
+		if err := s.acl.LoadFile(s.configACLFile); err != nil {
+			return nil, err
+		}
+
+		return []byte("+OK\r\n"), nil
+
 	case "LOG":
 		if len(args) > 3 {
 			return nil, errors.New(

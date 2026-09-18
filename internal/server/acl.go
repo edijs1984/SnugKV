@@ -215,6 +215,53 @@ func (a *ACL) SetUser(name string, rules []string) error {
 			u.NoPass = false
 			u.PasswordHashes = nil
 
+		case strings.EqualFold(rule, "sanitize-payload"):
+			// Redis persists this flag in ACL files. SnugKV currently
+			// always uses sanitize-payload semantics.
+
+		case strings.EqualFold(rule, "resetchannels"):
+			// Channel ACLs are not enforced yet. Accept the persisted
+			// modifier for Redis ACL-file compatibility.
+
+		case rule == "&*":
+			// Redis commonly persists all-channel access as &*.
+			// Channel ACL enforcement is outside the current ACL scope.
+
+		case strings.HasPrefix(rule, "#"):
+			hash := strings.ToLower(
+				strings.TrimPrefix(rule, "#"),
+			)
+
+			if len(hash) != 64 {
+				return errors.New(
+					"ERR Error in ACL SETUSER modifier",
+				)
+			}
+
+			if _, err := hex.DecodeString(hash); err != nil {
+				return errors.New(
+					"ERR Error in ACL SETUSER modifier",
+				)
+			}
+
+			u.NoPass = false
+
+			found := false
+
+			for _, existing := range u.PasswordHashes {
+				if existing == hash {
+					found = true
+					break
+				}
+			}
+
+			if !found {
+				u.PasswordHashes = append(
+					u.PasswordHashes,
+					hash,
+				)
+			}
+
 		case strings.HasPrefix(rule, ">"):
 			password := strings.TrimPrefix(rule, ">")
 			if password == "" {
@@ -524,4 +571,19 @@ func aclSubcommandSupported(subcommand string) bool {
 	default:
 		return false
 	}
+}
+
+func (a *ACL) ReplaceFrom(source *ACL) {
+	source.mu.RLock()
+	defer source.mu.RUnlock()
+
+	users := make(map[string]*ACLUser, len(source.users))
+
+	for name, user := range source.users {
+		users[name] = cloneACLUser(user)
+	}
+
+	a.mu.Lock()
+	a.users = users
+	a.mu.Unlock()
 }
