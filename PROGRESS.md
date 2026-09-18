@@ -30,15 +30,25 @@ slice.
 COMMAND metadata/tooling and the common CONFIG compatibility milestone are
 complete. Core AUTH/ACL support is also implemented through command/category/key
 authorization, transaction enforcement, ACL LOG, SAVE/LOAD, and startup ACL-file
-persistence. The audited ACL core and core RESP3 protocol milestone are complete. The current
-compatibility focus is broader RESP3 command/client differential hardening, exact
-`allow-oom` semantics, `SCRIPT DEBUG`, migration/transfer scope beyond COPY, deeper
-dynamic SORT/script/Function ACL audits, and advanced CLIENT tracking/caching only
-where real clients require it. Streams are
-broadly implemented through Redis 8.2 reference-policy behavior; a final Streams
-differential edge-case audit remains useful.
+persistence. The audited ACL core and broad RESP3 command-shape milestone are
+complete. The Redis 8.2 Streams differential edge-case audit is also complete.
+The current compatibility focus is optional RESP3 client-library/attribute
+hardening, exact `allow-oom` semantics, `SCRIPT DEBUG`, migration/transfer scope
+beyond COPY, deeper dynamic SORT/script/Function ACL audits, and advanced CLIENT
+tracking/caching only where real clients require it.
 
 ## Recently completed
+
+- Streams Redis 8.2 differential edge-case audit: deterministic passes covered
+  IDs/ranges, exact and approximate trim grammar, group creation/SETID/
+  ENTRIESREAD/lag, XREADGROUP/XPENDING, XCLAIM/XAUTOCLAIM, consumer deletion,
+  XINFO, and Redis 8.2 KEEPREF/DELREF/ACKED policies. The audit fixed XACKDEL
+  dangling-reference status, trim `max-deleted-entry-id`, XRANGE COUNT 0,
+  XTRIM LIMIT grammar/error parity, group entries-read reporting, DELCONSUMER PEL
+  cleanup, never-active consumer metadata, empty XPENDING shape, and BUSYGROUP/
+  NOGROUP framing. Remaining observed differences are intentional Redis-internal
+  radix-tree diagnostics and exact approximate-`~` trimming granularity. See
+  `docs/STREAMS-DIFFERENTIAL-AUDIT.md`.
 
 - Broad RESP3 Redis 8.2 structural sweep: ZSET score doubles/pair replies, GEO
   coordinate doubles, XREAD/XREADGROUP maps, XINFO maps, FUNCTION STATS maps,
@@ -295,6 +305,10 @@ differential edge-case audit remains useful.
   testing exposed and fixed a corruption path.
 - Export/restore, TTL, rename, WRONGTYPE, race, RESP, redis-cli smoke, and
   reference-policy coverage.
+- Completed Redis 8.2 differential edge-case audit across IDs/ranges, trimming,
+  groups/ENTRIESREAD/lag, pending entries, claims/autoclaims, consumer lifecycle,
+  XINFO, reference policies, and tested error behavior. See
+  `docs/STREAMS-DIFFERENTIAL-AUDIT.md`.
 
 ### Sparse-memory optimization
 
@@ -441,12 +455,11 @@ when evaluating CPU tradeoffs.
 3. `SCRIPT DEBUG`, exact `allow-oom`, deeper command-flag/OOM semantics, and
    optional Redis-RDB Function payload parity.
 4. Migration/transfer scope beyond single-database COPY and advanced CLIENT tracking/caching/redirection where required.
-5. Differential Redis edge-case audit for the completed Streams surface.
-6. Optional legacy `GEORADIUS*` aliases if real client usage requires them.
-7. Fresh release-scale benchmarks, multi-run variance, million-record datasets,
+5. Optional legacy `GEORADIUS*` aliases if real client usage requires them.
+6. Fresh release-scale benchmarks, multi-run variance, million-record datasets,
    broader client compatibility, retained long-duration soak evidence, dedicated
    large-GEO benchmarking, script runtime/cache benchmarks, and SORT external-key
    performance testing.
-8. Distributed features only after the single-node target is mature.
+7. Distributed features only after the single-node target is mature.
 
 See `PLAN.md`, `COMPATIBILITY.md`, `KNOWN-LIMITATIONS.md`, and GitHub issue #55.

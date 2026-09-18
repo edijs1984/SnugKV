@@ -59,5 +59,7 @@ redis-cli -p 6380 ACL GETUSER app
 currently active ACL unchanged. Startup uses the same parser and fails closed if
 the configured file is invalid.
 
-Current ACL compatibility does not yet enforce channel patterns or selectors; use
-command and key ACLs as the supported security boundary.
+The audited ACL surface enforces command/category rules, key patterns, classic and
+sharded Pub/Sub channel patterns, and root-or-selector rule-set authorization.
+Deeper dynamic SORT/script/Function ACL edge auditing remains optional hardening;
+see [ACL compatibility](ACL-COMPATIBILITY.md).

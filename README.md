@@ -59,7 +59,7 @@ for current boundaries, [PLAN.md](PLAN.md) for the remaining roadmap, and
 - Sorting: `SORT`, `SORT_RO` over LIST/SET/ZSET sources with numeric or `ALPHA` ordering, `ASC`/`DESC`, `LIMIT`, external string/hash `BY` and `GET` patterns, `GET #`, `BY`-constant/native-order mode, and `SORT ... STORE` LIST replacement.
 - HyperLogLog: `PFADD`, `PFCOUNT`, `PFMERGE` with Redis-compatible serialized HLL strings.
 - GEO: `GEOADD`, `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH`, `GEOSEARCHSTORE` using Redis-compatible 52-bit geospatial ZSET scores.
-- STREAM: `XADD`, `XLEN`, `XRANGE`, `XREVRANGE`, `XDEL`, `XDELEX`, `XTRIM`, `XREAD`, `XGROUP`, `XREADGROUP`, `XACK`, `XACKDEL`, `XPENDING`, `XCLAIM`, `XAUTOCLAIM`, `XINFO`; Redis 8.2 `KEEPREF` / `DELREF` / `ACKED` reference policies are supported.
+- STREAM: `XADD`, `XLEN`, `XRANGE`, `XREVRANGE`, `XDEL`, `XDELEX`, `XTRIM`, `XREAD`, `XGROUP`, `XREADGROUP`, `XACK`, `XACKDEL`, `XPENDING`, `XCLAIM`, `XAUTOCLAIM`, `XINFO`; Redis 8.2 `KEEPREF` / `DELREF` / `ACKED` reference policies are supported and the documented surface has completed a Redis 8.2 differential edge-case audit.
 - Pub/Sub: `SUBSCRIBE`, `UNSUBSCRIBE`, `PSUBSCRIBE`, `PUNSUBSCRIBE`, `PUBLISH`, `SSUBSCRIBE`, `SUNSUBSCRIBE`, `SPUBLISH`, and `PUBSUB` classic/sharded introspection.
 - Transactions: `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH` with cross-client optimistic locking and EXEC error semantics.
 - Scripting: `EVAL`, `EVALSHA`, `EVAL_RO`, `EVALSHA_RO`, `SCRIPT LOAD`, `SCRIPT EXISTS`, `SCRIPT FLUSH`, `SCRIPT KILL`; Lua `KEYS`/`ARGV`, `redis.call`, `redis.pcall`, `redis.error_reply`, `redis.status_reply`, and `redis.sha1hex` are available.
@@ -137,9 +137,9 @@ not serialized.
 
 Remaining scripting/function management gaps include `SCRIPT DEBUG`, exact
 `allow-oom` scoped admission, exact Redis RDB byte compatibility for Function
-DUMP/RESTORE payloads, and deeper Redis Lua/command-flag/OOM parity. ACL command
-and key authorization is implemented, while channel/selector ACL semantics remain
-a separate compatibility boundary.
+DUMP/RESTORE payloads, and deeper Redis Lua/command-flag/OOM parity. ACL command,
+key, channel, and selector authorization is implemented; deeper dynamic
+SORT/script/Function ACL edge auditing remains optional hardening.
 
 ## CLIENT compatibility
 
@@ -271,10 +271,11 @@ and the core RESP3 protocol milestone are complete. Other significant gaps are
 `SCRIPT DEBUG`, exact `allow-oom` semantics, migration scope beyond DB0 COPY,
 advanced CLIENT tracking/caching, optional Redis-RDB Function payload compatibility,
 and optional RESP3 client-library/attribute hardening. Deprecated `GEORADIUS*`
-compatibility is not part of the modern GEO surface yet. A final differential
-Redis edge-case audit remains useful for Streams, but there is no known core
-Streams command-family gap. See [COMPATIBILITY.md](COMPATIBILITY.md) and GitHub
-issue #55.
+compatibility is not part of the modern GEO surface yet. The Redis 8.2 Streams
+differential edge-case audit is complete; the only documented implementation-
+specific differences are approximate `XTRIM ~` granularity and Redis-internal
+radix-tree diagnostic counts. See [docs/STREAMS-DIFFERENTIAL-AUDIT.md](docs/STREAMS-DIFFERENTIAL-AUDIT.md),
+[COMPATIBILITY.md](COMPATIBILITY.md), and GitHub issue #55.
 
 ## License
 

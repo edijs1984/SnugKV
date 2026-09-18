@@ -21,7 +21,9 @@ Streams include core reads/writes, blocking `XREAD`, consumer groups,
 `XREADGROUP`, PEL inspection/acknowledgement, claims/autoclaims, XINFO,
 MAXLEN/MINID trimming, lifetime `entries-added` / `max-deleted-entry-id`,
 separate consumer idle/inactive tracking, Redis 8.2 `KEEPREF` / `DELREF` /
-`ACKED` reference policies, `XDELEX`, and `XACKDEL`.
+`ACKED` reference policies, `XDELEX`, and `XACKDEL`. The Redis 8.2 differential
+edge-case audit for IDs, trimming, groups, claims, XINFO, reference policies,
+consumer lifecycle, and tested errors is complete.
 
 Transactions include `MULTI`, `EXEC`, `DISCARD`, `WATCH`, and `UNWATCH`, with
 queue-time EXECABORT semantics, runtime errors preserved inside EXEC arrays,
@@ -168,9 +170,10 @@ and 24-byte arena segment descriptors.
 - [x] `acl_file` / `SNUGKV_ACL_FILE` configuration and startup ACL restoration.
 - [x] Fail-closed startup for missing/malformed configured ACL files.
 - [x] Live Redis 8.2 differential validation across core command/key/category/log/persistence behavior.
-- [ ] Channel-pattern enforcement and allchannels/resetchannels parity.
-- [ ] ACL selectors and selector serialization.
-- [ ] Remaining uncommon SETUSER reset/removal modifiers and deeper dynamic SORT/script ACL edge auditing.
+- [x] Channel-pattern enforcement and allchannels/resetchannels parity.
+- [x] ACL selectors and selector serialization.
+- [x] Audited SETUSER reset/removal/hash/alias/sanitize modifiers.
+- [ ] Deeper dynamic SORT/script/Function ACL edge auditing.
 
 Details: `docs/ACL-COMPATIBILITY.md`.
 
@@ -230,6 +233,11 @@ Details: `docs/ACL-COMPATIBILITY.md`.
 - [x] Lifetime `entries-added` and `max-deleted-entry-id` metadata.
 - [x] Distinct consumer attempted/successful timestamps for `idle` vs `inactive`.
 - [x] Production optimizer regression: STREAM is never rewritten by scalar codecs.
+- [x] Redis 8.2 differential edge-case audit covering stream IDs/ranges, trimming,
+  groups/ENTRIESREAD/lag, pending-entry lifecycle, claims/autoclaims, XINFO,
+  reference policies, consumer deletion, and tested error behavior. Intentional
+  differences are limited to Redis-internal radix-tree diagnostics and exact
+  approximate-`~` trimming granularity. See `docs/STREAMS-DIFFERENTIAL-AUDIT.md`.
 
 ### Pub/Sub
 
@@ -269,9 +277,11 @@ Details: `docs/ACL-COMPATIBILITY.md`.
 
 ## Remaining work / TODO
 
-### P0 — Streams differential hardening
+### Completed — Streams differential hardening
 
-- [ ] Differential Redis edge-case audit for stream ID/trimming/group/claim/XINFO/reference-policy semantics.
+- [x] Differential Redis 8.2 edge-case audit for stream ID/range/trimming/group/
+  pending/claim/XINFO/reference-policy/error semantics. See
+  `docs/STREAMS-DIFFERENTIAL-AUDIT.md`.
 
 ### P1 — major Redis command families
 

@@ -11,6 +11,9 @@ HASH, SET, LIST, ZSET, and STREAM semantics. The broad Streams and consumer-grou
 surface is implemented, including blocking reads, pending-entry management,
 claiming, XINFO introspection, lifetime stream metadata, MAXLEN/MINID trimming,
 Redis 8.2 `KEEPREF` / `DELREF` / `ACKED` policies, `XDELEX`, and `XACKDEL`.
+The documented Streams surface has completed a live Redis 8.2 differential
+edge-case audit covering IDs, ranges, trimming, groups, pending entries, claims,
+XINFO, reference policies, consumer lifecycle, and tested error behavior.
 
 Classic and sharded Pub/Sub are implemented, along with connection-scoped Redis
 transactions and optimistic locking (`MULTI`, `EXEC`, `DISCARD`, `WATCH`,
@@ -263,10 +266,13 @@ Implemented stream behavior includes:
   consumer attempted/successful interaction timestamps;
 - TTL/RENAME/persistence support and optimizer exclusion as a native datatype.
 
-SnugKV has no Redis macro-node representation, so `~` is accepted but trimming is
-exact except for an explicit `LIMIT` cap. A final differential Redis edge-case
-audit remains useful, but no known core Streams command-family gap is currently
-tracked.
+SnugKV has no Redis macro-node representation, so Redis's exact approximate
+`XTRIM ~` removal granularity is not claimed: the grammar is supported, but the
+number removed by a particular approximate trim can differ because Redis trims
+according to its radix-tree/listpack node layout. `radix-tree-keys` /
+`radix-tree-nodes` are likewise Redis-internal diagnostics and are not fabricated
+for byte-identical metadata. The Redis 8.2 edge-case audit for the documented
+Streams surface is complete; see `docs/STREAMS-DIFFERENTIAL-AUDIT.md`.
 
 ## Pub/Sub
 
@@ -506,16 +512,14 @@ It is not a complete RedisJSON implementation.
 
 Prioritized backlog:
 
-1. ACL hardening: channel patterns, selectors, remaining uncommon SETUSER
-   modifiers, and deeper dynamic-key/scripting edge audits.
+1. Deeper dynamic SORT/script/Function ACL edge audits.
 2. `SCRIPT DEBUG`, exact `allow-oom`, and deeper scripting command-flag/OOM parity.
 3. Migration/transfer scope beyond single-database `COPY`.
 4. Optional RESP3 client-library smoke coverage and attribute-frame support if required.
 5. Advanced CLIENT tracking/caching/redirection features where real clients require them.
-6. Differential hardening for the completed Streams surface.
-7. Optional Redis-RDB byte compatibility for Function DUMP/RESTORE payloads.
-8. Deprecated `GEORADIUS*` aliases if legacy client compatibility justifies them.
-10. Replication/failover/cluster only after the single-node compatibility target is mature.
+6. Optional Redis-RDB byte compatibility for Function DUMP/RESTORE payloads.
+7. Deprecated `GEORADIUS*` aliases if legacy client compatibility justifies them.
+8. Replication/failover/cluster only after the single-node compatibility target is mature.
 
 See GitHub issue #55 and `PLAN.md` for the working roadmap.
 

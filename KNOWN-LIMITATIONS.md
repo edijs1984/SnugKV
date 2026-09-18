@@ -174,10 +174,13 @@ a permanent secondary geospatial index, making searches O(source cardinality).
 This is a deliberate memory/performance tradeoff pending large-GEO benchmarks.
 
 Streams include Redis 8.2 `KEEPREF`, `DELREF`, and `ACKED` reference-policy
-selection plus `XDELEX` and `XACKDEL`. SnugKV has no Redis macro-node
-representation, so accepted `~` stream trimming is exact except for an explicit
-`LIMIT` cap. A differential Redis edge-case audit can still uncover small semantic
-differences even though no known core Streams command-family gap remains.
+selection plus `XDELEX` and `XACKDEL`. The documented Streams surface has
+completed a Redis 8.2 differential edge-case audit. SnugKV has no Redis
+radix-tree/listpack macro-node representation, so exact approximate `XTRIM ~`
+removal counts are implementation-specific, and Redis-internal `radix-tree-keys` /
+`radix-tree-nodes` diagnostics are not claimed to match. These are explicit
+representation differences rather than known core Streams semantic gaps. See
+`docs/STREAMS-DIFFERENTIAL-AUDIT.md`.
 
 Transactions implement `MULTI`, `EXEC`, `DISCARD`, `WATCH`, and `UNWATCH`,
 including cross-client WATCH invalidation and change-then-restore detection.
@@ -192,9 +195,10 @@ queued MULTI commands; `PUBLISH` and `SPUBLISH` remain ordinary queueable comman
   platforms. Linux builds additionally detect TCP peer disconnects while blocked.
   Equivalent proactive socket-disconnect monitoring is not yet implemented on
   non-Linux builds.
-- COMMAND metadata and common CONFIG tooling are complete. Core AUTH/ACL command
-  and key enforcement is also implemented; remaining ACL work is limited to the
-  channel/selector/uncommon-modifier edge surface described above. Advanced CLIENT
+- COMMAND metadata and common CONFIG tooling are complete. The audited AUTH/ACL
+  surface includes command/category/key/channel enforcement, selectors, hardened
+  SETUSER modifiers, persistence, and transaction re-authorization; remaining ACL
+  work is deeper dynamic SORT/script/Function policy auditing. Advanced CLIENT
   tracking/caching remains incomplete.
 - The modern GEO command set has focused command-level compatibility tests; large
   dataset differential/performance testing is intentionally still pending.
