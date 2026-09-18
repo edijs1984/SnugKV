@@ -511,3 +511,81 @@ func aclUserAllowsCommand(
 
 	return false
 }
+
+func aclRuleSetAllowsAdditionalKey(
+	command string,
+	args [][]byte,
+	key string,
+
+	allCommands bool,
+	commandAllow map[string]bool,
+
+	allKeys bool,
+	keyPatterns []string,
+
+	allChannels bool,
+	channelPatterns []string,
+) bool {
+	if !aclRuleSetAllows(
+		command,
+		args,
+		allCommands,
+		commandAllow,
+		allKeys,
+		keyPatterns,
+		allChannels,
+		channelPatterns,
+	) {
+		return false
+	}
+
+	return aclRuleKeyAllowed(
+		allKeys,
+		keyPatterns,
+		key,
+	)
+}
+
+func aclUserAllowsAdditionalKey(
+	user *ACLUser,
+	args [][]byte,
+	key string,
+) bool {
+	if user == nil || len(args) == 0 {
+		return false
+	}
+
+	command := aclCanonicalCommand(args)
+
+	if aclRuleSetAllowsAdditionalKey(
+		command,
+		args,
+		key,
+		user.AllCommands,
+		user.CommandAllow,
+		user.AllKeys,
+		user.KeyPatterns,
+		user.AllChannels,
+		user.ChannelPatterns,
+	) {
+		return true
+	}
+
+	for _, selector := range user.Selectors {
+		if aclRuleSetAllowsAdditionalKey(
+			command,
+			args,
+			key,
+			selector.AllCommands,
+			selector.CommandAllow,
+			selector.AllKeys,
+			selector.KeyPatterns,
+			selector.AllChannels,
+			selector.ChannelPatterns,
+		) {
+			return true
+		}
+	}
+
+	return false
+}
