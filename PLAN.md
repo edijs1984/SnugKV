@@ -13,8 +13,9 @@ modern GEO, CONFIG runtime/tooling compatibility, the common Lua scripting path 
 `SCRIPT KILL`, Redis Functions core/management through `FUNCTION KILL`, the
 standalone-safe Function flag subset, `SORT` / `SORT_RO`, single-database `COPY`,
 the current CLIENT management/tooling slice, Redis-shaped COMMAND metadata/tooling,
-common CONFIG runtime/tooling compatibility, and core AUTH/ACL enforcement with
-ACL-file persistence are implemented.
+common CONFIG runtime/tooling compatibility, and the audited single-node AUTH/ACL
+milestone—including channels, selectors, SETUSER modifiers, ACL logging, and
+ACL-file persistence—is implemented.
 
 Streams include core reads/writes, blocking `XREAD`, consumer groups,
 `XREADGROUP`, PEL inspection/acknowledgement, claims/autoclaims, XINFO,
@@ -36,7 +37,7 @@ for script results. Redis Functions include load/list/delete/flush,
 `FCALL`/`FCALL_RO`, DUMP/RESTORE, restart persistence, STATS/HELP, KILL with
 Redis-style NOTBUSY/UNKILLABLE safety semantics, and the standalone-safe flags
 `no-writes`, `allow-stale`, `no-cluster`, and `allow-cross-slot-keys`.
-`SCRIPT DEBUG`, exact `allow-oom`, and deeper command-flag/ACL/OOM parity remain. CONFIG now supports GET/SET/RESETSTAT/REWRITE/HELP for SnugKV-backed settings, live maxmemory/maxmemory-policy/maxclients/appendfsync mutation, Redis-shaped COMMAND metadata/docs, atomic JSON rewrite, and restart persistence. SnugKV intentionally reports one logical database and advertises only real settings/policies.
+`SCRIPT DEBUG`, exact `allow-oom`, and deeper scripting/OOM policy parity remain. CONFIG now supports GET/SET/RESETSTAT/REWRITE/HELP for SnugKV-backed settings, live maxmemory/maxmemory-policy/maxclients/appendfsync mutation, Redis-shaped COMMAND metadata/docs, atomic JSON rewrite, and restart persistence. SnugKV intentionally reports one logical database and advertises only real settings/policies.
 
 The current CLIENT slice includes `ID`, `GETNAME`, `SETNAME`, `SETINFO`, `INFO`,
 `LIST`, `LIST ID`, `LIST TYPE NORMAL`, `KILL ID [SKIPME]`, `UNBLOCK
@@ -332,3 +333,12 @@ Before treating a feature as complete:
 - test production configuration interactions for native datatypes;
 - document observable compatibility differences;
 - publish performance or memory claims only with reproducible benchmark details.
+
+### RESP3
+
+- [ ] Add per-connection RESP protocol state and accept `HELLO 3`.
+- [ ] Implement RESP3 scalar/null/boolean/double/bignum/container encoders needed by SnugKV replies.
+- [ ] Convert command reply shapes that differ between RESP2 and RESP3 without changing RESP2 behavior.
+- [ ] Implement RESP3 Pub/Sub push frames and validate subscribed-mode command behavior.
+- [ ] Audit `HELLO 3` metadata, AUTH/SETNAME option behavior, protocol switching, and errors against Redis 8.2.
+- [ ] Add RESP3 client compatibility coverage for redis-cli and supported client libraries while keeping RESP2 regression coverage green.
