@@ -194,8 +194,16 @@ func (s *Server) luaRedisCallReadOnly(protected bool) lua.LGFunction {
 		if scriptCommandWritesOrReplicates(args) {
 			return luaPushCommandError(L, protected, errors.New("ERR Write commands are not allowed from read-only scripts."))
 		}
+		if err := s.authorizeExecutionNestedCommand(args); err != nil {
+			return luaPushCommandError(L, protected, err)
+		}
 
-		result, err := s.executePressureMode(args, false)
+		result, err := s.withNestedExecutionCommand(
+			args,
+			func() ([]byte, error) {
+				return s.executePressureMode(args, false)
+			},
+		)
 		if err != nil {
 			return luaPushCommandError(L, protected, err)
 		}
