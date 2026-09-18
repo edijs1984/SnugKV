@@ -6,6 +6,18 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Added
 
+- Redis 8.2-shaped COMMAND tooling for the implemented surface, including ten-field
+  `COMMAND INFO`, `COMMAND DOCS`, `GETKEYS`, `GETKEYSANDFLAGS`, parent/
+  subcommand metadata, and dynamic key extraction for variable-key commands.
+- Common CONFIG tooling compatibility: `CONFIG GET`, `SET`, `RESETSTAT`,
+  `REWRITE`, and `HELP`, with live maxmemory/policy/maxclients/appendfsync
+  mutation and atomic strict-JSON rewrite/restart persistence.
+- Redis-style authentication and ACL management: `AUTH`, `ACL WHOAMI`, `USERS`,
+  `GETUSER`, `LIST`, `SETUSER`, `DELUSER`, `CAT`, `DRYRUN`, `GENPASS`,
+  `LOG`, `SAVE`, `LOAD`, and `HELP`.
+- ACL command/category/key-pattern enforcement, MULTI queue-time ACL dirtying,
+  EXEC-time re-authorization, aggregated ACL LOG entries, and optional ACL-file
+  persistence/startup restore with fail-closed malformed-file handling.
 - Redis Functions core with `FUNCTION LOAD/LIST/DELETE/FLUSH`, `FCALL`,
   `FCALL_RO`, read-only enforcement, function-local Lua state, and `no-writes`.
 - `FUNCTION DUMP` / `FUNCTION RESTORE` with checksum-protected versioned payloads,
@@ -86,6 +98,11 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Verified
 
+- Live Redis 8.2 differential audits for COMMAND metadata/key discovery, CONFIG
+  common tooling, AUTH/ACL command and key rules, category ordering, transaction
+  re-authorization, ACL LOG aggregation, and ACL SAVE/LOAD persistence behavior.
+- ACL restart persistence on a live SnugKV process, plus startup rejection for a
+  malformed configured ACL file.
 - `FUNCTION STATS` tests cover exact idle RESP2 shape, live function
   name/command/duration metadata, engine counts, and non-blocking access while the
   durability mutex is held; `FUNCTION HELP` and arity errors are covered too.

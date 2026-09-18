@@ -11,14 +11,42 @@ read/write Lua scripting including `SCRIPT KILL`, Redis Functions through
 `SORT_RO`, single-database `COPY`, and the current CLIENT management/tooling
 slice.
 
-The current engineering focus is COMMAND metadata completeness and tooling
-introspection, followed by CONFIG/ACL scope, RESP3, exact `allow-oom` semantics,
-`SCRIPT DEBUG`, migration/transfer scope beyond COPY, and advanced CLIENT
-tracking/caching only where real clients require it. Streams are broadly
-implemented through Redis 8.2 reference-policy behavior; a final Streams
+COMMAND metadata/tooling and the common CONFIG compatibility milestone are
+complete. Core AUTH/ACL support is also implemented through command/category/key
+authorization, transaction enforcement, ACL LOG, SAVE/LOAD, and startup ACL-file
+persistence. The current compatibility focus is the remaining ACL
+channel/selector/uncommon-modifier edge surface, followed by RESP3, exact
+`allow-oom` semantics, `SCRIPT DEBUG`, migration/transfer scope beyond COPY, and
+advanced CLIENT tracking/caching only where real clients require it. Streams are
+broadly implemented through Redis 8.2 reference-policy behavior; a final Streams
 differential edge-case audit remains useful.
 
 ## Recently completed
+
+### COMMAND, CONFIG, and ACL compatibility
+
+- COMMAND tooling now covers Redis-shaped ten-field INFO, documented-surface DOCS,
+  GETKEYS, GETKEYSANDFLAGS, parent/subcommand metadata, and audited dynamic-key
+  extraction for scripting, COPY, BITOP, ZSET algebra/pops, and stream reads.
+- CONFIG supports GET/SET/RESETSTAT/REWRITE/HELP for SnugKV-backed settings,
+  runtime maxmemory/policy/maxclients/appendfsync mutation, atomic JSON rewrite,
+  and restart persistence.
+- AUTH supports default-user and named-user authentication with immediate
+  revocation when a user is disabled or deleted.
+- ACL management covers WHOAMI, USERS, GETUSER, LIST, SETUSER, DELUSER, CAT,
+  DRYRUN, GENPASS, LOG, SAVE, LOAD, and HELP.
+- Command rules support explicit commands and Redis 8.2 categories with ordered
+  overrides; key rules use shared fixed/dynamic command-key discovery.
+- MULTI queue-time ACL denials poison the transaction, and EXEC re-authorizes
+  queued commands so permission changes take effect before execution.
+- ACL LOG records auth/command/key denials, aggregates repeated equivalent
+  violations, and returns Redis-shaped newest-first records.
+- ACL SAVE/LOAD uses Redis-style ACL-file lines with hashed passwords; LOAD is
+  atomic on malformed input, and configured ACL files restore on startup.
+- Live restart validation confirmed persisted users survive process restart and
+  malformed configured ACL files fail startup closed.
+- See `docs/COMMAND-COMPATIBILITY.md`, `docs/CONFIG-COMPATIBILITY.md`, and
+  `docs/ACL-COMPATIBILITY.md`.
 
 ### CLIENT management/tooling
 
@@ -297,7 +325,8 @@ TTL sidecars, and compact arena segment descriptors.
 - Sharded collision-safe indexing, segmented arenas, expiration, compaction,
   explicit max-memory accounting, OOM rollback, and sampled LRU eviction.
 - String, numeric, bit, expiration, key, JSON, HyperLogLog, GEO, scripting,
-  Functions, SORT, COPY, CLIENT management, and administration commands.
+  Functions, SORT, COPY, COMMAND/CONFIG tooling, AUTH/ACL enforcement, CLIENT
+  management, and administration commands.
 - Native HASH, SET, LIST, and ZSET with broad Redis-style command coverage.
 - Blocking LIST/ZSET/STREAM waits register before readiness checks and use
   waiter/wakeup signaling instead of polling.
@@ -344,6 +373,11 @@ Recent real-server verification includes:
 - CLIENT parity for IDs/names/setinfo, INFO/LIST/list filters, targeted kill,
   self-kill/SKIPME, UNBLOCK TIMEOUT/ERROR, invalid IDs/reasons, and connection
   survival after unblock;
+- COMMAND parity for audited INFO/DOCS/key-discovery metadata and dynamic-key
+  commands;
+- CONFIG parity for GET/SET/RESETSTAT/REWRITE/HELP on the supported settings;
+- AUTH/ACL parity for user management, command/category/key rules, DRYRUN/GENPASS,
+  transaction enforcement, ACL LOG aggregation, SAVE/LOAD, and startup restore;
 - end-to-end Function-library restart persistence on a live SnugKV process;
 - transaction queue-time EXECABORT behavior;
 - runtime WRONGTYPE inside EXEC while later queued work still commits;
@@ -372,18 +406,18 @@ when evaluating CPU tradeoffs.
 
 ## Remaining engineering work
 
-1. COMMAND metadata completeness and Redis differential audit (issue #90).
-2. CONFIG compatibility and ACL/authentication scope.
-3. `SCRIPT DEBUG`, exact `allow-oom`, deeper command-flag/ACL/OOM semantics, and
+1. ACL hardening: channel patterns, selectors, remaining uncommon SETUSER
+   modifiers, and deeper dynamic SORT/script/Function ACL edge audits.
+2. `SCRIPT DEBUG`, exact `allow-oom`, deeper command-flag/OOM semantics, and
    optional Redis-RDB Function payload parity.
-4. Migration/transfer scope beyond single-database COPY.
-5. RESP3 and advanced CLIENT tracking/caching/redirection where required.
-6. Differential Redis edge-case audit for the completed Streams surface.
-7. Optional legacy `GEORADIUS*` aliases if real client usage requires them.
-8. Fresh release-scale benchmarks, multi-run variance, million-record datasets,
+3. Migration/transfer scope beyond single-database COPY.
+4. RESP3 and advanced CLIENT tracking/caching/redirection where required.
+5. Differential Redis edge-case audit for the completed Streams surface.
+6. Optional legacy `GEORADIUS*` aliases if real client usage requires them.
+7. Fresh release-scale benchmarks, multi-run variance, million-record datasets,
    broader client compatibility, retained long-duration soak evidence, dedicated
    large-GEO benchmarking, script runtime/cache benchmarks, and SORT external-key
    performance testing.
-9. Distributed features only after the single-node target is mature.
+8. Distributed features only after the single-node target is mature.
 
 See `PLAN.md`, `COMPATIBILITY.md`, `KNOWN-LIMITATIONS.md`, and GitHub issue #55.

@@ -29,8 +29,8 @@ Major Redis-compatible features still not implemented or incomplete:
 - Redis-RDB byte compatibility for `FUNCTION DUMP` / `RESTORE` payloads;
 - cross-database COPY and broader migration/transfer command scope;
 - RESP3;
-- broader CONFIG / ACL compatibility and advanced CLIENT tracking/caching features;
-- complete COMMAND metadata/introspection parity;
+- ACL channel-pattern/selectors and remaining uncommon SETUSER modifiers;
+- advanced CLIENT tracking/caching/redirection features;
 - replication;
 - Sentinel-style failover;
 - cluster mode;
@@ -101,6 +101,25 @@ runtime errors do not roll back successful writes already made before the error.
 With AOF enabled, resulting logical changes from one direct writable EVAL or FCALL
 are persisted as one frame.
 
+## ACL boundaries
+
+Core AUTH/ACL support is implemented, including named-user authentication,
+command/category rules, key patterns, `ACL CAT`, `DRYRUN`, `GENPASS`, `LOG`,
+transaction enforcement, `SAVE`/`LOAD`, and configured ACL-file startup restore.
+Password persistence uses hashes rather than plaintext, failed ACL-file loads are
+atomic, and malformed configured ACL files fail startup closed.
+
+The remaining ACL compatibility boundaries are:
+
+- channel-pattern enforcement and full `allchannels` / `resetchannels` behavior;
+- ACL selectors and selector serialization;
+- less-common SETUSER reset/removal modifiers, including complete hash-removal parity;
+- exact non-default GETUSER/LIST channel presentation;
+- deeper auditing for dynamically resolved SORT external keys and scripting/
+  Function ACL-policy edge cases.
+
+See [docs/ACL-COMPATIBILITY.md](docs/ACL-COMPATIBILITY.md).
+
 ## CLIENT boundaries
 
 The implemented CLIENT surface includes `CLIENT ID`, `GETNAME`, `SETNAME`,
@@ -130,8 +149,9 @@ Current compatibility boundaries:
   for non-STORE ALPHA replies, so locale-sensitive/non-ASCII ordering can differ;
 - SET native iteration order under a constant/no-wildcard `BY` is implementation
   dependent, so exact order is not promised for that intentionally-unsorted case;
-- Redis ACL checks and Cluster slot restrictions for dynamically resolved BY/GET
-  patterns are outside SnugKV's current no-ACL, single-node scope.
+- core command/key ACL enforcement is implemented, but deeper Redis parity for
+  dynamically resolved BY/GET external keys is still being audited;
+- Redis Cluster slot restrictions remain outside SnugKV's single-node scope.
 
 The implemented common SORT surface has been compared manually against Redis for
 LIST/SET/ZSET sources, BY/GET/hash patterns, nosort, STORE/TTL, missing values,
@@ -175,9 +195,10 @@ queued MULTI commands; `PUBLISH` and `SPUBLISH` remain ordinary queueable comman
   platforms. Linux builds additionally detect TCP peer disconnects while blocked.
   Equivalent proactive socket-disconnect monitoring is not yet implemented on
   non-Linux builds.
-- COMMAND metadata completeness is the next tooling milestone; CONFIG/ACL and
-  advanced CLIENT tracking/caching remain incomplete even though ordinary
-  application workloads and the implemented CLIENT management slice work.
+- COMMAND metadata and common CONFIG tooling are complete. Core AUTH/ACL command
+  and key enforcement is also implemented; remaining ACL work is limited to the
+  channel/selector/uncommon-modifier edge surface described above. Advanced CLIENT
+  tracking/caching remains incomplete.
 - The modern GEO command set has focused command-level compatibility tests; large
   dataset differential/performance testing is intentionally still pending.
 - Lua scripting/read-only variants and Functions core have focused unit,

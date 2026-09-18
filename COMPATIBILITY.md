@@ -22,11 +22,13 @@ LOAD/LIST/DELETE/FLUSH`, `DUMP`, `RESTORE`, `STATS`, `KILL`, `HELP`, `FCALL`,
 `FCALL_RO`), `SORT` / `SORT_RO`, single-database `COPY`, and the current CLIENT
 management/tooling slice are also implemented.
 
-The largest remaining Redis compatibility areas are COMMAND metadata completeness,
-CONFIG/ACL scope, `SCRIPT DEBUG`, exact `allow-oom` behavior, RESP3,
-migration/transfer scope, and advanced CLIENT tracking/caching features.
-Replication, Sentinel-style failover, and Cluster remain outside the current
-single-node scope.
+COMMAND metadata and common CONFIG tooling are complete, and core AUTH/ACL
+authentication, command/category/key enforcement, ACL logging, and ACL-file
+persistence are implemented. The largest remaining Redis compatibility areas are
+the remaining ACL channel/selector edge surface, `SCRIPT DEBUG`, exact
+`allow-oom` behavior, RESP3, migration/transfer scope, and advanced CLIENT
+tracking/caching features. Replication, Sentinel-style failover, and Cluster
+remain outside the current single-node scope.
 
 ## Client compatibility
 
@@ -68,9 +70,11 @@ protocol version`.
 | Transactions | Broad support | `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH`, queue/runtime error semantics, AOF transaction frames |
 | HyperLogLog | Supported | `PFADD`, `PFCOUNT`, `PFMERGE`; Redis-compatible serialized HLL strings |
 | GEO | Modern surface supported | `GEOADD`, `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH`, `GEOSEARCHSTORE`; deprecated `GEORADIUS*` commands are not implemented |
-| Lua scripting / Functions | Partial | `EVAL*`, read-only EVAL, SCRIPT load/exists/flush/kill, Functions core/management, restart persistence and standalone-safe flags; SCRIPT DEBUG, allow-oom and deeper ACL/command-flag parity remain |
+| Lua scripting / Functions | Partial | `EVAL*`, read-only EVAL, SCRIPT load/exists/flush/kill, Functions core/management, restart persistence and standalone-safe flags; SCRIPT DEBUG, allow-oom and deeper command-flag/OOM parity remain |
+| AUTH / ACL | Broad core support | Named authentication, command/category/key rules, transaction enforcement, CAT/DRYRUN/GENPASS/LOG, SAVE/LOAD, startup ACL-file restore; channel/selectors remain partial |
+| CONFIG | Broad tooling support | GET/SET/RESETSTAT/REWRITE/HELP for supported SnugKV settings with runtime mutation and restart persistence |
 | CLIENT | Partial | ID/name/setinfo/info/list/list filters/kill/unblock/help implemented and differentially tested; tracking/caching/redirection not implemented |
-| COMMAND metadata | Partial | Basic COMMAND exists; metadata completeness/introspection parity is the next tooling milestone |
+| COMMAND metadata | Supported for implemented surface | Redis-shaped INFO/DOCS/GETKEYS/GETKEYSANDFLAGS, parent/subcommand metadata, dynamic key extraction, differential audit complete |
 | RESP3 | Not implemented | RESP2 only |
 | Replication / Sentinel / Cluster | Not implemented | Outside current single-node scope |
 
@@ -156,8 +160,9 @@ Current boundary: SnugKV uses bytewise comparison for `ALPHA`. Redis can use
 locale-aware collation for non-STORE ALPHA replies, so locale-sensitive/non-ASCII
 ordering is not claimed as exact parity. SET native iteration order under `BY`
 without a wildcard is implementation-defined; STORE uses deterministic ordering.
-Dynamic-pattern ACL and Cluster slot restrictions are outside SnugKV's current
-single-node/no-ACL scope.
+Core command/key ACL enforcement is implemented. Deeper Redis parity for
+dynamically resolved external SORT keys is still being audited, while Cluster
+slot restrictions remain outside SnugKV's single-node scope.
 
 ## COPY
 
@@ -392,6 +397,36 @@ Current scripting/Functions boundaries:
 - SnugKV does not claim Redis's exact Lua VM implementation details or every
   scripting edge-case yet.
 
+## Authentication and ACL
+
+Implemented authentication and ACL commands:
+
+```text
+AUTH
+ACL WHOAMI USERS GETUSER LIST SETUSER DELUSER
+ACL CAT DRYRUN GENPASS LOG SAVE LOAD HELP
+```
+
+Named users support enable/disable state, password hashes, `nopass`, explicit
+command allow/deny rules, Redis 8.2 command categories, `allkeys` /
+`resetkeys`, and `~pattern` key rules. Category rules are applied left-to-right,
+and key authorization uses the same fixed/dynamic command-key discovery layer as
+COMMAND introspection.
+
+ACL failures while queueing MULTI poison the transaction; EXEC re-authorizes the
+queued commands against the current rules. `ACL LOG` records auth/command/key
+denials and aggregates equivalent repeated violations.
+
+With `acl_file` configured, `ACL SAVE` writes Redis-style user lines with
+SHA-256 password hashes, `ACL LOAD` is atomic on parse failure, and startup
+restores the file before clients are accepted. Missing or malformed configured ACL
+files fail startup closed.
+
+Current boundaries are channel-pattern enforcement, selectors, some uncommon
+SETUSER reset/removal modifiers, exact non-default channel presentation, and
+deeper dynamic SORT/script/Function ACL edge auditing. See
+`docs/ACL-COMPATIBILITY.md`.
+
 ## CLIENT
 
 Supported management/introspection commands and forms:
@@ -461,15 +496,15 @@ It is not a complete RedisJSON implementation.
 
 Prioritized backlog:
 
-1. COMMAND metadata completeness and Redis differential audit (issue #90).
-2. CONFIG compatibility and ACL/authentication scope.
-3. `SCRIPT DEBUG`, exact `allow-oom`, and deeper scripting command-flag/ACL/OOM parity.
-4. Migration/transfer scope beyond single-database `COPY`.
-5. RESP3 where required by clients/tooling.
-6. Advanced CLIENT tracking/caching/redirection features where real clients require them.
-7. Differential hardening for the completed Streams surface.
-8. Optional Redis-RDB byte compatibility for Function DUMP/RESTORE payloads.
-9. Deprecated `GEORADIUS*` aliases if legacy client compatibility justifies them.
+1. ACL hardening: channel patterns, selectors, remaining uncommon SETUSER
+   modifiers, and deeper dynamic-key/scripting edge audits.
+2. `SCRIPT DEBUG`, exact `allow-oom`, and deeper scripting command-flag/OOM parity.
+3. Migration/transfer scope beyond single-database `COPY`.
+4. RESP3 where required by clients/tooling.
+5. Advanced CLIENT tracking/caching/redirection features where real clients require them.
+6. Differential hardening for the completed Streams surface.
+7. Optional Redis-RDB byte compatibility for Function DUMP/RESTORE payloads.
+8. Deprecated `GEORADIUS*` aliases if legacy client compatibility justifies them.
 10. Replication/failover/cluster only after the single-node compatibility target is mature.
 
 See GitHub issue #55 and `PLAN.md` for the working roadmap.

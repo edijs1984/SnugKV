@@ -12,7 +12,9 @@ support, classic/sharded Pub/Sub, Redis-style transactions/WATCH, HyperLogLog,
 modern GEO, CONFIG runtime/tooling compatibility, the common Lua scripting path including read-only execution and
 `SCRIPT KILL`, Redis Functions core/management through `FUNCTION KILL`, the
 standalone-safe Function flag subset, `SORT` / `SORT_RO`, single-database `COPY`,
-and the current CLIENT management/tooling slice are implemented.
+the current CLIENT management/tooling slice, Redis-shaped COMMAND metadata/tooling,
+common CONFIG runtime/tooling compatibility, and core AUTH/ACL enforcement with
+ACL-file persistence are implemented.
 
 Streams include core reads/writes, blocking `XREAD`, consumer groups,
 `XREADGROUP`, PEL inspection/acknowledgement, claims/autoclaims, XINFO,
@@ -152,6 +154,25 @@ and 24-byte arena segment descriptors.
 - [ ] Exact Redis RDB byte compatibility for `FUNCTION DUMP` / `RESTORE` payloads.
 - [ ] Deeper differential audit of command flags, ACL semantics, and OOM/eviction behavior.
 
+### Authentication / ACL compatibility
+
+- [x] `AUTH password` and `AUTH username password` with Redis-style WRONGPASS/NOAUTH behavior.
+- [x] `ACL WHOAMI`, `USERS`, `GETUSER`, `LIST`, `SETUSER`, and `DELUSER`.
+- [x] Explicit command rules and Redis 8.2 command-category rules with left-to-right overrides.
+- [x] Key-pattern authorization through shared fixed/dynamic command-key discovery.
+- [x] `ACL CAT`, `DRYRUN`, `GENPASS`, `LOG`, and `HELP`.
+- [x] MULTI queue-time ACL failures poison the transaction; EXEC re-authorizes queued commands against the current rules.
+- [x] `ACL LOG` authentication/command/key records with repeated-violation aggregation.
+- [x] `ACL SAVE` / `ACL LOAD` with hashed-password serialization and atomic load semantics.
+- [x] `acl_file` / `SNUGKV_ACL_FILE` configuration and startup ACL restoration.
+- [x] Fail-closed startup for missing/malformed configured ACL files.
+- [x] Live Redis 8.2 differential validation across core command/key/category/log/persistence behavior.
+- [ ] Channel-pattern enforcement and allchannels/resetchannels parity.
+- [ ] ACL selectors and selector serialization.
+- [ ] Remaining uncommon SETUSER reset/removal modifiers and deeper dynamic SORT/script ACL edge auditing.
+
+Details: `docs/ACL-COMPATIBILITY.md`.
+
 ### CLIENT compatibility
 
 - [x] `CLIENT ID`, `GETNAME`, `SETNAME`.
@@ -260,14 +281,19 @@ and 24-byte arena segment descriptors.
 - [x] `SORT` / `SORT_RO`.
 - [x] `COPY` for DB 0 with `REPLACE`, TTL/type preservation, durability, transactions, OOM safety, and direct Redis differential audit.
 - [x] CLIENT management/tooling slice through LIST filters, KILL, and UNBLOCK with direct Redis differential audit.
-- [ ] Remaining scripting parity/hardening: `SCRIPT DEBUG`, exact `allow-oom`, command-flag/ACL/OOM parity, and optional Redis-RDB Function payload compatibility.
+- [ ] Remaining scripting parity/hardening: `SCRIPT DEBUG`, exact `allow-oom`,
+  command-flag/OOM parity, scripting-specific ACL edge audits, and optional
+  Redis-RDB Function payload compatibility.
 - [ ] Migration/transfer command scope beyond single-node COPY.
 
 ### P2 — client/tooling compatibility
 
 - [x] COMMAND metadata completeness — completed in issue #90.
 - [x] CONFIG compatibility for common tooling: GET/SET/RESETSTAT/REWRITE/HELP, runtime maxmemory/policy/maxclients/appendfsync, COMMAND INFO/DOCS metadata, JSON rewrite/restart persistence.
-- [ ] ACL/authentication scope — next target.
+- [x] Core ACL/authentication scope: AUTH, ACL management, command/category/key rules,
+  transaction enforcement, LOG, SAVE/LOAD, and startup ACL-file persistence.
+- [ ] ACL hardening: channel patterns, selectors, remaining uncommon SETUSER
+  modifiers, and deeper dynamic-key/scripting edge audits.
 - [ ] RESP3.
 - [ ] Advanced CLIENT tracking/caching/redirection features if required.
 - [ ] Equivalent proactive blocked-client disconnect detection for non-Linux server builds if cross-platform parity is required.
