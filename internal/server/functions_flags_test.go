@@ -78,7 +78,7 @@ func TestFunctionFlagsDeduplicate(t *testing.T) {
 	}
 }
 
-func TestFunctionAllowOOMStillExplicitlyUnsupported(t *testing.T) {
+func TestFunctionAllowOOMFlagSupported(t *testing.T) {
 	s := New(engine.New())
 
 	code := "#!lua name=oomflag\n" +
@@ -88,16 +88,21 @@ func TestFunctionAllowOOMStillExplicitlyUnsupported(t *testing.T) {
 		"flags={'allow-oom'}" +
 		"}"
 
-	_, err := s.Execute([][]byte{
-		[]byte("FUNCTION"),
-		[]byte("LOAD"),
-		[]byte(code),
-	})
-	if err == nil {
-		t.Fatal("FUNCTION LOAD unexpectedly accepted allow-oom")
+	if got := execute(t, s, "FUNCTION", "LOAD", code); got != "$7\r\noomflag\r\n" {
+		t.Fatalf("FUNCTION LOAD = %q", got)
 	}
-	if !strings.Contains(err.Error(), "unsupported function flag: allow-oom") {
-		t.Fatalf("unexpected error: %v", err)
+
+	fn := functionRegistryForServer(s).lookup("f")
+	if fn == nil {
+		t.Fatal("registered function not found")
+	}
+	if !fn.allowOom {
+		t.Fatal("allow-oom flag not recorded")
+	}
+
+	got := execute(t, s, "FUNCTION", "LIST")
+	if !strings.Contains(got, "+allow-oom\r\n") {
+		t.Fatalf("FUNCTION LIST missing allow-oom in %q", got)
 	}
 }
 
