@@ -51,6 +51,54 @@ func ListenWithJournal(c config.Config, store *engine.Store, journal Journal) (*
 		return nil, err
 	}
 	s := &TCPServer{ownsOptimizer: true, listener: ln, server: New(store), config: c, connections: make(map[net.Conn]struct{}), clients: make(map[uint64]*clientSession), done: make(chan struct{})}
+
+	s.server.configAppendFsync = c.Fsync
+
+	// CONFIG SET appendfsync changes the real persistence policy when
+	// the configured journal supports runtime policy mutation.
+	if configurable, ok := journal.(interface {
+		SetPolicy(string) error
+		Policy() string
+	}); ok {
+		s.server.configAppendFsync = configurable.Policy()
+
+		s.server.configSetAppendFsync = func(policy string) error {
+			if err := configurable.SetPolicy(policy); err != nil {
+				return err
+			}
+
+			s.server.configMu.Lock()
+			s.server.configAppendFsync = configurable.Policy()
+			s.server.configMu.Unlock()
+
+			return nil
+		}
+	} else {
+		// Redis allows appendfsync to be changed even while appendonly
+		// is disabled. Retain the effective runtime value in that case.
+		s.server.configSetAppendFsync = func(policy string) error {
+			s.server.configMu.Lock()
+			s.server.configAppendFsync = policy
+			s.server.configMu.Unlock()
+
+			return nil
+		}
+	}
+	s.server.configAppendOnly = c.AOFPath != ""
+
+	s.server.configGetMaxClients = func() int {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+
+		return s.config.MaxConnections
+	}
+
+	s.server.configSetMaxClients = func(max int) {
+		s.mu.Lock()
+		s.config.MaxConnections = max
+		s.mu.Unlock()
+	}
+
 	if c.Encoding {
 		opt, err := optimizer.New(store, optimizer.Default())
 		if err != nil {

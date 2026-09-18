@@ -56,3 +56,10 @@ func (r *Registry) WritePrometheus(w io.Writer) {
 		fmt.Fprintf(w, "snugkv_command_duration_seconds_bucket{command=%q,le=\"+Inf\"} %d\nsnugkv_command_duration_seconds_sum{command=%q} %f\nsnugkv_command_duration_seconds_count{command=%q} %d\n", name, c.Count, name, float64(c.Nanoseconds)/1e9, name, c.Count)
 	}
 }
+
+// Reset clears accumulated per-command runtime statistics.
+func (r *Registry) Reset() {
+	r.mu.Lock()
+	r.commands = make(map[string]Command)
+	r.mu.Unlock()
+}

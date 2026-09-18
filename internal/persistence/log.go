@@ -39,7 +39,7 @@ type Log struct {
 }
 
 func Open(path, policy string) (*Log, error) {
-	if policy != "always" && policy != "everysec" && policy != "no" {
+	if !validFsyncPolicy(policy) {
 		return nil, errors.New("invalid fsync policy")
 	}
 	lock, err := lockFile(path)
@@ -82,12 +82,20 @@ func Open(path, policy string) (*Log, error) {
 		return nil, err
 	}
 	success = true
-	l := &Log{lock: lock, file: f, policy: policy, stop: make(chan struct{}), done: make(chan struct{})}
-	if policy == "everysec" {
-		go l.syncLoop()
-	} else {
-		close(l.done)
+	l := &Log{
+		lock:   lock,
+		file:   f,
+		policy: policy,
+		stop:   make(chan struct{}),
+		done:   make(chan struct{}),
 	}
+
+	// Keep one lightweight sync loop alive for the lifetime of the log.
+	// It only performs fsync work while the current runtime policy is
+	// "everysec". This allows CONFIG SET appendfsync to switch policies
+	// without creating/stopping goroutines or replacing channels.
+	go l.syncLoop()
+
 	return l, nil
 }
 func (l *Log) syncLoop() {
@@ -100,13 +108,65 @@ func (l *Log) syncLoop() {
 			return
 		case <-ticker.C:
 			l.mu.Lock()
-			if l.failed == nil {
+
+			if l.failed == nil &&
+				l.policy == "everysec" {
+
 				l.failed = l.file.Sync()
 			}
+
 			l.mu.Unlock()
 		}
 	}
 }
+
+func validFsyncPolicy(policy string) bool {
+	return policy == "always" ||
+		policy == "everysec" ||
+		policy == "no"
+}
+
+// Policy returns the current runtime fsync policy.
+func (l *Log) Policy() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return l.policy
+}
+
+// SetPolicy changes the runtime AOF fsync policy.
+//
+// Switching to "always" performs a sync before publishing the new policy,
+// so once CONFIG SET returns OK the file is already durable through all
+// writes completed before the policy transition.
+func (l *Log) SetPolicy(policy string) error {
+	if !validFsyncPolicy(policy) {
+		return errors.New("invalid fsync policy")
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if l.failed != nil {
+		return l.failed
+	}
+
+	if policy == l.policy {
+		return nil
+	}
+
+	if policy == "always" {
+		if err := l.file.Sync(); err != nil {
+			l.failed = err
+			return err
+		}
+	}
+
+	l.policy = policy
+
+	return nil
+}
+
 func (l *Log) Append(records []Record) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()

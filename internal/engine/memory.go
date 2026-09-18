@@ -412,3 +412,23 @@ func (s *Store) MemoryUsage(key string) (uint64, bool) {
 
 	return entryBytes + arenaBytes, true
 }
+
+// MaxMemory returns the current runtime memory limit in accounted bytes.
+// Zero means unlimited.
+func (s *Store) MaxMemory() uint64 {
+	s.memory.mu.Lock()
+	defer s.memory.mu.Unlock()
+
+	return s.memory.max
+}
+
+// SetMaxMemory changes the runtime memory admission limit.
+//
+// Lowering the limit below current accounted usage is allowed, matching Redis:
+// existing data remains resident, while subsequent memory-growing writes are
+// subject to the configured eviction/OOM policy.
+func (s *Store) SetMaxMemory(max uint64) {
+	s.memory.mu.Lock()
+	s.memory.max = max
+	s.memory.mu.Unlock()
+}
