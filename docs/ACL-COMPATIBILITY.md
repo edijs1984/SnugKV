@@ -56,6 +56,16 @@ EVAL/FCALL, COPY, BITOP, ZSET algebra/store, ZMPOP/BZMPOP, XREAD, and XREADGROUP
 
 A complete matching ACL rule set must permit every referenced key.
 
+Nested `redis.call()` / `redis.pcall()` execution inside EVAL/EVALSHA,
+EVAL_RO/EVALSHA_RO, FCALL, and FCALL_RO is re-authorized using the authenticated
+caller's ACL context. Scripts and Functions therefore cannot use nested commands
+to bypass command or key restrictions.
+
+Redis 8.2 applies a stricter rule to wildcard external `SORT BY` / `GET`
+patterns: the authorizing root rule set or selector must grant full key scope.
+Matching only the source key and the concrete derived key-pattern namespace is
+not sufficient. SnugKV matches that behavior.
+
 ## Channel authorization
 
 Channel rules support `allchannels`, `resetchannels`, and `&pattern`.
@@ -154,7 +164,9 @@ Direct Redis 8.2 differential testing covers:
 - MULTI queue-time dirtying and EXEC-time re-authorization;
 - ACL LOG aggregation and channel-denial logging;
 - SAVE/LOAD, password-hash persistence, restart restoration, and fail-closed
-  malformed ACL startup.
+  malformed ACL startup;
+- dynamic scripting/Function ACL enforcement and wildcard external SORT BY/GET
+  policy. See `docs/DYNAMIC-ACL-DIFFERENTIAL-AUDIT.md`.
 
 ## Remaining hardening
 
