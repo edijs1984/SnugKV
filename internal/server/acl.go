@@ -25,6 +25,13 @@ type ACLUser struct {
 
 	AllKeys     bool
 	KeyPatterns []string
+
+	AllChannels     bool
+	ChannelPatterns []string
+
+	SanitizePayload bool
+
+	Selectors []ACLSelector
 }
 
 type ACL struct {
@@ -38,15 +45,18 @@ func NewACL() *ACL {
 	}
 
 	a.users["default"] = &ACLUser{
-		Name:           "default",
-		Enabled:        true,
-		NoPass:         true,
-		PasswordHashes: nil,
-		AllCommands:    true,
-		CommandRules:   []string{"+@all"},
-		CommandAllow:   make(map[string]bool),
-		AllKeys:        true,
-		KeyPatterns:    []string{"*"},
+		Name:            "default",
+		Enabled:         true,
+		NoPass:          true,
+		PasswordHashes:  nil,
+		AllCommands:     true,
+		CommandRules:    []string{"+@all"},
+		CommandAllow:    make(map[string]bool),
+		AllKeys:         true,
+		KeyPatterns:     []string{"*"},
+		AllChannels:     true,
+		ChannelPatterns: []string{"*"},
+		SanitizePayload: true,
 	}
 
 	return a
@@ -54,11 +64,12 @@ func NewACL() *ACL {
 
 func newACLUser(name string) *ACLUser {
 	return &ACLUser{
-		Name:         name,
-		Enabled:      false,
-		NoPass:       false,
-		CommandRules: []string{"-@all"},
-		CommandAllow: make(map[string]bool),
+		Name:            name,
+		Enabled:         false,
+		NoPass:          false,
+		CommandRules:    []string{"-@all"},
+		CommandAllow:    make(map[string]bool),
+		SanitizePayload: true,
 	}
 }
 
@@ -71,6 +82,21 @@ func cloneACLUser(u *ACLUser) *ACLUser {
 	out.PasswordHashes = append([]string(nil), u.PasswordHashes...)
 	out.CommandRules = append([]string(nil), u.CommandRules...)
 	out.KeyPatterns = append([]string(nil), u.KeyPatterns...)
+	out.ChannelPatterns = append(
+		[]string(nil),
+		u.ChannelPatterns...,
+	)
+
+	out.Selectors = make(
+		[]ACLSelector,
+		len(u.Selectors),
+	)
+
+	for i := range u.Selectors {
+		out.Selectors[i] = cloneACLSelector(
+			u.Selectors[i],
+		)
+	}
 
 	out.CommandAllow = make(map[string]bool, len(u.CommandAllow))
 	for name, allowed := range u.CommandAllow {
@@ -160,6 +186,61 @@ func (a *ACL) DefaultUserNoPass() bool {
 	return ok && u.Enabled && u.NoPass
 }
 
+func validACLPasswordHash(hash string) bool {
+	if len(hash) != 64 {
+		return false
+	}
+
+	for _, ch := range hash {
+		if !((ch >= '0' && ch <= '9') ||
+			(ch >= 'a' && ch <= 'f')) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func removeACLPasswordHash(
+	hashes []string,
+	hash string,
+) ([]string, bool) {
+	for i, existing := range hashes {
+		if existing != hash {
+			continue
+		}
+
+		out := make([]string, 0, len(hashes)-1)
+		out = append(out, hashes[:i]...)
+		out = append(out, hashes[i+1:]...)
+
+		return out, true
+	}
+
+	return hashes, false
+}
+
+func resetACLUserState(
+	user *ACLUser,
+	name string,
+) {
+	*user = ACLUser{
+		Name:            name,
+		Enabled:         false,
+		NoPass:          false,
+		PasswordHashes:  nil,
+		AllCommands:     false,
+		CommandRules:    []string{"-@all"},
+		CommandAllow:    make(map[string]bool),
+		AllKeys:         false,
+		KeyPatterns:     nil,
+		AllChannels:     false,
+		ChannelPatterns: nil,
+		SanitizePayload: true,
+		Selectors:       nil,
+	}
+}
+
 func (a *ACL) SetUser(name string, rules []string) error {
 	if name == "" {
 		return errors.New("ERR invalid username")
@@ -200,7 +281,32 @@ func (a *ACL) SetUser(name string, rules []string) error {
 	for _, raw := range rules {
 		rule := string(raw)
 
+		if !strings.HasPrefix(rule, "(") &&
+			strings.Contains(rule, ")") {
+			return fmt.Errorf(
+				"ERR Error in ACL SETUSER modifier '%s': Unknown command or category name in ACL",
+				rule,
+			)
+		}
+
+		if strings.HasPrefix(rule, "(") {
+			selector, err := parseACLSelector(rule)
+			if err != nil {
+				return err
+			}
+
+			u.Selectors = append(
+				u.Selectors,
+				selector,
+			)
+
+			continue
+		}
+
 		switch {
+		case strings.EqualFold(rule, "reset"):
+			resetACLUserState(u, u.Name)
+
 		case strings.EqualFold(rule, "on"):
 			u.Enabled = true
 
@@ -216,46 +322,117 @@ func (a *ACL) SetUser(name string, rules []string) error {
 			u.PasswordHashes = nil
 
 		case strings.EqualFold(rule, "sanitize-payload"):
-			// Redis persists this flag in ACL files. SnugKV currently
-			// always uses sanitize-payload semantics.
+			u.SanitizePayload = true
+
+		case strings.EqualFold(rule, "skip-sanitize-payload"):
+			u.SanitizePayload = false
 
 		case strings.EqualFold(rule, "resetchannels"):
-			// Channel ACLs are not enforced yet. Accept the persisted
-			// modifier for Redis ACL-file compatibility.
+			u.AllChannels = false
+			u.ChannelPatterns = nil
 
-		case rule == "&*":
-			// Redis commonly persists all-channel access as &*.
-			// Channel ACL enforcement is outside the current ACL scope.
+		case strings.EqualFold(rule, "allchannels"):
+			u.AllChannels = true
+			u.ChannelPatterns = []string{"*"}
 
-		case strings.HasPrefix(rule, "#"):
-			hash := strings.ToLower(
-				strings.TrimPrefix(rule, "#"),
-			)
+		case strings.HasPrefix(rule, "&"):
+			// Redis accepts even a bare "&", which represents an empty
+			// channel pattern.
+			pattern := strings.TrimPrefix(rule, "&")
 
-			if len(hash) != 64 {
-				return errors.New(
-					"ERR Error in ACL SETUSER modifier",
-				)
+			if pattern == "*" {
+				u.AllChannels = true
+				u.ChannelPatterns = []string{"*"}
+				break
 			}
 
-			if _, err := hex.DecodeString(hash); err != nil {
-				return errors.New(
-					"ERR Error in ACL SETUSER modifier",
-				)
+			if u.AllChannels {
+				// &* already grants every channel. Keep the canonical
+				// allchannels representation rather than adding redundant
+				// patterns.
+				break
 			}
-
-			u.NoPass = false
 
 			found := false
-
-			for _, existing := range u.PasswordHashes {
-				if existing == hash {
+			for _, existing := range u.ChannelPatterns {
+				if existing == pattern {
 					found = true
 					break
 				}
 			}
 
 			if !found {
+				u.ChannelPatterns = append(
+					u.ChannelPatterns,
+					pattern,
+				)
+			}
+
+		case strings.HasPrefix(rule, "<"):
+			password := strings.TrimPrefix(rule, "<")
+
+			sum := sha256.Sum256([]byte(password))
+			hash := hex.EncodeToString(sum[:])
+
+			var removed bool
+			u.PasswordHashes, removed =
+				removeACLPasswordHash(
+					u.PasswordHashes,
+					hash,
+				)
+
+			if !removed {
+				return fmt.Errorf(
+					"ERR Error in ACL SETUSER modifier '%s': The password you are trying to remove from the user does not exist",
+					rule,
+				)
+			}
+
+		case strings.HasPrefix(rule, "!"):
+			hash := strings.TrimPrefix(rule, "!")
+
+			if !validACLPasswordHash(hash) {
+				return fmt.Errorf(
+					"ERR Error in ACL SETUSER modifier '%s': The password hash must be exactly 64 characters and contain only lowercase hexadecimal characters",
+					rule,
+				)
+			}
+
+			var removed bool
+			u.PasswordHashes, removed =
+				removeACLPasswordHash(
+					u.PasswordHashes,
+					hash,
+				)
+
+			if !removed {
+				return fmt.Errorf(
+					"ERR Error in ACL SETUSER modifier '%s': The password you are trying to remove from the user does not exist",
+					rule,
+				)
+			}
+
+		case strings.HasPrefix(rule, "#"):
+			hash := strings.TrimPrefix(rule, "#")
+
+			if !validACLPasswordHash(hash) {
+				return fmt.Errorf(
+					"ERR Error in ACL SETUSER modifier '%s': The password hash must be exactly 64 characters and contain only lowercase hexadecimal characters",
+					rule,
+				)
+			}
+
+			u.NoPass = false
+
+			exists := false
+			for _, existing := range u.PasswordHashes {
+				if existing == hash {
+					exists = true
+					break
+				}
+			}
+
+			if !exists {
 				u.PasswordHashes = append(
 					u.PasswordHashes,
 					hash,
@@ -264,24 +441,25 @@ func (a *ACL) SetUser(name string, rules []string) error {
 
 		case strings.HasPrefix(rule, ">"):
 			password := strings.TrimPrefix(rule, ">")
-			if password == "" {
-				return errors.New("ERR Error in ACL SETUSER modifier")
-			}
+
+			sum := sha256.Sum256([]byte(password))
+			hash := hex.EncodeToString(sum[:])
 
 			u.NoPass = false
 
-			hash := aclPasswordHash(password)
-			found := false
-
+			exists := false
 			for _, existing := range u.PasswordHashes {
 				if existing == hash {
-					found = true
+					exists = true
 					break
 				}
 			}
 
-			if !found {
-				u.PasswordHashes = append(u.PasswordHashes, hash)
+			if !exists {
+				u.PasswordHashes = append(
+					u.PasswordHashes,
+					hash,
+				)
 			}
 
 		case strings.EqualFold(rule, "allkeys"):
@@ -306,12 +484,14 @@ func (a *ACL) SetUser(name string, rules []string) error {
 				u.KeyPatterns = append(u.KeyPatterns, pattern)
 			}
 
-		case strings.EqualFold(rule, "+@all"):
+		case strings.EqualFold(rule, "allcommands"),
+			strings.EqualFold(rule, "+@all"):
 			u.AllCommands = true
 			u.CommandAllow = make(map[string]bool)
 			u.CommandRules = []string{"+@all"}
 
-		case strings.EqualFold(rule, "-@all"):
+		case strings.EqualFold(rule, "nocommands"),
+			strings.EqualFold(rule, "-@all"):
 			u.AllCommands = false
 			u.CommandAllow = make(map[string]bool)
 			u.CommandRules = []string{"-@all"}
@@ -385,7 +565,10 @@ func (a *ACL) SetUser(name string, rules []string) error {
 			u.CommandRules = append(u.CommandRules, "-"+command)
 
 		default:
-			return errors.New("ERR Error in ACL SETUSER modifier")
+			return fmt.Errorf(
+				"ERR Error in ACL SETUSER modifier '%s': Syntax error",
+				rule,
+			)
 		}
 	}
 
@@ -445,6 +628,65 @@ func (a *ACL) KeyAllowed(username, key string) bool {
 
 	for _, pattern := range u.KeyPatterns {
 		if aclGlobMatch(pattern, key) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (a *ACL) ChannelAllowed(
+	username string,
+	channel string,
+) bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	u, ok := a.users[username]
+	if !ok || !u.Enabled {
+		return false
+	}
+
+	if u.AllChannels {
+		return true
+	}
+
+	for _, pattern := range u.ChannelPatterns {
+		if aclGlobMatch(pattern, channel) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// Redis treats PSUBSCRIBE differently from SUBSCRIBE/PUBLISH:
+//
+//	user: &allowed:*
+//	PSUBSCRIBE allowed:*     -> allowed
+//	PSUBSCRIBE allowed:foo*  -> denied
+//	PSUBSCRIBE *             -> denied
+//
+// Therefore pattern subscriptions require an exact ACL pattern match,
+// except for allchannels.
+func (a *ACL) ChannelPatternAllowed(
+	username string,
+	pattern string,
+) bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	u, ok := a.users[username]
+	if !ok || !u.Enabled {
+		return false
+	}
+
+	if u.AllChannels {
+		return true
+	}
+
+	for _, allowed := range u.ChannelPatterns {
+		if allowed == pattern {
 			return true
 		}
 	}
@@ -565,6 +807,8 @@ func aclSubcommandSupported(subcommand string) bool {
 		"dryrun",
 		"genpass",
 		"log",
+		"save",
+		"load",
 		"help":
 		return true
 

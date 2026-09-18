@@ -91,40 +91,204 @@ func (s *Server) authorizeConnectionCommand(
 		return nil
 	}
 
-	cmd := strings.ToUpper(string(args[0]))
-
-	// AUTH must always remain available to unauthenticated connections.
-	if cmd == "AUTH" {
+	// AUTH must remain available before authentication succeeds.
+	if strings.EqualFold(
+		string(args[0]),
+		"AUTH",
+	) {
 		return nil
 	}
 
-	if !session.authenticated {
-		return errors.New("NOAUTH Authentication required.")
+	username := "default"
+
+	if session != nil && session.username != "" {
+		username = session.username
 	}
 
-	// Re-check user state on every command so disabling/deleting a user
-	// immediately revokes existing sessions.
-	user, ok := s.acl.GetUser(session.username)
+	user, ok := s.acl.GetUser(username)
 	if !ok || !user.Enabled {
-		session.authenticated = false
-		return errors.New("NOAUTH Authentication required.")
+		return errors.New(
+			"NOAUTH Authentication required.",
+		)
+	}
+
+	if aclUserAllowsCommand(user, args) {
+		return nil
 	}
 
 	canonical := aclCanonicalCommand(args)
 
-	if !s.acl.CommandAllowed(session.username, canonical) {
+	// Preserve Redis's reason ordering:
+	// command denial first, then key, then channel.
+	commandPossible := aclDryRunCommandAllowed(
+		user,
+		canonical,
+	)
+
+	if !commandPossible {
+		for _, selector := range user.Selectors {
+			if aclRuleCommandAllowed(
+				selector.AllCommands,
+				selector.CommandAllow,
+				canonical,
+			) {
+				commandPossible = true
+				break
+			}
+		}
+	}
+
+	if !commandPossible {
 		return fmt.Errorf(
 			"NOPERM User %s has no permissions to run the '%s' command",
-			session.username,
+			username,
 			canonical,
 		)
 	}
 
-	if err := s.authorizeCommandKeys(session.username, args); err != nil {
-		return err
+	refs, err := commandKeys(args)
+	if err == nil && len(refs) > 0 {
+		keyPossible := true
+
+		for _, ref := range refs {
+			key := string(ref.value)
+			matched := aclDryRunKeyAllowed(
+				user,
+				key,
+			)
+
+			if !matched {
+				for _, selector := range user.Selectors {
+					if aclRuleKeyAllowed(
+						selector.AllKeys,
+						selector.KeyPatterns,
+						key,
+					) {
+						matched = true
+						break
+					}
+				}
+			}
+
+			if !matched {
+				keyPossible = false
+				break
+			}
+		}
+
+		if !keyPossible {
+			return errors.New(
+				"NOPERM No permissions to access a key",
+			)
+		}
 	}
 
-	return nil
+	if denied := firstDeniedACLChannelAcrossUser(
+		user,
+		args,
+	); denied != "" {
+		return errors.New(
+			"NOPERM No permissions to access a channel",
+		)
+	}
+
+	// At this point individual dimensions may each be allowed by
+	// different rule sets, but no single complete root/selector rule
+	// set matched. Redis still reports a key/channel-style denial
+	// depending on the command surface. Prefer key when keys exist.
+	if err == nil && len(refs) > 0 {
+		return errors.New(
+			"NOPERM No permissions to access a key",
+		)
+	}
+
+	return errors.New(
+		"NOPERM No permissions to access a channel",
+	)
+}
+
+func firstDeniedACLChannelAcrossUser(
+	user *ACLUser,
+	args [][]byte,
+) string {
+	if len(args) < 2 {
+		return ""
+	}
+
+	command := strings.ToUpper(string(args[0]))
+
+	channelAllowed := func(channel string) bool {
+		if aclRuleChannelAllowed(
+			user.AllChannels,
+			user.ChannelPatterns,
+			channel,
+		) {
+			return true
+		}
+
+		for _, selector := range user.Selectors {
+			if aclRuleChannelAllowed(
+				selector.AllChannels,
+				selector.ChannelPatterns,
+				channel,
+			) {
+				return true
+			}
+		}
+
+		return false
+	}
+
+	patternAllowed := func(pattern string) bool {
+		if aclRuleChannelPatternAllowed(
+			user.AllChannels,
+			user.ChannelPatterns,
+			pattern,
+		) {
+			return true
+		}
+
+		for _, selector := range user.Selectors {
+			if aclRuleChannelPatternAllowed(
+				selector.AllChannels,
+				selector.ChannelPatterns,
+				pattern,
+			) {
+				return true
+			}
+		}
+
+		return false
+	}
+
+	switch command {
+	case "PUBLISH", "SPUBLISH":
+		channel := string(args[1])
+
+		if !channelAllowed(channel) {
+			return channel
+		}
+
+	case "SUBSCRIBE", "SSUBSCRIBE":
+		for _, raw := range args[1:] {
+			channel := string(raw)
+
+			if !channelAllowed(channel) {
+				return channel
+			}
+		}
+
+	case "PSUBSCRIBE":
+		for _, raw := range args[1:] {
+			pattern := string(raw)
+
+			if !patternAllowed(pattern) {
+				return pattern
+			}
+		}
+	}
+
+	return ""
 }
 
 func (s *Server) authorizeCommandKeys(
@@ -148,6 +312,98 @@ func (s *Server) authorizeCommandKeys(
 	}
 
 	return nil
+}
+
+func (s *Server) authorizeCommandChannels(
+	username string,
+	args [][]byte,
+) error {
+	if len(args) < 2 {
+		return nil
+	}
+
+	command := strings.ToUpper(string(args[0]))
+
+	switch command {
+	case "PUBLISH", "SPUBLISH":
+		if !s.acl.ChannelAllowed(
+			username,
+			string(args[1]),
+		) {
+			return errors.New(
+				"NOPERM No permissions to access a channel",
+			)
+		}
+
+	case "SUBSCRIBE", "SSUBSCRIBE":
+		for _, raw := range args[1:] {
+			if !s.acl.ChannelAllowed(
+				username,
+				string(raw),
+			) {
+				return errors.New(
+					"NOPERM No permissions to access a channel",
+				)
+			}
+		}
+
+	case "PSUBSCRIBE":
+		for _, raw := range args[1:] {
+			if !s.acl.ChannelPatternAllowed(
+				username,
+				string(raw),
+			) {
+				return errors.New(
+					"NOPERM No permissions to access a channel",
+				)
+			}
+		}
+	}
+
+	return nil
+}
+
+func (s *Server) firstDeniedACLChannel(
+	username string,
+	args [][]byte,
+) string {
+	if len(args) < 2 {
+		return ""
+	}
+
+	command := strings.ToUpper(string(args[0]))
+
+	switch command {
+	case "PUBLISH", "SPUBLISH":
+		if !s.acl.ChannelAllowed(
+			username,
+			string(args[1]),
+		) {
+			return string(args[1])
+		}
+
+	case "SUBSCRIBE", "SSUBSCRIBE":
+		for _, raw := range args[1:] {
+			if !s.acl.ChannelAllowed(
+				username,
+				string(raw),
+			) {
+				return string(raw)
+			}
+		}
+
+	case "PSUBSCRIBE":
+		for _, raw := range args[1:] {
+			if !s.acl.ChannelPatternAllowed(
+				username,
+				string(raw),
+			) {
+				return string(raw)
+			}
+		}
+	}
+
+	return ""
 }
 
 func (s *Server) executeACL(
@@ -387,10 +643,17 @@ func aclGetUserReply(user *ACLUser) []byte {
 		flags = append(flags, formatBulkString([]byte("nopass")))
 	}
 
-	flags = append(
-		flags,
-		formatBulkString([]byte("sanitize-payload")),
-	)
+	if user.SanitizePayload {
+		flags = append(
+			flags,
+			formatBulkString([]byte("sanitize-payload")),
+		)
+	} else {
+		flags = append(
+			flags,
+			formatBulkString([]byte("skip-sanitize-payload")),
+		)
+	}
 
 	passwords := make([][]byte, 0, len(user.PasswordHashes))
 	for _, hash := range user.PasswordHashes {
@@ -409,9 +672,25 @@ func aclGetUserReply(user *ACLUser) []byte {
 
 	commands := strings.Join(user.CommandRules, " ")
 
-	channels := ""
-	if user.Name == "default" {
-		channels = "&*"
+	channelsReply := []byte{}
+
+	for _, pattern := range user.ChannelPatterns {
+		if len(channelsReply) > 0 {
+			channelsReply = append(
+				channelsReply,
+				' ',
+			)
+		}
+
+		channelsReply = append(
+			channelsReply,
+			'&',
+		)
+
+		channelsReply = append(
+			channelsReply,
+			pattern...,
+		)
 	}
 
 	return array(
@@ -428,11 +707,43 @@ func aclGetUserReply(user *ACLUser) []byte {
 		formatBulkString(keysReply),
 
 		formatBulkString([]byte("channels")),
-		formatBulkString([]byte(channels)),
+		formatBulkString(channelsReply),
 
 		formatBulkString([]byte("selectors")),
-		array(),
+		aclSelectorsReply(user.Selectors),
 	)
+}
+
+func aclSelectorsReply(
+	selectors []ACLSelector,
+) []byte {
+	items := make([][]byte, 0, len(selectors))
+
+	for _, selector := range selectors {
+		commands := strings.Join(
+			selector.CommandRules,
+			" ",
+		)
+
+		keys := aclSelectorKeysString(selector)
+		channels := aclSelectorChannelsString(selector)
+
+		items = append(
+			items,
+			array(
+				formatBulkString([]byte("commands")),
+				formatBulkString([]byte(commands)),
+
+				formatBulkString([]byte("keys")),
+				formatBulkString([]byte(keys)),
+
+				formatBulkString([]byte("channels")),
+				formatBulkString([]byte(channels)),
+			),
+		)
+	}
+
+	return array(items...)
 }
 
 func aclUserListLine(user *ACLUser) string {
@@ -451,7 +762,11 @@ func aclUserListLine(user *ACLUser) string {
 		out.WriteString(" nopass")
 	}
 
-	out.WriteString(" sanitize-payload")
+	if user.SanitizePayload {
+		out.WriteString(" sanitize-payload")
+	} else {
+		out.WriteString(" skip-sanitize-payload")
+	}
 
 	for _, hash := range user.PasswordHashes {
 		out.WriteString(" #")
@@ -463,15 +778,27 @@ func aclUserListLine(user *ACLUser) string {
 		out.WriteString(pattern)
 	}
 
-	if user.Name == "default" {
+	if user.AllChannels {
 		out.WriteString(" &*")
 	} else {
 		out.WriteString(" resetchannels")
+
+		for _, pattern := range user.ChannelPatterns {
+			out.WriteString(" &")
+			out.WriteString(pattern)
+		}
 	}
 
 	for _, rule := range user.CommandRules {
 		out.WriteByte(' ')
 		out.WriteString(rule)
+	}
+
+	for _, selector := range user.Selectors {
+		out.WriteByte(' ')
+		out.WriteString(
+			aclSelectorListFragment(selector),
+		)
 	}
 
 	return out.String()
@@ -543,6 +870,40 @@ func aclDryRunKeyAllowed(user *ACLUser, key string) bool {
 	return false
 }
 
+func aclDryRunChannelAllowed(
+	user *ACLUser,
+	channel string,
+) bool {
+	if user.AllChannels {
+		return true
+	}
+
+	for _, pattern := range user.ChannelPatterns {
+		if aclGlobMatch(pattern, channel) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func aclDryRunChannelPatternAllowed(
+	user *ACLUser,
+	pattern string,
+) bool {
+	if user.AllChannels {
+		return true
+	}
+
+	for _, allowed := range user.ChannelPatterns {
+		if allowed == pattern {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (s *Server) executeACLDryRun(args [][]byte) ([]byte, error) {
 	// ACL DRYRUN <username> <command> [<arg> ...]
 	if len(args) < 4 {
@@ -589,9 +950,29 @@ func (s *Server) executeACLDryRun(args [][]byte) ([]byte, error) {
 
 	canonical := aclCanonicalCommand(commandArgs)
 
-	// Redis DRYRUN evaluates the user's ACL rules even when that user is
-	// currently disabled. It does not perform authentication-state checks.
-	if !aclDryRunCommandAllowed(user, canonical) {
+	if aclUserAllowsCommand(user, commandArgs) {
+		return []byte("+OK\r\n"), nil
+	}
+
+	commandPossible := aclDryRunCommandAllowed(
+		user,
+		canonical,
+	)
+
+	if !commandPossible {
+		for _, selector := range user.Selectors {
+			if aclRuleCommandAllowed(
+				selector.AllCommands,
+				selector.CommandAllow,
+				canonical,
+			) {
+				commandPossible = true
+				break
+			}
+		}
+	}
+
+	if !commandPossible {
 		return formatBulkString([]byte(fmt.Sprintf(
 			"User %s has no permissions to run the '%s' command",
 			username,
@@ -604,7 +985,25 @@ func (s *Server) executeACLDryRun(args [][]byte) ([]byte, error) {
 		for _, ref := range refs {
 			key := string(ref.value)
 
-			if !aclDryRunKeyAllowed(user, key) {
+			keyPossible := aclDryRunKeyAllowed(
+				user,
+				key,
+			)
+
+			if !keyPossible {
+				for _, selector := range user.Selectors {
+					if aclRuleKeyAllowed(
+						selector.AllKeys,
+						selector.KeyPatterns,
+						key,
+					) {
+						keyPossible = true
+						break
+					}
+				}
+			}
+
+			if !keyPossible {
 				return formatBulkString([]byte(fmt.Sprintf(
 					"User %s has no permissions to access the '%s' key",
 					username,
@@ -614,7 +1013,34 @@ func (s *Server) executeACLDryRun(args [][]byte) ([]byte, error) {
 		}
 	}
 
-	return []byte("+OK\r\n"), nil
+	if denied := firstDeniedACLChannelAcrossUser(
+		user,
+		commandArgs,
+	); denied != "" {
+		return formatBulkString([]byte(fmt.Sprintf(
+			"User %s has no permissions to access the '%s' channel",
+			username,
+			denied,
+		))), nil
+	}
+
+	// Dimensions may individually be covered by different selectors,
+	// but no single selector matched the whole command.
+	if err == nil && len(refs) > 0 {
+		key := string(refs[0].value)
+
+		return formatBulkString([]byte(fmt.Sprintf(
+			"User %s has no permissions to access the '%s' key",
+			username,
+			key,
+		))), nil
+	}
+
+	return formatBulkString([]byte(fmt.Sprintf(
+		"User %s has no permissions to run the '%s' command",
+		username,
+		canonical,
+	))), nil
 }
 
 func executeACLGenPass(args [][]byte) ([]byte, error) {

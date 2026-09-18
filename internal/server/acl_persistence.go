@@ -26,7 +26,11 @@ func aclUserFileLine(user *ACLUser) string {
 		out.WriteString(" nopass")
 	}
 
-	out.WriteString(" sanitize-payload")
+	if user.SanitizePayload {
+		out.WriteString(" sanitize-payload")
+	} else {
+		out.WriteString(" skip-sanitize-payload")
+	}
 
 	for _, hash := range user.PasswordHashes {
 		out.WriteString(" #")
@@ -38,13 +42,27 @@ func aclUserFileLine(user *ACLUser) string {
 		out.WriteString(pattern)
 	}
 
-	// SnugKV does not enforce channel ACLs yet. Redis ACL SAVE commonly
-	// serializes unrestricted channel access as &*.
-	out.WriteString(" &*")
+	if user.AllChannels {
+		out.WriteString(" &*")
+	} else {
+		out.WriteString(" resetchannels")
+
+		for _, pattern := range user.ChannelPatterns {
+			out.WriteString(" &")
+			out.WriteString(pattern)
+		}
+	}
 
 	for _, rule := range user.CommandRules {
 		out.WriteByte(' ')
 		out.WriteString(rule)
+	}
+
+	for _, selector := range user.Selectors {
+		out.WriteByte(' ')
+		out.WriteString(
+			aclSelectorListFragment(selector),
+		)
 	}
 
 	return out.String()

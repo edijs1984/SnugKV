@@ -1778,3 +1778,1220 @@ func TestACLFileStartupRejectsMissingFile(t *testing.T) {
 		t.Fatal("expected missing ACL file error")
 	}
 }
+
+func TestACLDefaultUserAllowsAllChannels(t *testing.T) {
+	acl := NewACL()
+
+	u, ok := acl.GetUser("default")
+	if !ok {
+		t.Fatal("default user missing")
+	}
+
+	if !u.AllChannels {
+		t.Fatal("default user must allow all channels")
+	}
+
+	if len(u.ChannelPatterns) != 1 ||
+		u.ChannelPatterns[0] != "*" {
+		t.Fatalf(
+			"unexpected default channel patterns: %#v",
+			u.ChannelPatterns,
+		)
+	}
+}
+
+func TestACLNewUserStartsWithResetChannels(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("chan", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	u, ok := acl.GetUser("chan")
+	if !ok {
+		t.Fatal("user missing")
+	}
+
+	if u.AllChannels {
+		t.Fatal("new user unexpectedly has allchannels")
+	}
+
+	if len(u.ChannelPatterns) != 0 {
+		t.Fatalf(
+			"expected no channel patterns, got %#v",
+			u.ChannelPatterns,
+		)
+	}
+}
+
+func TestACLChannelPatterns(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("chan", []string{
+		"on",
+		"nopass",
+		"resetchannels",
+		"&allowed:*",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !acl.ChannelAllowed(
+		"chan",
+		"allowed:one",
+	) {
+		t.Fatal("allowed channel rejected")
+	}
+
+	if acl.ChannelAllowed(
+		"chan",
+		"denied:one",
+	) {
+		t.Fatal("denied channel allowed")
+	}
+}
+
+func TestACLChannelPatternSubscriptionRequiresExactPattern(
+	t *testing.T,
+) {
+	acl := NewACL()
+
+	if err := acl.SetUser("chan", []string{
+		"on",
+		"nopass",
+		"resetchannels",
+		"&allowed:*",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !acl.ChannelPatternAllowed(
+		"chan",
+		"allowed:*",
+	) {
+		t.Fatal("exact pattern should be allowed")
+	}
+
+	if acl.ChannelPatternAllowed(
+		"chan",
+		"allowed:foo*",
+	) {
+		t.Fatal("narrower pattern should be denied")
+	}
+
+	if acl.ChannelPatternAllowed(
+		"chan",
+		"*",
+	) {
+		t.Fatal("broader pattern should be denied")
+	}
+}
+
+func TestACLAllChannels(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("chan", []string{
+		"on",
+		"nopass",
+		"allchannels",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !acl.ChannelAllowed(
+		"chan",
+		"anything",
+	) {
+		t.Fatal("allchannels did not allow channel")
+	}
+
+	if !acl.ChannelPatternAllowed(
+		"chan",
+		"anything:*",
+	) {
+		t.Fatal("allchannels did not allow pattern subscription")
+	}
+
+	u, _ := acl.GetUser("chan")
+
+	if !u.AllChannels {
+		t.Fatal("allchannels flag missing")
+	}
+}
+
+func TestACLResetChannelsAfterAllChannels(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("chan", []string{
+		"on",
+		"nopass",
+		"allchannels",
+		"resetchannels",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if acl.ChannelAllowed(
+		"chan",
+		"anything",
+	) {
+		t.Fatal("resetchannels did not revoke access")
+	}
+}
+
+func TestACLEmptyChannelPatternAccepted(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("chan", []string{
+		"on",
+		"nopass",
+		"resetchannels",
+		"&",
+	}); err != nil {
+		t.Fatalf("bare & rejected: %v", err)
+	}
+
+	if !acl.ChannelAllowed("chan", "") {
+		t.Fatal("empty channel should match bare &")
+	}
+
+	if acl.ChannelAllowed("chan", "x") {
+		t.Fatal("bare & should not match non-empty channel")
+	}
+}
+
+func TestACLAuthorizePublishChannel(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("chan", []string{
+		"on",
+		"nopass",
+		"+publish",
+		"resetchannels",
+		"&allowed:*",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Server{acl: acl}
+
+	err := s.authorizeCommandChannels(
+		"chan",
+		[][]byte{
+			[]byte("PUBLISH"),
+			[]byte("allowed:one"),
+			[]byte("hello"),
+		},
+	)
+
+	if err != nil {
+		t.Fatalf("allowed publish rejected: %v", err)
+	}
+
+	err = s.authorizeCommandChannels(
+		"chan",
+		[][]byte{
+			[]byte("PUBLISH"),
+			[]byte("denied:one"),
+			[]byte("hello"),
+		},
+	)
+
+	if err == nil {
+		t.Fatal("denied publish allowed")
+	}
+
+	if err.Error() !=
+		"NOPERM No permissions to access a channel" {
+		t.Fatalf("unexpected error: %q", err.Error())
+	}
+}
+
+func TestACLAuthorizePSubscribePattern(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("chan", []string{
+		"on",
+		"nopass",
+		"+psubscribe",
+		"resetchannels",
+		"&allowed:*",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Server{acl: acl}
+
+	if err := s.authorizeCommandChannels(
+		"chan",
+		[][]byte{
+			[]byte("PSUBSCRIBE"),
+			[]byte("allowed:*"),
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.authorizeCommandChannels(
+		"chan",
+		[][]byte{
+			[]byte("PSUBSCRIBE"),
+			[]byte("allowed:foo*"),
+		},
+	); err == nil {
+		t.Fatal("narrower PSUBSCRIBE pattern allowed")
+	}
+}
+
+func TestACLGetUserChannelFormatting(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("chan", []string{
+		"on",
+		"nopass",
+		"resetchannels",
+		"&foo:*",
+		"&bar:*",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	u, _ := acl.GetUser("chan")
+
+	got := string(aclGetUserReply(u))
+
+	if !strings.Contains(
+		got,
+		"&foo:* &bar:*",
+	) {
+		t.Fatalf("unexpected GETUSER reply: %q", got)
+	}
+}
+
+func TestACLListChannelFormatting(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("chan", []string{
+		"on",
+		"nopass",
+		"resetchannels",
+		"&foo:*",
+		"&bar:*",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	u, _ := acl.GetUser("chan")
+
+	got := aclUserListLine(u)
+
+	want := "resetchannels &foo:* &bar:*"
+
+	if !strings.Contains(got, want) {
+		t.Fatalf(
+			"got %q; expected %q",
+			got,
+			want,
+		)
+	}
+}
+
+func TestACLFileChannelRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "users.acl")
+
+	acl := NewACL()
+
+	if err := acl.SetUser("chan", []string{
+		"on",
+		">secret",
+		"allkeys",
+		"+@all",
+		"resetchannels",
+		"&foo:*",
+		"&bar:*",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := acl.SaveFile(path); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded := NewACL()
+
+	if err := loaded.LoadFile(path); err != nil {
+		t.Fatal(err)
+	}
+
+	u, ok := loaded.GetUser("chan")
+	if !ok {
+		t.Fatal("persisted user missing")
+	}
+
+	if len(u.ChannelPatterns) != 2 ||
+		u.ChannelPatterns[0] != "foo:*" ||
+		u.ChannelPatterns[1] != "bar:*" {
+		t.Fatalf(
+			"channel patterns not restored: %#v",
+			u.ChannelPatterns,
+		)
+	}
+
+	if !loaded.ChannelAllowed("chan", "foo:1") {
+		t.Fatal("restored foo channel denied")
+	}
+
+	if loaded.ChannelAllowed("chan", "baz:1") {
+		t.Fatal("restored denied channel allowed")
+	}
+}
+
+func TestACLDryRunChannelAllowed(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("chan", []string{
+		"on",
+		"nopass",
+		"+publish",
+		"resetchannels",
+		"&allowed:*",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Server{acl: acl}
+
+	got, err := s.executeACLDryRun([][]byte{
+		[]byte("ACL"),
+		[]byte("DRYRUN"),
+		[]byte("chan"),
+		[]byte("PUBLISH"),
+		[]byte("allowed:one"),
+		[]byte("hello"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(got) != "+OK\r\n" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestACLDryRunChannelDenied(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("chan", []string{
+		"on",
+		"nopass",
+		"+publish",
+		"resetchannels",
+		"&allowed:*",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Server{acl: acl}
+
+	got, err := s.executeACLDryRun([][]byte{
+		[]byte("ACL"),
+		[]byte("DRYRUN"),
+		[]byte("chan"),
+		[]byte("PUBLISH"),
+		[]byte("denied:one"),
+		[]byte("hello"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	message := "User chan has no permissions to access the 'denied:one' channel"
+	want := string(formatBulkString([]byte(message)))
+
+	if string(got) != want {
+		t.Fatalf(
+			"got %q want %q",
+			got,
+			want,
+		)
+	}
+}
+
+func TestACLDryRunPSubscribeRequiresExactPattern(
+	t *testing.T,
+) {
+	acl := NewACL()
+
+	if err := acl.SetUser("chan", []string{
+		"on",
+		"nopass",
+		"+psubscribe",
+		"resetchannels",
+		"&allowed:*",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Server{acl: acl}
+
+	got, err := s.executeACLDryRun([][]byte{
+		[]byte("ACL"),
+		[]byte("DRYRUN"),
+		[]byte("chan"),
+		[]byte("PSUBSCRIBE"),
+		[]byte("allowed:*"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(got) != "+OK\r\n" {
+		t.Fatalf("exact pattern rejected: %q", got)
+	}
+
+	got, err = s.executeACLDryRun([][]byte{
+		[]byte("ACL"),
+		[]byte("DRYRUN"),
+		[]byte("chan"),
+		[]byte("PSUBSCRIBE"),
+		[]byte("allowed:foo*"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(
+		string(got),
+		"has no permissions to access the 'allowed:foo*' channel",
+	) {
+		t.Fatalf(
+			"unexpected denial: %q",
+			got,
+		)
+	}
+}
+
+func TestACLSetUserInvalidChannelModifierError(t *testing.T) {
+	acl := NewACL()
+
+	err := acl.SetUser(
+		"chan",
+		[]string{"allchannels:x"},
+	)
+
+	if err == nil {
+		t.Fatal("expected syntax error")
+	}
+
+	want := "ERR Error in ACL SETUSER modifier 'allchannels:x': Syntax error"
+
+	if err.Error() != want {
+		t.Fatalf(
+			"got %q want %q",
+			err.Error(),
+			want,
+		)
+	}
+}
+
+func TestACLSetUserReset(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("u", []string{
+		"on",
+		">one",
+		"allkeys",
+		"allchannels",
+		"+@all",
+		"reset",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	u, _ := acl.GetUser("u")
+
+	if u.Enabled ||
+		u.NoPass ||
+		len(u.PasswordHashes) != 0 ||
+		u.AllKeys ||
+		len(u.KeyPatterns) != 0 ||
+		u.AllChannels ||
+		len(u.ChannelPatterns) != 0 ||
+		u.AllCommands {
+		t.Fatalf("user was not reset: %#v", u)
+	}
+
+	if len(u.CommandRules) != 1 ||
+		u.CommandRules[0] != "-@all" {
+		t.Fatalf(
+			"unexpected command rules: %#v",
+			u.CommandRules,
+		)
+	}
+
+	if !u.SanitizePayload {
+		t.Fatal("reset must restore sanitize-payload")
+	}
+}
+
+func TestACLSetUserResetOrdering(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("u", []string{
+		"reset",
+		"on",
+		"nopass",
+		"allkeys",
+		"allchannels",
+		"+get",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	u, _ := acl.GetUser("u")
+
+	if !u.Enabled ||
+		!u.NoPass ||
+		!u.AllKeys ||
+		!u.AllChannels {
+		t.Fatalf("post-reset modifiers not applied: %#v", u)
+	}
+
+	if !acl.CommandAllowed("u", "get") {
+		t.Fatal("+get not applied after reset")
+	}
+}
+
+func TestACLSetUserNoPassClearsPasswords(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("u", []string{
+		">one",
+		">two",
+		"nopass",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	u, _ := acl.GetUser("u")
+
+	if !u.NoPass {
+		t.Fatal("nopass flag missing")
+	}
+
+	if len(u.PasswordHashes) != 0 {
+		t.Fatalf(
+			"nopass did not clear passwords: %#v",
+			u.PasswordHashes,
+		)
+	}
+}
+
+func TestACLSetUserResetPass(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("u", []string{
+		">one",
+		"nopass",
+		"resetpass",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	u, _ := acl.GetUser("u")
+
+	if u.NoPass {
+		t.Fatal("resetpass must disable nopass")
+	}
+
+	if len(u.PasswordHashes) != 0 {
+		t.Fatal("resetpass must clear passwords")
+	}
+}
+
+func TestACLSetUserRemovePassword(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("u", []string{
+		">one",
+		">two",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := acl.SetUser("u", []string{
+		"<one",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	u, _ := acl.GetUser("u")
+
+	if len(u.PasswordHashes) != 1 {
+		t.Fatalf(
+			"expected one password, got %#v",
+			u.PasswordHashes,
+		)
+	}
+
+	err := acl.SetUser("u", []string{
+		"<one",
+	})
+
+	want := "ERR Error in ACL SETUSER modifier '<one': The password you are trying to remove from the user does not exist"
+
+	if err == nil || err.Error() != want {
+		t.Fatalf("got %v want %q", err, want)
+	}
+}
+
+func TestACLSetUserRemoveHash(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("u", []string{
+		">one",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	u, _ := acl.GetUser("u")
+
+	hash := u.PasswordHashes[0]
+
+	if err := acl.SetUser("u", []string{
+		"!" + hash,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	u, _ = acl.GetUser("u")
+
+	if len(u.PasswordHashes) != 0 {
+		t.Fatal("hash not removed")
+	}
+}
+
+func TestACLPasswordHashValidation(t *testing.T) {
+	acl := NewACL()
+
+	cases := []string{
+		"#abcd",
+		"!abcd",
+		"#AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		"!AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+	}
+
+	for _, rule := range cases {
+		err := acl.SetUser("u", []string{rule})
+
+		if err == nil {
+			t.Fatalf("%q unexpectedly accepted", rule)
+		}
+
+		want := "The password hash must be exactly 64 characters and contain only lowercase hexadecimal characters"
+
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf(
+				"%q: unexpected error %q",
+				rule,
+				err,
+			)
+		}
+	}
+}
+
+func TestACLEmptyPasswordModifier(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("u", []string{">"}); err != nil {
+		t.Fatal(err)
+	}
+
+	u, _ := acl.GetUser("u")
+
+	if len(u.PasswordHashes) != 1 {
+		t.Fatalf(
+			"empty password hash missing: %#v",
+			u.PasswordHashes,
+		)
+	}
+
+	if err := acl.SetUser("u", []string{"<"}); err != nil {
+		t.Fatal(err)
+	}
+
+	u, _ = acl.GetUser("u")
+
+	if len(u.PasswordHashes) != 0 {
+		t.Fatal("empty password hash not removed")
+	}
+}
+
+func TestACLCommandAliases(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("u", []string{
+		"allcommands",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	u, _ := acl.GetUser("u")
+
+	if len(u.CommandRules) != 1 ||
+		u.CommandRules[0] != "+@all" {
+		t.Fatalf(
+			"allcommands not canonicalized: %#v",
+			u.CommandRules,
+		)
+	}
+
+	if err := acl.SetUser("u", []string{
+		"nocommands",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	u, _ = acl.GetUser("u")
+
+	if len(u.CommandRules) != 1 ||
+		u.CommandRules[0] != "-@all" {
+		t.Fatalf(
+			"nocommands not canonicalized: %#v",
+			u.CommandRules,
+		)
+	}
+}
+
+func TestACLSanitizePayloadFlags(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("u", []string{
+		"skip-sanitize-payload",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	u, _ := acl.GetUser("u")
+
+	if u.SanitizePayload {
+		t.Fatal(
+			"skip-sanitize-payload did not disable flag",
+		)
+	}
+
+	if err := acl.SetUser("u", []string{
+		"sanitize-payload",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	u, _ = acl.GetUser("u")
+
+	if !u.SanitizePayload {
+		t.Fatal(
+			"sanitize-payload did not restore flag",
+		)
+	}
+}
+
+func TestACLSelectorParsing(t *testing.T) {
+	acl := NewACL()
+
+	err := acl.SetUser("u", []string{
+		"reset",
+		"on",
+		"(+get ~cache:*)",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	u, _ := acl.GetUser("u")
+
+	if len(u.Selectors) != 1 {
+		t.Fatalf(
+			"expected one selector, got %d",
+			len(u.Selectors),
+		)
+	}
+
+	s := u.Selectors[0]
+
+	if len(s.CommandRules) != 2 ||
+		s.CommandRules[0] != "-@all" ||
+		s.CommandRules[1] != "+get" {
+		t.Fatalf(
+			"unexpected commands: %#v",
+			s.CommandRules,
+		)
+	}
+
+	if len(s.KeyPatterns) != 1 ||
+		s.KeyPatterns[0] != "cache:*" {
+		t.Fatalf(
+			"unexpected keys: %#v",
+			s.KeyPatterns,
+		)
+	}
+}
+
+func TestACLSelectorResetClearsSelectors(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("u", []string{
+		"(+get ~one:*)",
+		"(+set ~two:*)",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := acl.SetUser(
+		"u",
+		[]string{"reset"},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	u, _ := acl.GetUser("u")
+
+	if len(u.Selectors) != 0 {
+		t.Fatalf(
+			"reset left selectors: %#v",
+			u.Selectors,
+		)
+	}
+}
+
+func TestACLResetSelectorsIsInvalid(t *testing.T) {
+	acl := NewACL()
+
+	err := acl.SetUser(
+		"u",
+		[]string{"resetselectors"},
+	)
+
+	if err == nil {
+		t.Fatal("resetselectors unexpectedly accepted")
+	}
+}
+
+func TestACLEmptySelectorAccepted(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser(
+		"u",
+		[]string{"()"},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	u, _ := acl.GetUser("u")
+
+	if len(u.Selectors) != 1 {
+		t.Fatal("empty selector not stored")
+	}
+
+	s := u.Selectors[0]
+
+	if s.AllCommands ||
+		len(s.CommandRules) != 1 ||
+		s.CommandRules[0] != "-@all" {
+		t.Fatalf(
+			"unexpected empty selector: %#v",
+			s,
+		)
+	}
+}
+
+func TestACLSelectorIllegalModifiers(t *testing.T) {
+	cases := []string{
+		"(>secret)",
+		"(on)",
+		"(nopass)",
+		"(sanitize-payload)",
+		"(reset)",
+		"((+get ~x:*))",
+	}
+
+	for _, rule := range cases {
+		acl := NewACL()
+
+		err := acl.SetUser(
+			"u",
+			[]string{rule},
+		)
+
+		if err == nil {
+			t.Fatalf(
+				"%q unexpectedly accepted",
+				rule,
+			)
+		}
+
+		want := "ERR Error in ACL SETUSER modifier '" +
+			rule +
+			"': Syntax error"
+
+		if err.Error() != want {
+			t.Fatalf(
+				"%q: got %q want %q",
+				rule,
+				err.Error(),
+				want,
+			)
+		}
+	}
+}
+
+func TestACLSelectorUnmatchedParenthesis(t *testing.T) {
+	acl := NewACL()
+
+	rule := "(+get ~x:*"
+
+	err := acl.SetUser("u", []string{rule})
+
+	if err == nil {
+		t.Fatal("expected unmatched-parenthesis error")
+	}
+
+	want := "ERR Unmatched parenthesis in acl selector starting at '(+get ~x:*'."
+
+	if err.Error() != want {
+		t.Fatalf(
+			"got %q want %q",
+			err.Error(),
+			want,
+		)
+	}
+}
+
+func TestACLSelectorListSerialization(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("u", []string{
+		"reset",
+		"on",
+		"(+get ~cache:*)",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	u, _ := acl.GetUser("u")
+
+	got := aclUserListLine(u)
+
+	want := "(~cache:* resetchannels -@all +get)"
+
+	if !strings.Contains(got, want) {
+		t.Fatalf(
+			"got %q; want selector %q",
+			got,
+			want,
+		)
+	}
+}
+
+func TestACLSelectorAllowsCommandAndKeyTogether(
+	t *testing.T,
+) {
+	acl := NewACL()
+
+	if err := acl.SetUser("u", []string{
+		"reset",
+		"on",
+		"(+get ~cache:*)",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	u, _ := acl.GetUser("u")
+
+	if !aclUserAllowsCommand(
+		u,
+		[][]byte{
+			[]byte("GET"),
+			[]byte("cache:one"),
+		},
+	) {
+		t.Fatal("selector should allow GET cache:one")
+	}
+
+	if aclUserAllowsCommand(
+		u,
+		[][]byte{
+			[]byte("GET"),
+			[]byte("other:one"),
+		},
+	) {
+		t.Fatal("selector allowed wrong key")
+	}
+
+	if aclUserAllowsCommand(
+		u,
+		[][]byte{
+			[]byte("SET"),
+			[]byte("cache:one"),
+			[]byte("x"),
+		},
+	) {
+		t.Fatal("selector allowed wrong command")
+	}
+}
+
+func TestACLSelectorRuleSetsDoNotMix(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("u", []string{
+		"reset",
+		"on",
+		"(+get ~read:*)",
+		"(+set ~write:*)",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	u, _ := acl.GetUser("u")
+
+	if aclUserAllowsCommand(
+		u,
+		[][]byte{
+			[]byte("GET"),
+			[]byte("write:one"),
+		},
+	) {
+		t.Fatal(
+			"command permission from selector 1 mixed with key permission from selector 2",
+		)
+	}
+}
+
+func TestACLRootOrSelector(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("u", []string{
+		"reset",
+		"on",
+		"+set",
+		"~write:*",
+		"(+get ~read:*)",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	u, _ := acl.GetUser("u")
+
+	if !aclUserAllowsCommand(
+		u,
+		[][]byte{
+			[]byte("SET"),
+			[]byte("write:one"),
+			[]byte("x"),
+		},
+	) {
+		t.Fatal("root rule should allow SET")
+	}
+
+	if !aclUserAllowsCommand(
+		u,
+		[][]byte{
+			[]byte("GET"),
+			[]byte("read:one"),
+		},
+	) {
+		t.Fatal("selector should allow GET")
+	}
+}
+
+func TestACLSelectorChannel(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("u", []string{
+		"reset",
+		"on",
+		"(+publish &events:*)",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	u, _ := acl.GetUser("u")
+
+	if !aclUserAllowsCommand(
+		u,
+		[][]byte{
+			[]byte("PUBLISH"),
+			[]byte("events:one"),
+			[]byte("hello"),
+		},
+	) {
+		t.Fatal("selector channel should allow publish")
+	}
+
+	if aclUserAllowsCommand(
+		u,
+		[][]byte{
+			[]byte("PUBLISH"),
+			[]byte("other:one"),
+			[]byte("hello"),
+		},
+	) {
+		t.Fatal("selector channel allowed wrong channel")
+	}
+}
+
+func TestACLDryRunSelector(t *testing.T) {
+	acl := NewACL()
+
+	if err := acl.SetUser("u", []string{
+		"reset",
+		"on",
+		"(+get ~cache:*)",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Server{acl: acl}
+
+	got, err := s.executeACLDryRun(
+		[][]byte{
+			[]byte("ACL"),
+			[]byte("DRYRUN"),
+			[]byte("u"),
+			[]byte("GET"),
+			[]byte("cache:one"),
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(got) != "+OK\r\n" {
+		t.Fatalf("selector DRYRUN rejected: %q", got)
+	}
+}
+
+func TestACLSelectorMissingOpeningParen(t *testing.T) {
+	acl := NewACL()
+
+	rule := "+get ~x:*)"
+
+	err := acl.SetUser(
+		"u",
+		[]string{rule},
+	)
+
+	if err == nil {
+		t.Fatal("expected malformed selector error")
+	}
+
+	want := "ERR Error in ACL SETUSER modifier '+get ~x:*)': Unknown command or category name in ACL"
+
+	if err.Error() != want {
+		t.Fatalf(
+			"got %q want %q",
+			err.Error(),
+			want,
+		)
+	}
+}

@@ -338,6 +338,20 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 						authSession,
 					),
 				)
+
+			case message == "NOPERM No permissions to access a channel":
+				s.server.aclLog.Add(
+					"channel",
+					s.server.firstDeniedACLChannel(
+						authSession.username,
+						msg,
+					),
+					authSession.username,
+					aclLogClientInfo(
+						clientSession,
+						authSession,
+					),
+				)
 			}
 
 			if writer.write(errorResponse(authErr)) != nil {
