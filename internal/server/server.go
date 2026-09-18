@@ -28,6 +28,13 @@ type Server struct {
 	durableMu        sync.Mutex
 	durabilityFailed bool
 
+	// executionACLUsername / executionACLArgs are valid only while durableMu is
+	// held. TCP and transaction execution populate them so dynamic command
+	// access (Lua/Functions and SORT BY/GET) can enforce the invoking user's
+	// ACL rule set. Direct in-process Execute calls leave the context empty.
+	executionACLUsername string
+	executionACLArgs     [][]byte
+
 	configAppendFsync    string
 	configACLFile        string
 	configAppendOnly     bool
