@@ -29,6 +29,8 @@ command-shape sweep across the implemented surface:
 - `RESET` returning to ordinary command behavior;
 - protocol-specific behavior without regressing the existing RESP2 Pub/Sub path.
 
+Real-client RESP3 smoke coverage is also complete. The compatibility harness explicitly negotiates RESP3 and passes with ioredis 6, node-redis 6, redis-py, and go-redis v9 against both SnugKV and the Redis 8.2 oracle. Coverage includes basic scalar/container commands, Streams, pipelines, MULTI/EXEC, WRONGTYPE preservation, and reconnect behavior.
+
 The final broad structural diff contained no known RESP3 wire-shape defects.
 Remaining observed differences were content/environment specific: SnugKV reports
 its own server/version/module metadata, Redis may advertise installed modules,
@@ -56,7 +58,6 @@ Core RESP3 support and the broad command-shape differential sweep are complete.
 SnugKV still does not claim exhaustive RESP3 protocol parity. Remaining optional
 hardening includes:
 
-- supported client-library smoke tests while explicitly using RESP3;
 - RESP3 attribute-frame behavior if future implemented commands require it;
 - unused RESP3 scalar/container types only when the SnugKV command surface needs
   them;
