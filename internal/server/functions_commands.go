@@ -222,7 +222,12 @@ func parseRegisteredFunction(L *lua.LState) (
 				case "allow-cross-slot-keys":
 					allowCrossSlotKeys = true
 				case "allow-oom":
-					allowOom = true
+					// Do not silently claim Redis ALLOW_OOM semantics yet.
+					// Redis permits commands that would normally be rejected in
+					// OOM state, while SnugKV still applies its normal max-memory
+					// admission rules to nested commands.
+					return "", nil, "", false, nil, false, false, false, false, false,
+						fmt.Errorf("unsupported function flag: %s", flag)
 				default:
 					return "", nil, "", false, nil, false, false, false, false, false,
 						fmt.Errorf("unsupported function flag: %s", flag)
@@ -493,3 +498,83 @@ func (r *functionRegistry) list(pattern string, withCode bool) []byte {
 			functionReplies = append(functionReplies, array(
 				formatBulkString([]byte("name")), formatBulkString([]byte(fn.name)),
 				formatBulkString([]byte("description")), description,
+				formatBulkString([]byte("flags")), array(flagReplies...),
+			))
+		}
+		items := [][]byte{
+			formatBulkString([]byte("library_name")), formatBulkString([]byte(lib.name)),
+			formatBulkString([]byte("engine")), formatBulkString([]byte("LUA")),
+			formatBulkString([]byte("functions")), array(functionReplies...),
+		}
+		if withCode {
+			items = append(items, formatBulkString([]byte("library_code")), formatBulkString([]byte(lib.code)))
+		}
+		libraries = append(libraries, array(items...))
+	}
+	return array(libraries...)
+}
+
+func parseFCallArguments(args [][]byte) (keys, argv [][]byte, err error) {
+	numKeys, parseErr := strconv.ParseInt(string(args[2]), 10, 64)
+	if parseErr != nil {
+		return nil, nil, errors.New("ERR value is not an integer or out of range")
+	}
+	if numKeys < 0 {
+		return nil, nil, errors.New("ERR Number of keys can't be negative")
+	}
+	if numKeys > int64(len(args)-3) {
+		return nil, nil, errors.New("ERR Number of keys can't be greater than number of args")
+	}
+	keyEnd := 3 + int(numKeys)
+	return args[3:keyEnd], args[keyEnd:], nil
+}
+
+func (s *Server) executeFCall(args [][]byte, readOnly bool) ([]byte, error) {
+	keys, argv, err := parseFCallArguments(args)
+	if err != nil {
+		return nil, err
+	}
+	fn := functionRegistryForServer(s).lookup(string(args[1]))
+	if fn == nil {
+		return nil, errors.New("ERR Function not found")
+	}
+	if err := s.rejectFunctionInvocationOOM(fn); err != nil {
+		return nil, err
+	}
+
+	return s.withFunctionOOMBypass(
+		fn,
+		func() ([]byte, error) {
+			return s.runRegisteredFunction(
+				fn,
+				keys,
+				argv,
+				readOnly || fn.noWrites,
+			)
+		},
+	)
+}
+
+func (s *Server) runRegisteredFunction(fn *registeredFunction, keys, argv [][]byte, readOnly bool) ([]byte, error) {
+	L := fn.library.state
+	if readOnly {
+		fn.library.redis.RawSetString("call", L.NewFunction(s.luaRedisCallReadOnly(false)))
+		fn.library.redis.RawSetString("pcall", L.NewFunction(s.luaRedisCallReadOnly(true)))
+	} else {
+		fn.library.redis.RawSetString("call", L.NewFunction(s.luaRedisCall(false)))
+		fn.library.redis.RawSetString("pcall", L.NewFunction(s.luaRedisCall(true)))
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), scriptExecutionLimit)
+	defer cancel()
+	L.SetContext(ctx)
+	if err := L.CallByParam(lua.P{Fn: fn.callback, NRet: 1, Protect: true}, luaBytesTable(L, keys), luaBytesTable(L, argv)); err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return nil, errors.New("ERR Function timed out")
+		}
+		return nil, fmt.Errorf("ERR Error running function: %v", err)
+	}
+	result := L.Get(-1)
+	L.Pop(1)
+	return luaValueToRESP(result)
+}
