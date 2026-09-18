@@ -224,7 +224,7 @@ func TestSortDynamicKeyACLRequiresSameRuleSet(t *testing.T) {
 	}
 }
 
-func TestSortDynamicKeyACLAllowsCompleteSelector(t *testing.T) {
+func TestSortDynamicKeyACLDeniesPartialCompleteSelector(t *testing.T) {
 	s := New(engine.New())
 
 	execute(t, s, "RPUSH", "src", "1", "2")
@@ -244,6 +244,43 @@ func TestSortDynamicKeyACLAllowsCompleteSelector(t *testing.T) {
 		"(~src ~weight_* ~name_* +sort)",
 	)
 
+	_, err := executeAuthorizedForTest(
+		t,
+		s,
+		session,
+		"SORT",
+		"src",
+		"BY",
+		"weight_*",
+		"GET",
+		"name_*",
+	)
+
+	if err == nil || err.Error() != "ERR BY option of SORT denied due to insufficient ACL permissions." {
+		t.Fatalf("SORT partial complete-selector ACL error = %v", err)
+	}
+}
+
+func TestSortDynamicKeyACLAllowsAllKeysSelector(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "RPUSH", "src", "1", "2")
+	execute(t, s, "SET", "weight_1", "2")
+	execute(t, s, "SET", "weight_2", "1")
+	execute(t, s, "SET", "name_1", "one")
+	execute(t, s, "SET", "name_2", "two")
+
+	session := newACLTestSession(
+		t,
+		s,
+		"sort-allkeys-selector",
+		"on",
+		"nopass",
+		"resetkeys",
+		"nocommands",
+		"(~* +sort)",
+	)
+
 	got, err := executeAuthorizedForTest(
 		t,
 		s,
@@ -257,12 +294,12 @@ func TestSortDynamicKeyACLAllowsCompleteSelector(t *testing.T) {
 	)
 
 	if err != nil {
-		t.Fatalf("SORT allowed selector error = %v", err)
+		t.Fatalf("SORT allkeys selector error = %v", err)
 	}
 
 	want := "*2\r\n$3\r\ntwo\r\n$3\r\none\r\n"
 	if got != want {
-		t.Fatalf("SORT allowed selector = %q, want %q", got, want)
+		t.Fatalf("SORT allkeys selector = %q, want %q", got, want)
 	}
 }
 
