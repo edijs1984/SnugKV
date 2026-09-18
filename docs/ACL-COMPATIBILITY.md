@@ -1,9 +1,7 @@
 # ACL compatibility
 
-SnugKV implements Redis-style username/password authentication and a substantial
-single-node ACL surface. The goal is behavioral compatibility for the commands
-and rule forms documented here, while keeping unsupported channel/selector
-features explicit.
+SnugKV implements Redis-style username/password authentication and the audited
+single-node ACL surface for the commands and rule forms documented here.
 
 ## Implemented commands
 
@@ -25,14 +23,16 @@ ACL LOAD
 ACL HELP
 ```
 
-The default user starts enabled with `nopass`, all commands, and all keys unless a
-configured ACL file replaces the startup ACL.
+The default user starts enabled with `nopass`, all commands, all keys, and all
+channels unless a configured ACL file replaces the startup ACL. Newly created
+users start disabled, with `-@all`, no keys, no channels, and
+`sanitize-payload`.
 
 ## Authentication
 
 `AUTH password` authenticates as `default`. `AUTH username password` selects a
-named user. Passwords are stored as SHA-256 hashes and comparisons are performed in
-constant time.
+named user. Passwords are stored as SHA-256 hashes and comparisons are performed
+in constant time.
 
 A disabled or deleted user is rejected immediately. Existing authenticated
 connections are re-checked on every command, so disabling or deleting a user
@@ -40,141 +40,124 @@ revokes the session without requiring reconnect.
 
 ## Command authorization
 
-Command rules support:
+Command rules support explicit command allow/deny rules, Redis 8.2 command
+categories, `+@all` / `-@all`, and the `allcommands` / `nocommands`
+aliases. Rules are applied left-to-right.
 
-- `+@all` / `-@all`;
-- Redis command categories such as `+@read`, `+@write`, `+@string`,
-  `-@dangerous`;
-- explicit command allow/deny rules such as `+get` and `-set`;
-- left-to-right rule application, so later rules override earlier rules.
-
-Category names are case-insensitive. SnugKV uses the Redis 8.2 ACL category table
-for category membership and intersects it with commands actually implemented by
-SnugKV.
-
-`ACL CAT` returns the Redis 8.2 category list and only reports commands SnugKV
-implements for a requested category.
+SnugKV uses the Redis 8.2 ACL category table for category membership and
+intersects it with commands actually implemented by SnugKV.
 
 ## Key authorization
 
-Key rules support:
+Key rules support `allkeys`, `resetkeys`, and `~pattern`. Authorization
+reuses the same command-key discovery layer used by `COMMAND GETKEYS` /
+`GETKEYSANDFLAGS`, including implemented dynamic-key commands such as
+EVAL/FCALL, COPY, BITOP, ZSET algebra/store, ZMPOP/BZMPOP, XREAD, and XREADGROUP.
 
-- `allkeys`;
-- `resetkeys`;
-- `~pattern` Redis-style glob patterns.
+A complete matching ACL rule set must permit every referenced key.
 
-Authorization reuses the same command-key discovery layer used by
-`COMMAND GETKEYS` / `GETKEYSANDFLAGS`. This includes dynamic key extraction for
-implemented commands such as EVAL/FCALL, COPY, BITOP, ZSET algebra/store,
-ZMPOP/BZMPOP, XREAD, and XREADGROUP.
+## Channel authorization
 
-Commands are rejected before execution if any referenced key is outside the
-current user's key patterns.
+Channel rules support `allchannels`, `resetchannels`, and `&pattern`.
+Classic and sharded Pub/Sub enforcement covers `PUBLISH`, `SUBSCRIBE`,
+`PSUBSCRIBE`, `SPUBLISH`, and `SSUBSCRIBE`.
+
+For ordinary channel access, Redis-style glob matching is used. For
+`PSUBSCRIBE`, the requested subscription pattern must exactly equal an allowed
+ACL channel pattern unless all channels are allowed. A bare `&` is accepted as
+an empty channel pattern, matching the audited Redis 8.2 behavior.
+
+## Selectors
+
+ACL selectors are supported and serialized in `ACL GETUSER`, `ACL LIST`, and
+ACL files.
+
+Authorization follows Redis's rule-set model:
+
+```text
+root rule set fully matches
+OR
+selector 1 fully matches
+OR
+selector 2 fully matches
+...
+```
+
+Command, key, and channel permissions from different selectors are not mixed. One
+complete root/selector rule set must authorize the command and all of its
+key/channel arguments.
+
+Empty selectors `()` and whitespace-only selectors are valid restrictive
+selectors. Password, user-state, reset, and sanitize-payload modifiers are not
+valid inside selectors. Redis 8.2 does not expose a `resetselectors` modifier in
+the audited surface; `reset` clears selectors.
+
+## SETUSER modifiers
+
+The audited ordinary SETUSER surface includes:
+
+- `reset`, `on`, `off`
+- `nopass`, `resetpass`
+- `>password` and `<password`
+- `#<sha256>` and `!<sha256>`
+- exact 64-character lowercase hexadecimal hash validation
+- `allcommands`, `nocommands`, `+@all`, `-@all`
+- category and explicit command rules
+- `allkeys`, `resetkeys`, `~pattern`
+- `allchannels`, `resetchannels`, `&pattern`
+- `sanitize-payload`, `skip-sanitize-payload`
+- selectors
+
+`nopass` clears stored password hashes. `resetpass` clears hashes and disables
+`nopass`. `reset` restores fresh-user ACL state and clears selectors. Modifier
+ordering is significant and applied left-to-right.
 
 ## Transactions
 
 ACL checks integrate with MULTI/EXEC:
 
-- an ACL denial while queueing marks the transaction dirty;
-- EXEC then returns EXECABORT rather than running a partially authorized queue;
+- a denial while queueing marks the transaction dirty;
+- EXEC returns EXECABORT rather than running a partially authorized queue;
 - queued commands are authorized again at EXEC time;
-- ACL changes made after queueing therefore take effect before execution.
-
-This prevents a user from queueing a command under one rule set and executing it
-after permissions have been revoked.
+- ACL changes after queueing therefore take effect before execution.
 
 ## ACL DRYRUN
 
-`ACL DRYRUN` evaluates command and key authorization without executing the command.
-Successful checks return `OK`. Denials use Redis-shaped explanatory bulk strings,
-including command and key denials.
+`ACL DRYRUN` evaluates the same command/key/channel/selector rule-set semantics
+without executing the command. Successful checks return `OK`; denials return
+Redis-shaped explanatory bulk strings.
 
 ## ACL LOG
 
-`ACL LOG` records:
-
-- failed authentication attempts (`reason=auth`);
-- command permission failures (`reason=command`);
-- key permission failures (`reason=key`).
-
-Entries are newest-first and use the Redis-style ten-field RESP2 record shape:
-count, reason, context, object, username, age-seconds, client-info, entry-id,
-timestamp-created, and timestamp-last-updated.
-
-Equivalent repeated violations are aggregated by reason/context/object/username.
-The original entry ID and creation timestamp are retained, while count,
-last-updated timestamp, and client-info are refreshed and the entry moves to the
-front. The log is bounded to 128 entries.
-
-`ACL LOG RESET` clears the log.
+`ACL LOG` records authentication, command, key, and channel denials. Entries are
+newest-first, repeated equivalent violations are aggregated, and the log is
+bounded to 128 entries.
 
 ## ACL persistence
 
-Configure an ACL file in SnugKV's JSON configuration:
-
-```json
-{
-  "acl_file": "/etc/snugkv/users.acl"
-}
-```
-
-The equivalent environment variable is:
-
-```text
-SNUGKV_ACL_FILE=/etc/snugkv/users.acl
-```
-
-When `acl_file` is empty, `ACL SAVE` and `ACL LOAD` return the Redis-compatible
-"not configured to use an ACL file" error.
-
-When configured:
-
-- `ACL SAVE` serializes the current users in Redis ACL-file style;
-- plaintext passwords are never written; password hashes are emitted as
-  `#<sha256>`;
-- the file is written through a mode-0600 temporary file and atomic rename;
-- `ACL LOAD` parses into a temporary ACL and swaps the live ACL only after the
-  complete file validates;
-- malformed input leaves the active ACL unchanged;
-- startup loads the configured ACL file before accepting clients;
-- a missing or malformed configured ACL file fails startup closed.
-
-Example persisted users:
-
-```text
-user default on nopass sanitize-payload ~* &* +@all
-user app on sanitize-payload #<sha256> ~app:* &* -@all +@read +set
-```
+When `acl_file` is configured, `ACL SAVE` serializes Redis-style user rules
+including hashed passwords, channel rules, sanitize flags, and selectors.
+`ACL LOAD` parses into a temporary ACL and replaces the live ACL only after the
+complete file validates. Startup restores the configured ACL before serving
+clients; missing or malformed configured ACL files fail startup closed.
 
 ## Differential validation
 
-The implemented ACL surface has been compared live with Redis 8.2 for:
+Direct Redis 8.2 differential testing covers:
 
-- AUTH success and failure behavior;
-- WHOAMI / USERS / GETUSER / LIST / SETUSER / DELUSER;
-- DRYRUN and GENPASS;
-- CAT category enumeration and category command sets;
-- ordered category/command overrides;
-- key-pattern enforcement;
-- ACL failures inside MULTI and authorization changes before EXEC;
-- LOG entry structure, ordering, RESET, and repeated-violation aggregation;
-- SAVE / LOAD behavior with and without `aclfile`;
-- persisted password hashes and startup restoration;
-- malformed ACL-file atomicity/fail-closed startup behavior.
+- AUTH and user-management replies/errors;
+- command/category/key authorization and ordering;
+- Pub/Sub channel patterns, allchannels/resetchannels, classic and sharded paths;
+- SETUSER reset/password/hash/alias/sanitize modifier behavior and errors;
+- root-or-selector authorization, multiple selectors, selector categories, keys,
+  channels, malformed selectors, GETUSER/LIST serialization, and DRYRUN;
+- MULTI queue-time dirtying and EXEC-time re-authorization;
+- ACL LOG aggregation and channel-denial logging;
+- SAVE/LOAD, password-hash persistence, restart restoration, and fail-closed
+  malformed ACL startup.
 
-Runtime-specific fields in `ACL LOG client-info`, timestamps, and entry IDs are
-naturally instance-specific rather than byte-identical.
+## Remaining hardening
 
-## Current boundaries
-
-SnugKV does not yet claim full Redis ACL parity. Remaining work includes:
-
-- channel-pattern enforcement (`&pattern`, `allchannels`, `resetchannels`);
-- ACL selectors and selector serialization;
-- less-common SETUSER reset/removal modifiers such as password-hash removal;
-- exact channel/selector presentation in GETUSER/LIST for non-default users;
-- deeper ACL interaction auditing for dynamically resolved SORT BY/GET keys and
-  scripting/function command-policy edge cases.
-
-These gaps are compatibility boundaries, not bypasses of the implemented command
-and key ACL checks.
+There is no known core feature gap in the documented single-node ACL surface.
+Optional deeper audits remain useful for dynamically resolved SORT BY/GET external
+keys and unusual scripting/Function policy interactions.
