@@ -298,3 +298,26 @@ func (s *Server) executePubSubConnectionCommand(session *pubSubSession, args [][
 	s.metrics.Observe(name, time.Since(start), err != nil)
 	return handled, quit, err
 }
+
+func isPubSubConnectionCommand(
+	args [][]byte,
+) bool {
+	if len(args) == 0 {
+		return false
+	}
+
+	switch strings.ToUpper(
+		string(args[0]),
+	) {
+	case "SUBSCRIBE",
+		"UNSUBSCRIBE",
+		"PSUBSCRIBE",
+		"PUNSUBSCRIBE",
+		"SSUBSCRIBE",
+		"SUNSUBSCRIBE",
+		"RESET":
+		return true
+	default:
+		return false
+	}
+}

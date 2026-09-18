@@ -65,7 +65,7 @@ var commandTable = map[string]commandInfo{
 	"AUTH":            {1, 3, 0, 0, 0, false},
 	"ACL":             {1, 0, 0, 0, 0, false},
 	"PING":            {1, 2, 0, 0, 0, false}, "ECHO": {2, 2, 0, 0, 0, false}, "QUIT": {1, 1, 0, 0, 0, false},
-	"SELECT": {2, 2, 0, 0, 0, false}, "HELLO": {2, 2, 0, 0, 0, false}, "INFO": {1, 2, 0, 0, 0, false},
+	"SELECT": {2, 2, 0, 0, 0, false}, "HELLO": {1, 0, 0, 0, 0, false}, "INFO": {1, 2, 0, 0, 0, false},
 	"DBSIZE": {1, 1, 0, 0, 0, false}, "COMMAND": {1, 0, 0, 0, 0, false},
 	"CONFIG":      {2, 0, 0, 0, 0, false},
 	"CLIENT":      {2, 0, 0, 0, 0, false},
@@ -705,10 +705,24 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		}
 		return []byte("+OK\r\n"), nil
 	case "HELLO":
-		if key != "2" {
-			return nil, errors.New("NOPROTO unsupported protocol version")
+		if len(args) == 1 {
+			return helloReply(2, 0), nil
 		}
-		return array(formatBulkString([]byte("server")), formatBulkString([]byte("snugkv")), formatBulkString([]byte("version")), formatBulkString([]byte("0.1.0")), formatBulkString([]byte("proto")), integer(2), formatBulkString([]byte("mode")), formatBulkString([]byte("standalone")), formatBulkString([]byte("role")), formatBulkString([]byte("master"))), nil
+
+		protocol, err := strconv.Atoi(string(args[1]))
+		if err != nil {
+			return nil, errors.New(
+				"ERR Protocol version is not an integer or out of range",
+			)
+		}
+
+		if protocol != 2 {
+			return nil, errors.New(
+				"NOPROTO unsupported protocol version",
+			)
+		}
+
+		return helloReply(2, 0), nil
 	case "SET":
 		options, err := setOptions(args[3:])
 		if err != nil {

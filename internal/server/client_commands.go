@@ -32,6 +32,8 @@ type clientSession struct {
 	libName string
 	libVer  string
 
+	protocol int
+
 	createdAt time.Time
 	lastSeen  time.Time
 	lastCmd   string
@@ -54,6 +56,7 @@ func newClientSession(
 		conn:       conn,
 		remoteAddr: remoteAddr,
 		localAddr:  localAddr,
+		protocol:   2,
 		createdAt:  now,
 		lastSeen:   now,
 	}
@@ -76,6 +79,23 @@ func (c *clientSession) touch(args [][]byte) {
 	c.lastSeen = time.Now()
 	c.lastCmd = cmd
 	c.mu.Unlock()
+}
+
+func (c *clientSession) setProtocol(protocol int) {
+	c.mu.Lock()
+	c.protocol = protocol
+	c.mu.Unlock()
+}
+
+func (c *clientSession) protocolVersion() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.protocol == 0 {
+		return 2
+	}
+
+	return c.protocol
 }
 
 func (c *clientSession) setName(name string) {
@@ -151,6 +171,8 @@ type clientSnapshot struct {
 	libName string
 	libVer  string
 
+	protocol int
+
 	createdAt time.Time
 	lastSeen  time.Time
 	lastCmd   string
@@ -169,6 +191,7 @@ func (c *clientSession) snapshot() clientSnapshot {
 		name:       c.name,
 		libName:    c.libName,
 		libVer:     c.libVer,
+		protocol:   c.protocol,
 		createdAt:  c.createdAt,
 		lastSeen:   c.lastSeen,
 		lastCmd:    c.lastCmd,
@@ -563,7 +586,7 @@ func formatClientInfo(
 		"id=%d addr=%s laddr=%s fd=-1 name=%s age=%d idle=%d flags=%s "+
 			"db=0 sub=0 psub=0 ssub=0 multi=-1 qbuf=0 qbuf-free=0 "+
 			"argv-mem=0 multi-mem=0 rbs=0 rbp=0 obl=0 oll=0 omem=0 "+
-			"tot-mem=0 events=r cmd=%s user=default redir=-1 resp=2 "+
+			"tot-mem=0 events=r cmd=%s user=default redir=-1 resp=%d "+
 			"lib-name=%s lib-ver=%s",
 		client.id,
 		client.remoteAddr,
@@ -573,6 +596,7 @@ func formatClientInfo(
 		idle,
 		flags,
 		cmd,
+		client.protocol,
 		libName,
 		libVer,
 	)

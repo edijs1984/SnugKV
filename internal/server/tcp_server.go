@@ -220,30 +220,66 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 	// Pub/Sub delivery can write from a publisher's goroutine while this
 	// connection goroutine is blocked reading the next subscriber command.
 	// Serialize complete responses so partial socket writes cannot interleave.
-	writer := &serializedResponseWriter{server: s, conn: conn}
-	pubSession := newPubSubSession(s.server, func(response []byte) error {
-		err := writer.write(response)
-		if err != nil {
-			_ = peer.Close()
-		}
-		return err
-	})
-	defer pubSession.close()
-	authSession := newAuthSession(s.server.acl)
+	writer := &serializedResponseWriter{
+		server: s,
+		conn:   conn,
+	}
 
-	txSession := newTransactionSession(s.server)
-	txSession.auth = authSession
-	defer txSession.close()
+	clientID := atomic.AddUint64(
+		&s.nextClientID,
+		1,
+	)
 
-	clientID := atomic.AddUint64(&s.nextClientID, 1)
 	clientSession := newClientSession(
 		clientID,
 		peer,
 		peer.RemoteAddr().String(),
 		peer.LocalAddr().String(),
 	)
+
 	s.registerClient(clientSession)
 	defer s.unregisterClient(clientSession.id)
+
+	pubSession := newPubSubSession(
+		s.server,
+		func(response []byte) error {
+			if clientSession.protocolVersion() == 3 {
+				response = resp3PubSubPush(response)
+			}
+
+			err := writer.write(response)
+			if err != nil {
+				_ = peer.Close()
+			}
+
+			return err
+		},
+	)
+	defer pubSession.close()
+
+	authSession := newAuthSession(
+		s.server.acl,
+	)
+
+	txSession := newTransactionSession(
+		s.server,
+	)
+	txSession.auth = authSession
+	defer txSession.close()
+
+	writeProtocol := func(
+		command [][]byte,
+		response []byte,
+	) error {
+		if clientSession.protocolVersion() == 3 {
+			response = resp3AdaptCommand(
+				command,
+				response,
+			)
+		}
+
+		return writer.write(response)
+	}
 
 	decoder, _ := resp.NewDecoder(bufio.NewReader(conn), s.config.Limits())
 	for {
@@ -269,6 +305,26 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			return
 		}
 		clientSession.touch(msg)
+
+		if len(msg) > 0 &&
+			strings.EqualFold(string(msg[0]), "HELLO") {
+			response, helloErr :=
+				s.executeHelloConnectionCommand(
+					clientSession,
+					authSession,
+					msg,
+				)
+
+			if helloErr != nil {
+				response = errorResponse(helloErr)
+			}
+
+			if writeProtocol(msg, response) != nil {
+				return
+			}
+
+			continue
+		}
 
 		if len(msg) > 0 && strings.EqualFold(string(msg[0]), "AUTH") {
 			response, authErr := s.server.executeAUTH(authSession, msg)
@@ -298,7 +354,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				response = errorResponse(authErr)
 			}
 
-			if writer.write(response) != nil {
+			if writeProtocol(msg, response) != nil {
 				return
 			}
 
@@ -354,7 +410,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				)
 			}
 
-			if writer.write(errorResponse(authErr)) != nil {
+			if writeProtocol(msg, errorResponse(authErr)) != nil {
 				return
 			}
 
@@ -368,7 +424,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				response = errorResponse(aclErr)
 			}
 
-			if writer.write(response) != nil {
+			if writeProtocol(msg, response) != nil {
 				return
 			}
 
@@ -402,46 +458,83 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			if clientErr != nil {
 				clientResponse = errorResponse(clientErr)
 			}
-			if writer.write(clientResponse) != nil {
+			if writeProtocol(msg, clientResponse) != nil {
 				return
 			}
 			continue
 		}
 
-		// RESP2 subscribed clients remain in Pub/Sub mode. This must run before
-		// transaction handling so MULTI is rejected by the subscribed-mode rules.
-		if pubSession.active() {
-			if handled, quit, pubSubErr := s.server.executePubSubConnectionCommand(pubSession, msg); handled {
-				if pubSubErr != nil && writer.write(errorResponse(pubSubErr)) != nil {
-					return
+		// RESP2 subscribed clients remain in Pub/Sub mode.
+		// RESP3 subscribers may continue executing ordinary commands while
+		// subscriptions remain active.
+		if clientSession.protocolVersion() == 2 &&
+			pubSession.active() {
+			if handled, quit, pubSubErr :=
+				s.server.executePubSubConnectionCommand(
+					pubSession,
+					msg,
+				); handled {
+				if pubSubErr != nil {
+					if writeProtocol(
+						msg,
+						errorResponse(pubSubErr),
+					) != nil {
+						return
+					}
 				}
+
 				if quit {
 					return
 				}
+
 				continue
 			}
 		}
 
-		if handled, txResponse, txErr := s.server.executeTransactionConnectionCommand(txSession, msg); handled {
+		if handled, txResponse, txErr :=
+			s.server.executeTransactionConnectionCommand(
+				txSession,
+				msg,
+			); handled {
 			if txErr != nil {
 				txResponse = errorResponse(txErr)
 			}
-			if writer.write(txResponse) != nil {
+
+			if writeProtocol(
+				msg,
+				txResponse,
+			) != nil {
 				return
 			}
+
 			continue
 		}
 
-		if handled, quit, pubSubErr := s.server.executePubSubConnectionCommand(pubSession, msg); handled {
-			if pubSubErr != nil {
-				if writer.write(errorResponse(pubSubErr)) != nil {
+		// RESP2 always passes Pub/Sub commands through this dispatcher.
+		// RESP3 only does so for the actual Pub/Sub connection commands;
+		// ordinary commands continue through normal execution.
+		if clientSession.protocolVersion() == 2 ||
+			isPubSubConnectionCommand(msg) {
+			if handled, quit, pubSubErr :=
+				s.server.executePubSubConnectionCommand(
+					pubSession,
+					msg,
+				); handled {
+				if pubSubErr != nil {
+					if writeProtocol(
+						msg,
+						errorResponse(pubSubErr),
+					) != nil {
+						return
+					}
+				}
+
+				if quit {
 					return
 				}
+
+				continue
 			}
-			if quit {
-				return
-			}
-			continue
 		}
 
 		var result []byte
@@ -474,7 +567,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 		if err != nil {
 			result = errorResponse(err)
 		}
-		if err = writer.write(result); err != nil {
+		if err = writeProtocol(msg, result); err != nil {
 			return
 		}
 		if len(msg) == 1 && strings.EqualFold(string(msg[0]), "QUIT") {
