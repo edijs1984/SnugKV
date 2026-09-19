@@ -1,3 +1,13 @@
+## Redis MIGRATE
+
+- Implemented Redis 8.2-compatible `MIGRATE` for the audited standalone surface.
+- Supports `COPY`, `REPLACE`, `KEYS`, `AUTH`, and `AUTH2`.
+- Live SnugKV -> Redis and Redis -> SnugKV migration passed for moves, copies, replacement, TTL transfer, missing keys, multi-key batches, and partial BUSYKEY failures.
+- Matches Redis per-key acknowledgement semantics: earlier successful keys stay moved even if a later RESTORE fails.
+- Partial source deletions are persisted and invalidate WATCH.
+- Focused tests, full race suite, vet, and RESP fuzz gates are green.
+- Details: `docs/MIGRATE-COMPATIBILITY.md`.
+
 ## Redis key-level DUMP / RESTORE
 
 - Added Redis 8.2-compatible key payloads with RDB version 12 and CRC64 validation.
