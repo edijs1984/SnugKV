@@ -356,3 +356,95 @@ func TestKeyRestoreRedis82NativeFixtures(t *testing.T) {
 		})
 	}
 }
+
+
+func TestKeyDumpRedis82StreamEntriesFixture(t *testing.T) {
+	s := New(engine.New())
+	if got := execute(t, s, "XADD", "st", "1000-0", "f1", "v1", "f2", "v2"); got != "$6\r\n1000-0\r\n" {
+		t.Fatalf("XADD 1000-0 = %q", got)
+	}
+	if got := execute(t, s, "XADD", "st", "1001-0", "f1", "v3"); got != "$6\r\n1001-0\r\n" {
+		t.Fatalf("XADD 1001-0 = %q", got)
+	}
+	response, err := s.Execute([][]byte{[]byte("DUMP"), []byte("st")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := bulkPayloadFromResponse(t, response)
+	want := "15011000000000000003e80000000000000000c33439133900000013000201000102018266310382663203400b00002001018276200f0376320305200b000160036021057633030601ff0243e90043e800000002000c00f30b683747c98465"
+	if got := hex.EncodeToString(payload); got != want {
+		t.Fatalf("stream dump = %s, want %s", got, want)
+	}
+}
+
+func TestKeyRestoreRedis82StreamDeletedMetadata(t *testing.T) {
+	payload, err := hex.DecodeString("15011000000000000003e80000000000000000393900000013000101010102018266310382663203000102010001000182763103827632030501010101010001010182663103827633030601ff0143e90043e80043e90002000c002d7ac7eef0f0549a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	object, err := decodeKeyDumpObject(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if object.stream == nil {
+		t.Fatal("missing stream snapshot")
+	}
+	snapshot := object.stream
+	if snapshot.LastID != (engine.StreamID{Millis: 1001, Sequence: 0}) {
+		t.Fatalf("LastID = %#v", snapshot.LastID)
+	}
+	if snapshot.MaxDeletedID != (engine.StreamID{Millis: 1001, Sequence: 0}) {
+		t.Fatalf("MaxDeletedID = %#v", snapshot.MaxDeletedID)
+	}
+	if snapshot.EntriesAdded != 2 || len(snapshot.Entries) != 1 || snapshot.Entries[0].ID != (engine.StreamID{Millis: 1000, Sequence: 0}) {
+		t.Fatalf("snapshot = %#v", snapshot)
+	}
+}
+
+func TestKeyRestoreRedis82StreamGroupPendingFixture(t *testing.T) {
+	payload, err := hex.DecodeString("15011000000000000003e80000000000000000c34041404b144b0000001a00020101010201826631038266320300200b00002001018276200f0376320305201d0001200f000180210376330306200d4023c0110034201100ff0243ea0043e80043e900030102673143ea00030100000000000003ea00000000000000001fb757b9a001000001010263311fb757b9a00100001fb757b9a00100000100000000000003ea00000000000000000c00aac646f291c3f120")
+	if err != nil {
+		t.Fatal(err)
+	}
+	object, err := decodeKeyDumpObject(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if object.stream == nil {
+		t.Fatal("missing stream snapshot")
+	}
+	snapshot := object.stream
+	if snapshot.LastID != (engine.StreamID{Millis: 1002}) ||
+		snapshot.MaxDeletedID != (engine.StreamID{Millis: 1001}) ||
+		snapshot.EntriesAdded != 3 ||
+		len(snapshot.Entries) != 2 {
+		t.Fatalf("stream metadata = %#v", snapshot)
+	}
+	if len(snapshot.Groups) != 1 {
+		t.Fatalf("groups = %#v", snapshot.Groups)
+	}
+	group := snapshot.Groups[0]
+	if group.Name != "g1" || group.LastDeliveredID != (engine.StreamID{Millis: 1002}) || group.EntriesRead != 3 {
+		t.Fatalf("group = %#v", group)
+	}
+	if len(group.Consumers) != 1 || group.Consumers[0].Name != "c1" {
+		t.Fatalf("consumers = %#v", group.Consumers)
+	}
+	if len(group.Pending) != 1 ||
+		group.Pending[0].ID != (engine.StreamID{Millis: 1002}) ||
+		group.Pending[0].Consumer != "c1" ||
+		group.Pending[0].Deliveries != 1 {
+		t.Fatalf("pending = %#v", group.Pending)
+	}
+
+	s := New(engine.New())
+	if _, err := s.Execute([][]byte{[]byte("RESTORE"), []byte("st2"), []byte("0"), payload}); err != nil {
+		t.Fatalf("RESTORE stream: %v", err)
+	}
+	if got := execute(t, s, "XRANGE", "st2", "-", "+"); got != "*2\r\n*2\r\n$6\r\n1000-0\r\n*4\r\n$2\r\nf1\r\n$2\r\nv1\r\n$2\r\nf2\r\n$2\r\nv2\r\n*2\r\n$6\r\n1002-0\r\n*2\r\n$2\r\nf1\r\n$2\r\nv4\r\n" {
+		t.Fatalf("XRANGE restored stream = %q", got)
+	}
+	if got := execute(t, s, "XPENDING", "st2", "g1"); !strings.HasPrefix(got, "*4\r\n:1\r\n$6\r\n1002-0\r\n$6\r\n1002-0\r\n") {
+		t.Fatalf("XPENDING restored stream = %q", got)
+	}
+}
