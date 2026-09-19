@@ -257,3 +257,159 @@ func TestClientTrackingBcastPrefix(t *testing.T) {
 		t.Fatal("non-prefix BCAST write produced invalidation")
 	}
 }
+
+func trackingReadInteger(t *testing.T, reader *bufio.Reader) int64 {
+	t.Helper()
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, ":") {
+		t.Fatalf("expected integer reply, got %q", line)
+	}
+	var value int64
+	if _, err := fmt.Sscanf(line, ":%d", &value); err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
+
+func TestClientTrackingRedirectRESP3(t *testing.T) {
+	_, tracked, tr, redirect, rr := trackingPair(t)
+
+	trackingWrite(t, redirect, "CLIENT", "ID")
+	redirectID := trackingReadInteger(t, rr)
+
+	trackingWrite(
+		t,
+		tracked,
+		"CLIENT", "TRACKING", "ON", "REDIRECT",
+		fmt.Sprintf("%d", redirectID),
+	)
+	trackingReadExact(t, tr, "+OK\r\n")
+
+	trackingWrite(t, tracked, "CLIENT", "GETREDIR")
+	if got := trackingReadInteger(t, tr); got != redirectID {
+		t.Fatalf("GETREDIR = %d, want %d", got, redirectID)
+	}
+
+	// Use a third connection as the writer so the redirect target is passive.
+	writer, err := net.DialTimeout("tcp", tracked.RemoteAddr().String(), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	if err := writer.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	wr := bufio.NewReader(writer)
+	trackingWrite(t, writer, "HELLO", "3")
+	if err := discardRESPValue(wr); err != nil {
+		t.Fatal(err)
+	}
+
+	trackingWrite(t, tracked, "GET", "redirect:key")
+	trackingReadExact(t, tr, "_\r\n")
+
+	trackingWrite(t, writer, "SET", "redirect:key", "v1")
+	trackingReadExact(t, wr, "+OK\r\n")
+
+	trackingReadExact(
+		t,
+		rr,
+		">2\r\n$10\r\ninvalidate\r\n*1\r\n$12\r\nredirect:key\r\n",
+	)
+}
+
+func TestClientTrackingRedirectValidation(t *testing.T) {
+	_, a, ar, target, tr := trackingPair(t)
+
+	trackingWrite(t, target, "CLIENT", "ID")
+	targetID := trackingReadInteger(t, tr)
+
+	tests := []struct {
+		parts []string
+		want  string
+	}{
+		{
+			[]string{"CLIENT", "TRACKING", "ON", "REDIRECT"},
+			"-ERR syntax error\r\n",
+		},
+		{
+			[]string{"CLIENT", "TRACKING", "ON", "REDIRECT", "abc"},
+			"-ERR value is not an integer or out of range\r\n",
+		},
+		{
+			[]string{"CLIENT", "TRACKING", "ON", "REDIRECT", "999999999"},
+			"-ERR The client ID you want redirect to does not exist\r\n",
+		},
+	}
+
+	for _, tc := range tests {
+		trackingWrite(t, a, tc.parts...)
+		trackingReadExact(t, ar, tc.want)
+	}
+
+	trackingWrite(
+		t,
+		a,
+		"CLIENT", "TRACKING", "ON", "BCAST", "REDIRECT",
+		fmt.Sprintf("%d", targetID),
+	)
+	trackingReadExact(t, ar, "+OK\r\n")
+}
+
+func TestClientTrackingRedirectBrokenPushKeepsID(t *testing.T) {
+	_, tracked, tr, target, targetReader := trackingPair(t)
+
+	trackingWrite(t, target, "CLIENT", "ID")
+	targetID := trackingReadInteger(t, targetReader)
+
+	trackingWrite(
+		t,
+		tracked,
+		"CLIENT", "TRACKING", "ON", "REDIRECT",
+		fmt.Sprintf("%d", targetID),
+	)
+	trackingReadExact(t, tr, "+OK\r\n")
+
+	trackingWrite(t, tracked, "GET", "deadredir:key")
+	trackingReadExact(t, tr, "_\r\n")
+
+	if err := target.Close(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(30 * time.Millisecond)
+
+	writer, err := net.DialTimeout("tcp", tracked.RemoteAddr().String(), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	if err := writer.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	wr := bufio.NewReader(writer)
+	trackingWrite(t, writer, "HELLO", "3")
+	if err := discardRESPValue(wr); err != nil {
+		t.Fatal(err)
+	}
+
+	trackingWrite(t, writer, "SET", "deadredir:key", "v")
+	trackingReadExact(t, wr, "+OK\r\n")
+
+	trackingReadExact(
+		t,
+		tr,
+		fmt.Sprintf(
+			">2\r\n$21\r\ntracking-redir-broken\r\n:%d\r\n",
+			targetID,
+		),
+	)
+
+	trackingWrite(t, tracked, "CLIENT", "GETREDIR")
+	if got := trackingReadInteger(t, tr); got != targetID {
+		t.Fatalf("GETREDIR after broken target = %d, want %d", got, targetID)
+	}
+}
