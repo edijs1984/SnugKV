@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/binary"
 	"errors"
+	"sort"
 	"strconv"
 )
 
@@ -284,8 +285,9 @@ func encodeRedisIntset(values [][]byte) ([]byte, bool) {
 			width = 4
 		}
 	}
+	sort.Slice(ints, func(i, j int) bool { return ints[i] < ints[j] })
 	for i := 1; i < len(ints); i++ {
-		if ints[i] <= ints[i-1] {
+		if ints[i] == ints[i-1] {
 			return nil, false
 		}
 	}
