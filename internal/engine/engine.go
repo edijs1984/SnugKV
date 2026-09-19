@@ -150,9 +150,9 @@ func NewWithOptions(options Options) (*Store, error) {
 		memory: accounting{
 			used:  base,
 			index: base,
+			max:   options.MaxMemory,
 		},
 	}
-	s.memory.max.Store(options.MaxMemory)
 	for i := range s.shards {
 		s.shards[i].data = *index.New[uint32]()
 	}
