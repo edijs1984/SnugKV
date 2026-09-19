@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -29,15 +30,22 @@ func setLuaEvictionHeadroom(t *testing.T, s *Server, headroom uint64) {
 func TestLuaAllKeysLRUEvictsBeforeOOM(t *testing.T) {
 	s := newLuaEvictionTestServer(t, "allkeys-lru")
 
-	execute(t, s, "SET", "evict:a", strings.Repeat("a", 4096))
-	execute(t, s, "SET", "evict:b", strings.Repeat("b", 4096))
+	for i := 0; i < 8; i++ {
+		execute(
+			t,
+			s,
+			"SET",
+			fmt.Sprintf("evict:victim-%d", i),
+			strings.Repeat(string(rune('a'+i)), 4096),
+		)
+	}
 	setLuaEvictionHeadroom(t, s, 512)
 
 	reply, err := s.Execute(stringArgs(
 		"EVAL",
 		"#!lua\nreturn redis.call('SET','evict:new',ARGV[1])",
 		"0",
-		strings.Repeat("n", 8192),
+		strings.Repeat("n", 4096),
 	))
 	if err != nil {
 		t.Fatal(err)
@@ -46,13 +54,17 @@ func TestLuaAllKeysLRUEvictsBeforeOOM(t *testing.T) {
 		t.Fatalf("EVAL reply = %q", reply)
 	}
 
-	if value, ok := s.store.Get("evict:new"); !ok || len(value) != 8192 {
+	if value, ok := s.store.Get("evict:new"); !ok || len(value) != 4096 {
 		t.Fatalf("evict:new missing or wrong size: ok=%v len=%d", ok, len(value))
 	}
 
-	_, a := s.store.Get("evict:a")
-	_, b := s.store.Get("evict:b")
-	if a && b {
+	remaining := 0
+	for i := 0; i < 8; i++ {
+		if _, ok := s.store.Get(fmt.Sprintf("evict:victim-%d", i)); ok {
+			remaining++
+		}
+	}
+	if remaining == 8 {
 		t.Fatal("allkeys-lru did not evict any existing victim")
 	}
 }
