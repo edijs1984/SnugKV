@@ -275,9 +275,9 @@ func (s *Server) runLuaScript(source, sha string, keys, argv [][]byte, legacyOOM
 	if legacyOOM {
 		legacyState = newLegacyScriptOOMState(s)
 		defer legacyState.restore(s)
-		L.SetGlobal("redis", s.luaRedisModuleWithLegacyState(L, legacyState))
+		L.SetGlobal("redis", s.luaRedisModuleWithDebugger(L, legacyState, runtime))
 	} else {
-		L.SetGlobal("redis", s.luaRedisModule(L))
+		L.SetGlobal("redis", s.luaRedisModuleWithDebugger(L, nil, runtime))
 	}
 
 	fn, err := L.LoadString(source)
@@ -307,14 +307,37 @@ func (s *Server) luaRedisModuleWithLegacyState(
 	L *lua.LState,
 	state *legacyScriptOOMState,
 ) *lua.LTable {
+	return s.luaRedisModuleWithDebugger(L, state, nil)
+}
+
+func (s *Server) luaRedisModuleWithDebugger(
+	L *lua.LState,
+	state *legacyScriptOOMState,
+	runtime *scriptDebugRuntime,
+) *lua.LTable {
 	module := L.NewTable()
-	L.SetFuncs(module, map[string]lua.LGFunction{
+	funcs := map[string]lua.LGFunction{
 		"call":         s.luaRedisCallWithLegacyOOM(false, state),
 		"pcall":        s.luaRedisCallWithLegacyOOM(true, state),
 		"error_reply":  luaRedisErrorReply,
 		"status_reply": luaRedisStatusReply,
 		"sha1hex":      luaRedisSHA1Hex,
-	})
+	}
+	if runtime != nil {
+		funcs["debug"] = func(L *lua.LState) int {
+			values := make([]lua.LValue, 0, L.GetTop())
+			for i := 1; i <= L.GetTop(); i++ {
+				values = append(values, L.Get(i))
+			}
+			runtime.addDebugMessage(values)
+			return 0
+		}
+		funcs["breakpoint"] = func(L *lua.LState) int {
+			runtime.requestRuntimeBreakpoint()
+			return 0
+		}
+	}
+	L.SetFuncs(module, funcs)
 	return module
 }
 
