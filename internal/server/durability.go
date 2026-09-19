@@ -90,6 +90,20 @@ func (s *Server) executeDurableForSession(
 	args [][]byte,
 	session *authSession,
 ) ([]byte, error) {
+	// GET and SET are single-key engine operations whose Store paths are already
+	// concurrency-safe. When AOF is disabled and no WATCH session exists, they
+	// do not need the global exclusive command lock. An RLock still excludes
+	// MULTI/EXEC and every complex command, preserving transaction atomicity.
+	if s.journal == nil && isConcurrentScalarCommand(args) {
+		s.durableMu.RLock()
+		if !s.hasWatchSessionsLocked() {
+			result, err := s.executePressure(args)
+			s.durableMu.RUnlock()
+			return result, err
+		}
+		s.durableMu.RUnlock()
+	}
+
 	s.durableMu.Lock()
 	defer s.durableMu.Unlock()
 
@@ -226,4 +240,21 @@ func (s *Server) executeDurableLocked(args [][]byte) ([]byte, error) {
 	s.signalZSetAvailability(args, result)
 	s.signalStreamAvailability(args, result)
 	return result, nil
+}
+
+func isConcurrentScalarCommand(args [][]byte) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch strings.ToUpper(string(args[0])) {
+	case "GET":
+		return len(args) == 2
+	case "SET":
+		// Keep only the plain SET key value form on the concurrent fast path.
+		// Option parsing can involve TTL/conditional semantics and stays on the
+		// serialized path until separately audited.
+		return len(args) == 3
+	default:
+		return false
+	}
 }
