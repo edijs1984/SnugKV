@@ -377,6 +377,16 @@ func (a *Arena) Free(ref Ref) {
 	a.free[bucket] = (uint64(ref.segment())+1)<<32 | uint64(ref.offset())
 }
 
+// AllocationBytesForLength returns the physical arena block that would be
+// reserved for a value of the given logical length.
+func AllocationBytesForLength(length int) uint64 {
+	if length == 0 {
+		return 0
+	}
+	_, block := class(length)
+	return uint64(block)
+}
+
 // AllocationBytes returns the physical arena block reserved for ref.
 func (a *Arena) AllocationBytes(ref Ref) uint64 {
 	if ref.generation == 0 {

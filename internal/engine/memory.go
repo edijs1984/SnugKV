@@ -271,19 +271,33 @@ func (s *Store) publishRecordKnown(
 
 	extraIndex := uint64(0)
 	extraEntries := uint64(0)
-
 	if !exists {
 		extraIndex = sh.data.GrowthBytes(1)
 		extraEntries = sh.entryGrowthBytes(1)
 	}
 
-	s.memory.mu.Lock()
-	defer s.memory.mu.Unlock()
-
+	// Arena planning is shard-local and the caller already holds sh.mu. Keep
+	// this work out of the global accounting critical section so independent
+	// shards do not serialize while simulating allocation growth.
 	extraArena := sh.arena.GrowthFor([]int{len(e.data)})
 	if exists {
 		extraArena += sh.arena.FreeGrowth(old.ref)
 	}
+	newBlockBytes := arena.AllocationBytesForLength(len(e.data))
+	oldBlockBytes := uint64(0)
+	if exists {
+		oldBlockBytes = sh.arena.AllocationBytes(old.ref)
+	}
+
+	var newSchema *jsonshape.Schema
+	if e.entryMeta != nil {
+		newSchema = e.entryMeta.schema
+	}
+
+	// Reserve the accounting delta atomically with maxmemory admission, but do
+	// not hold the global accounting mutex across the physical shard publish.
+	s.memory.mu.Lock()
+
 	next := s.memory.used -
 		oldCost -
 		oldMetaCost +
@@ -293,12 +307,9 @@ func (s *Store) publishRecordKnown(
 		extraEntries +
 		extraArena
 
-	var newSchema *jsonshape.Schema
-	if e.entryMeta != nil {
-		newSchema = e.entryMeta.schema
-	}
 	if newSchema != nil {
 		if sh.shapes == nil || !sh.shapes.RetainRecord(newSchema, e.data) {
+			s.memory.mu.Unlock()
 			return errors.New("ERR schema admission changed")
 		}
 	}
@@ -307,6 +318,7 @@ func (s *Store) publishRecordKnown(
 		if newSchema != nil {
 			sh.shapes.ReleaseRecord(newSchema, e.data)
 		}
+		s.memory.mu.Unlock()
 		return ErrOOM
 	}
 
@@ -323,9 +335,13 @@ func (s *Store) publishRecordKnown(
 
 	if exists {
 		s.memory.arenaPayload -= uint64(len(sh.encoded(old)))
+		s.memory.arenaLiveBlocks -= oldBlockBytes
 	}
 
 	s.memory.arenaPayload += uint64(len(e.data))
+	s.memory.arenaLiveBlocks += newBlockBytes
+
+	s.memory.mu.Unlock()
 
 	if s.shouldTrackActivity(e.entry) {
 		meta := e.ensureMeta()
@@ -346,15 +362,6 @@ func (s *Store) publishRecordKnown(
 	}
 
 	e.ref = sh.arena.Alloc(e.data)
-
-	newBlockBytes := sh.arena.AllocationBytes(e.ref)
-
-	if exists {
-		oldBlockBytes := sh.arena.AllocationBytes(old.ref)
-		s.memory.arenaLiveBlocks -= oldBlockBytes
-	}
-
-	s.memory.arenaLiveBlocks += newBlockBytes
 
 	// The queue owns the expiration timestamp. The hot entry stores only this
 	// one-byte presence bit so persistent reads never need a map lookup.
