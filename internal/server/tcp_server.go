@@ -372,6 +372,12 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				authSession,
 				msg,
 			); handled {
+			if errors.Is(debugErr, errScriptDebugCloseAfterReply) {
+				if writer.write(debugResponse) != nil {
+					return
+				}
+				return
+			}
 			if debugErr != nil {
 				debugResponse = errorResponse(debugErr)
 			}
