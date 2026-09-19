@@ -22,6 +22,7 @@ type TCPServer struct {
 	adminOnly, ownsOptimizer bool
 	inputBytes, outputBytes  uint64
 	nextClientID             uint64
+	trackingClients          uint64
 	listener                 net.Listener
 	server                   *Server
 	config                   config.Config
@@ -239,7 +240,12 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 	clientSession.mu.Unlock()
 
 	s.registerClient(clientSession)
-	defer s.unregisterClient(clientSession.id)
+	defer func() {
+		if clientSession.trackingIsEnabled() {
+			atomic.AddUint64(&s.trackingClients, ^uint64(0))
+		}
+		s.unregisterClient(clientSession.id)
+	}()
 	defer writer.flush()
 	defer clientSession.closeScriptDebugRuntime()
 
