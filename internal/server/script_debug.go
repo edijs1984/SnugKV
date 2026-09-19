@@ -466,7 +466,7 @@ func (r *scriptDebugRuntime) printReply(name string) []byte {
 		return array([]byte("+No such variable.\r\n"))
 	}
 	for i := 1; ; i++ {
-		localName, value := event.state.GetLocal(dbg, i)
+		localName, value := event.state.GetHookLocal(dbg, i)
 		if localName == "" {
 			break
 		}
