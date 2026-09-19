@@ -13,6 +13,8 @@ import (
 	"snugkv/internal/engine"
 )
 
+var errScriptDebugCloseAfterReply = errors.New("script debugger close connection after reply")
+
 type scriptDebugMode uint8
 
 const (
@@ -716,7 +718,7 @@ func (s *TCPServer) executeScriptDebugCommand(
 	if len(args) == 1 && len(args[0]) == 0 {
 		session.clearScriptDebugRuntime(runtime)
 		runtime.close()
-		return true, runtime.protocolErrorReply(), nil
+		return true, runtime.protocolErrorReply(), errScriptDebugCloseAfterReply
 	}
 
 	parts := scriptDebugCommandParts(args)
