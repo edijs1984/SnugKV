@@ -87,7 +87,7 @@ client-library-specific parity are not yet claimed.
 | CLIENT | Partial | ID/name/setinfo/info/list/list filters/kill/unblock/help implemented and differentially tested; tracking/caching/redirection not implemented |
 | COMMAND metadata | Supported for implemented surface | Redis-shaped INFO/DOCS/GETKEYS/GETKEYSANDFLAGS, parent/subcommand metadata, dynamic key extraction, differential audit complete |
 | RESP3 | Broad audited support | `HELLO 3`, protocol switching, audited null/map/set/double/verbatim reply shapes, Streams/tooling maps, GEO/ZSET numeric forms, and Pub/Sub push semantics; optional client/attribute hardening remains |
-| Key migration payloads | Supported | Redis 8.2-compatible key-level `DUMP` / `RESTORE` across STRING/HLL/HASH/SET/LIST/ZSET/STREAM; STREAM tombstone byte-for-byte re-emission after XDEL is a documented storage-model boundary |
+| Key migration / transfer | Supported | Redis 8.2-compatible `DUMP` / `RESTORE` plus `MIGRATE` with COPY/REPLACE/KEYS/AUTH/AUTH2 and live two-way interoperability; STREAM tombstone byte-for-byte re-emission after XDEL remains a documented storage-model boundary |
 | Replication / Sentinel / Cluster | Not implemented | Outside current single-node scope |
 
 ## HASH
@@ -212,6 +212,18 @@ RESTORE key ttl serialized-value [REPLACE] [ABSTTL] [IDLETIME seconds | FREQ fre
 ```
 
 SnugKV uses Redis 8.2 RDB object payloads with version/CRC64 validation. Live cross-restore is verified in both directions for STRING, HyperLogLog, HASH, SET, LIST, ZSET, and STREAM. Audited fixtures are byte-identical for STRING/HLL/HASH/SET/LIST/ZSET and for STREAMs without deleted tombstones. Redis STREAM tombstone payloads restore semantically, including lifetime and consumer-group/PEL metadata, but SnugKV does not retain deleted field/value tombstone bytes for exact later re-emission. See `docs/DUMP-RESTORE-COMPATIBILITY.md`.
+
+## MIGRATE
+
+Supported syntax:
+
+```text
+MIGRATE host port key destination-db timeout [COPY] [REPLACE]
+        [AUTH password] [AUTH2 username password]
+        [KEYS key [key ...]]
+```
+
+SnugKV uses Redis-compatible DUMP/RESTORE payloads for transfer. Live interoperability has been verified in both directions against Redis 8.2, including basic moves, COPY, REPLACE, TTL transfer, NOKEY, multi-key KEYS mode, partial BUSYKEY failures, AUTH, and AUTH2. Redis-style partial success is preserved: successfully acknowledged keys are removed locally even if a later key in the same KEYS batch fails. Those partial deletions are journaled and invalidate WATCH. SnugKV remains single-database as a destination, so only SELECT 0 is available. See `docs/MIGRATE-COMPATIBILITY.md`.
 
 ## HyperLogLog
 
@@ -525,7 +537,7 @@ Prioritized backlog:
 
 1. Deeper dynamic SORT/script/Function ACL edge audits.
 2. `SCRIPT DEBUG`, exact `allow-oom`, and deeper scripting command-flag/OOM parity.
-3. Migration/transfer scope beyond single-database `COPY`.
+3. Further distributed migration/cluster transfer behavior beyond standalone `MIGRATE`.
 4. Optional RESP3 client-library smoke coverage and attribute-frame support if required.
 5. Advanced CLIENT tracking/caching/redirection features where real clients require them.
 7. Deprecated `GEORADIUS*` aliases if legacy client compatibility justifies them.

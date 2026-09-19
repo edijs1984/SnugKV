@@ -102,6 +102,9 @@ func (s *Server) executePressureCommand(args [][]byte) ([]byte, error) {
 	if isCopyCommand(args) {
 		return s.executeCopy(args)
 	}
+	if isMigrateCommand(args) {
+		return s.executeMigrate(args)
+	}
 	if isKeyDumpRestoreCommand(args) {
 		return s.executeKeyDumpRestore(args)
 	}

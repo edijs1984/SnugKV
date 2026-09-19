@@ -150,6 +150,10 @@ func (s *Server) executeDurableLocked(args [][]byte) ([]byte, error) {
 		return nil, errors.New("ERR persistence is unavailable; restart after repairing storage")
 	}
 
+	if cmd == "MIGRATE" {
+		return s.executeMigrateDurableLocked(args)
+	}
+
 	// EVAL/EVALSHA and FCALL have dynamic key access, and Redis keeps mutations
 	// performed before a later Lua runtime error. Snapshot/diff the complete
 	// logical DB and append the resulting changes as one persistence frame.

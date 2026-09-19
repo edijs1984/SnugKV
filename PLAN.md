@@ -11,7 +11,7 @@ observability, packaging, HASH, SET, LIST, ZSET, broad STREAM/consumer-group
 support, classic/sharded Pub/Sub, Redis-style transactions/WATCH, HyperLogLog,
 modern GEO, CONFIG runtime/tooling compatibility, the common Lua scripting path including read-only execution and
 `SCRIPT KILL`, Redis Functions core/management through `FUNCTION KILL`, the
-standalone-safe Function flag subset, `SORT` / `SORT_RO`, single-database `COPY`, Redis-compatible key-level `DUMP` / `RESTORE`,
+standalone-safe Function flag subset, `SORT` / `SORT_RO`, single-database `COPY`, Redis-compatible key-level `DUMP` / `RESTORE`, Redis-compatible `MIGRATE`,
 the current CLIENT management/tooling slice, Redis-shaped COMMAND metadata/tooling,
 common CONFIG runtime/tooling compatibility, and the audited single-node AUTH/ACL
 milestone—including channels, selectors, SETUSER modifiers, ACL logging, and
@@ -302,7 +302,7 @@ Details: `docs/ACL-COMPATIBILITY.md`.
   nested redis.call authorization and the full-key-scope requirement for wildcard
   SORT BY/GET patterns.
 - [x] Redis-compatible key-level `DUMP` / `RESTORE` with live two-way Redis 8.2 interoperability across STRING/HLL/HASH/SET/LIST/ZSET/STREAM. See `docs/DUMP-RESTORE-COMPATIBILITY.md`.
-- [ ] `MIGRATE` / remote-transfer command scope beyond single-node COPY and local DUMP/RESTORE.
+- [x] Redis-compatible `MIGRATE` with COPY/REPLACE/KEYS/AUTH/AUTH2, TTL transfer, partial-success durability, WATCH invalidation, and live two-way Redis 8.2 interoperability. See `docs/MIGRATE-COMPATIBILITY.md`.
 
 ### P2 — client/tooling compatibility
 
