@@ -26,8 +26,10 @@ var geoCommands = map[string]commandInfo{
 	"GEODIST":        {4, 5, 1, 1, 1, false},
 	"GEOHASH":        {3, 0, 1, 1, 1, false},
 	"GEOPOS":         {3, 0, 1, 1, 1, false},
-	"GEOSEARCH":      {7, 0, 1, 1, 1, false},
-	"GEOSEARCHSTORE": {8, 0, 1, 1, 1, true},
+	"GEOSEARCH":           {7, 0, 1, 1, 1, false},
+	"GEOSEARCHSTORE":      {8, 0, 1, 1, 1, true},
+	"GEORADIUS":           {6, 0, 1, 1, 1, true},
+	"GEORADIUSBYMEMBER":   {5, 0, 1, 1, 1, true},
 }
 
 func init() {
@@ -70,6 +72,10 @@ func (s *Server) executeGeo(args [][]byte) ([]byte, error) {
 		return s.executeGeoSearch(args, false)
 	case "GEOSEARCHSTORE":
 		return s.executeGeoSearch(args, true)
+	case "GEORADIUS":
+		return s.executeLegacyGeoRadius(args, false)
+	case "GEORADIUSBYMEMBER":
+		return s.executeLegacyGeoRadius(args, true)
 	default:
 		return nil, errors.New("ERR unknown GEO command")
 	}
@@ -635,5 +641,322 @@ func (s *Server) executeGeoSearch(args [][]byte, store bool) ([]byte, error) {
 		}
 		responseItems = append(responseItems, array(row...))
 	}
+	return array(responseItems...), nil
+}
+
+
+type legacyGeoRadiusSpec struct {
+	search      geoSearchSpec
+	store       bool
+	destination string
+}
+
+func parseLegacyGeoRadiusSpec(
+	args [][]byte,
+	byMember bool,
+) (legacyGeoRadiusSpec, error) {
+	var out legacyGeoRadiusSpec
+	out.search.unitMeters = 1
+
+	optionStart := 6
+	if byMember {
+		optionStart = 5
+		out.search.hasMember = true
+		out.search.fromMember = append([]byte(nil), args[2]...)
+	} else {
+		longitude, err := geoParseFloat(
+			args[2],
+			"ERR value is not a valid float",
+		)
+		if err != nil {
+			return out, err
+		}
+		latitude, err := geoParseFloat(
+			args[3],
+			"ERR value is not a valid float",
+		)
+		if err != nil {
+			return out, err
+		}
+		if !geoValidCoordinates(longitude, latitude) {
+			return out, fmt.Errorf(
+				"ERR invalid longitude,latitude pair %f,%f",
+				longitude,
+				latitude,
+			)
+		}
+		out.search.hasCoords = true
+		out.search.longitude = longitude
+		out.search.latitude = latitude
+	}
+
+	radiusIndex := 3
+	unitIndex := 4
+	if !byMember {
+		radiusIndex = 4
+		unitIndex = 5
+	}
+
+	radius, err := geoParseFloat(
+		args[radiusIndex],
+		"ERR need numeric radius",
+	)
+	if err != nil {
+		return out, err
+	}
+	if radius < 0 {
+		return out, errors.New("ERR radius cannot be negative")
+	}
+
+	unitMeters, err := geoUnitMeters(args[unitIndex])
+	if err != nil {
+		return out, err
+	}
+
+	out.search.byRadius = true
+	out.search.radius = radius
+	out.search.unitMeters = unitMeters
+
+	storeSeen := false
+
+	for i := optionStart; i < len(args); {
+		switch strings.ToUpper(string(args[i])) {
+		case "ASC":
+			out.search.sortOrder = 1
+			i++
+
+		case "DESC":
+			out.search.sortOrder = -1
+			i++
+
+		case "COUNT":
+			if i+1 >= len(args) {
+				return out, errors.New("ERR syntax error")
+			}
+			count, err := strconv.ParseInt(string(args[i+1]), 10, 64)
+			if err != nil {
+				return out, errors.New(
+					"ERR value is not an integer or out of range",
+				)
+			}
+			if count <= 0 {
+				return out, errors.New("ERR COUNT must be > 0")
+			}
+			out.search.count = count
+			i += 2
+
+		case "ANY":
+			out.search.any = true
+			i++
+
+		case "WITHDIST":
+			out.search.withDist = true
+			i++
+
+		case "WITHHASH":
+			out.search.withHash = true
+			i++
+
+		case "WITHCOORD":
+			out.search.withCoord = true
+			i++
+
+		case "STORE":
+			if i+1 >= len(args) {
+				return out, errors.New("ERR syntax error")
+			}
+			out.store = true
+			out.search.storeDist = false
+			out.destination = string(args[i+1])
+			storeSeen = true
+			i += 2
+
+		case "STOREDIST":
+			if i+1 >= len(args) {
+				return out, errors.New("ERR syntax error")
+			}
+			out.store = true
+			out.search.storeDist = true
+			out.destination = string(args[i+1])
+			storeSeen = true
+			i += 2
+
+		default:
+			return out, errors.New("ERR syntax error")
+		}
+	}
+
+	if out.search.any && out.search.count == 0 {
+		return out, errors.New(
+			"ERR the ANY argument requires COUNT argument",
+		)
+	}
+
+	if storeSeen &&
+		(out.search.withDist ||
+			out.search.withHash ||
+			out.search.withCoord) {
+		return out, errors.New(
+			"ERR STORE option in GEORADIUS is not compatible with WITHDIST, WITHHASH and WITHCOORD options",
+		)
+	}
+
+	return out, nil
+}
+
+func (s *Server) executeLegacyGeoRadius(
+	args [][]byte,
+	byMember bool,
+) ([]byte, error) {
+	parsed, err := parseLegacyGeoRadiusSpec(args, byMember)
+	if err != nil {
+		return nil, err
+	}
+
+	source := string(args[1])
+	items, err := s.store.ZSetRange(source, 0, -1, false)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(items) == 0 {
+		if parsed.store {
+			if err := s.store.ZSetReplace(parsed.destination, nil); err != nil {
+				return nil, err
+			}
+			return integer(0), nil
+		}
+		return array(), nil
+	}
+
+	spec := parsed.search
+	if spec.hasMember {
+		index := geoMemberIndex(items, spec.fromMember)
+		if index < 0 {
+			return nil, errors.New(
+				"ERR could not decode requested zset member",
+			)
+		}
+
+		longitude, latitude, ok :=
+			geoDecodeScore(items[index].Score)
+		if !ok {
+			return nil, errors.New(
+				"ERR could not decode requested zset member",
+			)
+		}
+		spec.longitude = longitude
+		spec.latitude = latitude
+	}
+
+	results := make([]geoSearchResult, 0, len(items))
+	for _, item := range items {
+		longitude, latitude, ok := geoDecodeScore(item.Score)
+		if !ok {
+			continue
+		}
+
+		distance, matches :=
+			geoMatchesSearch(spec, longitude, latitude)
+		if !matches {
+			continue
+		}
+
+		results = append(
+			results,
+			geoSearchResult{
+				item:      item,
+				longitude: longitude,
+				latitude:  latitude,
+				distanceM: distance,
+			},
+		)
+
+		if spec.any &&
+			spec.count > 0 &&
+			int64(len(results)) >= spec.count {
+			break
+		}
+	}
+
+	if spec.sortOrder != 0 {
+		sort.SliceStable(results, func(i, j int) bool {
+			if spec.sortOrder > 0 {
+				return results[i].distanceM < results[j].distanceM
+			}
+			return results[i].distanceM > results[j].distanceM
+		})
+	}
+
+	if spec.count > 0 &&
+		int64(len(results)) > spec.count {
+		results = results[:spec.count]
+	}
+
+	if parsed.store {
+		stored := make([]engine.ZSetItem, len(results))
+		for i, result := range results {
+			score := result.item.Score
+			if spec.storeDist {
+				score = result.distanceM / spec.unitMeters
+			}
+			stored[i] = engine.ZSetItem{
+				Member: append([]byte(nil), result.item.Member...),
+				Score:  score,
+			}
+		}
+
+		if err := s.store.ZSetReplace(
+			parsed.destination,
+			stored,
+		); err != nil {
+			return nil, err
+		}
+
+		return integer(int64(len(stored))), nil
+	}
+
+	responseItems := make([][]byte, 0, len(results))
+	hasOptions := spec.withDist ||
+		spec.withHash ||
+		spec.withCoord
+
+	for _, result := range results {
+		member := formatBulkString(result.item.Member)
+		if !hasOptions {
+			responseItems = append(responseItems, member)
+			continue
+		}
+
+		row := make([][]byte, 0, 4)
+		row = append(row, member)
+
+		if spec.withDist {
+			row = append(
+				row,
+				geoDistanceBulk(
+					result.distanceM/spec.unitMeters,
+				),
+			)
+		}
+		if spec.withHash {
+			row = append(
+				row,
+				integer(int64(result.item.Score)),
+			)
+		}
+		if spec.withCoord {
+			row = append(
+				row,
+				array(
+					geoCoordinateBulk(result.longitude),
+					geoCoordinateBulk(result.latitude),
+				),
+			)
+		}
+
+		responseItems = append(responseItems, array(row...))
+	}
+
 	return array(responseItems...), nil
 }

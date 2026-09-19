@@ -61,6 +61,12 @@ func commandKeys(args [][]byte) ([]commandKeyRef, error) {
 	case "XREADGROUP":
 		return commandXReadGroupKeys(args)
 
+	case "GEORADIUS", "GEORADIUSBYMEMBER":
+		return commandLegacyGeoRadiusKeys(
+			name,
+			args,
+		)
+
 	case "COPY":
 		if len(args) < 3 {
 			return nil, errors.New(
@@ -2063,4 +2069,38 @@ func commandDocsLegacyReply(names [][]byte) []byte {
 	}
 
 	return array(parts...)
+}
+
+func commandLegacyGeoRadiusKeys(
+	name string,
+	args [][]byte,
+) ([]commandKeyRef, error) {
+	byMember := name == "GEORADIUSBYMEMBER"
+
+	parsed, err := parseLegacyGeoRadiusSpec(
+		args,
+		byMember,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	refs := []commandKeyRef{
+		{
+			value: args[1],
+			flags: []string{"RO", "access"},
+		},
+	}
+
+	if parsed.store {
+		refs = append(
+			refs,
+			commandKeyRef{
+				value: []byte(parsed.destination),
+				flags: []string{"OW", "update"},
+			},
+		)
+	}
+
+	return refs, nil
 }

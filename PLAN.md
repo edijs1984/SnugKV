@@ -129,7 +129,7 @@ and 24-byte arena segment descriptors.
 - [x] `GEOSEARCH` with `FROMMEMBER` / `FROMLONLAT`, `BYRADIUS` / `BYBOX`, ordering, COUNT/ANY, and WITH* result options.
 - [x] `GEOSEARCHSTORE` with replacement semantics, TTL clearing, and `STOREDIST`.
 - [x] OOM retry protection keeps both GEOSEARCHSTORE source and destination from eviction.
-- [ ] Optional legacy `GEORADIUS*` aliases if real client compatibility requires them.
+- [x] Legacy `GEORADIUS` / `GEORADIUSBYMEMBER` aliases with COUNT/ANY, WITH*, STORE/STOREDIST, dynamic key metadata, and Redis 8.2 differential validation. Audit: `docs/LEGACY-GEORADIUS-DIFFERENTIAL-AUDIT.md`.
 - [ ] Dedicated large geospatial performance benchmark and potential score-range pruning/indexing if O(N) search becomes a measured bottleneck.
 
 ### Lua scripting and Redis Functions

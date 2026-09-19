@@ -1,6 +1,7 @@
 package server
 
 import (
+	"math"
 	"snugkv/internal/engine"
 	"strings"
 	"testing"
@@ -191,5 +192,423 @@ func TestGeoSearchStoreReplacesDestinationAndClearsTTL(t *testing.T) {
 	response, err = s.Execute(geoArgs("EXISTS", "nearby"))
 	if err != nil || string(response) != ":0\r\n" {
 		t.Fatalf("destination not deleted = %q, err=%v", response, err)
+	}
+}
+
+
+func seedLegacyGeoCities(t *testing.T, s *Server) {
+	t.Helper()
+
+	response, err := s.Execute(geoArgs(
+		"GEOADD", "geo:src",
+		"13.361389", "38.115556", "Palermo",
+		"15.087269", "37.502669", "Catania",
+		"12.496366", "41.902782", "Rome",
+		"9.190000", "45.464200", "Milan",
+	))
+	if err != nil || string(response) != ":4\r\n" {
+		t.Fatalf("GEOADD legacy cities = %q, err=%v", response, err)
+	}
+}
+
+func TestLegacyGeoRadiusCore(t *testing.T) {
+	s := New(engine.New())
+	seedLegacyGeoCities(t, s)
+
+	response, err := s.Execute(geoArgs(
+		"GEORADIUS",
+		"geo:src",
+		"15",
+		"37",
+		"200",
+		"km",
+	))
+	if err != nil ||
+		string(response) != "*2\r\n$7\r\nPalermo\r\n$7\r\nCatania\r\n" {
+		t.Fatalf("GEORADIUS basic = %q, err=%v", response, err)
+	}
+
+	response, err = s.Execute(geoArgs(
+		"GEORADIUS",
+		"geo:src",
+		"15",
+		"37",
+		"2000",
+		"km",
+		"ASC",
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(response)
+	for _, name := range []string{"Catania", "Palermo", "Rome", "Milan"} {
+		if !strings.Contains(got, name) {
+			t.Fatalf("GEORADIUS ASC missing %s in %q", name, got)
+		}
+	}
+	if !(strings.Index(got, "Catania") <
+		strings.Index(got, "Palermo") &&
+		strings.Index(got, "Palermo") <
+			strings.Index(got, "Rome") &&
+		strings.Index(got, "Rome") <
+			strings.Index(got, "Milan")) {
+		t.Fatalf("GEORADIUS ASC order = %q", got)
+	}
+
+	response, err = s.Execute(geoArgs(
+		"GEORADIUS",
+		"geo:src",
+		"15",
+		"37",
+		"2000",
+		"km",
+		"WITHDIST",
+		"WITHHASH",
+		"WITHCOORD",
+		"ASC",
+		"COUNT",
+		"3",
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = string(response)
+	for _, want := range []string{
+		"Catania",
+		"56.4413",
+		"3479447370796909",
+		"15.087267458438873",
+		"37.50266842333162",
+		"Palermo",
+		"190.4424",
+		"Rome",
+		"586.1050",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("GEORADIUS enriched missing %q in %q", want, got)
+		}
+	}
+}
+
+func TestLegacyGeoRadiusByMember(t *testing.T) {
+	s := New(engine.New())
+	seedLegacyGeoCities(t, s)
+
+	response, err := s.Execute(geoArgs(
+		"GEORADIUSBYMEMBER",
+		"geo:src",
+		"Palermo",
+		"2000",
+		"km",
+		"WITHDIST",
+		"WITHHASH",
+		"WITHCOORD",
+		"ASC",
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(response)
+	for _, want := range []string{
+		"Palermo",
+		"0.0000",
+		"Catania",
+		"166.2742",
+		"Rome",
+		"427.6295",
+		"Milan",
+		"887.2253",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf(
+				"GEORADIUSBYMEMBER missing %q in %q",
+				want,
+				got,
+			)
+		}
+	}
+
+	_, err = s.Execute(geoArgs(
+		"GEORADIUSBYMEMBER",
+		"geo:src",
+		"Nope",
+		"200",
+		"km",
+	))
+	if err == nil ||
+		err.Error() != "ERR could not decode requested zset member" {
+		t.Fatalf("missing member error = %v", err)
+	}
+}
+
+func TestLegacyGeoRadiusStore(t *testing.T) {
+	s := New(engine.New())
+	seedLegacyGeoCities(t, s)
+
+	response, err := s.Execute(geoArgs(
+		"GEORADIUS",
+		"geo:src",
+		"15",
+		"37",
+		"2000",
+		"km",
+		"STORE",
+		"geo:store",
+	))
+	if err != nil || string(response) != ":4\r\n" {
+		t.Fatalf("GEORADIUS STORE = %q, err=%v", response, err)
+	}
+
+	response, err = s.Execute(geoArgs(
+		"ZRANGE",
+		"geo:store",
+		"0",
+		"-1",
+		"WITHSCORES",
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(response)
+	for _, want := range []string{
+		"Palermo",
+		"3479099956230698",
+		"Catania",
+		"3479447370796909",
+		"Rome",
+		"3480343273965391",
+		"Milan",
+		"3663062935203680",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("stored GEO score missing %q in %q", want, got)
+		}
+	}
+
+	response, err = s.Execute(geoArgs(
+		"GEORADIUS",
+		"geo:src",
+		"15",
+		"37",
+		"2000",
+		"km",
+		"STOREDIST",
+		"geo:dist",
+	))
+	if err != nil || string(response) != ":4\r\n" {
+		t.Fatalf("GEORADIUS STOREDIST = %q, err=%v", response, err)
+	}
+
+	response, err = s.Execute(geoArgs(
+		"ZSCORE",
+		"geo:dist",
+		"Catania",
+	))
+	if err != nil || !strings.Contains(
+		string(response),
+		"56.4412578701582",
+	) {
+		t.Fatalf("stored distance = %q, err=%v", response, err)
+	}
+}
+
+func TestLegacyGeoRadiusErrors(t *testing.T) {
+	s := New(engine.New())
+	seedLegacyGeoCities(t, s)
+
+	tests := []struct {
+		name string
+		args [][]byte
+		want string
+	}{
+		{
+			"bad unit",
+			geoArgs(
+				"GEORADIUS",
+				"geo:src",
+				"15",
+				"37",
+				"200",
+				"wat",
+			),
+			"ERR unsupported unit provided. please use M, KM, FT, MI",
+		},
+		{
+			"bad radius",
+			geoArgs(
+				"GEORADIUS",
+				"geo:src",
+				"15",
+				"37",
+				"x",
+				"km",
+			),
+			"ERR need numeric radius",
+		},
+		{
+			"negative radius",
+			geoArgs(
+				"GEORADIUS",
+				"geo:src",
+				"15",
+				"37",
+				"-1",
+				"km",
+			),
+			"ERR radius cannot be negative",
+		},
+		{
+			"count zero",
+			geoArgs(
+				"GEORADIUS",
+				"geo:src",
+				"15",
+				"37",
+				"200",
+				"km",
+				"COUNT",
+				"0",
+			),
+			"ERR COUNT must be > 0",
+		},
+		{
+			"any without count",
+			geoArgs(
+				"GEORADIUS",
+				"geo:src",
+				"15",
+				"37",
+				"200",
+				"km",
+				"ANY",
+			),
+			"ERR the ANY argument requires COUNT argument",
+		},
+		{
+			"store with enrich",
+			geoArgs(
+				"GEORADIUS",
+				"geo:src",
+				"15",
+				"37",
+				"200",
+				"km",
+				"WITHDIST",
+				"STORE",
+				"geo:store",
+			),
+			"ERR STORE option in GEORADIUS is not compatible with WITHDIST, WITHHASH and WITHCOORD options",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := s.Execute(tc.args)
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestLegacyGeoRadiusCommandKeys(t *testing.T) {
+	refs, err := commandKeys(geoArgs(
+		"GEORADIUS",
+		"geo:src",
+		"15",
+		"37",
+		"200",
+		"km",
+		"STOREDIST",
+		"geo:dist",
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != 2 {
+		t.Fatalf("refs = %#v", refs)
+	}
+	if string(refs[0].value) != "geo:src" ||
+		string(refs[1].value) != "geo:dist" {
+		t.Fatalf("refs = %#v", refs)
+	}
+}
+
+
+func TestLegacyGeoRadiusLastStoreOptionWins(t *testing.T) {
+	s := New(engine.New())
+	seedLegacyGeoCities(t, s)
+
+	response, err := s.Execute(geoArgs(
+		"GEORADIUS",
+		"geo:src",
+		"15",
+		"37",
+		"200",
+		"km",
+		"STORE",
+		"geo:store2",
+		"STOREDIST",
+		"geo:dist2",
+	))
+	if err != nil || string(response) != ":2\r\n" {
+		t.Fatalf("dual STORE/STOREDIST = %q, err=%v", response, err)
+	}
+
+	response, err = s.Execute(geoArgs(
+		"EXISTS",
+		"geo:store2",
+	))
+	if err != nil || string(response) != ":0\r\n" {
+		t.Fatalf("earlier STORE destination exists: %q, err=%v", response, err)
+	}
+
+	response, err = s.Execute(geoArgs(
+		"ZRANGE",
+		"geo:dist2",
+		"0",
+		"-1",
+		"WITHSCORES",
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := string(response)
+	for _, want := range []string{
+		"Catania",
+		"Palermo",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("dual STOREDIST missing %q in %q", want, got)
+		}
+	}
+
+	cataniaScore, found, err := s.store.ZSetScore(
+		"geo:dist2",
+		[]byte("Catania"),
+	)
+	if err != nil || !found ||
+		math.Abs(cataniaScore-56.4412578701582) > 1e-12 {
+		t.Fatalf(
+			"Catania STOREDIST score = %.17g, found=%v, err=%v",
+			cataniaScore,
+			found,
+			err,
+		)
+	}
+
+	palermoScore, found, err := s.store.ZSetScore(
+		"geo:dist2",
+		[]byte("Palermo"),
+	)
+	if err != nil || !found ||
+		math.Abs(palermoScore-190.44242984775784) > 1e-12 {
+		t.Fatalf(
+			"Palermo STOREDIST score = %.17g, found=%v, err=%v",
+			palermoScore,
+			found,
+			err,
+		)
 	}
 }
