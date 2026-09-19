@@ -246,7 +246,11 @@ func appendStreamGroupsRDB(out []byte, groups []engine.StreamSnapshotGroup) []by
 		for _, consumer := range group.Consumers {
 			out = appendRDBRawString(out, []byte(consumer.Name))
 			out = appendRDBFixedI64(out, consumer.SeenAt)
-			out = appendRDBFixedI64(out, consumer.ActiveAt)
+			activeAt := consumer.ActiveAt
+			if activeAt <= 0 {
+				activeAt = -1
+			}
+			out = appendRDBFixedI64(out, activeAt)
 
 			count := 0
 			for _, pending := range group.Pending {
