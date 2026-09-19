@@ -58,6 +58,11 @@ with socket.create_connection((HOST,SRC_PORT),timeout=3) as src, socket.create_c
     expect("dst AUTH",auth,("simple",b"OK"))
     expect("dst FLUSHDB",cmd(dst,"FLUSHDB"),("simple",b"OK"))
 
+    print("\n=== AUTH success ===")
+    expect("SET auth",cmd(src,"SET","auth","v"),("simple",b"OK"))
+    expect("MIGRATE AUTH",cmd(src,"MIGRATE",MIGRATE_HOST,str(MIGRATE_PORT),"auth","0","5000","AUTH",PASS),("simple",b"OK"))
+    expect("dst GET auth",cmd(dst,"GET","auth"),("bulk",b"v"))
+
     print("\n=== AUTH2 success ===")
     expect("SET auth2",cmd(src,"SET","auth2","v"),("simple",b"OK"))
     expect("MIGRATE AUTH2",cmd(src,"MIGRATE",MIGRATE_HOST,str(MIGRATE_PORT),"auth2","0","5000","AUTH2",USER,PASS),("simple",b"OK"))
