@@ -517,7 +517,7 @@ func (s *Server) executeKeyDumpRestore(args [][]byte) ([]byte, error) {
 				expiresAtMS = ttl
 			} else {
 				nowMS := time.Now().UnixMilli()
-				if ttl > math.MaxInt64-nowMS {
+				if ttl > int64(^uint64(0)>>1)-nowMS {
 					return nil, errors.New("ERR value is not an integer or out of range")
 				}
 				expiresAtMS = nowMS + ttl
