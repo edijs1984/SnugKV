@@ -127,3 +127,24 @@ func TestFunctionRestoreRedis82PayloadExecutes(t *testing.T) {
 		t.Fatalf("restored Redis function result = %q", got)
 	}
 }
+
+
+func TestRedisLZFCompressorRoundTrip(t *testing.T) {
+	cases := [][]byte{
+		[]byte("#!lua name=one\nredis.register_function('one_fn', function() return 1 end)"),
+		[]byte("#!lua name=lib_a\nredis.register_function{\n  function_name='echo_a',\n  callback=function(keys, args) return args[1] end,\n  description='alpha function',\n  flags={'no-writes'}\n}\n"),
+	}
+	for _, input := range cases {
+		compressed, ok := lzfCompressRedis(input, len(input)-4)
+		if !ok {
+			t.Fatalf("compression unexpectedly failed for %q", input)
+		}
+		decoded, err := lzfDecompress(compressed, len(input))
+		if err != nil {
+			t.Fatalf("decompress compressed payload: %v", err)
+		}
+		if string(decoded) != string(input) {
+			t.Fatalf("LZF round trip mismatch: got %q want %q", decoded, input)
+		}
+	}
+}
