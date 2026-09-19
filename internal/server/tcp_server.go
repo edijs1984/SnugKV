@@ -220,10 +220,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 	// Pub/Sub delivery can write from a publisher's goroutine while this
 	// connection goroutine is blocked reading the next subscriber command.
 	// Serialize complete responses so partial socket writes cannot interleave.
-	writer := &serializedResponseWriter{
-		server: s,
-		conn:   conn,
-	}
+	writer := newSerializedResponseWriter(s, conn)
 
 	clientID := atomic.AddUint64(
 		&s.nextClientID,
@@ -243,6 +240,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 
 	s.registerClient(clientSession)
 	defer s.unregisterClient(clientSession.id)
+	defer writer.flush()
 	defer clientSession.closeScriptDebugRuntime()
 
 	pubSession := newPubSubSession(
@@ -283,11 +281,20 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			)
 		}
 
-		return writer.write(response)
+		return writer.writeBuffered(response)
 	}
 
-	decoder, _ := resp.NewDecoder(bufio.NewReader(conn), s.config.Limits())
+	reader := bufio.NewReaderSize(conn, 256<<10)
+	decoder, _ := resp.NewDecoder(reader, s.config.Limits())
 	for {
+		// If no more request bytes are already buffered, flushing here avoids
+		// waiting for the next client command while still allowing an existing
+		// pipeline to accumulate responses into one socket write.
+		if reader.Buffered() == 0 {
+			if err := writer.flush(); err != nil {
+				return
+			}
+		}
 		if pubSession.active() {
 			// Pub/Sub subscriptions are long-lived. Message delivery is outbound,
 			// so an ordinary request read timeout must not kill an idle subscriber.
