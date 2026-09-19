@@ -39,7 +39,7 @@ for script results. Redis Functions include load/list/delete/flush,
 `FCALL`/`FCALL_RO`, DUMP/RESTORE, restart persistence, STATS/HELP, KILL with
 Redis-style NOTBUSY/UNKILLABLE safety semantics, and the standalone-safe flags
 `no-writes`, `allow-stale`, `no-cluster`, and `allow-cross-slot-keys`.
-`SCRIPT DEBUG` remains. Redis 8.2 Function `allow-oom`, Lua shebang/OOM flag semantics, and Lua eviction behavior for `allkeys-lru` / `volatile-lru` are implemented and audited. CONFIG now supports GET/SET/RESETSTAT/REWRITE/HELP for SnugKV-backed settings, live maxmemory/maxmemory-policy/maxclients/appendfsync mutation, Redis-shaped COMMAND metadata/docs, atomic JSON rewrite, and restart persistence. SnugKV intentionally reports one logical database and advertises only real settings/policies.
+`SCRIPT DEBUG` now has a Redis-compatible connection-scoped YES/SYNC/NO + CONTINUE foundation; full stepping/breakpoints remain pending because GopherLua lacks debug hooks. Redis 8.2 Function `allow-oom`, Lua shebang/OOM flag semantics, and Lua eviction behavior for `allkeys-lru` / `volatile-lru` are implemented and audited. CONFIG now supports GET/SET/RESETSTAT/REWRITE/HELP for SnugKV-backed settings, live maxmemory/maxmemory-policy/maxclients/appendfsync mutation, Redis-shaped COMMAND metadata/docs, atomic JSON rewrite, and restart persistence. SnugKV intentionally reports one logical database and advertises only real settings/policies.
 
 The current CLIENT slice includes `ID`, `GETNAME`, `SETNAME`, `SETINFO`, `INFO`,
 `LIST`, `LIST ID`, `LIST TYPE NORMAL`, `KILL ID [SKIPME]`, `UNBLOCK
@@ -152,7 +152,7 @@ and 24-byte arena segment descriptors.
 - [x] `FUNCTION KILL` with `NOTBUSY`, safe cancellation before the first write boundary, and `UNKILLABLE` after it.
 - [x] Standalone-safe Function flags: `no-writes`, `allow-stale`, `no-cluster`, `allow-cross-slot-keys`.
 - [x] Live Redis differential audit for read-only scripting and Functions core behavior through LIST metadata formatting.
-- [ ] `SCRIPT DEBUG` with real Redis LDB-style semantics rather than a placeholder.
+- [ ] Full `SCRIPT DEBUG` LDB semantics. YES/SYNC/NO + CONTINUE are implemented and Redis-wire audited; stepping/breakpoints/inspection remain pending. See `docs/SCRIPT-DEBUG-COMPATIBILITY.md`.
 - [x] Exact scoped `allow-oom` memory-admission semantics.
 - [ ] Exact Redis RDB byte compatibility for `FUNCTION DUMP` / `RESTORE` payloads.
 - [x] Dynamic scripting/Function/SORT ACL audit and command-flag/OOM admission parity audit against Redis 8.2.

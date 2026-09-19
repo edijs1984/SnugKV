@@ -361,6 +361,21 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			continue
 		}
 
+		if handled, debugResponse, debugErr :=
+			s.executeScriptDebugCommand(
+				clientSession,
+				authSession,
+				msg,
+			); handled {
+			if debugErr != nil {
+				debugResponse = errorResponse(debugErr)
+			}
+			if writer.write(debugResponse) != nil {
+				return
+			}
+			continue
+		}
+
 		if authErr := s.server.authorizeConnectionCommand(authSession, msg); authErr != nil {
 			// Redis marks a MULTI transaction dirty when a command cannot be
 			// queued because ACL authorization failed. EXEC must subsequently
@@ -452,6 +467,34 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				}
 				continue
 			}
+		}
+
+		if handled, debugResponse, debugErr :=
+			s.executeScriptDebugControl(
+				clientSession,
+				msg,
+			); handled {
+			if debugErr != nil {
+				debugResponse = errorResponse(debugErr)
+			}
+			if writeProtocol(msg, debugResponse) != nil {
+				return
+			}
+			continue
+		}
+
+		if handled, debugResponse, debugErr :=
+			s.beginScriptDebugEval(
+				clientSession,
+				msg,
+			); handled {
+			if debugErr != nil {
+				debugResponse = errorResponse(debugErr)
+			}
+			if writer.write(debugResponse) != nil {
+				return
+			}
+			continue
 		}
 
 		if handled, clientResponse, clientErr := s.executeClientConnectionCommand(clientSession, msg); handled {

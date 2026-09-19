@@ -953,6 +953,7 @@ func TestCommandDocsParentSubcommands(t *testing.T) {
 		[]byte("$13\r\nscript|exists\r\n"),
 		[]byte("$12\r\nscript|flush\r\n"),
 		[]byte("$11\r\nscript|kill\r\n"),
+		[]byte("$12\r\nscript|debug\r\n"),
 	} {
 		if !bytes.Contains(reply, want) {
 			t.Fatalf(
@@ -963,15 +964,6 @@ func TestCommandDocsParentSubcommands(t *testing.T) {
 		}
 	}
 
-	if bytes.Contains(
-		reply,
-		[]byte("script|debug"),
-	) {
-		t.Fatalf(
-			"unsupported SCRIPT DEBUG advertised: %q",
-			reply,
-		)
-	}
 }
 
 func TestCommandDocsSubcommandLookup(t *testing.T) {
@@ -1031,6 +1023,7 @@ func TestCommandParentsAdvertiseOnlyImplementedChildren(t *testing.T) {
 			"SCRIPT|EXISTS",
 			"SCRIPT|FLUSH",
 			"SCRIPT|KILL",
+			"SCRIPT|DEBUG",
 		},
 	}
 
@@ -1063,6 +1056,7 @@ func TestCommandInfoSupportedIncludesSubcommands(t *testing.T) {
 		"FUNCTION|STATS",
 		"SCRIPT|LOAD",
 		"SCRIPT|KILL",
+		"SCRIPT|DEBUG",
 	} {
 		if !commandInfoSupported(name) {
 			t.Fatalf(
@@ -1074,7 +1068,6 @@ func TestCommandInfoSupportedIncludesSubcommands(t *testing.T) {
 
 	for _, name := range []string{
 		"CLIENT|TRACKING",
-		"SCRIPT|DEBUG",
 		"DOESNOTEXIST",
 	} {
 		if commandInfoSupported(name) {
@@ -1092,6 +1085,7 @@ func TestCommandInfoSubcommandMetadataIsNotNull(t *testing.T) {
 		"CLIENT|ID",
 		"FUNCTION|LOAD",
 		"SCRIPT|KILL",
+		"SCRIPT|DEBUG",
 	} {
 		reply := commandInfoReply(name)
 
