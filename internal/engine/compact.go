@@ -39,7 +39,7 @@ func (s *Store) Compact(scratch uint64) int {
 		projected := fresh.GrowthFor(lengths)
 
 		s.memory.mu.Lock()
-		if s.memory.max > 0 && s.memory.used-oldArena+projected > s.memory.max {
+		if max := s.memory.max.Load(); max > 0 && s.memory.used-oldArena+projected > max {
 			s.memory.mu.Unlock()
 			sh.mu.Unlock()
 			continue

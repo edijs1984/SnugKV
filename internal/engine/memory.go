@@ -21,9 +21,10 @@ const (
 )
 
 func (s *Store) exceedsMemoryLimitLocked(next uint64, admission memoryAdmission) bool {
+	max := s.memory.max.Load()
 	return admission == enforceMemoryLimit &&
-		s.memory.max > 0 &&
-		next > s.memory.max
+		max > 0 &&
+		next > max
 }
 
 // Reservations track owned engine allocations, not total process RSS.
@@ -84,8 +85,9 @@ func (s *Store) Layout() LayoutStats {
 }
 
 type accounting struct {
-	mu                                                                               sync.Mutex
-	used, index, entries, max, arenas, arenaPayload, arenaLiveBlocks, schemas, metas uint64
+	mu                                                                         sync.Mutex
+	used, index, entries, arenas, arenaPayload, arenaLiveBlocks, schemas, metas uint64
+	max                                                                        atomic.Uint64
 }
 
 func (s *Store) Memory() MemoryStats {
@@ -93,7 +95,7 @@ func (s *Store) Memory() MemoryStats {
 	defer s.memory.mu.Unlock()
 	return MemoryStats{
 		AccountedBytes:      s.memory.used,
-		MaxBytes:            s.memory.max,
+		MaxBytes:            s.memory.max.Load(),
 		IndexReservedBytes:  s.memory.index,
 		EntryBytes:          s.memory.entries,
 		ArenaBytes:          s.memory.arenas,
@@ -426,10 +428,7 @@ func (s *Store) MemoryUsage(key string) (uint64, bool) {
 // MaxMemory returns the current runtime memory limit in accounted bytes.
 // Zero means unlimited.
 func (s *Store) MaxMemory() uint64 {
-	s.memory.mu.Lock()
-	defer s.memory.mu.Unlock()
-
-	return s.memory.max
+	return s.memory.max.Load()
 }
 
 // SetMaxMemory changes the runtime memory admission limit.
@@ -438,7 +437,5 @@ func (s *Store) MaxMemory() uint64 {
 // existing data remains resident, while subsequent memory-growing writes are
 // subject to the configured eviction/OOM policy.
 func (s *Store) SetMaxMemory(max uint64) {
-	s.memory.mu.Lock()
-	s.memory.max = max
-	s.memory.mu.Unlock()
+	s.memory.max.Store(max)
 }

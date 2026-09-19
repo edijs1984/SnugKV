@@ -194,7 +194,7 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 	}
 	s.memory.mu.Lock()
 	next := s.memory.used - before - beforeMeta + after + afterMeta + extra + extraEntries + extraArena
-	if !force && s.memory.max > 0 && next > s.memory.max {
+	if max := s.memory.max.Load(); !force && max > 0 && next > max {
 		s.memory.mu.Unlock()
 		return ErrOOM
 	}
