@@ -39,7 +39,7 @@ for script results. Redis Functions include load/list/delete/flush,
 `FCALL`/`FCALL_RO`, DUMP/RESTORE, restart persistence, STATS/HELP, KILL with
 Redis-style NOTBUSY/UNKILLABLE safety semantics, and the standalone-safe flags
 `no-writes`, `allow-stale`, `no-cluster`, and `allow-cross-slot-keys`.
-`SCRIPT DEBUG` and eviction-policy-specific scripting behavior remain. Redis 8.2 Function `allow-oom` semantics and Lua shebang/OOM flag semantics are implemented and audited. CONFIG now supports GET/SET/RESETSTAT/REWRITE/HELP for SnugKV-backed settings, live maxmemory/maxmemory-policy/maxclients/appendfsync mutation, Redis-shaped COMMAND metadata/docs, atomic JSON rewrite, and restart persistence. SnugKV intentionally reports one logical database and advertises only real settings/policies.
+`SCRIPT DEBUG` remains. Redis 8.2 Function `allow-oom`, Lua shebang/OOM flag semantics, and Lua eviction behavior for `allkeys-lru` / `volatile-lru` are implemented and audited. CONFIG now supports GET/SET/RESETSTAT/REWRITE/HELP for SnugKV-backed settings, live maxmemory/maxmemory-policy/maxclients/appendfsync mutation, Redis-shaped COMMAND metadata/docs, atomic JSON rewrite, and restart persistence. SnugKV intentionally reports one logical database and advertises only real settings/policies.
 
 The current CLIENT slice includes `ID`, `GETNAME`, `SETNAME`, `SETINFO`, `INFO`,
 `LIST`, `LIST ID`, `LIST TYPE NORMAL`, `KILL ID [SKIPME]`, `UNBLOCK
@@ -157,7 +157,7 @@ and 24-byte arena segment descriptors.
 - [ ] Exact Redis RDB byte compatibility for `FUNCTION DUMP` / `RESTORE` payloads.
 - [x] Dynamic scripting/Function/SORT ACL audit and command-flag/OOM admission parity audit against Redis 8.2.
 - [x] Redis 8.2 Lua shebang/OOM flag semantics for legacy scripts, `allow-oom`, `no-writes`, `_RO`, `SCRIPT LOAD`, and `EVALSHA`; audit: `docs/LUA-OOM-FLAGS-DIFFERENTIAL-AUDIT.md`.
-- [ ] Eviction-policy-specific scripting behavior under `allkeys-lru` / `volatile-lru`.
+- [x] Eviction-policy-specific Lua scripting behavior under `allkeys-lru` / `volatile-lru`; audit: `docs/LUA-EVICTION-POLICY-DIFFERENTIAL-AUDIT.md`.
 
 ### Authentication / ACL compatibility
 
@@ -294,8 +294,7 @@ Details: `docs/ACL-COMPATIBILITY.md`.
 - [x] `SORT` / `SORT_RO`.
 - [x] `COPY` for DB 0 with `REPLACE`, TTL/type preservation, durability, transactions, OOM safety, and direct Redis differential audit.
 - [x] CLIENT management/tooling slice through LIST filters, KILL, and UNBLOCK with direct Redis differential audit.
-- [ ] Remaining scripting parity/hardening: `SCRIPT DEBUG`, eviction-policy-specific scripting behavior,
-  and optional Redis-RDB Function payload compatibility.
+- [ ] Remaining scripting parity/hardening: `SCRIPT DEBUG` and optional Redis-RDB Function payload compatibility.
 - [x] Lua shebang/OOM flags (`allow-oom`, `no-writes`) and legacy first-write OOM semantics.
 - [x] Redis 8.2 Function `allow-oom` semantics, including OOM entry gating,
   `no-writes` interaction, scoped memory-admission bypass, and live differential audit.
