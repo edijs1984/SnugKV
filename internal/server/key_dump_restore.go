@@ -3,7 +3,6 @@ package server
 import (
 	"encoding/binary"
 	"errors"
-	"math"
 	"snugkv/internal/engine"
 	"snugkv/internal/persistence"
 	"strconv"
@@ -44,14 +43,14 @@ func appendRDBIntegerString(dst []byte, value []byte) ([]byte, bool) {
 		return dst, false
 	}
 	switch {
-	case n >= math.MinInt8 && n <= math.MaxInt8:
-		return append(dst, 0xC0|rdbEncInt8, byte(int8(n))), true
-	case n >= math.MinInt16 && n <= math.MaxInt16:
+	case n >= -128 && n <= 127:
+		return append(dst, 0xC0|rdbEncInt8, byte(uint8(int8(n)))), true
+	case n >= -32768 && n <= 32767:
 		dst = append(dst, 0xC0|rdbEncInt16)
 		var buf [2]byte
 		binary.LittleEndian.PutUint16(buf[:], uint16(int16(n)))
 		return append(dst, buf[:]...), true
-	case n >= math.MinInt32 && n <= math.MaxInt32:
+	case n >= -2147483648 && n <= 2147483647:
 		dst = append(dst, 0xC0|rdbEncInt32)
 		var buf [4]byte
 		binary.LittleEndian.PutUint32(buf[:], uint32(int32(n)))
@@ -235,7 +234,7 @@ func (s *Server) executeKeyDumpRestore(args [][]byte) ([]byte, error) {
 				setOptions.HasExpireAt = true
 				setOptions.ExpireAt = time.UnixMilli(ttl)
 			} else {
-				if ttl > math.MaxInt64/int64(time.Millisecond) {
+				if ttl > int64(^uint64(0)>>1)/int64(time.Millisecond) {
 					return nil, errors.New("ERR value is not an integer or out of range")
 				}
 				setOptions.TTL = time.Duration(ttl) * time.Millisecond
