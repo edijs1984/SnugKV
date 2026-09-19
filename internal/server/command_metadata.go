@@ -67,6 +67,20 @@ func commandKeys(args [][]byte) ([]commandKeyRef, error) {
 			args,
 		)
 
+	case "MIGRATE":
+		_, options, err := migrateSourceKeys(args)
+		if err != nil {
+			return nil, err
+		}
+		refs := make([]commandKeyRef, 0, len(options.keys))
+		for _, key := range options.keys {
+			refs = append(refs, commandKeyRef{
+				value: key,
+				flags: []string{"RW", "access", "delete"},
+			})
+		}
+		return refs, nil
+
 	case "COPY":
 		if len(args) < 3 {
 			return nil, errors.New(
@@ -633,6 +647,12 @@ func commandInfoACL(
 			"@slow",
 		}
 
+	case "MIGRATE":
+		return []string{
+			"@keyspace",
+			"@dangerous",
+		}
+
 	case "BITOP":
 		return []string{
 			"@write",
@@ -738,6 +758,11 @@ func commandInfoACL(
 
 func commandInfoTips(name string) []string {
 	switch name {
+	case "MIGRATE":
+		return []string{
+			"nondeterministic_output",
+		}
+
 	case "DEL":
 		return []string{
 			"request_policy:multi_shard",
@@ -1026,6 +1051,34 @@ func commandInfoKeySpecs(
 					"access",
 				},
 				2,
+			),
+		)
+
+	case "MIGRATE":
+		return array(
+			commandKeySpec(
+				[]string{
+					"RW",
+					"access",
+					"delete",
+				},
+				3,
+				0,
+				1,
+			),
+			commandKeywordRangeSpec(
+				[]string{
+					"RW",
+					"access",
+					"delete",
+					"incomplete",
+				},
+				"KEYS form uses every argument after the KEYS keyword",
+				"KEYS",
+				-2,
+				-1,
+				1,
+				0,
 			),
 		)
 
@@ -1461,6 +1514,19 @@ var commandDocs = map[string]commandDoc{
 				keySpecIndex: 0,
 				hasKeySpec:   true,
 			},
+		},
+	},
+
+	"MIGRATE": {
+		summary:    "Atomically transfers a key from one Redis instance to another.",
+		since:      "2.6.0",
+		group:      "generic",
+		complexity: "DUMP+DEL on the source, RESTORE on the target, plus O(N) network transfer.",
+		history: [][2]string{
+			{"3.0.0", "Added the COPY and REPLACE options."},
+			{"3.0.6", "Added the KEYS option."},
+			{"4.0.7", "Added the AUTH option."},
+			{"6.0.0", "Added the AUTH2 option."},
 		},
 	},
 
