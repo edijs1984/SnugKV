@@ -199,3 +199,82 @@ func TestScriptDebugStepAndNextUsePausedVM(t *testing.T) {
 		"*1\r\n+<endsession>\r\n:2\r\n",
 	)
 }
+
+
+func TestScriptDebugInspectAndBreakpointTCP(t *testing.T) {
+	_, conn, reader := newScriptDebugTCP(t)
+
+	source := "local x = 10\n" +
+		"local y = x + 5\n" +
+		"return y"
+
+	writeRESPCommand(t, conn, "SCRIPT", "DEBUG", "YES")
+	readExactReply(t, reader, "+OK\r\n")
+
+	writeRESPCommand(t, conn, "EVAL", source, "0")
+	readExactReply(
+		t,
+		reader,
+		"*2\r\n"+
+			"+* Stopped at 1, stop reason = step over\r\n"+
+			"+-> 1   local x = 10\r\n",
+	)
+
+	writeRESPCommand(t, conn, "P", "x")
+	readExactReply(t, reader, "*1\r\n+No such variable.\r\n")
+
+	writeRESPCommand(t, conn, "T")
+	readExactReply(
+		t,
+		reader,
+		"*2\r\n"+
+			"+In top level:\r\n"+
+			"+-> 1   local x = 10\r\n",
+	)
+
+	writeRESPCommand(t, conn, "L")
+	readExactReply(
+		t,
+		reader,
+		"*3\r\n"+
+			"+-> 1   local x = 10\r\n"+
+			"+   2   local y = x + 5\r\n"+
+			"+   3   return y\r\n",
+	)
+
+	writeRESPCommand(t, conn, "S")
+	readExactReply(
+		t,
+		reader,
+		"*2\r\n"+
+			"+* Stopped at 2, stop reason = step over\r\n"+
+			"+-> 2   local y = x + 5\r\n",
+	)
+
+	writeRESPCommand(t, conn, "P", "x")
+	readExactReply(t, reader, "*1\r\n+<value> 10\r\n")
+
+	writeRESPCommand(t, conn, "B", "3")
+	readExactReply(
+		t,
+		reader,
+		"*2\r\n"+
+			"+-> 2   local y = x + 5\r\n"+
+			"+ #  3   return y\r\n",
+	)
+
+	writeRESPCommand(t, conn, "C")
+	readExactReply(
+		t,
+		reader,
+		"*2\r\n"+
+			"+* Stopped at 3, stop reason = break point\r\n"+
+			"+-> 3   return y\r\n",
+	)
+
+	writeRESPCommand(t, conn, "P", "y")
+	readExactReply(t, reader, "*1\r\n+<value> 15\r\n")
+
+	writeRESPCommand(t, conn, "C")
+	readExactReply(t, reader, "*1\r\n+<endsession>\r\n:15\r\n")
+}
