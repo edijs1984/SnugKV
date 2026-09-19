@@ -301,14 +301,16 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				return
 			}
 		}
-		if pubSession.active() {
-			// Pub/Sub subscriptions are long-lived. Message delivery is outbound,
-			// so an ordinary request read timeout must not kill an idle subscriber.
-			if err := conn.SetReadDeadline(time.Time{}); err != nil {
+		if reader.Buffered() == 0 {
+			if pubSession.active() {
+				// Pub/Sub subscriptions are long-lived. Message delivery is outbound,
+				// so an ordinary request read timeout must not kill an idle subscriber.
+				if err := conn.SetReadDeadline(time.Time{}); err != nil {
+					return
+				}
+			} else if err := conn.SetReadDeadline(time.Now().Add(time.Duration(s.config.ReadTimeoutMS) * time.Millisecond)); err != nil {
 				return
 			}
-		} else if err := conn.SetReadDeadline(time.Now().Add(time.Duration(s.config.ReadTimeoutMS) * time.Millisecond)); err != nil {
-			return
 		}
 		msg, err := decoder.ReadCommand()
 		if err != nil {
