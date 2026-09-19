@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"net"
 	"strconv"
 	"strings"
@@ -38,7 +39,7 @@ func readTestRESPCommand(r *bufio.Reader) ([][]byte, error) {
 			return nil, fmt.Errorf("invalid bulk size %q", header)
 		}
 		value := make([]byte, size+2)
-		if _, err := r.Read(value); err != nil {
+		if _, err := io.ReadFull(r, value); err != nil {
 			return nil, err
 		}
 		if string(value[size:]) != "\r\n" {
