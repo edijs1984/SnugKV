@@ -532,3 +532,56 @@ func TestLegacyGeoRadiusCommandKeys(t *testing.T) {
 		t.Fatalf("refs = %#v", refs)
 	}
 }
+
+
+func TestLegacyGeoRadiusLastStoreOptionWins(t *testing.T) {
+	s := New(engine.New())
+	seedLegacyGeoCities(t, s)
+
+	response, err := s.Execute(geoArgs(
+		"GEORADIUS",
+		"geo:src",
+		"15",
+		"37",
+		"200",
+		"km",
+		"STORE",
+		"geo:store2",
+		"STOREDIST",
+		"geo:dist2",
+	))
+	if err != nil || string(response) != ":2\r\n" {
+		t.Fatalf("dual STORE/STOREDIST = %q, err=%v", response, err)
+	}
+
+	response, err = s.Execute(geoArgs(
+		"EXISTS",
+		"geo:store2",
+	))
+	if err != nil || string(response) != ":0\r\n" {
+		t.Fatalf("earlier STORE destination exists: %q, err=%v", response, err)
+	}
+
+	response, err = s.Execute(geoArgs(
+		"ZRANGE",
+		"geo:dist2",
+		"0",
+		"-1",
+		"WITHSCORES",
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := string(response)
+	for _, want := range []string{
+		"Catania",
+		"56.4412578701582",
+		"Palermo",
+		"190.44242984775784",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("dual STOREDIST missing %q in %q", want, got)
+		}
+	}
+}
