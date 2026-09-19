@@ -271,8 +271,11 @@ func (s *Server) runLuaScript(source, sha string, keys, argv [][]byte, legacyOOM
 
 	L.SetGlobal("KEYS", luaBytesTable(L, keys))
 	L.SetGlobal("ARGV", luaBytesTable(L, argv))
+	var legacyState *legacyScriptOOMState
 	if legacyOOM {
-		L.SetGlobal("redis", s.luaRedisModuleLegacyOOM(L))
+		legacyState = newLegacyScriptOOMState(s)
+		defer legacyState.restore(s)
+		L.SetGlobal("redis", s.luaRedisModuleWithLegacyState(L, legacyState))
 	} else {
 		L.SetGlobal("redis", s.luaRedisModule(L))
 	}
@@ -298,10 +301,6 @@ func (s *Server) runLuaScript(source, sha string, keys, argv [][]byte, legacyOOM
 
 func (s *Server) luaRedisModule(L *lua.LState) *lua.LTable {
 	return s.luaRedisModuleWithLegacyState(L, nil)
-}
-
-func (s *Server) luaRedisModuleLegacyOOM(L *lua.LState) *lua.LTable {
-	return s.luaRedisModuleWithLegacyState(L, &legacyScriptOOMState{})
 }
 
 func (s *Server) luaRedisModuleWithLegacyState(
@@ -386,21 +385,16 @@ func (s *Server) luaRedisCallWithLegacyOOM(
 			return luaPushCommandError(L, protected, err)
 		}
 
-		result, err := s.executeLegacyLuaNested(
-			state,
+		result, err := s.withNestedExecutionCommand(
 			args,
 			func() ([]byte, error) {
-				return s.withNestedExecutionCommand(
-					args,
-					func() ([]byte, error) {
-						return s.executePressureMode(args, false)
-					},
-				)
+				return s.executePressureMode(args, false)
 			},
 		)
 		if err != nil {
 			return luaPushCommandError(L, protected, err)
 		}
+		state.afterSuccessfulCommand(s, args)
 		s.signalListAvailability(args, result)
 		s.signalZSetAvailability(args, result)
 		s.signalStreamAvailability(args, result)
