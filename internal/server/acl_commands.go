@@ -117,6 +117,7 @@ func (s *Server) authorizeConnectionCommand(
 	// normally grants all commands, keys and channels with no selectors. In
 	// that case there is nothing command-specific to evaluate.
 	if user.AllCommands &&
+		len(user.CommandAllow) == 0 &&
 		user.AllKeys &&
 		user.AllChannels &&
 		len(user.Selectors) == 0 {
