@@ -89,6 +89,7 @@ var commandParentMetadataTable = map[string]commandParentMetadata{
 			"SCRIPT|EXISTS",
 			"SCRIPT|LOAD",
 			"SCRIPT|FLUSH",
+			"SCRIPT|DEBUG",
 		},
 	},
 }
@@ -355,6 +356,12 @@ var commandLeafMetadataTable = map[string]commandLeafMetadata{
 			"response_policy:one_succeeded",
 		},
 	},
+
+	"SCRIPT|DEBUG": {
+		arity: 3,
+		flags: []string{"noscript"},
+		acl:   []string{"@slow", "@scripting"},
+	},
 }
 
 func commandStructuredInfoReply(
@@ -518,6 +525,7 @@ var commandContainerDocs = map[string]commandContainerDoc{
 			"SCRIPT|EXISTS",
 			"SCRIPT|LOAD",
 			"SCRIPT|FLUSH",
+			"SCRIPT|DEBUG",
 		},
 	},
 }
@@ -971,6 +979,24 @@ var commandSubcommandDocs = map[string]commandDoc{
 		since:      "2.6.0",
 		group:      "scripting",
 		complexity: "O(1)",
+	},
+
+	"SCRIPT|DEBUG": {
+		summary:    "Sets the Lua debugging mode for the current connection.",
+		since:      "3.2.0",
+		group:      "scripting",
+		complexity: "O(1)",
+		arguments: []commandDocArgument{
+			{
+				name:    "mode",
+				argType: "oneof",
+				arguments: []commandDocArgument{
+					pureToken("yes", "YES"),
+					pureToken("sync", "SYNC"),
+					pureToken("no", "NO"),
+				},
+			},
+		},
 	},
 }
 
