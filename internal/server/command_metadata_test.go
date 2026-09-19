@@ -1006,6 +1006,9 @@ func TestCommandParentsAdvertiseOnlyImplementedChildren(t *testing.T) {
 			"CLIENT|KILL",
 			"CLIENT|UNBLOCK",
 			"CLIENT|HELP",
+			"CLIENT|TRACKING",
+			"CLIENT|CACHING",
+			"CLIENT|GETREDIR",
 		},
 		"FUNCTION": {
 			"FUNCTION|LOAD",
@@ -1052,6 +1055,9 @@ func TestCommandInfoSupportedIncludesSubcommands(t *testing.T) {
 		"COMMAND|DOCS",
 		"CLIENT|ID",
 		"CLIENT|UNBLOCK",
+		"CLIENT|TRACKING",
+		"CLIENT|CACHING",
+		"CLIENT|GETREDIR",
 		"FUNCTION|LOAD",
 		"FUNCTION|STATS",
 		"SCRIPT|LOAD",
@@ -1067,7 +1073,6 @@ func TestCommandInfoSupportedIncludesSubcommands(t *testing.T) {
 	}
 
 	for _, name := range []string{
-		"CLIENT|TRACKING",
 		"DOESNOTEXIST",
 	} {
 		if commandInfoSupported(name) {
@@ -1083,6 +1088,9 @@ func TestCommandInfoSubcommandMetadataIsNotNull(t *testing.T) {
 	for _, name := range []string{
 		"COMMAND|COUNT",
 		"CLIENT|ID",
+		"CLIENT|TRACKING",
+		"CLIENT|CACHING",
+		"CLIENT|GETREDIR",
 		"FUNCTION|LOAD",
 		"SCRIPT|KILL",
 		"SCRIPT|DEBUG",
