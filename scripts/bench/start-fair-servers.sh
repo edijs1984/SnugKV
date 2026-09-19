@@ -13,13 +13,18 @@ PPROF_RAW_PORT="${PPROF_RAW_PORT:-6060}"
 PPROF_OPT_PORT="${PPROF_OPT_PORT:-6061}"
 
 IMAGE="${SNUG_IMAGE:-snugkv-bench:local}"
+BUILD_IMAGE="${BUILD_IMAGE:-1}"
 
 docker network create "$NETWORK" >/dev/null 2>&1 || true
 
 docker rm -f "$REDIS_NAME" "$SNUG_RAW_NAME" "$SNUG_OPT_NAME" snug-bench-snugkv >/dev/null 2>&1 || true
 
-echo "Building SnugKV benchmark image..."
-docker build -t "$IMAGE" .
+if [[ "$BUILD_IMAGE" == "1" ]]; then
+  echo "Building SnugKV benchmark image..."
+  docker build -t "$IMAGE" .
+else
+  echo "Reusing SnugKV benchmark image: $IMAGE"
+fi
 
 echo "Starting Redis 8.2 benchmark container..."
 docker run -d --rm \

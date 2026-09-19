@@ -10,6 +10,10 @@ OPS="${OPS:-1000000}"
 VALUE_BYTES="${VALUE_BYTES:-64}"
 VALUE_SHAPE="${VALUE_SHAPE:-repetitive}"
 SETTLE_MS="${SETTLE_MS:-0}"
+SETTLE_STABLE_SAMPLES="${SETTLE_STABLE_SAMPLES:-5}"
+SETTLE_POLL_MS="${SETTLE_POLL_MS:-1000}"
+SETTLE_MAX_MS="${SETTLE_MAX_MS:-120000}"
+FRESH_SERVERS="${FRESH_SERVERS:-1}"
 WORKERS="${WORKERS:-4}"
 PIPELINE="${PIPELINE:-256}"
 RUNS="${RUNS:-3}"
@@ -60,6 +64,74 @@ mult={
     "TiB":1024**4,
 }
 print(int(n*mult[u]))
+PY
+}
+
+server_used_memory() {
+  local addr="$1"
+  redis-cli -h "${addr%:*}" -p "${addr##*:}" --raw INFO memory \
+    | awk -F: '/^used_memory:/{gsub(/\r/,"",$2); print $2; exit}'
+}
+
+wait_for_memory_stable() {
+  local addr="$1"
+  local label="$2"
+  local stable=0
+  local previous=""
+  local elapsed=0
+  local current=""
+
+  while (( elapsed <= SETTLE_MAX_MS )); do
+    current="$(server_used_memory "$addr")"
+    if [[ -z "$current" ]]; then
+      echo "failed to read used_memory from $label" >&2
+      return 1
+    fi
+
+    if [[ "$current" == "$previous" ]]; then
+      stable=$((stable + 1))
+    else
+      stable=0
+    fi
+
+    if (( stable >= SETTLE_STABLE_SAMPLES )); then
+      echo "$current $elapsed"
+      return 0
+    fi
+
+    previous="$current"
+    sleep "$(python3 - "$SETTLE_POLL_MS" <<'PY'
+import sys
+print(int(sys.argv[1]) / 1000)
+PY
+)"
+    elapsed=$((elapsed + SETTLE_POLL_MS))
+  done
+
+  echo "$current $elapsed"
+}
+
+annotate_settled_memory() {
+  local path="$1"
+  local settled="$2"
+  local settle_elapsed="$3"
+
+  python3 - "$path" "$settled" "$settle_elapsed" <<'PY'
+import json, sys
+p=sys.argv[1]
+settled=int(sys.argv[2])
+elapsed=int(sys.argv[3])
+with open(p) as f:
+    d=json.load(f)
+before=int(d["used_memory_before"])
+d["used_memory_after_initial"]=d["used_memory_after"]
+d["used_memory_after"]=settled
+d["used_memory_delta"]=max(0, settled-before)
+if d.get("workload")=="load":
+    d["bytes_per_key_delta"]=d["used_memory_delta"]/d["keys"]
+d["settle_actual_ms"]=elapsed
+with open(p,"w") as f:
+    json.dump(d,f,separators=(",",":"))
 PY
 }
 
@@ -125,10 +197,21 @@ run_one() {
     -keys "$KEYS" \
     -value-bytes "$VALUE_BYTES" \
     -value-shape "$VALUE_SHAPE" \
-    -settle-ms "$SETTLE_MS" \
+    -settle-ms 0 \
     -workers "$WORKERS" \
     -pipeline "$PIPELINE" \
     > "$OUT_DIR/${name}-run${run}-load.json"
+
+  if (( SETTLE_MS > 0 )); then
+    sleep "$(python3 - "$SETTLE_MS" <<'PY'
+import sys
+print(int(sys.argv[1]) / 1000)
+PY
+)"
+  fi
+
+  read -r settled_memory settle_actual_ms < <(wait_for_memory_stable "$addr" "$name")
+  annotate_settled_memory "$OUT_DIR/${name}-run${run}-load.json" "$settled_memory" "$settle_actual_ms"
 
   mem_after="$(container_bytes "$container")"
   annotate_memory "$OUT_DIR/${name}-run${run}-load.json" "$mem_before" "$mem_after"
@@ -159,10 +242,16 @@ run_one() {
 echo "Redis:       $REDIS_ADDR"
 echo "SnugKV raw:  $SNUG_RAW_ADDR"
 echo "SnugKV opt:  $SNUG_OPT_ADDR"
-echo "keys=$KEYS ops=$OPS value_bytes=$VALUE_BYTES value_shape=$VALUE_SHAPE settle_ms=$SETTLE_MS workers=$WORKERS pipeline=$PIPELINE runs=$RUNS capture_heap=$CAPTURE_HEAP"
+echo "keys=$KEYS ops=$OPS value_bytes=$VALUE_BYTES value_shape=$VALUE_SHAPE settle_ms=$SETTLE_MS stable_samples=$SETTLE_STABLE_SAMPLES settle_max_ms=$SETTLE_MAX_MS fresh_servers=$FRESH_SERVERS workers=$WORKERS pipeline=$PIPELINE runs=$RUNS capture_heap=$CAPTURE_HEAP"
 echo "results=$OUT_DIR"
 
 for run in $(seq 1 "$RUNS"); do
+  if [[ "$FRESH_SERVERS" == "1" ]]; then
+    echo
+    echo "===== restarting benchmark servers for run $run/$RUNS ====="
+    BUILD_IMAGE=0 bash scripts/bench/start-fair-servers.sh >/dev/null
+  fi
+
   run_one redis "$REDIS_ADDR" "$run" "$REDIS_CONTAINER"
   run_one snug_raw "$SNUG_RAW_ADDR" "$run" "$SNUG_RAW_CONTAINER"
   run_one snug_opt "$SNUG_OPT_ADDR" "$run" "$SNUG_OPT_CONTAINER"
