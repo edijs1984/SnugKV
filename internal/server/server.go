@@ -1411,9 +1411,9 @@ func formatBytes(n uint64) string {
 	}
 })
 	out = strconv.AppendInt(out, int64(len(v)), 10)
-	out = append(out, '\r', '\n')
+	out = append(out, 13, 10)
 	out = append(out, v...)
-	return append(out, '\r', '\n')
+	return append(out, 13, 10)
 }
 func array(items ...[]byte) []byte {
 	out := []byte(fmt.Sprintf("*%d\r\n", len(items)))
