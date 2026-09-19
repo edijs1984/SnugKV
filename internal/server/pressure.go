@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"errors"
 	"snugkv/internal/engine"
 	"snugkv/internal/persistence"
@@ -171,6 +172,21 @@ func (s *Server) executeTransactionPressure(args [][]byte) ([]byte, error) {
 }
 
 func (s *Server) executePressureMode(args [][]byte, journalEvictions bool) ([]byte, error) {
+	// Plain GET/SET dominate normal cache workloads. Avoid sending them through
+	// every scripting/container/special-command predicate in the generic router.
+	// GET still enforces Redis WRONGTYPE semantics. Plain SET overwrites any type.
+	if len(args) == 2 && bytes.EqualFold(args[0], []byte("GET")) {
+		if s.nativeContainerKey(string(args[1])) {
+			return nil, errWrongType
+		}
+		return s.execute(args)
+	}
+	if len(args) == 3 &&
+		bytes.EqualFold(args[0], []byte("SET")) &&
+		s.store.MaxMemory() == 0 {
+		return s.execute(args)
+	}
+
 	if err := s.rejectDenyOOMCommand(args); err != nil {
 		return nil, err
 	}
