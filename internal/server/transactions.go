@@ -122,7 +122,14 @@ func persistenceDiff(before, after []persistence.Record) []persistence.Record {
 }
 
 func (s *Server) refreshWatchesLocked() {
-	registry := transactionRegistryForServer(s)
+	existing, ok := transactionWatchRegistries.Load(s)
+	if !ok {
+		return
+	}
+	registry := existing.(*transactionWatchRegistry)
+	if len(registry.sessions) == 0 {
+		return
+	}
 	for session := range registry.sessions {
 		if session.watchDirty || len(session.watched) == 0 {
 			continue
