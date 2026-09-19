@@ -243,6 +243,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 
 	s.registerClient(clientSession)
 	defer s.unregisterClient(clientSession.id)
+	defer clientSession.closeScriptDebugRuntime()
 
 	pubSession := newPubSubSession(
 		s.server,
@@ -490,6 +491,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 		if handled, debugResponse, debugErr :=
 			s.beginScriptDebugEval(
 				clientSession,
+				authSession,
 				msg,
 			); handled {
 			if debugErr != nil {
