@@ -121,6 +121,14 @@ func persistenceDiff(before, after []persistence.Record) []persistence.Record {
 	return changes
 }
 
+func (s *Server) hasWatchSessionsLocked() bool {
+	existing, ok := transactionWatchRegistries.Load(s)
+	if !ok {
+		return false
+	}
+	return len(existing.(*transactionWatchRegistry).sessions) != 0
+}
+
 func (s *Server) refreshWatchesLocked() {
 	existing, ok := transactionWatchRegistries.Load(s)
 	if !ok {
