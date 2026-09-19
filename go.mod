@@ -7,3 +7,5 @@ require (
 	github.com/pierrec/lz4/v4 v4.1.22 // indirect
 	github.com/yuin/gopher-lua v1.1.2
 )
+
+replace github.com/yuin/gopher-lua => github.com/edijs1984/gopher-lua v0.0.0-20260919083617-0a21fbdcfd9a
