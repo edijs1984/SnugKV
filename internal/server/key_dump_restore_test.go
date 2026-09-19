@@ -193,3 +193,166 @@ func TestKeyRestoreValidationErrors(t *testing.T) {
 		}
 	}
 }
+
+
+func TestKeyDumpRedis82NativeFixtures(t *testing.T) {
+	tests := []struct {
+		name    string
+		setup   func(*Server)
+		key     string
+		wantHex string
+	}{
+		{
+			name: "hash-listpack",
+			setup: func(s *Server) {
+				if got := execute(t, s, "HSET", "h", "a", "1", "b", "two", "c", "three"); got != ":3\r\n" {
+					t.Fatalf("HSET = %q", got)
+				}
+			},
+			key: "h",
+			wantHex: "101e1e000000060081610201018162028374776f0481630285746872656506ff0c00db36cf028de770b0",
+		},
+		{
+			name: "set-listpack",
+			setup: func(s *Server) {
+				if got := execute(t, s, "SADD", "ss", "alpha", "beta", "gamma"); got != ":3\r\n" {
+					t.Fatalf("SADD = %q", got)
+				}
+			},
+			key: "ss",
+			wantHex: "141b1b000000030085616c706861068462657461058567616d6d6106ff0c009a7345486301b8e9",
+		},
+		{
+			name: "set-intset",
+			setup: func(s *Server) {
+				if got := execute(t, s, "SADD", "si", "1", "2", "3", "1000"); got != ":4\r\n" {
+					t.Fatalf("SADD ints = %q", got)
+				}
+			},
+			key: "si",
+			wantHex: "0b100200000004000000010002000300e8030c0095c987bb742ffce2",
+		},
+		{
+			name: "list-quicklist2",
+			setup: func(s *Server) {
+				if got := execute(t, s, "RPUSH", "l", "one", "two", "three", "four"); got != ":4\r\n" {
+					t.Fatalf("RPUSH = %q", got)
+				}
+			},
+			key: "l",
+			wantHex: "1201021e1e0000000400836f6e65048374776f048574687265650684666f757205ff0c003c3bb7048e6be326",
+		},
+		{
+			name: "zset-listpack",
+			setup: func(s *Server) {
+				if got := execute(t, s, "ZADD", "z", "1.5", "one", "2", "two", "-3.25", "three"); got != ":3\r\n" {
+					t.Fatalf("ZADD = %q", got)
+				}
+			},
+			key: "z",
+			wantHex: "112626000000060085746872656506852d332e323506836f6e650483312e35048374776f040201ff0c0083f1147074462567",
+		},
+		{
+			name: "hll-string",
+			setup: func(s *Server) {
+				if got := execute(t, s, "PFADD", "hll", "alice", "bob", "carol"); got != ":1\r\n" {
+					t.Fatalf("PFADD = %q", got)
+				}
+			},
+			key: "hll",
+			wantHex: "001b48594c4c010000000000000000000080453c9458108451698c51440c002b7fd5455fdb37b0",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := New(engine.New())
+			tc.setup(s)
+			response, err := s.Execute([][]byte{[]byte("DUMP"), []byte(tc.key)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			payload := bulkPayloadFromResponse(t, response)
+			if gotHex := hex.EncodeToString(payload); gotHex != tc.wantHex {
+				t.Fatalf("dump = %s, want %s", gotHex, tc.wantHex)
+			}
+		})
+	}
+}
+
+func TestKeyRestoreRedis82NativeFixtures(t *testing.T) {
+	tests := []struct {
+		name    string
+		hex     string
+		key     string
+		check   []string
+		want    string
+	}{
+		{
+			name: "hash-listpack",
+			hex: "101e1e000000060081610201018162028374776f0481630285746872656506ff0c00db36cf028de770b0",
+			key: "h2",
+			check: []string{"HGETALL", "h2"},
+			want: "*6\r\n$1\r\na\r\n$1\r\n1\r\n$1\r\nb\r\n$3\r\ntwo\r\n$1\r\nc\r\n$5\r\nthree\r\n",
+		},
+		{
+			name: "set-listpack",
+			hex: "141b1b000000030085616c706861068462657461058567616d6d6106ff0c009a7345486301b8e9",
+			key: "ss2",
+			check: []string{"SMEMBERS", "ss2"},
+			want: "*3\r\n$5\r\nalpha\r\n$4\r\nbeta\r\n$5\r\ngamma\r\n",
+		},
+		{
+			name: "set-intset",
+			hex: "0b100200000004000000010002000300e8030c0095c987bb742ffce2",
+			key: "si2",
+			check: []string{"SMEMBERS", "si2"},
+			want: "*4\r\n$1\r\n1\r\n$4\r\n1000\r\n$1\r\n2\r\n$1\r\n3\r\n",
+		},
+		{
+			name: "list-quicklist2",
+			hex: "1201021e1e0000000400836f6e65048374776f048574687265650684666f757205ff0c003c3bb7048e6be326",
+			key: "l2",
+			check: []string{"LRANGE", "l2", "0", "-1"},
+			want: "*4\r\n$3\r\none\r\n$3\r\ntwo\r\n$5\r\nthree\r\n$4\r\nfour\r\n",
+		},
+		{
+			name: "zset-listpack",
+			hex: "112626000000060085746872656506852d332e323506836f6e650483312e35048374776f040201ff0c0083f1147074462567",
+			key: "z2",
+			check: []string{"ZRANGE", "z2", "0", "-1", "WITHSCORES"},
+			want: "*6\r\n$5\r\nthree\r\n$5\r\n-3.25\r\n$3\r\none\r\n$3\r\n1.5\r\n$3\r\ntwo\r\n$1\r\n2\r\n",
+		},
+		{
+			name: "hll-string",
+			hex: "001b48594c4c010000000000000000000080453c9458108451698c51440c002b7fd5455fdb37b0",
+			key: "hll2",
+			check: []string{"PFCOUNT", "hll2"},
+			want: ":3\r\n",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := New(engine.New())
+			payload, err := hex.DecodeString(tc.hex)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.Execute([][]byte{[]byte("RESTORE"), []byte(tc.key), []byte("0"), payload}); err != nil {
+				t.Fatalf("RESTORE: %v", err)
+			}
+			args := make([][]byte, len(tc.check))
+			for i := range tc.check {
+				args[i] = []byte(tc.check[i])
+			}
+			got, err := s.Execute(args)
+			if err != nil {
+				t.Fatalf("check: %v", err)
+			}
+			if string(got) != tc.want {
+				t.Fatalf("check = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
