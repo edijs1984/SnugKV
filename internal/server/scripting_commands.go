@@ -588,3 +588,81 @@ func luaValueToRESP(value lua.LValue) ([]byte, error) {
 		return nil, fmt.Errorf("ERR Lua script returned unsupported type %s", value.Type().String())
 	}
 }
+
+func (s *Server) executeEvalDebug(args [][]byte, runtime *scriptDebugRuntime) ([]byte, error) {
+	keys, argv, err := parseEvalArguments(args)
+	if err != nil {
+		return nil, err
+	}
+
+	cache := scriptCacheForServer(s)
+	source := string(args[1])
+	if err := validateLuaScript(source); err != nil {
+		if strings.HasPrefix(err.Error(), "ERR ") {
+			return nil, err
+		}
+		return nil, fmt.Errorf("ERR Error compiling script (new function): %v", err)
+	}
+	sha := cache.put(source)
+
+	meta, err := parseEvalScriptMetadata(source)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.rejectFlaggedScriptInvocationOOM(meta); err != nil {
+		return nil, err
+	}
+
+	return s.withFlaggedScriptMemoryAdmission(
+		meta,
+		func() ([]byte, error) {
+			if meta.noWrites {
+				return s.runLuaScriptDebug(meta.body, sha, keys, argv, false, runtime)
+			}
+			return s.runLuaScriptDebug(meta.body, sha, keys, argv, !meta.flagged, runtime)
+		},
+	)
+}
+
+func (s *Server) runLuaScriptDebug(
+	source, sha string,
+	keys, argv [][]byte,
+	legacyOOM bool,
+	runtime *scriptDebugRuntime,
+) ([]byte, error) {
+	L := newScriptLuaState()
+	defer L.Close()
+
+	L.SetContext(runtime.ctx)
+	L.SetLineHook(runtime.lineHook())
+
+	L.SetGlobal("KEYS", luaBytesTable(L, keys))
+	L.SetGlobal("ARGV", luaBytesTable(L, argv))
+
+	var legacyState *legacyScriptOOMState
+	if legacyOOM {
+		legacyState = newLegacyScriptOOMState(s)
+		defer legacyState.restore(s)
+		L.SetGlobal("redis", s.luaRedisModuleWithLegacyState(L, legacyState))
+	} else {
+		L.SetGlobal("redis", s.luaRedisModule(L))
+	}
+
+	fn, err := L.LoadString(source)
+	if err != nil {
+		return nil, fmt.Errorf("ERR Error compiling script (new function): %v", err)
+	}
+	L.Push(fn)
+	if err := L.PCall(0, 1, nil); err != nil {
+		if runtime.ctx.Err() != nil {
+			return nil, errors.New("ERR Script debug session cancelled")
+		}
+		if sha == "" {
+			sha = scriptSHA(source)
+		}
+		return nil, fmt.Errorf("ERR Error running script (call to f_%s): %v", sha, err)
+	}
+
+	result := L.Get(-1)
+	return luaValueToRESP(result)
+}
