@@ -118,10 +118,10 @@ tracking/caching only where real clients require it.
   are implemented on persistent library-local Lua VMs.
 - Table-form `redis.register_function()` supports descriptions and the current
   standalone-safe flags `no-writes`, `allow-stale`, `no-cluster`, and
-  `allow-cross-slot-keys`. `allow-oom` is intentionally deferred pending exact
-  scoped memory-admission semantics.
+  `allow-cross-slot-keys`, plus the audited `allow-oom` behavior.
 - `FUNCTION DUMP` / `RESTORE` implement default APPEND plus REPLACE/FLUSH restore
-  policy and checksum validation using the documented versioned `SNUGF001` payload.
+  policy using Redis 8.2-compatible RDB Function payloads, including CRC64/version
+  validation and Redis LZF string encoding/decoding.
 - Function library definitions survive restart when AOF or snapshot persistence is
   configured, using an atomic checksummed sidecar separate from user keyspace data.
 - `FUNCTION STATS` exposes the active Function name, command vector, duration, and
@@ -142,8 +142,12 @@ tracking/caching only where real clients require it.
   `no-writes`, persistent library-local state, LOAD REPLACE, DELETE/FLUSH, and
   FUNCTION LIST metadata. The RESP type for Function flags was corrected to match
   Redis simple-string encoding.
-- Remaining scripting work is `SCRIPT DEBUG`, exact `allow-oom`, exact Redis-RDB
-  Function payload bytes, and deeper command-flag/ACL/OOM parity.
+- Live Function dump audit verified Redis 8.2 -> SnugKV restore and SnugKV -> Redis
+  restore, successful FCALL_RO after both directions, and byte-identical payload
+  output for the shared audited fixture.
+- `SCRIPT DEBUG`, `allow-oom`, and Redis-RDB Function payload compatibility are
+  complete for the audited Redis 8.2 surface; remaining work is deeper optional
+  scripting edge/parity hardening.
 
 ### COPY
 
