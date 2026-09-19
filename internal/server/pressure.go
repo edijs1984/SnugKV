@@ -176,15 +176,29 @@ func (s *Server) executePressureMode(args [][]byte, journalEvictions bool) ([]by
 	// every scripting/container/special-command predicate in the generic router.
 	// GET still enforces Redis WRONGTYPE semantics. Plain SET overwrites any type.
 	if len(args) == 2 && bytes.EqualFold(args[0], []byte("GET")) {
-		if s.nativeContainerKey(string(args[1])) {
+		key := string(args[1])
+		if s.nativeContainerKey(key) {
 			return nil, errWrongType
 		}
-		return s.execute(args)
+		value, found := s.store.Get(key)
+		return optionalBulk(value, found), nil
 	}
 	if len(args) == 3 &&
 		bytes.EqualFold(args[0], []byte("SET")) &&
 		s.store.MaxMemory() == 0 {
-		return s.execute(args)
+		key := string(args[1])
+		applied, _, _, err := s.store.SetWithOptions(
+			key,
+			args[2],
+			engine.SetOptions{},
+		)
+		if err != nil {
+			return nil, err
+		}
+		if applied && s.optimizer != nil {
+			s.optimizer.Queue(key)
+		}
+		return []byte("+OK\r\n"), nil
 	}
 
 	if err := s.rejectDenyOOMCommand(args); err != nil {
