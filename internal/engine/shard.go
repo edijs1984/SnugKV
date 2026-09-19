@@ -141,12 +141,5 @@ func (sh *shard) all() func(func(string, entry) bool) {
 }
 
 func (s *Store) shardFor(key string) *shard {
-	h := uint64(14695981039346656037)
-
-	for i := 0; i < len(key); i++ {
-		h ^= uint64(key[i])
-		h *= 1099511628211
-	}
-
-	return &s.shards[h&uint64(len(s.shards)-1)]
+	return &s.shards[index.Hash(key)&uint64(len(s.shards)-1)]
 }
