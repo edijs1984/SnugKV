@@ -34,13 +34,14 @@ type scriptDebugResume struct {
 }
 
 type scriptDebugEvent struct {
-	line   int
-	depth  int
-	reason string
-	state  *lua.LState
-	result []byte
-	err    error
-	done   bool
+	line     int
+	depth    int
+	reason   string
+	state    *lua.LState
+	messages []string
+	result   []byte
+	err      error
+	done     bool
 }
 
 type scriptDebugRuntime struct {
@@ -49,9 +50,12 @@ type scriptDebugRuntime struct {
 	body       string
 	lineOffset int
 
-	mu          sync.RWMutex
-	current     scriptDebugEvent
-	breakpoints map[int]struct{}
+	mu                       sync.RWMutex
+	current                  scriptDebugEvent
+	breakpoints              map[int]struct{}
+	lastLine                 int
+	pendingRuntimeBreakpoint bool
+	debugMessages            []string
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -133,6 +137,53 @@ func (r *scriptDebugRuntime) breakpointLines() []int {
 	return lines
 }
 
+func (r *scriptDebugRuntime) setLastLine(luaLine int) {
+	r.mu.Lock()
+	r.lastLine = luaLine
+	r.mu.Unlock()
+}
+
+func (r *scriptDebugRuntime) addDebugMessage(values []lua.LValue) {
+	r.mu.Lock()
+	line := r.lastLine + r.lineOffset
+	parts := make([]string, 0, len(values))
+	for _, value := range values {
+		parts = append(parts, scriptDebugValue(value))
+	}
+	r.debugMessages = append(
+		r.debugMessages,
+		fmt.Sprintf("<debug> line %d: %s", line, strings.Join(parts, ", ")),
+	)
+	r.mu.Unlock()
+}
+
+func (r *scriptDebugRuntime) requestRuntimeBreakpoint() {
+	r.mu.Lock()
+	r.pendingRuntimeBreakpoint = true
+	r.mu.Unlock()
+}
+
+func (r *scriptDebugRuntime) takeRuntimeBreakpoint() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.pendingRuntimeBreakpoint {
+		return false
+	}
+	r.pendingRuntimeBreakpoint = false
+	return true
+}
+
+func (r *scriptDebugRuntime) drainDebugMessages() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.debugMessages) == 0 {
+		return nil
+	}
+	out := append([]string(nil), r.debugMessages...)
+	r.debugMessages = r.debugMessages[:0]
+	return out
+}
+
 func (r *scriptDebugRuntime) close() {
 	if r == nil {
 		return
@@ -158,10 +209,11 @@ func (r *scriptDebugRuntime) lineHook() lua.LineHook {
 	pause := func(L *lua.LState, event lua.HookEvent, reason string) bool {
 		select {
 		case r.events <- scriptDebugEvent{
-			line:   event.Line,
-			depth:  event.Depth,
-			reason: reason,
-			state:  L,
+			line:     event.Line,
+			depth:    event.Depth,
+			reason:   reason,
+			state:    L,
+			messages: r.drainDebugMessages(),
 		}:
 		case <-r.ctx.Done():
 			return false
@@ -183,6 +235,7 @@ func (r *scriptDebugRuntime) lineHook() lua.LineHook {
 		if event.Line <= 0 || r.ctx.Err() != nil {
 			return
 		}
+		r.setLastLine(event.Line)
 
 		if !initialized {
 			initialized = true
@@ -191,6 +244,10 @@ func (r *scriptDebugRuntime) lineHook() lua.LineHook {
 		}
 
 		shouldStop := false
+		if r.takeRuntimeBreakpoint() {
+			_ = pause(L, event, "redis.breakpoint() called")
+			return
+		}
 		if r.hasBreakpoint(event.Line) {
 			_ = pause(L, event, "break point")
 			return
@@ -257,14 +314,24 @@ func (c *clientSession) closeScriptDebugRuntime() {
 
 func scriptDebugStopReply(runtime *scriptDebugRuntime, event scriptDebugEvent) []byte {
 	lineNo, line := runtime.displayLine(event.line)
-	return array(
+	items := make([][]byte, 0, len(event.messages)+2)
+	for _, message := range event.messages {
+		items = append(items, []byte("+"+message+"\r\n"))
+	}
+	items = append(items,
 		[]byte(fmt.Sprintf("+* Stopped at %d, stop reason = %s\r\n", lineNo, event.reason)),
 		[]byte(fmt.Sprintf("+-> %d   %s\r\n", lineNo, line)),
 	)
+	return array(items...)
 }
 
-func scriptDebugEndReply(result []byte) []byte {
-	out := array([]byte("+<endsession>\r\n"))
+func scriptDebugEndReply(result []byte, messages ...string) []byte {
+	items := make([][]byte, 0, len(messages)+1)
+	for _, message := range messages {
+		items = append(items, []byte("+"+message+"\r\n"))
+	}
+	items = append(items, []byte("+<endsession>\r\n"))
+	out := array(items...)
 	out = append(out, result...)
 	return out
 }
@@ -328,7 +395,12 @@ func (s *TCPServer) runScriptDebugRuntime(
 	)
 	target.durableMu.Unlock()
 
-	event := scriptDebugEvent{result: result, err: err, done: true}
+	event := scriptDebugEvent{
+		result:   result,
+		err:      err,
+		done:     true,
+		messages: runtime.drainDebugMessages(),
+	}
 	select {
 	case runtime.events <- event:
 	case <-runtime.ctx.Done():
@@ -392,7 +464,7 @@ func (s *TCPServer) beginScriptDebugEval(
 		if event.err != nil {
 			return true, nil, event.err
 		}
-		return true, scriptDebugEndReply(event.result), nil
+		return true, scriptDebugEndReply(event.result, event.messages...), nil
 	}
 	runtime.setCurrent(event)
 	return true, scriptDebugStopReply(runtime, event), nil
@@ -631,7 +703,7 @@ func (s *TCPServer) executeScriptDebugCommand(
 		if event.err != nil {
 			return true, nil, event.err
 		}
-		return true, scriptDebugEndReply(event.result), nil
+		return true, scriptDebugEndReply(event.result, event.messages...), nil
 	}
 
 	runtime.setCurrent(event)
