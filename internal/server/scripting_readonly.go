@@ -97,12 +97,26 @@ func (s *Server) executeEvalReadOnly(args [][]byte, bySHA bool) ([]byte, error) 
 		}
 	} else {
 		if err := validateLuaScript(source); err != nil {
+			if strings.HasPrefix(err.Error(), "ERR ") {
+				return nil, err
+			}
 			return nil, fmt.Errorf("ERR Error compiling script (new function): %v", err)
 		}
 		sha = cache.put(source)
 	}
 
-	return s.runLuaScriptReadOnly(source, sha, keys, argv)
+	meta, err := parseEvalScriptMetadata(source)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.rejectFlaggedScriptInvocationOOM(meta); err != nil {
+		return nil, err
+	}
+	if err := validateReadOnlyEvalMetadata(meta); err != nil {
+		return nil, err
+	}
+
+	return s.runLuaScriptReadOnly(meta.body, sha, keys, argv)
 }
 
 func (s *Server) runLuaScriptReadOnly(source, sha string, keys, argv [][]byte) ([]byte, error) {
