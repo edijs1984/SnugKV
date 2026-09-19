@@ -9,6 +9,8 @@ VALUE_BYTES="${VALUE_BYTES:-64}"
 WORKERS="${WORKERS:-4}"
 PIPELINE="${PIPELINE:-256}"
 RUNS="${RUNS:-3}"
+REDIS_CONTAINER="${REDIS_CONTAINER:-snug-bench-redis}"
+SNUG_CONTAINER="${SNUG_CONTAINER:-snug-bench-snugkv}"
 OUT_DIR="${OUT_DIR:-benchmark-results/redis-vs-snug-$(date +%Y%m%d-%H%M%S)}"
 
 mkdir -p "$OUT_DIR"
@@ -16,14 +18,57 @@ mkdir -p "$OUT_DIR"
 echo "Building rediswirebench..."
 go build -o /tmp/rediswirebench ./cmd/rediswirebench
 
+container_bytes() {
+  local container="$1"
+  if ! docker inspect "$container" >/dev/null 2>&1; then
+    echo 0
+    return
+  fi
+  local raw
+  raw="$(docker stats --no-stream --format '{{.MemUsage}}' "$container" | awk -F/ '{gsub(/^ +| +$/, "", $1); print $1}')"
+  python3 - "$raw" <<'PY'
+import re, sys
+s=sys.argv[1].strip()
+m=re.fullmatch(r"([0-9.]+)([KMGTP]?i?B)", s)
+if not m:
+    print(0); raise SystemExit
+n=float(m.group(1)); u=m.group(2)
+mult={"B":1,"KB":1000,"MB":1000**2,"GB":1000**3,"TB":1000**4,
+      "KiB":1024,"MiB":1024**2,"GiB":1024**3,"TiB":1024**4}
+print(int(n*mult[u]))
+PY
+}
+
+annotate_memory() {
+  local path="$1" before="$2" after="$3"
+  python3 - "$path" "$before" "$after" <<'PY'
+import json, sys
+p=sys.argv[1]
+with open(p) as f: d=json.load(f)
+b=int(sys.argv[2]); a=int(sys.argv[3])
+d["container_memory_before"]=b
+d["container_memory_after"]=a
+d["container_memory_delta"]=max(0,a-b)
+with open(p,"w") as f: json.dump(d,f,separators=(",",":"))
+PY
+}
+
 run_one() {
   local name="$1"
   local addr="$2"
   local run="$3"
+  local container="$4"
+
+  redis-cli -h "${addr%:*}" -p "${addr##*:}" FLUSHDB >/dev/null
+  sleep 0.2
+  local mem_before mem_after
+  mem_before="$(container_bytes "$container")"
 
   echo
   echo "===== $name run $run/$RUNS: load ====="
-  /tmp/rediswirebench     -server "$name"     -addr "$addr"     -workload load     -keys "$KEYS"     -value-bytes "$VALUE_BYTES"     -workers "$WORKERS"     -pipeline "$PIPELINE"     -reset     > "$OUT_DIR/${name}-run${run}-load.json"
+  /tmp/rediswirebench     -server "$name"     -addr "$addr"     -workload load     -keys "$KEYS"     -value-bytes "$VALUE_BYTES"     -workers "$WORKERS"     -pipeline "$PIPELINE"     > "$OUT_DIR/${name}-run${run}-load.json"
+  mem_after="$(container_bytes "$container")"
+  annotate_memory "$OUT_DIR/${name}-run${run}-load.json" "$mem_before" "$mem_after"
   cat "$OUT_DIR/${name}-run${run}-load.json"
 
   for workload in get mixed ttl; do
@@ -42,8 +87,8 @@ echo "keys=$KEYS ops=$OPS value_bytes=$VALUE_BYTES workers=$WORKERS pipeline=$PI
 echo "results=$OUT_DIR"
 
 for run in $(seq 1 "$RUNS"); do
-  run_one redis "$REDIS_ADDR" "$run"
-  run_one snugkv "$SNUG_ADDR" "$run"
+  run_one redis "$REDIS_ADDR" "$run" "$REDIS_CONTAINER"
+  run_one snugkv "$SNUG_ADDR" "$run" "$SNUG_CONTAINER"
 done
 
 python3 - "$OUT_DIR" <<'PY'
@@ -73,6 +118,8 @@ for (server, workload), items in sorted(groups.items()):
     if workload == "load":
         entry["bytes_per_key_delta_median"] = statistics.median(x["bytes_per_key_delta"] for x in items)
         entry["used_memory_after_median"] = statistics.median(x["used_memory_after"] for x in items)
+        entry["container_memory_after_median"] = statistics.median(x.get("container_memory_after",0) for x in items)
+        entry["container_memory_delta_median"] = statistics.median(x.get("container_memory_delta",0) for x in items)
     summary.append(entry)
 
 with (root / "summary.json").open("w") as f:
