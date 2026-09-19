@@ -39,7 +39,7 @@ for script results. Redis Functions include load/list/delete/flush,
 `FCALL`/`FCALL_RO`, DUMP/RESTORE, restart persistence, STATS/HELP, KILL with
 Redis-style NOTBUSY/UNKILLABLE safety semantics, and the standalone-safe flags
 `no-writes`, `allow-stale`, `no-cluster`, and `allow-cross-slot-keys`.
-`SCRIPT DEBUG` now has a Redis-compatible connection-scoped YES/SYNC/NO + CONTINUE foundation; full stepping/breakpoints remain pending because GopherLua lacks debug hooks. Redis 8.2 Function `allow-oom`, Lua shebang/OOM flag semantics, and Lua eviction behavior for `allkeys-lru` / `volatile-lru` are implemented and audited. CONFIG now supports GET/SET/RESETSTAT/REWRITE/HELP for SnugKV-backed settings, live maxmemory/maxmemory-policy/maxclients/appendfsync mutation, Redis-shaped COMMAND metadata/docs, atomic JSON rewrite, and restart persistence. SnugKV intentionally reports one logical database and advertises only real settings/policies.
+`SCRIPT DEBUG` now implements the audited Redis-compatible LDB session, including stepping, next, breakpoints, listing, stack/variable inspection, redis.debug(), redis.breakpoint(), protocol errors, and end-session behavior. Redis 8.2 Function `allow-oom`, Lua shebang/OOM flag semantics, and Lua eviction behavior for `allkeys-lru` / `volatile-lru` are implemented and audited. CONFIG now supports GET/SET/RESETSTAT/REWRITE/HELP for SnugKV-backed settings, live maxmemory/maxmemory-policy/maxclients/appendfsync mutation, Redis-shaped COMMAND metadata/docs, atomic JSON rewrite, and restart persistence. SnugKV intentionally reports one logical database and advertises only real settings/policies.
 
 The current CLIENT slice includes `ID`, `GETNAME`, `SETNAME`, `SETINFO`, `INFO`,
 `LIST`, `LIST ID`, `LIST TYPE NORMAL`, `KILL ID [SKIPME]`, `UNBLOCK
@@ -152,9 +152,9 @@ and 24-byte arena segment descriptors.
 - [x] `FUNCTION KILL` with `NOTBUSY`, safe cancellation before the first write boundary, and `UNKILLABLE` after it.
 - [x] Standalone-safe Function flags: `no-writes`, `allow-stale`, `no-cluster`, `allow-cross-slot-keys`.
 - [x] Live Redis differential audit for read-only scripting and Functions core behavior through LIST metadata formatting.
-- [ ] Full `SCRIPT DEBUG` LDB semantics. YES/SYNC/NO + CONTINUE are implemented and Redis-wire audited; stepping/breakpoints/inspection remain pending. See `docs/SCRIPT-DEBUG-COMPATIBILITY.md`.
+- [x] Redis-compatible `SCRIPT DEBUG` LDB semantics for the audited command/wire surface. See `docs/SCRIPT-DEBUG-COMPATIBILITY.md`.
 - [x] Exact scoped `allow-oom` memory-admission semantics.
-- [ ] Exact Redis RDB byte compatibility for `FUNCTION DUMP` / `RESTORE` payloads.
+- [x] Redis 8.2-compatible RDB payloads for `FUNCTION DUMP` / `RESTORE`, including LZF decoding/encoding, CRC64/version validation, two-way cross-restore, and byte-identical audited fixture output.
 - [x] Dynamic scripting/Function/SORT ACL audit and command-flag/OOM admission parity audit against Redis 8.2.
 - [x] Redis 8.2 Lua shebang/OOM flag semantics for legacy scripts, `allow-oom`, `no-writes`, `_RO`, `SCRIPT LOAD`, and `EVALSHA`; audit: `docs/LUA-OOM-FLAGS-DIFFERENTIAL-AUDIT.md`.
 - [x] Eviction-policy-specific Lua scripting behavior under `allkeys-lru` / `volatile-lru`; audit: `docs/LUA-EVICTION-POLICY-DIFFERENTIAL-AUDIT.md`.
@@ -294,7 +294,7 @@ Details: `docs/ACL-COMPATIBILITY.md`.
 - [x] `SORT` / `SORT_RO`.
 - [x] `COPY` for DB 0 with `REPLACE`, TTL/type preservation, durability, transactions, OOM safety, and direct Redis differential audit.
 - [x] CLIENT management/tooling slice through LIST filters, KILL, and UNBLOCK with direct Redis differential audit.
-- [ ] Remaining scripting parity/hardening: `SCRIPT DEBUG` and optional Redis-RDB Function payload compatibility.
+- [x] Audited `SCRIPT DEBUG` LDB and Redis-RDB Function payload compatibility.
 - [x] Lua shebang/OOM flags (`allow-oom`, `no-writes`) and legacy first-write OOM semantics.
 - [x] Redis 8.2 Function `allow-oom` semantics, including OOM entry gating,
   `no-writes` interaction, scoped memory-admission bypass, and live differential audit.
