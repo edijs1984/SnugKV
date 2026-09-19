@@ -100,3 +100,26 @@ Completing full LDB semantics requires either:
 
 Until then, SnugKV advertises the real continue-only LDB foundation rather than
 claiming full Redis debugger parity.
+
+
+## Full LDB Redis 8.2 oracle
+
+The full debugger command protocol has now been audited against Redis 8.2 with:
+
+```
+compat/scripting/script-debug-ldb-wire.py
+```
+
+The oracle covers step, next, breakpoint management, source listing, stack trace,
+local-variable inspection, `redis.debug()`, `redis.breakpoint()`, invalid
+debugger commands, and end-session framing.
+
+Implementation details and the controlled GopherLua v1.1.2 hook-fork design are
+recorded in:
+
+```
+docs/SCRIPT-DEBUG-LDB-IMPLEMENTATION.md
+```
+
+A historical 2019 hook fork was inspected only as design evidence and is not a
+suitable runtime dependency for SnugKV.
