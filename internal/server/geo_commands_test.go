@@ -1,6 +1,7 @@
 package server
 
 import (
+	"math"
 	"snugkv/internal/engine"
 	"strings"
 	"testing"
@@ -576,12 +577,38 @@ func TestLegacyGeoRadiusLastStoreOptionWins(t *testing.T) {
 	got := string(response)
 	for _, want := range []string{
 		"Catania",
-		"56.4412578701582",
 		"Palermo",
-		"190.44242984775784",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("dual STOREDIST missing %q in %q", want, got)
 		}
+	}
+
+	cataniaScore, found, err := s.store.ZSetScore(
+		"geo:dist2",
+		[]byte("Catania"),
+	)
+	if err != nil || !found ||
+		math.Abs(cataniaScore-56.4412578701582) > 1e-12 {
+		t.Fatalf(
+			"Catania STOREDIST score = %.17g, found=%v, err=%v",
+			cataniaScore,
+			found,
+			err,
+		)
+	}
+
+	palermoScore, found, err := s.store.ZSetScore(
+		"geo:dist2",
+		[]byte("Palermo"),
+	)
+	if err != nil || !found ||
+		math.Abs(palermoScore-190.44242984775784) > 1e-12 {
+		t.Fatalf(
+			"Palermo STOREDIST score = %.17g, found=%v, err=%v",
+			palermoScore,
+			found,
+			err,
+		)
 	}
 }
