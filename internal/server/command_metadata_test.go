@@ -868,6 +868,9 @@ func TestCommandInfoParentHasSupportedSubcommands(t *testing.T) {
 		[]byte("$11\r\nclient|list\r\n"),
 		[]byte("$11\r\nclient|kill\r\n"),
 		[]byte("$14\r\nclient|unblock\r\n"),
+		[]byte("$15\r\nclient|tracking\r\n"),
+		[]byte("$14\r\nclient|caching\r\n"),
+		[]byte("$15\r\nclient|getredir\r\n"),
 	} {
 		if !bytes.Contains(reply, want) {
 			t.Fatalf(
@@ -878,15 +881,6 @@ func TestCommandInfoParentHasSupportedSubcommands(t *testing.T) {
 		}
 	}
 
-	if bytes.Contains(
-		reply,
-		[]byte("client|tracking"),
-	) {
-		t.Fatalf(
-			"unsupported CLIENT TRACKING advertised: %q",
-			reply,
-		)
-	}
 }
 
 func TestCommandInfoSubcommandLeaf(t *testing.T) {
