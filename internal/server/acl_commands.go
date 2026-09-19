@@ -113,6 +113,16 @@ func (s *Server) authorizeConnectionCommand(
 			"NOAUTH Authentication required.",
 		)
 	}
+	// Common unrestricted-user fast path. The default Redis-compatible user
+	// normally grants all commands, keys and channels with no selectors. In
+	// that case there is nothing command-specific to evaluate.
+	if user.AllCommands &&
+		user.AllKeys &&
+		user.AllChannels &&
+		len(user.Selectors) == 0 {
+		s.acl.mu.RUnlock()
+		return nil
+	}
 	defer s.acl.mu.RUnlock()
 
 	if aclUserAllowsCommand(user, args) {
