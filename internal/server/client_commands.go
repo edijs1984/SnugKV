@@ -46,7 +46,7 @@ type clientSession struct {
 	trackingPush func([]byte) error
 
 	scriptDebugMode    scriptDebugMode
-	scriptDebugPending *scriptDebugPending
+	scriptDebugRuntime *scriptDebugRuntime
 }
 
 func newClientSession(

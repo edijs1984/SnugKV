@@ -153,3 +153,269 @@ func TestScriptDebugSyncContinuePersists(t *testing.T) {
 		t.Fatalf("debug:counter = %q ok=%v", value, ok)
 	}
 }
+
+
+func TestScriptDebugStepAndNextUsePausedVM(t *testing.T) {
+	_, conn, reader := newScriptDebugTCP(t)
+
+	source := "local x = 1\n" +
+		"x = x + 1\n" +
+		"return x"
+
+	writeRESPCommand(t, conn, "SCRIPT", "DEBUG", "YES")
+	readExactReply(t, reader, "+OK\r\n")
+
+	writeRESPCommand(t, conn, "EVAL", source, "0")
+	readExactReply(
+		t,
+		reader,
+		"*2\r\n"+
+			"+* Stopped at 1, stop reason = step over\r\n"+
+			"+-> 1   local x = 1\r\n",
+	)
+
+	writeRESPCommand(t, conn, "S")
+	readExactReply(
+		t,
+		reader,
+		"*2\r\n"+
+			"+* Stopped at 2, stop reason = step over\r\n"+
+			"+-> 2   x = x + 1\r\n",
+	)
+
+	writeRESPCommand(t, conn, "N")
+	readExactReply(
+		t,
+		reader,
+		"*2\r\n"+
+			"+* Stopped at 3, stop reason = step over\r\n"+
+			"+-> 3   return x\r\n",
+	)
+
+	writeRESPCommand(t, conn, "C")
+	readExactReply(
+		t,
+		reader,
+		"*1\r\n+<endsession>\r\n:2\r\n",
+	)
+}
+
+
+func TestScriptDebugInspectAndBreakpointTCP(t *testing.T) {
+	_, conn, reader := newScriptDebugTCP(t)
+
+	source := "local x = 10\n" +
+		"local y = x + 5\n" +
+		"return y"
+
+	writeRESPCommand(t, conn, "SCRIPT", "DEBUG", "YES")
+	readExactReply(t, reader, "+OK\r\n")
+
+	writeRESPCommand(t, conn, "EVAL", source, "0")
+	readExactReply(
+		t,
+		reader,
+		"*2\r\n"+
+			"+* Stopped at 1, stop reason = step over\r\n"+
+			"+-> 1   local x = 10\r\n",
+	)
+
+	writeRESPCommand(t, conn, "P", "x")
+	readExactReply(t, reader, "*1\r\n+No such variable.\r\n")
+
+	writeRESPCommand(t, conn, "T")
+	readExactReply(
+		t,
+		reader,
+		"*2\r\n"+
+			"+In top level:\r\n"+
+			"+-> 1   local x = 10\r\n",
+	)
+
+	writeRESPCommand(t, conn, "L")
+	readExactReply(
+		t,
+		reader,
+		"*3\r\n"+
+			"+-> 1   local x = 10\r\n"+
+			"+   2   local y = x + 5\r\n"+
+			"+   3   return y\r\n",
+	)
+
+	writeRESPCommand(t, conn, "S")
+	readExactReply(
+		t,
+		reader,
+		"*2\r\n"+
+			"+* Stopped at 2, stop reason = step over\r\n"+
+			"+-> 2   local y = x + 5\r\n",
+	)
+
+	writeRESPCommand(t, conn, "P", "x")
+	readExactReply(t, reader, "*1\r\n+<value> 10\r\n")
+
+	writeRESPCommand(t, conn, "B", "3")
+	readExactReply(
+		t,
+		reader,
+		"*2\r\n"+
+			"+-> 2   local y = x + 5\r\n"+
+			"+  #3   return y\r\n",
+	)
+
+	writeRESPCommand(t, conn, "C")
+	readExactReply(
+		t,
+		reader,
+		"*2\r\n"+
+			"+* Stopped at 3, stop reason = break point\r\n"+
+			"+->#3   return y\r\n",
+	)
+
+	writeRESPCommand(t, conn, "P", "y")
+	readExactReply(t, reader, "*1\r\n+<value> 15\r\n")
+
+	writeRESPCommand(t, conn, "C")
+	readExactReply(t, reader, "*1\r\n+<endsession>\r\n:15\r\n")
+}
+
+
+func TestScriptDebugRedisDebugAndBreakpointTCP(t *testing.T) {
+	_, conn, reader := newScriptDebugTCP(t)
+
+	source := "local x = 10\n" +
+		"redis.debug('hello', x)\n" +
+		"redis.breakpoint()\n" +
+		"local y = x + 5\n" +
+		"return y"
+
+	writeRESPCommand(t, conn, "SCRIPT", "DEBUG", "YES")
+	readExactReply(t, reader, "+OK\r\n")
+
+	writeRESPCommand(t, conn, "EVAL", source, "0")
+	readExactReply(
+		t,
+		reader,
+		"*2\r\n"+
+			"+* Stopped at 1, stop reason = step over\r\n"+
+			"+-> 1   local x = 10\r\n",
+	)
+
+	writeRESPCommand(t, conn, "C")
+	readExactReply(
+		t,
+		reader,
+		"*3\r\n"+
+			"+<debug> line 2: \"hello\", 10\r\n"+
+			"+* Stopped at 4, stop reason = redis.breakpoint() called\r\n"+
+			"+-> 4   local y = x + 5\r\n",
+	)
+
+	writeRESPCommand(t, conn, "P", "x")
+	readExactReply(t, reader, "*1\r\n+<value> 10\r\n")
+
+	writeRESPCommand(t, conn, "C")
+	readExactReply(
+		t,
+		reader,
+		"*1\r\n+<endsession>\r\n:15\r\n",
+	)
+}
+
+
+func TestScriptDebugRedisStatementStepAndBreakpointFormattingTCP(t *testing.T) {
+	_, conn, reader := newScriptDebugTCP(t)
+
+	source := "local x = 10\n" +
+		"local function add(a, b)\n" +
+		"  local c = a + b\n" +
+		"  return c\n" +
+		"end\n" +
+		"return add(x, 5)"
+
+	writeRESPCommand(t, conn, "SCRIPT", "DEBUG", "YES")
+	readExactReply(t, reader, "+OK\r\n")
+
+	writeRESPCommand(t, conn, "EVAL", source, "0")
+	readExactReply(
+		t,
+		reader,
+		"*2\r\n"+
+			"+* Stopped at 1, stop reason = step over\r\n"+
+			"+-> 1   local x = 10\r\n",
+	)
+
+	writeRESPCommand(t, conn, "S")
+	readExactReply(
+		t,
+		reader,
+		"*2\r\n"+
+			"+* Stopped at 5, stop reason = step over\r\n"+
+			"+-> 5   end\r\n",
+	)
+
+	writeRESPCommand(t, conn, "B", "4")
+	readExactReply(
+		t,
+		reader,
+		"*3\r\n"+
+			"+   3     local c = a + b\r\n"+
+			"+  #4     return c\r\n"+
+			"+-> 5   end\r\n",
+	)
+
+	writeRESPCommand(t, conn, "B")
+	readExactReply(
+		t,
+		reader,
+		"*2\r\n"+
+			"+1 breakpoints set:\r\n"+
+			"+  #4     return c\r\n",
+	)
+
+	writeRESPCommand(t, conn, "B", "-4")
+	readExactReply(t, reader, "*1\r\n+Breakpoint removed.\r\n")
+
+	writeRESPCommand(t, conn, "C")
+	readExactReply(t, reader, "*1\r\n+<endsession>\r\n:15\r\n")
+}
+
+
+func TestScriptDebugErrorProtocolTCP(t *testing.T) {
+	_, conn, reader := newScriptDebugTCP(t)
+
+	writeRESPCommand(t, conn, "SCRIPT", "DEBUG", "YES")
+	readExactReply(t, reader, "+OK\r\n")
+
+	writeRESPCommand(t, conn, "EVAL", "local a=1\nreturn a", "0")
+	readExactReply(
+		t,
+		reader,
+		"*2\r\n"+
+			"+* Stopped at 1, stop reason = step over\r\n"+
+			"+-> 1   local a=1\r\n",
+	)
+
+	writeRESPCommand(t, conn, "QWERTY")
+	readExactReply(
+		t,
+		reader,
+		"*1\r\n+<error> Unknown Redis Lua debugger command or wrong number of arguments.\r\n",
+	)
+
+	writeRESPCommand(t, conn, "P", ")")
+	readExactReply(
+		t,
+		reader,
+		"*1\r\n+<error> Unknown Redis Lua debugger command or wrong number of arguments.\r\n",
+	)
+
+	writeRESPCommand(t, conn, "")
+	readExactReply(
+		t,
+		reader,
+		"*1\r\n"+
+			"+<endsession>\r\n"+
+			"-ERR protocol error script: fd5b805c25b880c80ea924c9e4f8797d27ae2ba3, on @user_script:1.\r\n",
+	)
+}

@@ -12,9 +12,20 @@ Connection-scoped:
 
 The next `EVAL` on that connection enters a Redis-shaped LDB session.
 
-Supported debugger command:
+Supported debugger commands:
 
 - `C` / `CONTINUE`
+- `S` / `STEP`
+- `N` / `NEXT`
+- `B` breakpoint management
+- `L` source listing
+- `T` stack trace
+- `P <name>` local-variable inspection
+
+Debugger-only Redis helpers:
+
+- `redis.debug(...)`
+- `redis.breakpoint()`
 
 ### YES
 
@@ -69,34 +80,48 @@ Redis 8.2 behavior confirmed:
 - YES rolls dataset writes back
 - SYNC retains dataset writes
 
-## Not implemented
+## Full LDB status
 
-Full Redis LDB stepping remains intentionally incomplete:
+Full LDB execution is implemented on a persistent paused Lua VM using a
+SnugKV-controlled GopherLua v1.1.2 fork with a host line-hook API.
 
-- `S` / step
-- `N` / next
-- `B` / breakpoints
-- `L` / source listing
-- `T` / stack/backtrace
-- variable inspection
-- `redis.debug()` streaming
-- `redis.breakpoint()`
+The implementation covers:
 
-Redis 8.2 wire behavior for these commands is captured in:
+- real VM suspension and resume;
+- step and next semantics;
+- line breakpoints;
+- source listing and top-level stack traces;
+- local-variable inspection at hook suspension points;
+- `redis.debug()` output;
+- `redis.breakpoint()` runtime stops;
+- Redis-shaped invalid-command replies;
+- Redis protocol-error end-session behavior, including connection close.
+
+The debugger remains connection-scoped. `YES` runs against the disposable
+logical clone and `SYNC` runs against the real server.
+
+## Full LDB Redis 8.2 oracle
+
+The full debugger command protocol has now been audited against Redis 8.2 with:
 
 ```
-compat/scripting/script-debug-commands-wire.py
+compat/scripting/script-debug-ldb-wire.py
 ```
 
-The current embedded Lua runtime is GopherLua v1.1.2. GopherLua does not implement
-Lua debug hooks, which are the mechanism required for correct line-by-line
-suspension during an already-running script. SnugKV therefore does not fake
-stepping by merely walking source text.
+The oracle covers step, next, breakpoint management, source listing, stack trace,
+local-variable inspection, `redis.debug()`, `redis.breakpoint()`, invalid
+debugger commands, protocol-error connection teardown, and end-session framing.
 
-Completing full LDB semantics requires either:
+For the audited Redis 8.2 session, SnugKV now produces byte-for-byte identical
+wire output. The only textual difference in the harness output is the target
+port printed by the harness itself (`6390` for Redis, `6380` for SnugKV).
 
-1. a Lua VM with usable line/instruction debug hooks; or
-2. a maintained GopherLua fork that adds equivalent hook support.
+Implementation details and the controlled GopherLua v1.1.2 hook-fork design are
+recorded in:
 
-Until then, SnugKV advertises the real continue-only LDB foundation rather than
-claiming full Redis debugger parity.
+```
+docs/SCRIPT-DEBUG-LDB-IMPLEMENTATION.md
+```
+
+A historical 2019 hook fork was inspected only as design evidence and is not a
+suitable runtime dependency for SnugKV.

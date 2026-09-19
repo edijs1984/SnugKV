@@ -307,14 +307,37 @@ func (s *Server) luaRedisModuleWithLegacyState(
 	L *lua.LState,
 	state *legacyScriptOOMState,
 ) *lua.LTable {
+	return s.luaRedisModuleWithDebugger(L, state, nil)
+}
+
+func (s *Server) luaRedisModuleWithDebugger(
+	L *lua.LState,
+	state *legacyScriptOOMState,
+	runtime *scriptDebugRuntime,
+) *lua.LTable {
 	module := L.NewTable()
-	L.SetFuncs(module, map[string]lua.LGFunction{
+	funcs := map[string]lua.LGFunction{
 		"call":         s.luaRedisCallWithLegacyOOM(false, state),
 		"pcall":        s.luaRedisCallWithLegacyOOM(true, state),
 		"error_reply":  luaRedisErrorReply,
 		"status_reply": luaRedisStatusReply,
 		"sha1hex":      luaRedisSHA1Hex,
-	})
+	}
+	if runtime != nil {
+		funcs["debug"] = func(L *lua.LState) int {
+			values := make([]lua.LValue, 0, L.GetTop())
+			for i := 1; i <= L.GetTop(); i++ {
+				values = append(values, L.Get(i))
+			}
+			runtime.addDebugMessage(values)
+			return 0
+		}
+		funcs["breakpoint"] = func(L *lua.LState) int {
+			runtime.requestRuntimeBreakpoint()
+			return 0
+		}
+	}
+	L.SetFuncs(module, funcs)
 	return module
 }
 
@@ -587,4 +610,82 @@ func luaValueToRESP(value lua.LValue) ([]byte, error) {
 	default:
 		return nil, fmt.Errorf("ERR Lua script returned unsupported type %s", value.Type().String())
 	}
+}
+
+func (s *Server) executeEvalDebug(args [][]byte, runtime *scriptDebugRuntime) ([]byte, error) {
+	keys, argv, err := parseEvalArguments(args)
+	if err != nil {
+		return nil, err
+	}
+
+	cache := scriptCacheForServer(s)
+	source := string(args[1])
+	if err := validateLuaScript(source); err != nil {
+		if strings.HasPrefix(err.Error(), "ERR ") {
+			return nil, err
+		}
+		return nil, fmt.Errorf("ERR Error compiling script (new function): %v", err)
+	}
+	sha := cache.put(source)
+
+	meta, err := parseEvalScriptMetadata(source)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.rejectFlaggedScriptInvocationOOM(meta); err != nil {
+		return nil, err
+	}
+
+	return s.withFlaggedScriptMemoryAdmission(
+		meta,
+		func() ([]byte, error) {
+			if meta.noWrites {
+				return s.runLuaScriptDebug(meta.body, sha, keys, argv, false, runtime)
+			}
+			return s.runLuaScriptDebug(meta.body, sha, keys, argv, !meta.flagged, runtime)
+		},
+	)
+}
+
+func (s *Server) runLuaScriptDebug(
+	source, sha string,
+	keys, argv [][]byte,
+	legacyOOM bool,
+	runtime *scriptDebugRuntime,
+) ([]byte, error) {
+	L := newScriptLuaState()
+	defer L.Close()
+
+	L.SetContext(runtime.ctx)
+	L.SetLineHook(runtime.lineHook())
+
+	L.SetGlobal("KEYS", luaBytesTable(L, keys))
+	L.SetGlobal("ARGV", luaBytesTable(L, argv))
+
+	var legacyState *legacyScriptOOMState
+	if legacyOOM {
+		legacyState = newLegacyScriptOOMState(s)
+		defer legacyState.restore(s)
+		L.SetGlobal("redis", s.luaRedisModuleWithDebugger(L, legacyState, runtime))
+	} else {
+		L.SetGlobal("redis", s.luaRedisModuleWithDebugger(L, nil, runtime))
+	}
+
+	fn, err := L.LoadString(source)
+	if err != nil {
+		return nil, fmt.Errorf("ERR Error compiling script (new function): %v", err)
+	}
+	L.Push(fn)
+	if err := L.PCall(0, 1, nil); err != nil {
+		if runtime.ctx.Err() != nil {
+			return nil, errors.New("ERR Script debug session cancelled")
+		}
+		if sha == "" {
+			sha = scriptSHA(source)
+		}
+		return nil, fmt.Errorf("ERR Error running script (call to f_%s): %v", sha, err)
+	}
+
+	result := L.Get(-1)
+	return luaValueToRESP(result)
 }
