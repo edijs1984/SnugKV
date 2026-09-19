@@ -393,10 +393,10 @@ boundary: it can cancel EVAL/EVALSHA/EVAL_RO/EVALSHA_RO before a writable nested
 command is dispatched, returns `UNKILLABLE` after the write boundary, and returns
 `NOTBUSY` when idle. See `docs/SCRIPT-KILL.md`.
 
-Payload compatibility boundary: SnugKV currently uses its own versioned
-`SNUGF001` Function dump payload rather than Redis RDB Function bytes. Redis and
-SnugKV Function DUMP payloads are therefore not cross-restorable yet. See
-`docs/FUNCTION-DUMP-RESTORE.md`.
+`FUNCTION DUMP` / `RESTORE` use Redis 8.2-compatible Function RDB payloads,
+including the RDB version/CRC64 trailer and Redis LZF string encoding. Live audit
+verified cross-restore in both directions and byte-identical dump output for the
+shared audited fixture. See `docs/FUNCTION-DUMP-RESTORE.md`.
 
 Current scripting/Functions boundaries:
 
@@ -404,11 +404,10 @@ Current scripting/Functions boundaries:
 - filesystem/process Lua libraries are not exposed;
 - blocking commands, connection/subscription state, transaction commands, nested
   EVAL/SCRIPT, and SnugKV admin commands are rejected from `redis.call`/`redis.pcall`;
-- `SCRIPT DEBUG` is intentionally not implemented until real Redis LDB-style
-  semantics are supported;
+- `SCRIPT DEBUG` implements the audited Redis-compatible LDB wire/session surface;
 - Function flags supported for current standalone semantics are `no-writes`,
   `allow-stale`, `no-cluster`, and `allow-cross-slot-keys`;
-- `allow-oom` remains deferred pending exact scoped memory-admission semantics;
+- Redis 8.2 `allow-oom` admission semantics are implemented for the audited standalone surface;
 - full Redis scripting command-flag/ACL/OOM parity is not implemented;
 - SnugKV does not claim Redis's exact Lua VM implementation details or every
   scripting edge-case yet.
@@ -517,7 +516,6 @@ Prioritized backlog:
 3. Migration/transfer scope beyond single-database `COPY`.
 4. Optional RESP3 client-library smoke coverage and attribute-frame support if required.
 5. Advanced CLIENT tracking/caching/redirection features where real clients require them.
-6. Optional Redis-RDB byte compatibility for Function DUMP/RESTORE payloads.
 7. Deprecated `GEORADIUS*` aliases if legacy client compatibility justifies them.
 8. Replication/failover/cluster only after the single-node compatibility target is mature.
 
