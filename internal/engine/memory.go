@@ -3,6 +3,7 @@ package engine
 import (
 	"bytes"
 	"errors"
+	"snugkv/internal/arena"
 	"snugkv/internal/codec"
 	"snugkv/internal/codec/jsonshape"
 	"sync"
