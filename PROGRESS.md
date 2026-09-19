@@ -1,3 +1,12 @@
+## Redis key-level DUMP / RESTORE
+
+- Added Redis 8.2-compatible key payloads with RDB version 12 and CRC64 validation.
+- Live two-way Redis 8.2 cross-restore is verified for STRING, HyperLogLog, HASH, SET, LIST, ZSET, and STREAM.
+- Audited STRING/HASH/SET/LIST/ZSET/HLL fixtures produce byte-identical payloads in both implementations.
+- STREAM live-entry payloads are byte-identical; Redis STREAM payloads containing deleted tombstones restore semantically into SnugKV with last-generated ID, max-deleted-entry-id, entries-added, consumer groups, consumers, and PEL state preserved.
+- SnugKV does not retain deleted stream field/value tombstone payloads, so post-XDEL re-dumps are not claimed byte-identical.
+- Audit harnesses live under `compat/keyspace/`; details: `docs/DUMP-RESTORE-COMPATIBILITY.md`.
+
 
 
 ## ACL compatibility completion
