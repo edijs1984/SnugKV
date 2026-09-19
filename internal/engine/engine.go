@@ -226,47 +226,6 @@ func (s *Store) GetString(key string) (value []byte, found bool, wrongType bool)
 
 	return s.decode(sh, e), true, false
 }
-// AppendStringValue appends a Redis string value directly into dst while
-// holding the owning shard lock. Raw values are copied exactly once from the
-// arena into caller-owned memory. Encoded values preserve the existing decode
-// path. wrongType is true for native container values.
-func (s *Store) AppendStringValue(key string, dst []byte) (out []byte, found bool, wrongType bool) {
-	sh := s.shardFor(key)
-	sh.mu.Lock()
-	defer sh.mu.Unlock()
-
-	e, ok := sh.get(key)
-	if !ok || sh.expired(key, e, s.now()) {
-		return dst, false, false
-	}
-	if isNativeContainerType(e.valueType) {
-		return dst, false, true
-	}
-
-	if s.shouldTrackActivity(e) && e.entryMeta != nil {
-		now := s.now()
-		meta := e.entryMeta
-		if now.Sub(meta.lastAccess.Time()) > time.Minute {
-			meta.reads = 0
-		}
-		meta.lastAccess = activityStampOf(now)
-		if meta.reads < ^uint8(0) {
-			meta.reads++
-		}
-		sh.set(key, e)
-	}
-
-	if e.codecID == codec.Raw {
-		value := sh.encoded(e)
-		if len(value) != int(e.rawLength) {
-			panic("raw codec length invariant")
-		}
-		return append(dst, value...), true, false
-	}
-
-	return append(dst, s.decode(sh, e)...), true, false
-}
-
 func (s *Store) Delete(key string) bool {
 	sh := s.shardFor(key)
 	sh.mu.Lock()

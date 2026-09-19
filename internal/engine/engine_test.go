@@ -55,22 +55,6 @@ func TestIncrBasic(t *testing.T) {
 }
 
 
-func TestAppendStringValueRaw(t *testing.T) {
-	store := New()
-	if err := store.Set("key", []byte("value"), 0); err != nil {
-		t.Fatal(err)
-	}
-
-	dst := []byte("prefix:")
-	out, found, wrongType := store.AppendStringValue("key", dst)
-	if wrongType || !found {
-		t.Fatalf("found=%t wrongType=%t", found, wrongType)
-	}
-	if got, want := string(out), "prefix:value"; got != want {
-		t.Fatalf("out=%q want=%q", got, want)
-	}
-}
-
 func TestGetStringRejectsStream(t *testing.T) {
 	store := New()
 	if _, _, err := store.StreamAdd(
@@ -84,14 +68,5 @@ func TestGetStringRejectsStream(t *testing.T) {
 
 	if _, found, wrongType := store.GetString("events"); found || !wrongType {
 		t.Fatalf("GetString stream found=%t wrongType=%t", found, wrongType)
-	}
-
-	dst := []byte("prefix:")
-	out, found, wrongType := store.AppendStringValue("events", dst)
-	if found || !wrongType {
-		t.Fatalf("AppendStringValue stream found=%t wrongType=%t", found, wrongType)
-	}
-	if string(out) != "prefix:" {
-		t.Fatalf("AppendStringValue modified dst on wrong type: %q", out)
 	}
 }
