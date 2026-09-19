@@ -16,7 +16,7 @@ IMAGE="${SNUG_IMAGE:-snugkv-bench:local}"
 
 docker network create "$NETWORK" >/dev/null 2>&1 || true
 
-docker rm -f "$REDIS_NAME" "$SNUG_RAW_NAME" "$SNUG_OPT_NAME" >/dev/null 2>&1 || true
+docker rm -f "$REDIS_NAME" "$SNUG_RAW_NAME" "$SNUG_OPT_NAME" snug-bench-snugkv >/dev/null 2>&1 || true
 
 echo "Building SnugKV benchmark image..."
 docker build -t "$IMAGE" .
