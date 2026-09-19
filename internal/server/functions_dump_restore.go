@@ -147,7 +147,9 @@ func lzfCompressRedis(src []byte, outLimit int) ([]byte, bool) {
 				break
 			}
 
-			// VERY_FAST=1 path from Redis liblzf.
+			// Redis liblzf VERY_FAST=1 backs up two bytes before
+			// rebuilding the rolling hash table.
+			ip--
 			ip--
 			hval = (uint32(src[ip]) << 8) | uint32(src[ip+1])
 			hval = (hval << 8) | uint32(src[ip+2])
