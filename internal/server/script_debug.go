@@ -255,6 +255,9 @@ func (r *scriptDebugRuntime) lineHook() lua.LineHook {
 
 		switch mode {
 		case scriptDebugStep:
+			if endLine, ok := r.localFunctionEnd(event.Line); ok {
+				event.Line = endLine
+			}
 			shouldStop = true
 		case scriptDebugNext:
 			shouldStop = event.Depth <= nextDepth
@@ -506,8 +509,53 @@ func (r *scriptDebugRuntime) lineText(displayLine int) string {
 	return strings.TrimSuffix(lines[luaLine-1], "\r")
 }
 
+func (r *scriptDebugRuntime) localFunctionEnd(luaLine int) (int, bool) {
+	lines := r.sourceLines()
+	if luaLine < 1 || luaLine > len(lines) {
+		return 0, false
+	}
+	start := strings.TrimSpace(lines[luaLine-1])
+	if !strings.HasPrefix(start, "local function ") {
+		return 0, false
+	}
+
+	depth := 1
+	for i := luaLine; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(line, "--") || line == "" {
+			continue
+		}
+
+		if strings.HasPrefix(line, "function ") ||
+			strings.HasPrefix(line, "local function ") ||
+			strings.HasSuffix(line, " then") ||
+			strings.HasPrefix(line, "for ") ||
+			strings.HasPrefix(line, "while ") ||
+			line == "repeat" ||
+			line == "do" {
+			depth++
+		}
+
+		if line == "end" || strings.HasPrefix(line, "end ") {
+			depth--
+			if depth == 0 {
+				return i + 1, true
+			}
+		}
+		if strings.HasPrefix(line, "until ") {
+			depth--
+		}
+	}
+	return 0, false
+}
+
 func scriptDebugSourceLine(prefix string, displayLine int, source string) []byte {
-	return []byte(fmt.Sprintf("+%s%d   %s\r\n", prefix, displayLine, source))
+	number := strconv.Itoa(displayLine)
+	padding := 4 - len(number)
+	if padding < 1 {
+		padding = 1
+	}
+	return []byte(fmt.Sprintf("+%s%s%s%s\r\n", prefix, number, strings.Repeat(" ", padding), source))
 }
 
 func scriptDebugErrorReply() []byte {
