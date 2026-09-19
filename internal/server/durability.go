@@ -51,15 +51,17 @@ func (s *Server) executeWithCancelSession(
 	session *authSession,
 ) (response []byte, resultErr error) {
 	atomic.AddUint64(&s.commands, 1)
-	start := time.Now()
-	name := "unknown"
-	if len(args) > 0 {
-		candidate := strings.ToUpper(string(args[0]))
-		if _, ok := commandTable[candidate]; ok {
-			name = candidate
+	if atomic.LoadUint32(&s.metricsEnabled) != 0 {
+		start := time.Now()
+		name := "unknown"
+		if len(args) > 0 {
+			candidate := strings.ToUpper(string(args[0]))
+			if _, ok := commandTable[candidate]; ok {
+				name = candidate
+			}
 		}
+		defer func() { s.metrics.Observe(name, time.Since(start), resultErr != nil) }()
 	}
-	defer func() { s.metrics.Observe(name, time.Since(start), resultErr != nil) }()
 
 	// Redis allows FUNCTION STATS while a function is busy. It therefore cannot
 	// wait on durableMu, which is intentionally held for the whole FCALL. HELP is
