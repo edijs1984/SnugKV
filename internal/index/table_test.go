@@ -7,6 +7,32 @@ import (
 	"unsafe"
 )
 
+
+func TestDecimalKeyHashesDoNotClusterLowBuckets(t *testing.T) {
+	const buckets = 2048
+	const keys = 100000
+
+	counts := make([]int, buckets)
+	for i := 0; i < keys; i++ {
+		key := fmt.Sprintf("key:%012d", i)
+		counts[int(Hash(key)&(buckets-1))]++
+	}
+
+	max := 0
+	for _, n := range counts {
+		if n > max {
+			max = n
+		}
+	}
+
+	// Average occupancy is about 48.8 keys/bucket. A 4x ceiling is deliberately
+	// loose enough to avoid testing a particular hash implementation while still
+	// catching severe low-bit clustering.
+	if max > 196 {
+		t.Fatalf("decimal-key bucket clustering too high: max=%d", max)
+	}
+}
+
 func TestPackedSlotIs16Bytes(t *testing.T) {
 	table := New[uint32]()
 	if got := table.EntryBytes(); got != 16 {
