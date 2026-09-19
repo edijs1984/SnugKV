@@ -2,6 +2,8 @@ package server
 
 import (
 	"errors"
+	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -20,6 +22,7 @@ type clientTrackingState struct {
 	mode     clientTrackingMode
 	prefixes []string
 	keys     map[string]struct{}
+	redirectID uint64
 
 	// cacheOverride is consumed by the next ordinary command:
 	//  1 => track it (OPTIN + CACHING YES)
@@ -46,6 +49,7 @@ func (c *clientSession) configureTracking(
 	noLoop bool,
 	mode clientTrackingMode,
 	prefixes []string,
+	redirectID uint64,
 ) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -61,6 +65,7 @@ func (c *clientSession) configureTracking(
 	c.tracking.mode = mode
 	c.tracking.prefixes = append([]string(nil), prefixes...)
 	c.tracking.keys = make(map[string]struct{})
+	c.tracking.redirectID = redirectID
 	c.tracking.cacheOverride = 0
 }
 
@@ -173,7 +178,11 @@ func (s *TCPServer) executeClientTracking(
 				"ERR wrong number of arguments for 'client|getredir' command",
 			)
 		}
-		return true, integer(-1), nil
+		state := session.trackingSnapshot()
+		if !state.enabled || state.redirectID == 0 {
+			return true, integer(-1), nil
+		}
+		return true, integer(int64(state.redirectID)), nil
 
 	case "CACHING":
 		if len(args) != 3 {
@@ -223,7 +232,7 @@ func (s *TCPServer) executeClientTracking(
 			if len(args) != 3 {
 				return true, nil, errors.New("ERR syntax error")
 			}
-			session.configureTracking(false, false, false, clientTrackingDefault, nil)
+			session.configureTracking(false, false, false, clientTrackingDefault, nil, 0)
 			return true, []byte("+OK\r\n"), nil
 
 		case "ON":
@@ -237,6 +246,7 @@ func (s *TCPServer) executeClientTracking(
 			optIn    bool
 			optOut   bool
 			prefixes []string
+			redirectID uint64
 		)
 
 		for i := 3; i < len(args); i++ {
@@ -257,9 +267,22 @@ func (s *TCPServer) executeClientTracking(
 				i++
 				prefixes = append(prefixes, string(args[i]))
 			case "REDIRECT":
-				return true, nil, errors.New(
-					"ERR REDIRECT is not supported yet",
-				)
+				if i+1 >= len(args) {
+					return true, nil, errors.New("ERR syntax error")
+				}
+				i++
+				id, err := strconv.ParseInt(string(args[i]), 10, 64)
+				if err != nil {
+					return true, nil, errors.New(
+						"ERR value is not an integer or out of range",
+					)
+				}
+				if id <= 0 || s.clientByID(uint64(id)) == nil {
+					return true, nil, errors.New(
+						"ERR The client ID you want redirect to does not exist",
+					)
+				}
+				redirectID = uint64(id)
 			default:
 				return true, nil, errors.New("ERR syntax error")
 			}
@@ -288,7 +311,7 @@ func (s *TCPServer) executeClientTracking(
 			mode = clientTrackingOptOut
 		}
 
-		session.configureTracking(true, bcast, noLoop, mode, prefixes)
+		session.configureTracking(true, bcast, noLoop, mode, prefixes, redirectID)
 		return true, []byte("+OK\r\n"), nil
 	}
 
@@ -353,6 +376,13 @@ func trackingWriteKeys(args [][]byte) []string {
 	return keys
 }
 
+func trackingRedirBrokenPush(id uint64) []byte {
+	return []byte(fmt.Sprintf(
+		">2\r\n$21\r\ntracking-redir-broken\r\n:%d\r\n",
+		id,
+	))
+}
+
 func trackingInvalidationPush(keys []string) []byte {
 	items := make([][]byte, 0, len(keys))
 	for _, key := range keys {
@@ -405,11 +435,32 @@ func (s *TCPServer) invalidateTrackingKeys(
 			continue
 		}
 
-		client.mu.RLock()
-		push := client.trackingPush
-		protocol := client.protocol
-		client.mu.RUnlock()
+		state := client.trackingSnapshot()
+		target := client
 
+		if state.redirectID != 0 {
+			target = s.clientByID(state.redirectID)
+			if target == nil {
+				client.mu.RLock()
+				sourcePush := client.trackingPush
+				sourceProtocol := client.protocol
+				client.mu.RUnlock()
+
+				if sourceProtocol == 3 && sourcePush != nil {
+					_ = sourcePush(trackingRedirBrokenPush(state.redirectID))
+				}
+				continue
+			}
+		}
+
+		target.mu.RLock()
+		push := target.trackingPush
+		protocol := target.protocol
+		target.mu.RUnlock()
+
+		// Redis delivers redirected invalidations as RESP3 pushes. A plain
+		// RESP2 redirect target that is not in Pub/Sub invalidate mode receives
+		// no frame, matching the audited Redis 8.2 behavior.
 		if protocol != 3 || push == nil {
 			continue
 		}
