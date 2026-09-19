@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/binary"
 	"errors"
+	"math"
 	"snugkv/internal/engine"
 	"snugkv/internal/persistence"
 	"strconv"
@@ -11,8 +12,13 @@ import (
 )
 
 const (
-	keyRDBTypeString = byte(0)
-	keyRDBVersion    = functionRDBVersion
+	keyRDBTypeString         = byte(0)
+	keyRDBTypeSetIntset      = byte(11)
+	keyRDBTypeHashListpack   = byte(16)
+	keyRDBTypeZSetListpack   = byte(17)
+	keyRDBTypeListQuicklist2 = byte(18)
+	keyRDBTypeSetListpack    = byte(20)
+	keyRDBVersion            = functionRDBVersion
 )
 
 var keyDumpRestoreCommands = map[string]commandInfo{
@@ -67,11 +73,7 @@ func appendRDBKeyString(dst []byte, value []byte) []byte {
 	return appendRDBRawString(dst, value)
 }
 
-func encodeKeyStringDump(value []byte) ([]byte, error) {
-	out := make([]byte, 0, len(value)+16)
-	out = append(out, keyRDBTypeString)
-	out = appendRDBKeyString(out, value)
-
+func appendKeyDumpTrailer(out []byte) ([]byte, error) {
 	var version [2]byte
 	binary.LittleEndian.PutUint16(version[:], keyRDBVersion)
 	out = append(out, version[:]...)
@@ -86,7 +88,13 @@ func encodeKeyStringDump(value []byte) ([]byte, error) {
 	return out, nil
 }
 
-func decodeKeyStringDump(data []byte) ([]byte, error) {
+func encodeKeyStringDump(value []byte) ([]byte, error) {
+	out := []byte{keyRDBTypeString}
+	out = appendRDBKeyString(out, value)
+	return appendKeyDumpTrailer(out)
+}
+
+func verifyKeyDumpPayload(data []byte) ([]byte, error) {
 	if len(data) < 11 || len(data) > persistence.MaxFrameBytes {
 		return nil, errors.New("ERR DUMP payload version or checksum are wrong")
 	}
@@ -100,18 +108,259 @@ func decodeKeyStringDump(data []byte) ([]byte, error) {
 	if redisCRC64(data[:trailer+2]) != wantChecksum {
 		return nil, errors.New("ERR DUMP payload version or checksum are wrong")
 	}
+	return data[:trailer], nil
+}
 
-	pos := 0
-	if data[pos] != keyRDBTypeString {
+func decodeKeyStringDump(data []byte) ([]byte, error) {
+	body, err := verifyKeyDumpPayload(data)
+	if err != nil {
+		return nil, err
+	}
+	if len(body) == 0 || body[0] != keyRDBTypeString {
 		return nil, errors.New("ERR Bad data format")
 	}
-	pos++
-
-	value, err := decodeRDBString(data[:trailer], &pos)
-	if err != nil || pos != trailer {
+	pos := 1
+	value, err := decodeRDBString(body, &pos)
+	if err != nil || pos != len(body) {
 		return nil, errors.New("ERR Bad data format")
 	}
 	return value, nil
+}
+
+func encodeHashDump(pairs []engine.HashPair) ([]byte, error) {
+	values := make([][]byte, 0, len(pairs)*2)
+	for _, pair := range pairs {
+		values = append(values, pair.Field, pair.Value)
+	}
+	lp, err := encodeRedisListpack(values)
+	if err != nil {
+		return nil, err
+	}
+	out := []byte{keyRDBTypeHashListpack}
+	out = appendRDBRawString(out, lp)
+	return appendKeyDumpTrailer(out)
+}
+
+func encodeSetDump(members [][]byte) ([]byte, error) {
+	if len(members) == 0 {
+		return nil, errors.New("ERR empty SET cannot be dumped")
+	}
+	if len(members) <= 512 {
+		if intset, ok := encodeRedisIntset(members); ok {
+			out := []byte{keyRDBTypeSetIntset}
+			out = appendRDBRawString(out, intset)
+			return appendKeyDumpTrailer(out)
+		}
+	}
+	lp, err := encodeRedisListpack(members)
+	if err != nil {
+		return nil, err
+	}
+	out := []byte{keyRDBTypeSetListpack}
+	out = appendRDBRawString(out, lp)
+	return appendKeyDumpTrailer(out)
+}
+
+func encodeListDump(elements [][]byte) ([]byte, error) {
+	if len(elements) == 0 {
+		return nil, errors.New("ERR empty LIST cannot be dumped")
+	}
+	lp, err := encodeRedisListpack(elements)
+	if err != nil {
+		return nil, err
+	}
+	out := []byte{keyRDBTypeListQuicklist2}
+	out = appendRDBLen(out, 1) // one quicklist node
+	out = appendRDBLen(out, 2) // QUICKLIST_NODE_CONTAINER_PACKED
+	out = appendRDBRawString(out, lp)
+	return appendKeyDumpTrailer(out)
+}
+
+func encodeZSetDump(items []engine.ZSetItem) ([]byte, error) {
+	if len(items) == 0 {
+		return nil, errors.New("ERR empty ZSET cannot be dumped")
+	}
+	values := make([][]byte, 0, len(items)*2)
+	for _, item := range items {
+		values = append(values, item.Member, formatZSetScore(item.Score))
+	}
+	lp, err := encodeRedisListpack(values)
+	if err != nil {
+		return nil, err
+	}
+	out := []byte{keyRDBTypeZSetListpack}
+	out = appendRDBRawString(out, lp)
+	return appendKeyDumpTrailer(out)
+}
+
+type decodedKeyObject struct {
+	valueType engine.ValueType
+	scalar    []byte
+	hash      []engine.HashPair
+	set       [][]byte
+	list      [][]byte
+	zset      []engine.ZSetItem
+}
+
+func decodeSingleRDBString(body []byte, pos *int) ([]byte, error) {
+	value, err := decodeRDBString(body, pos)
+	if err != nil {
+		return nil, errors.New("ERR Bad data format")
+	}
+	return value, nil
+}
+
+func decodeKeyDumpObject(data []byte) (decodedKeyObject, error) {
+	body, err := verifyKeyDumpPayload(data)
+	if err != nil {
+		return decodedKeyObject{}, err
+	}
+	if len(body) == 0 {
+		return decodedKeyObject{}, errors.New("ERR Bad data format")
+	}
+	pos := 1
+
+	switch body[0] {
+	case keyRDBTypeString:
+		value, err := decodeSingleRDBString(body, &pos)
+		if err != nil || pos != len(body) {
+			return decodedKeyObject{}, errors.New("ERR Bad data format")
+		}
+		return decodedKeyObject{valueType: engine.TypeString, scalar: value}, nil
+
+	case keyRDBTypeHashListpack:
+		raw, err := decodeSingleRDBString(body, &pos)
+		if err != nil || pos != len(body) {
+			return decodedKeyObject{}, errors.New("ERR Bad data format")
+		}
+		values, err := decodeRedisListpack(raw)
+		if err != nil || len(values) == 0 || len(values)%2 != 0 {
+			return decodedKeyObject{}, errors.New("ERR Bad data format")
+		}
+		pairs := make([]engine.HashPair, 0, len(values)/2)
+		for i := 0; i < len(values); i += 2 {
+			pairs = append(pairs, engine.HashPair{Field: values[i], Value: values[i+1]})
+		}
+		return decodedKeyObject{valueType: engine.TypeHash, hash: pairs}, nil
+
+	case keyRDBTypeSetListpack:
+		raw, err := decodeSingleRDBString(body, &pos)
+		if err != nil || pos != len(body) {
+			return decodedKeyObject{}, errors.New("ERR Bad data format")
+		}
+		members, err := decodeRedisListpack(raw)
+		if err != nil || len(members) == 0 {
+			return decodedKeyObject{}, errors.New("ERR Bad data format")
+		}
+		return decodedKeyObject{valueType: engine.TypeSet, set: members}, nil
+
+	case keyRDBTypeSetIntset:
+		raw, err := decodeSingleRDBString(body, &pos)
+		if err != nil || pos != len(body) {
+			return decodedKeyObject{}, errors.New("ERR Bad data format")
+		}
+		members, err := decodeRedisIntset(raw)
+		if err != nil {
+			return decodedKeyObject{}, errors.New("ERR Bad data format")
+		}
+		return decodedKeyObject{valueType: engine.TypeSet, set: members}, nil
+
+	case keyRDBTypeListQuicklist2:
+		nodes, encoded, err := readRDBLen(body, &pos)
+		if err != nil || encoded || nodes == 0 || nodes > uint64(len(body)) {
+			return decodedKeyObject{}, errors.New("ERR Bad data format")
+		}
+		elements := make([][]byte, 0)
+		for i := uint64(0); i < nodes; i++ {
+			container, encoded, err := readRDBLen(body, &pos)
+			if err != nil || encoded || container != 2 {
+				return decodedKeyObject{}, errors.New("ERR Bad data format")
+			}
+			raw, err := decodeSingleRDBString(body, &pos)
+			if err != nil {
+				return decodedKeyObject{}, err
+			}
+			node, err := decodeRedisListpack(raw)
+			if err != nil || len(node) == 0 {
+				return decodedKeyObject{}, errors.New("ERR Bad data format")
+			}
+			elements = append(elements, node...)
+		}
+		if pos != len(body) || len(elements) == 0 {
+			return decodedKeyObject{}, errors.New("ERR Bad data format")
+		}
+		return decodedKeyObject{valueType: engine.TypeList, list: elements}, nil
+
+	case keyRDBTypeZSetListpack:
+		raw, err := decodeSingleRDBString(body, &pos)
+		if err != nil || pos != len(body) {
+			return decodedKeyObject{}, errors.New("ERR Bad data format")
+		}
+		values, err := decodeRedisListpack(raw)
+		if err != nil || len(values) == 0 || len(values)%2 != 0 {
+			return decodedKeyObject{}, errors.New("ERR Bad data format")
+		}
+		items := make([]engine.ZSetItem, 0, len(values)/2)
+		for i := 0; i < len(values); i += 2 {
+			score, err := parseZSetScore(values[i+1])
+			if err != nil || math.IsNaN(score) {
+				return decodedKeyObject{}, errors.New("ERR Bad data format")
+			}
+			items = append(items, engine.ZSetItem{Member: values[i], Score: score})
+		}
+		return decodedKeyObject{valueType: engine.TypeZSet, zset: items}, nil
+
+	default:
+		return decodedKeyObject{}, errors.New("ERR Bad data format")
+	}
+}
+
+func buildRestoreRecord(key string, object decodedKeyObject, expiresAtMS int64) (persistence.Record, error) {
+	tmp, err := engine.NewWithShards(1)
+	if err != nil {
+		return persistence.Record{}, err
+	}
+	const tempKey = "__restore__"
+
+	switch object.valueType {
+	case engine.TypeString:
+		if _, err := tmp.SetConditional(tempKey, object.scalar, engine.SetOptions{}); err != nil {
+			return persistence.Record{}, err
+		}
+	case engine.TypeHash:
+		fields := make([][]byte, 0, len(object.hash))
+		values := make([][]byte, 0, len(object.hash))
+		for _, pair := range object.hash {
+			fields = append(fields, pair.Field)
+			values = append(values, pair.Value)
+		}
+		if _, err := tmp.HashSet(tempKey, fields, values); err != nil {
+			return persistence.Record{}, err
+		}
+	case engine.TypeSet:
+		if _, err := tmp.SetAdd(tempKey, object.set); err != nil {
+			return persistence.Record{}, err
+		}
+	case engine.TypeList:
+		if _, err := tmp.ListPushRight(tempKey, object.list); err != nil {
+			return persistence.Record{}, err
+		}
+	case engine.TypeZSet:
+		if _, _, _, err := tmp.ZSetAdd(tempKey, object.zset, engine.ZSetAddOptions{}); err != nil {
+			return persistence.Record{}, err
+		}
+	default:
+		return persistence.Record{}, errors.New("ERR Bad data format")
+	}
+
+	records := tmp.Export([]string{tempKey})
+	if len(records) != 1 || records[0].Deleted {
+		return persistence.Record{}, errors.New("ERR Bad data format")
+	}
+	record := records[0]
+	record.Key = []byte(key)
+	record.ExpiresAtMS = expiresAtMS
+	return record, nil
 }
 
 type restoreOptions struct {
@@ -175,6 +424,44 @@ func keyDumpScalarTypeSupported(t engine.ValueType) bool {
 	}
 }
 
+func (s *Server) dumpKey(key string, valueType engine.ValueType) ([]byte, error) {
+	switch valueType {
+	case engine.TypeHash:
+		pairs, err := s.store.HashGetAll(key)
+		if err != nil {
+			return nil, err
+		}
+		return encodeHashDump(pairs)
+	case engine.TypeSet:
+		members, err := s.store.SetMembers(key)
+		if err != nil {
+			return nil, err
+		}
+		return encodeSetDump(members)
+	case engine.TypeList:
+		elements, err := s.store.ListRange(key, 0, -1)
+		if err != nil {
+			return nil, err
+		}
+		return encodeListDump(elements)
+	case engine.TypeZSet:
+		items, err := s.store.ZSetRange(key, 0, -1, false)
+		if err != nil {
+			return nil, err
+		}
+		return encodeZSetDump(items)
+	default:
+		if !keyDumpScalarTypeSupported(valueType) {
+			return nil, errors.New("ERR DUMP object type is not supported yet")
+		}
+		value, found := s.store.Get(key)
+		if !found {
+			return nil, nil
+		}
+		return encodeKeyStringDump(value)
+	}
+}
+
 func (s *Server) executeKeyDumpRestore(args [][]byte) ([]byte, error) {
 	cmd := strings.ToUpper(string(args[0]))
 	switch cmd {
@@ -183,20 +470,16 @@ func (s *Server) executeKeyDumpRestore(args [][]byte) ([]byte, error) {
 			return nil, errors.New("ERR wrong number of arguments for 'dump' command")
 		}
 		key := string(args[1])
-		t, found := s.store.ValueTypeOf(key)
+		valueType, found := s.store.ValueTypeOf(key)
 		if !found {
 			return nullBulk(), nil
 		}
-		if !keyDumpScalarTypeSupported(t) {
-			return nil, errors.New("ERR DUMP object type is not supported yet")
-		}
-		value, found := s.store.Get(key)
-		if !found {
-			return nullBulk(), nil
-		}
-		payload, err := encodeKeyStringDump(value)
+		payload, err := s.dumpKey(key, valueType)
 		if err != nil {
 			return nil, err
+		}
+		if payload == nil {
+			return nullBulk(), nil
 		}
 		return formatBulkString(payload), nil
 
@@ -223,25 +506,29 @@ func (s *Server) executeKeyDumpRestore(args [][]byte) ([]byte, error) {
 			return nil, errors.New("ERR Invalid TTL value, must be >= 0")
 		}
 
-		value, err := decodeKeyStringDump(args[3])
+		object, err := decodeKeyDumpObject(args[3])
 		if err != nil {
 			return nil, err
 		}
 
-		setOptions := engine.SetOptions{}
+		var expiresAtMS int64
 		if ttl > 0 {
 			if options.absttl {
-				setOptions.HasExpireAt = true
-				setOptions.ExpireAt = time.UnixMilli(ttl)
+				expiresAtMS = ttl
 			} else {
-				if ttl > int64(^uint64(0)>>1)/int64(time.Millisecond) {
+				nowMS := time.Now().UnixMilli()
+				if ttl > math.MaxInt64-nowMS {
 					return nil, errors.New("ERR value is not an integer or out of range")
 				}
-				setOptions.TTL = time.Duration(ttl) * time.Millisecond
+				expiresAtMS = nowMS + ttl
 			}
 		}
 
-		if _, err := s.store.SetConditional(key, value, setOptions); err != nil {
+		record, err := buildRestoreRecord(key, object, expiresAtMS)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.store.Restore([]persistence.Record{record}, false); err != nil {
 			return nil, err
 		}
 		return []byte("+OK\r\n"), nil
