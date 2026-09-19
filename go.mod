@@ -8,4 +8,4 @@ require (
 	github.com/yuin/gopher-lua v1.1.2
 )
 
-replace github.com/yuin/gopher-lua => github.com/edijs1984/gopher-lua v0.0.0-20260919083617-0a21fbdcfd9a
+replace github.com/yuin/gopher-lua => github.com/edijs1984/gopher-lua v0.0.0-20260919083302-5f39082da1e4
