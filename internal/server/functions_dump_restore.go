@@ -54,7 +54,165 @@ func appendRDBLen(dst []byte, n uint64) []byte {
 	}
 }
 
+func lzfCompressRedis(src []byte, outLimit int) ([]byte, bool) {
+	const (
+		hlog   = 16
+		hsize  = 1 << hlog
+		maxLit = 1 << 5
+		maxOff = 1 << 13
+		maxRef = (1 << 8) + (1 << 3)
+	)
+	if len(src) == 0 || outLimit <= 0 {
+		return nil, false
+	}
+
+	// Redis builds liblzf with VERY_FAST=1. A zero-initialized offset table
+	// gives the same valid-match behavior while remaining deterministic in Go.
+	htab := make([]int, hsize)
+	for i := range htab {
+		htab[i] = -1
+	}
+
+	out := make([]byte, 1, outLimit)
+	lit := 0
+	ip := 0
+	if len(src) < 2 {
+		for ip < len(src) {
+			if len(out) >= outLimit {
+				return nil, false
+			}
+			lit++
+			out = append(out, src[ip])
+			ip++
+		}
+		out[0] = byte(lit - 1)
+		return out, true
+	}
+
+	hval := (int(src[0]) << 8) | int(src[1])
+	for ip < len(src)-2 {
+		hval = (hval << 8) | int(src[ip+2])
+		idx := (((hval >> (24 - hlog)) - hval*5) & (hsize - 1))
+		ref := htab[idx]
+		htab[idx] = ip
+
+		off := 0
+		match := false
+		if ref >= 0 && ref < ip {
+			off = ip - ref - 1
+			if off < maxOff && ref > 0 &&
+				ref+2 < len(src) &&
+				src[ref] == src[ip] &&
+				src[ref+1] == src[ip+1] &&
+				src[ref+2] == src[ip+2] {
+				match = true
+			}
+		}
+
+		if match {
+			length := 2
+			maxLen := len(src) - ip - length
+			if maxLen > maxRef {
+				maxLen = maxRef
+			}
+			for length < maxLen && src[ref+length] == src[ip+length] {
+				length++
+			}
+			length -= 2
+
+			needed := 3
+			if length < 7 {
+				needed = 2
+			}
+			if len(out)-boolInt(lit == 0)+needed+1 > outLimit {
+				return nil, false
+			}
+
+			out[len(out)-lit-1] = byte(lit - 1)
+			if lit == 0 {
+				out = out[:len(out)-1]
+			}
+
+			if length < 7 {
+				out = append(out, byte((off>>8)+(length<<5)))
+			} else {
+				out = append(out, byte((off>>8)+(7<<5)), byte(length-7))
+			}
+			out = append(out, byte(off))
+			lit = 0
+			out = append(out, 0)
+
+			ip += length + 2
+			if ip >= len(src)-2 {
+				break
+			}
+
+			// VERY_FAST=1 path from Redis liblzf.
+			ip--
+			hval = (int(src[ip]) << 8) | int(src[ip+1])
+			hval = (hval << 8) | int(src[ip+2])
+			idx = (((hval >> (24 - hlog)) - hval*5) & (hsize - 1))
+			htab[idx] = ip
+			ip++
+			hval = (hval << 8) | int(src[ip+2])
+			idx = (((hval >> (24 - hlog)) - hval*5) & (hsize - 1))
+			htab[idx] = ip
+			ip++
+			continue
+		}
+
+		if len(out) >= outLimit {
+			return nil, false
+		}
+		lit++
+		out = append(out, src[ip])
+		ip++
+		if lit == maxLit {
+			out[len(out)-lit-1] = byte(lit - 1)
+			lit = 0
+			out = append(out, 0)
+		}
+	}
+
+	if len(out)+3 > outLimit {
+		return nil, false
+	}
+	for ip < len(src) {
+		lit++
+		out = append(out, src[ip])
+		ip++
+		if lit == maxLit {
+			out[len(out)-lit-1] = byte(lit - 1)
+			lit = 0
+			out = append(out, 0)
+		}
+	}
+	out[len(out)-lit-1] = byte(lit - 1)
+	if lit == 0 {
+		out = out[:len(out)-1]
+	}
+	if len(out) > outLimit {
+		return nil, false
+	}
+	return out, true
+}
+
+func boolInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
+}
+
 func appendRDBRawString(dst []byte, value []byte) []byte {
+	if len(value) > 20 {
+		if compressed, ok := lzfCompressRedis(value, len(value)-4); ok {
+			dst = append(dst, 0xC0|rdbEncLZF)
+			dst = appendRDBLen(dst, uint64(len(compressed)))
+			dst = appendRDBLen(dst, uint64(len(value)))
+			return append(dst, compressed...)
+		}
+	}
 	dst = appendRDBLen(dst, uint64(len(value)))
 	return append(dst, value...)
 }
