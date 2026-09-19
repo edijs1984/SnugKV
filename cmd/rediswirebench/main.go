@@ -35,8 +35,10 @@ func main() {
 	ops := flag.Int("ops", 1000000, "operations for get/mixed/ttl")
 	workers := flag.Int("workers", runtime.NumCPU(), "concurrent workers")
 	valueBytes := flag.Int("value-bytes", 64, "value bytes")
+	valueShape := flag.String("value-shape", "repetitive", "value shape: random, repetitive, or json")
 	pipeline := flag.Int("pipeline", 256, "load pipeline depth")
 	seed := flag.Int64("seed", 1, "deterministic seed")
+	settleMS := flag.Int("settle-ms", 0, "milliseconds to wait after workload before post-workload memory snapshot")
 	reset := flag.Bool("reset", false, "FLUSHDB before workload")
 	cleanup := flag.Bool("cleanup", false, "FLUSHDB after workload")
 	flag.Parse()
@@ -48,6 +50,17 @@ func main() {
 	case "load", "get", "mixed", "ttl":
 	default:
 		fatalf("workload must be load, get, mixed, or ttl")
+	}
+	switch *valueShape {
+	case "random", "repetitive", "json":
+	default:
+		fatalf("value-shape must be random, repetitive, or json")
+	}
+	if *valueShape == "json" && *valueBytes < 32 {
+		fatalf("json value-shape requires value-bytes >= 32")
+	}
+	if *settleMS < 0 {
+		fatalf("settle-ms must be non-negative")
 	}
 
 	control, err := dial(*addr)
@@ -72,9 +85,13 @@ func main() {
 	var errs uint64
 	switch *workload {
 	case "load":
-		elapsed, samples, errs = runLoad(*addr, *keys, *valueBytes, *pipeline)
+		elapsed, samples, errs = runLoad(*addr, *keys, *valueBytes, *valueShape, *pipeline, *seed)
 	case "get", "mixed", "ttl":
-		elapsed, samples, errs = runConcurrent(*addr, *workload, *keys, *ops, *workers, *valueBytes, *seed)
+		elapsed, samples, errs = runConcurrent(*addr, *workload, *keys, *ops, *workers, *valueBytes, *valueShape, *seed)
+	}
+
+	if *settleMS > 0 {
+		time.Sleep(time.Duration(*settleMS) * time.Millisecond)
 	}
 
 	control, err = dial(*addr)
@@ -103,8 +120,10 @@ func main() {
 		"ops": measuredOps,
 		"workers": *workers,
 		"value_bytes": *valueBytes,
+		"value_shape": *valueShape,
 		"pipeline": *pipeline,
 		"seed": *seed,
+		"settle_ms": *settleMS,
 		"duration_ns": elapsed.Nanoseconds(),
 		"ops_per_second": float64(measuredOps)/elapsed.Seconds(),
 		"p50_ns": pct(samples,50),
@@ -131,11 +150,10 @@ func main() {
 	if errs != 0 { os.Exit(1) }
 }
 
-func runLoad(addr string, keys, valueBytes, pipeline int) (time.Duration, []int64, uint64) {
+func runLoad(addr string, keys, valueBytes int, valueShape string, pipeline int, seed int64) (time.Duration, []int64, uint64) {
 	c, err := dial(addr)
 	if err != nil { fatalf("load connect: %v", err) }
 	defer c.Close()
-	value := fixedValue(valueBytes)
 	samples := make([]int64,0,(keys+pipeline-1)/pipeline)
 	var errs uint64
 	start := time.Now()
@@ -144,6 +162,7 @@ func runLoad(addr string, keys, valueBytes, pipeline int) (time.Duration, []int6
 		if end>keys { end=keys }
 		batchStart:=time.Now()
 		for i:=base;i<end;i++ {
+			value := benchmarkValue(valueShape, valueBytes, i, seed)
 			if err:=c.write(b("SET"),key(i),value);err!=nil { fatalf("SET write: %v",err) }
 		}
 		if err:=c.w.Flush();err!=nil { fatalf("SET flush: %v",err) }
@@ -157,11 +176,10 @@ func runLoad(addr string, keys, valueBytes, pipeline int) (time.Duration, []int6
 	return time.Since(start),samples,errs
 }
 
-func runConcurrent(addr, workload string, keys, ops, workers, valueBytes int, seed int64) (time.Duration, []int64, uint64) {
+func runConcurrent(addr, workload string, keys, ops, workers, valueBytes int, valueShape string, seed int64) (time.Duration, []int64, uint64) {
 	samples:=make([]int64,ops)
 	var next uint64
 	var errs uint64
-	value:=fixedValue(valueBytes)
 	var wg sync.WaitGroup
 	start:=time.Now()
 	for worker:=0;worker<workers;worker++ {
@@ -182,9 +200,13 @@ func runConcurrent(addr, workload string, keys, ops, workers, valueBytes int, se
 				case "get":
 					opErr=c.get(key(k))
 				case "mixed":
-					if rng.Intn(10)==0 { opErr=c.set(key(k),value) } else { opErr=c.get(key(k)) }
+					if rng.Intn(10)==0 {
+						opErr=c.set(key(k),benchmarkValue(valueShape,valueBytes,k,seed))
+					} else {
+						opErr=c.get(key(k))
+					}
 				case "ttl":
-					opErr=c.setPX(key(k),value,60000)
+					opErr=c.setPX(key(k),benchmarkValue(valueShape,valueBytes,k,seed),60000)
 				}
 				samples[idx]=time.Since(begin).Nanoseconds()
 				if opErr!=nil { atomic.AddUint64(&errs,1) }
@@ -204,10 +226,43 @@ func pct(sorted []int64,p int) int64 {
 	return sorted[idx-1]
 }
 
-func fixedValue(size int) []byte {
-	v:=make([]byte,size)
-	for i:=range v { v[i]=byte('a'+i%23) }
-	return v
+func benchmarkValue(shape string, size, keyIndex int, seed int64) []byte {
+	switch shape {
+	case "random":
+		v := make([]byte, size)
+		x := uint64(seed) ^ uint64(keyIndex+1)*0x9e3779b97f4a7c15
+		for i := range v {
+			x ^= x << 13
+			x ^= x >> 7
+			x ^= x << 17
+			v[i] = byte(x)
+		}
+		return v
+
+	case "json":
+		prefix := []byte(fmt.Sprintf("{\"id\":%d,\"name\":\"user-%d\",\"message\":\"", keyIndex, keyIndex))
+		suffix := []byte("\"}")
+		if len(prefix)+len(suffix) > size {
+			v := append([]byte(nil), prefix...)
+			v = append(v, suffix...)
+			return v[:size]
+		}
+		v := make([]byte, 0, size)
+		v = append(v, prefix...)
+		for len(v)+len(suffix) < size {
+			v = append(v, byte('a'+(keyIndex+len(v))%23))
+		}
+		v = append(v, suffix...)
+		return v
+
+	default:
+		v := make([]byte,size)
+		pattern := []byte("snugkv-benchmark-")
+		for i:=range v {
+			v[i]=pattern[(i+keyIndex)%len(pattern)]
+		}
+		return v
+	}
 }
 func key(i int) []byte { return []byte(fmt.Sprintf("bench:%09d",i)) }
 func b(s string) []byte { return []byte(s) }

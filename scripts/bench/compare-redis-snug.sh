@@ -8,6 +8,8 @@ SNUG_OPT_ADDR="${SNUG_OPT_ADDR:-127.0.0.1:6383}"
 KEYS="${KEYS:-1000000}"
 OPS="${OPS:-1000000}"
 VALUE_BYTES="${VALUE_BYTES:-64}"
+VALUE_SHAPE="${VALUE_SHAPE:-repetitive}"
+SETTLE_MS="${SETTLE_MS:-0}"
 WORKERS="${WORKERS:-4}"
 PIPELINE="${PIPELINE:-256}"
 RUNS="${RUNS:-3}"
@@ -95,6 +97,8 @@ run_one() {
     -workload load \
     -keys "$KEYS" \
     -value-bytes "$VALUE_BYTES" \
+    -value-shape "$VALUE_SHAPE" \
+    -settle-ms "$SETTLE_MS" \
     -workers "$WORKERS" \
     -pipeline "$PIPELINE" \
     > "$OUT_DIR/${name}-run${run}-load.json"
@@ -113,6 +117,8 @@ run_one() {
       -keys "$KEYS" \
       -ops "$OPS" \
       -value-bytes "$VALUE_BYTES" \
+      -value-shape "$VALUE_SHAPE" \
+      -settle-ms 0 \
       -workers "$WORKERS" \
       -pipeline "$PIPELINE" \
       > "$OUT_DIR/${name}-run${run}-${workload}.json"
@@ -125,7 +131,7 @@ run_one() {
 echo "Redis:       $REDIS_ADDR"
 echo "SnugKV raw:  $SNUG_RAW_ADDR"
 echo "SnugKV opt:  $SNUG_OPT_ADDR"
-echo "keys=$KEYS ops=$OPS value_bytes=$VALUE_BYTES workers=$WORKERS pipeline=$PIPELINE runs=$RUNS"
+echo "keys=$KEYS ops=$OPS value_bytes=$VALUE_BYTES value_shape=$VALUE_SHAPE settle_ms=$SETTLE_MS workers=$WORKERS pipeline=$PIPELINE runs=$RUNS"
 echo "results=$OUT_DIR"
 
 for run in $(seq 1 "$RUNS"); do
