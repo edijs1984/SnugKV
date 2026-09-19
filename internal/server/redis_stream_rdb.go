@@ -348,6 +348,11 @@ func decodeStreamGroupsRDB(body []byte, pos *int) ([]engine.StreamSnapshotGroup,
 			if err != nil {
 				return nil, err
 			}
+			// Redis persists -1 for a consumer that has never been active.
+			// SnugKV uses zero internally for the same state.
+			if activeAt < 0 {
+				activeAt = 0
+			}
 			group.Consumers = append(group.Consumers, engine.StreamSnapshotConsumer{
 				Name: string(consumerName), SeenAt: seenAt, ActiveAt: activeAt,
 			})
