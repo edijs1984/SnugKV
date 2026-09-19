@@ -4,7 +4,9 @@ import (
 	"context"
 	"flag"
 	"log"
+	"net"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"runtime/debug"
@@ -57,12 +59,29 @@ func main() {
 	flag.StringVar(&cfg.MetricsAddr, "metrics-listen", cfg.MetricsAddr, "separate loopback metrics address (optional)")
 	flag.StringVar(&cfg.EvictionPolicy, "eviction-policy", cfg.EvictionPolicy, "noeviction, allkeys-lru, or volatile-lru")
 	flag.StringVar(&cfg.AdminAddr, "admin-listen", cfg.AdminAddr, "separate loopback RESP admin address")
+	pprofAddr := flag.String("pprof-listen", "", "optional loopback pprof HTTP address")
 	flag.Parse()
 	if flag.NArg() != 0 {
 		log.Fatal("unexpected positional arguments")
 	}
 	if err = cfg.Validate(); err != nil {
 		log.Fatal(err)
+	}
+	if *pprofAddr != "" {
+		host, _, splitErr := net.SplitHostPort(*pprofAddr)
+		if splitErr != nil {
+			log.Fatalf("pprof-listen: %v", splitErr)
+		}
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsLoopback() && !ip.IsUnspecified() {
+			log.Fatal("pprof-listen must use a loopback or unspecified IP")
+		}
+		go func() {
+			log.Printf("event=pprof_started listen=%s", *pprofAddr)
+			if serveErr := http.ListenAndServe(*pprofAddr, nil); serveErr != nil {
+				log.Printf("event=pprof_stopped error=%q", serveErr)
+			}
+		}()
 	}
 	if cfg.GoMemoryLimit > 0 {
 		debug.SetMemoryLimit(cfg.GoMemoryLimit)
