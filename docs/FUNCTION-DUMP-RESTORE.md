@@ -20,18 +20,24 @@ Restore policies follow Redis semantics:
   function-name collisions with unrelated libraries.
 - `FLUSH` replaces the complete current registry with the payload contents.
 
-## Payload compatibility boundary
+## Redis RDB payload compatibility
 
-SnugKV intentionally uses its own compact `SNUGF001` function payload format. The
-command behavior and restore policies target Redis compatibility, but the serialized
-bytes are **not Redis RDB FUNCTION DUMP bytes**. A Redis `FUNCTION DUMP` payload is
-therefore not currently accepted by SnugKV, and a SnugKV payload is not intended to
-be restored directly into Redis.
+SnugKV now uses the Redis 8.2 Function RDB payload format for `FUNCTION DUMP` and
+`FUNCTION RESTORE`. Each library is encoded with `RDB_OPCODE_FUNCTION2` and the
+original library source as an RDB string, followed by the Redis RDB version and CRC64
+trailer. Redis-compatible integer/raw/LZF string decoding is supported, and SnugKV
+emits Redis-compatible LZF compression when it saves at least four bytes.
 
-This boundary is explicit so the implementation can remain small and independently
-checksummed without importing the complete Redis RDB encoder/decoder solely for
-Function transport. Cross-implementation payload compatibility can be added later
-as a separate compatibility milestone.
+Live cross-implementation validation covers both directions:
+
+- Redis 8.2 `FUNCTION DUMP` -> SnugKV `FUNCTION RESTORE`;
+- SnugKV `FUNCTION DUMP` -> Redis 8.2 `FUNCTION RESTORE`;
+- successful `FCALL_RO` after each restore;
+- byte-identical Redis/SnugKV payload output for the shared audited fixture;
+- corrupt payload, checksum, version, truncation, restore-policy, and arity errors.
+
+The empty-registry payload is also locked to the Redis 8.2 10-byte fixture
+`0c0096ed6880f5553c93`.
 
 ## Restart durability
 
@@ -76,7 +82,10 @@ Coverage includes:
 - default APPEND collision rejection;
 - REPLACE and FLUSH policies;
 - invalid restore-policy handling;
-- checksum corruption rejection with no registry mutation;
+- checksum/version/truncation corruption rejection with no registry mutation;
+- Redis 8.2 LZF-compressed payload decoding and execution;
+- Redis <-> SnugKV cross-restore in both directions;
+- byte-identical Redis/SnugKV dump output for the audited fixture;
 - function registry restoration across a simulated restart;
 - persisted empty registry after `FUNCTION FLUSH`;
 - rejection of corrupt durable function sidecar state at startup.
