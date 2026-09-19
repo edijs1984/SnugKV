@@ -41,6 +41,9 @@ type clientSession struct {
 	blocked     bool
 	unblockCh   chan struct{}
 	unblockMode clientUnblockMode
+
+	scriptDebugMode    scriptDebugMode
+	scriptDebugPending *scriptDebugPending
 }
 
 func newClientSession(
