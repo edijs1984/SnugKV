@@ -21,6 +21,7 @@ type Server struct {
 	aclLog           *ACLLog
 	eviction         string
 	metrics          *stats.Registry
+	metricsEnabled   uint32
 	optimizer        *optimizer.Optimizer
 	store            *engine.Store
 	commands         uint64
