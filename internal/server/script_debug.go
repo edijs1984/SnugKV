@@ -318,9 +318,13 @@ func scriptDebugStopReply(runtime *scriptDebugRuntime, event scriptDebugEvent) [
 	for _, message := range event.messages {
 		items = append(items, []byte("+"+message+"\r\n"))
 	}
+	marker := "-> "
+	if event.reason == "break point" && runtime.hasBreakpoint(event.line) {
+		marker = "->#"
+	}
 	items = append(items,
 		[]byte(fmt.Sprintf("+* Stopped at %d, stop reason = %s\r\n", lineNo, event.reason)),
-		[]byte(fmt.Sprintf("+-> %d   %s\r\n", lineNo, line)),
+		scriptDebugSourceLine(marker, lineNo, line),
 	)
 	return array(items...)
 }
@@ -493,6 +497,31 @@ func (r *scriptDebugRuntime) sourceLines() []string {
 	return strings.Split(strings.ReplaceAll(r.body, "\r\n", "\n"), "\n")
 }
 
+func (r *scriptDebugRuntime) lineText(displayLine int) string {
+	luaLine := displayLine - r.lineOffset
+	lines := r.sourceLines()
+	if luaLine < 1 || luaLine > len(lines) {
+		return ""
+	}
+	return strings.TrimSuffix(lines[luaLine-1], "\r")
+}
+
+func scriptDebugSourceLine(prefix string, displayLine int, source string) []byte {
+	return []byte(fmt.Sprintf("+%s%d   %s\r\n", prefix, displayLine, source))
+}
+
+func scriptDebugErrorReply() []byte {
+	return scriptDebugErrorReply()
+}
+
+func (r *scriptDebugRuntime) protocolErrorReply() []byte {
+	sha := scriptSHA(r.source)
+	return scriptDebugEndReply(
+		[]byte(fmt.Sprintf("-ERR protocol error script: %s, on @user_script:1.\r\n", sha)),
+	)
+}
+
+
 func (r *scriptDebugRuntime) listReply(centerDisplayLine, radius int) []byte {
 	lines := r.sourceLines()
 	center := centerDisplayLine - r.lineOffset
@@ -512,18 +541,18 @@ func (r *scriptDebugRuntime) listReply(centerDisplayLine, radius int) []byte {
 	items := make([][]byte, 0, end-start+1)
 	for luaLine := start; luaLine <= end; luaLine++ {
 		displayLine := luaLine + r.lineOffset
-		prefix := "  "
-		if luaLine == current {
-			prefix = "->"
+		source := strings.TrimSuffix(lines[luaLine-1], "\r")
+
+		switch {
+		case luaLine == current && r.hasBreakpoint(luaLine):
+			items = append(items, scriptDebugSourceLine("->#", displayLine, source))
+		case luaLine == current:
+			items = append(items, scriptDebugSourceLine("-> ", displayLine, source))
+		case r.hasBreakpoint(luaLine):
+			items = append(items, scriptDebugSourceLine("  #", displayLine, source))
+		default:
+			items = append(items, scriptDebugSourceLine("   ", displayLine, source))
 		}
-		if r.hasBreakpoint(luaLine) {
-			if luaLine == current {
-				prefix = "->#"
-			} else {
-				prefix = " # "
-			}
-		}
-		items = append(items, []byte(fmt.Sprintf("+%s %d   %s\r\n", prefix, displayLine, strings.TrimSuffix(lines[luaLine-1], "\r"))))
 	}
 	return array(items...)
 }
@@ -583,6 +612,24 @@ func (r *scriptDebugRuntime) traceReply() []byte {
 	return array(items...)
 }
 
+func isScriptDebugIdentifier(value string) bool {
+	if value == "" {
+		return false
+	}
+	for i, r := range value {
+		if i == 0 {
+			if !(r == '_' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z') {
+				return false
+			}
+			continue
+		}
+		if !(r == '_' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
 func scriptDebugCommandParts(args [][]byte) []string {
 	parts := make([]string, 0, len(args))
 	for _, arg := range args {
@@ -618,30 +665,36 @@ func (s *TCPServer) executeScriptDebugCommand(
 		return false, nil, nil
 	}
 
+	if len(args) == 1 && len(args[0]) == 0 {
+		session.clearScriptDebugRuntime(runtime)
+		runtime.close()
+		return true, runtime.protocolErrorReply(), nil
+	}
+
 	parts := scriptDebugCommandParts(args)
 	if len(parts) == 0 {
-		return true, array([]byte("+<error> Unknown Redis Lua debugger command or wrong number of arguments.\r\n")), nil
+		return true, scriptDebugErrorReply(), nil
 	}
 
 	command := strings.ToUpper(parts[0])
 	switch command {
 	case "L":
 		if len(parts) != 1 {
-			return true, array([]byte("+<error> Unknown Redis Lua debugger command or wrong number of arguments.\r\n")), nil
+			return true, scriptDebugErrorReply(), nil
 		}
 		event := runtime.currentEvent()
 		display, _ := runtime.displayLine(event.line)
 		return true, runtime.listReply(display, 5), nil
 
 	case "P":
-		if len(parts) != 2 {
-			return true, array([]byte("+<error> Unknown Redis Lua debugger command or wrong number of arguments.\r\n")), nil
+		if len(parts) != 2 || !isScriptDebugIdentifier(parts[1]) {
+			return true, scriptDebugErrorReply(), nil
 		}
 		return true, runtime.printReply(parts[1]), nil
 
 	case "T":
 		if len(parts) != 1 {
-			return true, array([]byte("+<error> Unknown Redis Lua debugger command or wrong number of arguments.\r\n")), nil
+			return true, scriptDebugErrorReply(), nil
 		}
 		return true, runtime.traceReply(), nil
 
@@ -651,14 +704,15 @@ func (s *TCPServer) executeScriptDebugCommand(
 			if len(lines) == 0 {
 				return true, array([]byte("+No breakpoints set. Use 'b <line>' to add one.\r\n")), nil
 			}
-			items := make([][]byte, 0, len(lines))
+			items := make([][]byte, 0, len(lines)+1)
+			items = append(items, []byte(fmt.Sprintf("+%d breakpoints set:\r\n", len(lines))))
 			for _, line := range lines {
-				items = append(items, []byte(fmt.Sprintf("+%d\r\n", line)))
+				items = append(items, scriptDebugSourceLine("  #", line, runtime.lineText(line)))
 			}
 			return true, array(items...), nil
 		}
 		if len(parts) != 2 {
-			return true, array([]byte("+<error> Unknown Redis Lua debugger command or wrong number of arguments.\r\n")), nil
+			return true, scriptDebugErrorReply(), nil
 		}
 
 		raw := parts[1]
@@ -668,12 +722,12 @@ func (s *TCPServer) executeScriptDebugCommand(
 		}
 		displayLine, err := strconv.Atoi(raw)
 		if err != nil {
-			return true, array([]byte("+<error> Unknown Redis Lua debugger command or wrong number of arguments.\r\n")), nil
+			return true, scriptDebugErrorReply(), nil
 		}
 		luaLine := displayLine - runtime.lineOffset
 		lines := runtime.sourceLines()
 		if luaLine < 1 || luaLine > len(lines) {
-			return true, array([]byte("+<error> Unknown Redis Lua debugger command or wrong number of arguments.\r\n")), nil
+			return true, scriptDebugErrorReply(), nil
 		}
 		if remove {
 			runtime.setBreakpoint(luaLine, false)
@@ -685,7 +739,7 @@ func (s *TCPServer) executeScriptDebugCommand(
 
 	mode, ok := parseScriptDebugResume(args)
 	if !ok {
-		return true, array([]byte("+<error> Unknown Redis Lua debugger command or wrong number of arguments.\r\n")), nil
+		return true, scriptDebugErrorReply(), nil
 	}
 
 	runtime.clearCurrent()
