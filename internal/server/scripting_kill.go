@@ -155,12 +155,13 @@ func (s *Server) executeKillableScripting(args [][]byte) ([]byte, error) {
 				argv,
 				readOnly || meta.noWrites,
 				!meta.flagged,
+				meta.allowOom,
 			)
 		},
 	)
 }
 
-func (s *Server) runKillableLuaScript(source, sha string, keys, argv [][]byte, readOnly bool, legacyOOM bool) ([]byte, error) {
+func (s *Server) runKillableLuaScript(source, sha string, keys, argv [][]byte, readOnly bool, legacyOOM bool, allowOOM bool) ([]byte, error) {
 	L := newScriptLuaState()
 	defer L.Close()
 
@@ -177,7 +178,7 @@ func (s *Server) runKillableLuaScript(source, sha string, keys, argv [][]byte, r
 		defer legacyState.restore(s)
 		L.SetGlobal("redis", s.luaRedisModuleKillableWithLegacyState(L, legacyState))
 	} else {
-		L.SetGlobal("redis", s.luaRedisModuleKillable(L))
+		L.SetGlobal("redis", s.luaRedisModuleKillableWithOptions(L, nil, allowOOM))
 	}
 
 	fn, err := L.LoadString(source)
@@ -205,17 +206,25 @@ func (s *Server) runKillableLuaScript(source, sha string, keys, argv [][]byte, r
 }
 
 func (s *Server) luaRedisModuleKillable(L *lua.LState) *lua.LTable {
-	return s.luaRedisModuleKillableWithLegacyState(L, nil)
+	return s.luaRedisModuleKillableWithOptions(L, nil, false)
 }
 
 func (s *Server) luaRedisModuleKillableWithLegacyState(
 	L *lua.LState,
 	state *legacyScriptOOMState,
 ) *lua.LTable {
+	return s.luaRedisModuleKillableWithOptions(L, state, false)
+}
+
+func (s *Server) luaRedisModuleKillableWithOptions(
+	L *lua.LState,
+	state *legacyScriptOOMState,
+	allowOOM bool,
+) *lua.LTable {
 	module := L.NewTable()
 	L.SetFuncs(module, map[string]lua.LGFunction{
-		"call":         s.luaRedisCallKillableWithLegacyState(false, state),
-		"pcall":        s.luaRedisCallKillableWithLegacyState(true, state),
+		"call":         s.luaRedisCallKillableWithOptions(false, state, allowOOM),
+		"pcall":        s.luaRedisCallKillableWithOptions(true, state, allowOOM),
 		"error_reply":  luaRedisErrorReply,
 		"status_reply": luaRedisStatusReply,
 		"sha1hex":      luaRedisSHA1Hex,
@@ -224,12 +233,20 @@ func (s *Server) luaRedisModuleKillableWithLegacyState(
 }
 
 func (s *Server) luaRedisCallKillable(protected bool) lua.LGFunction {
-	return s.luaRedisCallKillableWithLegacyState(protected, nil)
+	return s.luaRedisCallKillableWithOptions(protected, nil, false)
 }
 
 func (s *Server) luaRedisCallKillableWithLegacyState(
 	protected bool,
 	state *legacyScriptOOMState,
+) lua.LGFunction {
+	return s.luaRedisCallKillableWithOptions(protected, state, false)
+}
+
+func (s *Server) luaRedisCallKillableWithOptions(
+	protected bool,
+	state *legacyScriptOOMState,
+	allowOOM bool,
 ) lua.LGFunction {
 	return func(L *lua.LState) int {
 		if L.GetTop() < 1 {
@@ -264,7 +281,7 @@ func (s *Server) luaRedisCallKillableWithLegacyState(
 		result, err := s.withNestedExecutionCommand(
 			args,
 			func() ([]byte, error) {
-				return s.executePressureMode(args, false)
+				return s.executeScriptNestedPressure(args, allowOOM)
 			},
 		)
 		if err != nil {
