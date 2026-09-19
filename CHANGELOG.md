@@ -1,4 +1,5 @@
 # Changelog
+- Added Redis-compatible CLIENT-side caching/tracking for the audited single-node surface: `CLIENT TRACKING`, `CLIENT CACHING`, `CLIENT GETREDIR`, BCAST/PREFIX, OPTIN/OPTOUT, NOLOOP, REDIRECT, RESP3 invalidation pushes, and broken-redirect notification semantics.
 
 All notable changes to SnugKV will be documented in this file.
 
