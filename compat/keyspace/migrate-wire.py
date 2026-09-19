@@ -5,6 +5,7 @@ import time
 
 HOST = os.environ.get("REDIS_HOST", "127.0.0.1")
 SRC_PORT = int(os.environ.get("REDIS_PORT", "6390"))
+DST_HOST = os.environ.get("REDIS_DST_HOST", HOST)
 DST_PORT = int(os.environ.get("REDIS_DST_PORT", "6391"))
 MIGRATE_HOST = os.environ.get("MIGRATE_HOST", HOST)
 MIGRATE_PORT = int(os.environ.get("MIGRATE_PORT", str(DST_PORT)))
@@ -55,8 +56,8 @@ def expect(label, got, want):
 def flush(sock,label):
     expect(label+" FLUSHDB",cmd(sock,"FLUSHDB"),("simple",b"OK"))
 
-print("MIGRATE oracle source="+HOST+":"+str(SRC_PORT)+" dest-client="+HOST+":"+str(DST_PORT)+" migrate-target="+MIGRATE_HOST+":"+str(MIGRATE_PORT))
-with socket.create_connection((HOST,SRC_PORT),timeout=3) as src, socket.create_connection((HOST,DST_PORT),timeout=3) as dst:
+print("MIGRATE oracle source="+HOST+":"+str(SRC_PORT)+" dest-client="+DST_HOST+":"+str(DST_PORT)+" migrate-target="+MIGRATE_HOST+":"+str(MIGRATE_PORT))
+with socket.create_connection((HOST,SRC_PORT),timeout=3) as src, socket.create_connection((DST_HOST,DST_PORT),timeout=3) as dst:
     flush(src,"src"); flush(dst,"dst")
 
     print("\n=== Basic move ===")
