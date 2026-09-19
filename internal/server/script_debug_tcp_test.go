@@ -278,3 +278,46 @@ func TestScriptDebugInspectAndBreakpointTCP(t *testing.T) {
 	writeRESPCommand(t, conn, "C")
 	readExactReply(t, reader, "*1\r\n+<endsession>\r\n:15\r\n")
 }
+
+
+func TestScriptDebugRedisDebugAndBreakpointTCP(t *testing.T) {
+	_, conn, reader := newScriptDebugTCP(t)
+
+	source := "local x = 10\n" +
+		"redis.debug('hello', x)\n" +
+		"redis.breakpoint()\n" +
+		"local y = x + 5\n" +
+		"return y"
+
+	writeRESPCommand(t, conn, "SCRIPT", "DEBUG", "YES")
+	readExactReply(t, reader, "+OK\r\n")
+
+	writeRESPCommand(t, conn, "EVAL", source, "0")
+	readExactReply(
+		t,
+		reader,
+		"*2\r\n"+
+			"+* Stopped at 1, stop reason = step over\r\n"+
+			"+-> 1   local x = 10\r\n",
+	)
+
+	writeRESPCommand(t, conn, "C")
+	readExactReply(
+		t,
+		reader,
+		"*3\r\n"+
+			"+<debug> line 2: \"hello\", 10\r\n"+
+			"+* Stopped at 4, stop reason = redis.breakpoint() called\r\n"+
+			"+-> 4   local y = x + 5\r\n",
+	)
+
+	writeRESPCommand(t, conn, "P", "x")
+	readExactReply(t, reader, "*1\r\n+<value> 10\r\n")
+
+	writeRESPCommand(t, conn, "C")
+	readExactReply(
+		t,
+		reader,
+		"*1\r\n+<endsession>\r\n:15\r\n",
+	)
+}
