@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"errors"
+	"snugkv/internal/engine"
 	"snugkv/internal/persistence"
 	"strings"
 	"sync/atomic"
@@ -112,6 +113,43 @@ func (s *Server) executeAuthorizedConcurrentGet(args [][]byte) (response []byte,
 		return nil, true, errWrongType
 	}
 	return optionalBulk(value, found), true, nil
+}
+
+// executeAuthorizedConcurrentSet serves a previously ACL-authorized plain SET
+// without passing through the generic function/blocking/pressure dispatch stack.
+// It is only used when persistence, metrics, WATCH and maxmemory semantics do not
+// require the ordinary durability/pressure path.
+func (s *Server) executeAuthorizedConcurrentSet(args [][]byte) (response []byte, handled bool, err error) {
+	if len(args) != 3 ||
+		!bytes.EqualFold(args[0], []byte("SET")) ||
+		s.journal != nil ||
+		atomic.LoadUint32(&s.metricsEnabled) != 0 ||
+		s.store.MaxMemory() != 0 {
+		return nil, false, nil
+	}
+
+	s.durableMu.RLock()
+	if s.hasWatchSessionsLocked() {
+		s.durableMu.RUnlock()
+		return nil, false, nil
+	}
+
+	key := string(args[1])
+	applied, _, _, setErr := s.store.SetWithOptions(
+		key,
+		args[2],
+		engine.SetOptions{},
+	)
+	s.durableMu.RUnlock()
+
+	atomic.AddUint64(&s.commands, 1)
+	if setErr != nil {
+		return nil, true, setErr
+	}
+	if applied && s.optimizer != nil {
+		s.optimizer.Queue(key)
+	}
+	return []byte("+OK\r\n"), true, nil
 }
 
 func (s *Server) executeDurable(args [][]byte) ([]byte, error) {

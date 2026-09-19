@@ -635,6 +635,20 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			continue
 		}
 
+		if result, handled, fastErr := s.server.executeAuthorizedConcurrentSet(msg); handled {
+			if fastErr != nil {
+				result = errorResponse(fastErr)
+			}
+			commandSucceeded := fastErr == nil
+			if writeProtocol(msg, result) != nil {
+				return
+			}
+			if commandSucceeded {
+				s.invalidateTrackingKeys(clientSession, msg)
+			}
+			continue
+		}
+
 		var result []byte
 		if isBlockingListCommand(msg) || isBlockingZSetCommand(msg) || isBlockingStreamCommand(msg) {
 			disconnected, stopWatch := watchConnectionDisconnect(peer)
