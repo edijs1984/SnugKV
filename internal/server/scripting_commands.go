@@ -275,9 +275,9 @@ func (s *Server) runLuaScript(source, sha string, keys, argv [][]byte, legacyOOM
 	if legacyOOM {
 		legacyState = newLegacyScriptOOMState(s)
 		defer legacyState.restore(s)
-		L.SetGlobal("redis", s.luaRedisModuleWithDebugger(L, legacyState, runtime))
+		L.SetGlobal("redis", s.luaRedisModuleWithLegacyState(L, legacyState))
 	} else {
-		L.SetGlobal("redis", s.luaRedisModuleWithDebugger(L, nil, runtime))
+		L.SetGlobal("redis", s.luaRedisModule(L))
 	}
 
 	fn, err := L.LoadString(source)
@@ -666,9 +666,9 @@ func (s *Server) runLuaScriptDebug(
 	if legacyOOM {
 		legacyState = newLegacyScriptOOMState(s)
 		defer legacyState.restore(s)
-		L.SetGlobal("redis", s.luaRedisModuleWithLegacyState(L, legacyState))
+		L.SetGlobal("redis", s.luaRedisModuleWithDebugger(L, legacyState, runtime))
 	} else {
-		L.SetGlobal("redis", s.luaRedisModule(L))
+		L.SetGlobal("redis", s.luaRedisModuleWithDebugger(L, nil, runtime))
 	}
 
 	fn, err := L.LoadString(source)
