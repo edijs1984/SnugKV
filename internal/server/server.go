@@ -1376,7 +1376,42 @@ func optionalBulk(v []byte, found bool) []byte {
 }
 func formatBulkString(v []byte) []byte {
 	out := make([]byte, 0, len(v)+32)
-	out = append(out, fmt.Sprintf("$%d\r\n", len(v))...)
+	out = append(out, '
+func array(items ...[]byte) []byte {
+	out := []byte(fmt.Sprintf("*%d\r\n", len(items)))
+	for _, item := range items {
+		out = append(out, item...)
+	}
+	return out
+}
+func parseInt64(v []byte) (int64, error) {
+	n, err := strconv.ParseInt(string(v), 10, 64)
+	if err != nil || strconv.FormatInt(n, 10) != string(v) {
+		return 0, errors.New("ERR value is not an integer or out of range")
+	}
+	return n, nil
+}
+
+func formatBytes(n uint64) string {
+	const (
+		kb = 1024
+		mb = 1024 * kb
+		gb = 1024 * mb
+	)
+
+	switch {
+	case n >= gb:
+		return fmt.Sprintf("%.2fG", float64(n)/gb)
+	case n >= mb:
+		return fmt.Sprintf("%.2fM", float64(n)/mb)
+	case n >= kb:
+		return fmt.Sprintf("%.2fK", float64(n)/kb)
+	default:
+		return fmt.Sprintf("%dB", n)
+	}
+})
+	out = strconv.AppendInt(out, int64(len(v)), 10)
+	out = append(out, '\r', '\n')
 	out = append(out, v...)
 	return append(out, '\r', '\n')
 }
