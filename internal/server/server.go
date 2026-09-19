@@ -25,7 +25,7 @@ type Server struct {
 	store            *engine.Store
 	commands         uint64
 	journal          Journal
-	durableMu        sync.Mutex
+	durableMu        sync.RWMutex
 	durabilityFailed bool
 
 	// executionACLUsername / executionACLArgs are valid only while durableMu is
