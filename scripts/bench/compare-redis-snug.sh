@@ -18,6 +18,10 @@ REDIS_CONTAINER="${REDIS_CONTAINER:-snug-bench-redis}"
 SNUG_RAW_CONTAINER="${SNUG_RAW_CONTAINER:-snug-bench-snugkv-raw}"
 SNUG_OPT_CONTAINER="${SNUG_OPT_CONTAINER:-snug-bench-snugkv-opt}"
 
+PPROF_RAW_URL="${PPROF_RAW_URL:-http://127.0.0.1:6060/debug/pprof/heap}"
+PPROF_OPT_URL="${PPROF_OPT_URL:-http://127.0.0.1:6061/debug/pprof/heap}"
+CAPTURE_HEAP="${CAPTURE_HEAP:-1}"
+
 OUT_DIR="${OUT_DIR:-benchmark-results/redis-vs-snug-modes-$(date +%Y%m%d-%H%M%S)}"
 
 mkdir -p "$OUT_DIR"
@@ -77,6 +81,29 @@ with open(p,"w") as f:
 PY
 }
 
+capture_heap_profile() {
+  local name="$1"
+  local run="$2"
+  local url=""
+
+  if [[ "$CAPTURE_HEAP" != "1" ]]; then
+    return
+  fi
+
+  case "$name" in
+    snug_raw) url="$PPROF_RAW_URL" ;;
+    snug_opt) url="$PPROF_OPT_URL" ;;
+    *) return ;;
+  esac
+
+  local profile="$OUT_DIR/${name}-run${run}-heap.pprof"
+  local report="$OUT_DIR/${name}-run${run}-heap-top.txt"
+
+  if curl -fsS "$url" -o "$profile"; then
+    go tool pprof -top -sample_index=inuse_space -nodecount=40 "$profile" > "$report" 2>&1 || true
+  fi
+}
+
 run_one() {
   local name="$1"
   local addr="$2"
@@ -105,6 +132,7 @@ run_one() {
 
   mem_after="$(container_bytes "$container")"
   annotate_memory "$OUT_DIR/${name}-run${run}-load.json" "$mem_before" "$mem_after"
+  capture_heap_profile "$name" "$run"
   cat "$OUT_DIR/${name}-run${run}-load.json"
 
   for workload in get mixed ttl; do
@@ -131,7 +159,7 @@ run_one() {
 echo "Redis:       $REDIS_ADDR"
 echo "SnugKV raw:  $SNUG_RAW_ADDR"
 echo "SnugKV opt:  $SNUG_OPT_ADDR"
-echo "keys=$KEYS ops=$OPS value_bytes=$VALUE_BYTES value_shape=$VALUE_SHAPE settle_ms=$SETTLE_MS workers=$WORKERS pipeline=$PIPELINE runs=$RUNS"
+echo "keys=$KEYS ops=$OPS value_bytes=$VALUE_BYTES value_shape=$VALUE_SHAPE settle_ms=$SETTLE_MS workers=$WORKERS pipeline=$PIPELINE runs=$RUNS capture_heap=$CAPTURE_HEAP"
 echo "results=$OUT_DIR"
 
 for run in $(seq 1 "$RUNS"); do
@@ -178,4 +206,5 @@ print("\n===== MEDIAN SUMMARY =====")
 for row in summary:
     print(row)
 print("\nsummary:", root / "summary.json")
+print("heap reports:", root / "snug_raw-run*-heap-top.txt", "and", root / "snug_opt-run*-heap-top.txt")
 PY
