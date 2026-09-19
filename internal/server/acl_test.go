@@ -2998,8 +2998,9 @@ func TestACLSelectorMissingOpeningParen(t *testing.T) {
 
 
 func TestAuthorizeConnectionCommandAllCommandsExplicitDeny(t *testing.T) {
-	s := newTestServer(t)
-	if err := s.acl.SetUser("limited", []string{
+	acl := NewACL()
+	s := &Server{acl: acl}
+	if err := acl.SetUser("limited", []string{
 		"on",
 		"nopass",
 		"+@all",
