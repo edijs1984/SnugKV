@@ -5,7 +5,6 @@ import (
 	"errors"
 	"snugkv/internal/engine"
 	"snugkv/internal/persistence"
-	"strconv"
 	"strings"
 )
 
@@ -177,28 +176,11 @@ func (s *Server) executePressureMode(args [][]byte, journalEvictions bool) ([]by
 	// every scripting/container/special-command predicate in the generic router.
 	// GET still enforces Redis WRONGTYPE semantics. Plain SET overwrites any type.
 	if len(args) == 2 && bytes.EqualFold(args[0], []byte("GET")) {
-		const prefixReserve = 32
-
-		response := make([]byte, prefixReserve, prefixReserve+2)
-		response, found, wrongType := s.store.AppendStringValue(string(args[1]), response)
+		value, found, wrongType := s.store.GetString(string(args[1]))
 		if wrongType {
 			return nil, errWrongType
 		}
-		if !found {
-			return nullBulk(), nil
-		}
-
-		valueLength := len(response) - prefixReserve
-		var header [32]byte
-		h := header[:0]
-		h = append(h, 36)
-		h = strconv.AppendInt(h, int64(valueLength), 10)
-		h = append(h, 13, 10)
-
-		start := prefixReserve - len(h)
-		copy(response[start:prefixReserve], h)
-		response = append(response, 13, 10)
-		return response[start:], nil
+		return optionalBulk(value, found), nil
 	}
 	if len(args) == 3 &&
 		bytes.EqualFold(args[0], []byte("SET")) &&
