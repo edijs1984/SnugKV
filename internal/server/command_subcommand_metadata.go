@@ -58,6 +58,9 @@ var commandParentMetadataTable = map[string]commandParentMetadata{
 			"CLIENT|GETNAME",
 			"CLIENT|HELP",
 			"CLIENT|SETINFO",
+			"CLIENT|TRACKING",
+			"CLIENT|CACHING",
+			"CLIENT|GETREDIR",
 		},
 	},
 
@@ -172,6 +175,24 @@ var commandLeafMetadataTable = map[string]commandLeafMetadata{
 		flags: []string{"noscript", "loading", "stale"},
 		acl:   []string{"@slow", "@connection"},
 		tips:  []string{"nondeterministic_output"},
+	},
+
+	"CLIENT|TRACKING": {
+		arity: -3,
+		flags: []string{"noscript", "loading", "stale"},
+		acl:   []string{"@slow", "@connection"},
+	},
+
+	"CLIENT|CACHING": {
+		arity: 3,
+		flags: []string{"noscript", "loading", "stale"},
+		acl:   []string{"@slow", "@connection"},
+	},
+
+	"CLIENT|GETREDIR": {
+		arity: 2,
+		flags: []string{"noscript", "loading", "stale"},
+		acl:   []string{"@slow", "@connection"},
 	},
 
 	"CLIENT|LIST": {
@@ -494,6 +515,9 @@ var commandContainerDocs = map[string]commandContainerDoc{
 			"CLIENT|GETNAME",
 			"CLIENT|HELP",
 			"CLIENT|SETINFO",
+			"CLIENT|TRACKING",
+			"CLIENT|CACHING",
+			"CLIENT|GETREDIR",
 		},
 	},
 
@@ -692,6 +716,37 @@ var commandSubcommandDocs = map[string]commandDoc{
 	"CLIENT|INFO": {
 		summary:    "Returns information about the connection.",
 		since:      "6.2.0",
+		group:      "connection",
+		complexity: "O(1)",
+	},
+
+	"CLIENT|TRACKING": {
+		summary:    "Controls server-assisted client-side caching for the current connection.",
+		since:      "6.0.0",
+		group:      "connection",
+		complexity: "O(1)",
+	},
+
+	"CLIENT|CACHING": {
+		summary:    "Controls whether the next command is cached when tracking uses OPTIN or OPTOUT mode.",
+		since:      "6.0.0",
+		group:      "connection",
+		complexity: "O(1)",
+		arguments: []commandDocArgument{
+			{
+				name:    "mode",
+				argType: "oneof",
+				arguments: []commandDocArgument{
+					pureToken("yes", "YES"),
+					pureToken("no", "NO"),
+				},
+			},
+		},
+	},
+
+	"CLIENT|GETREDIR": {
+		summary:    "Returns the client ID used as the invalidation redirect target, or -1 if redirection is disabled.",
+		since:      "6.0.0",
 		group:      "connection",
 		complexity: "O(1)",
 	},
