@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"errors"
 	"snugkv/internal/persistence"
 	"strings"
@@ -243,18 +244,11 @@ func (s *Server) executeDurableLocked(args [][]byte) ([]byte, error) {
 }
 
 func isConcurrentScalarCommand(args [][]byte) bool {
-	if len(args) == 0 {
-		return false
+	if len(args) == 2 && bytes.EqualFold(args[0], []byte("GET")) {
+		return true
 	}
-	switch strings.ToUpper(string(args[0])) {
-	case "GET":
-		return len(args) == 2
-	case "SET":
-		// Keep only the plain SET key value form on the concurrent fast path.
-		// Option parsing can involve TTL/conditional semantics and stays on the
-		// serialized path until separately audited.
-		return len(args) == 3
-	default:
-		return false
-	}
+	// Keep only the plain SET key value form on the concurrent fast path.
+	// Option parsing can involve TTL/conditional semantics and stays on the
+	// serialized path until separately audited.
+	return len(args) == 3 && bytes.EqualFold(args[0], []byte("SET"))
 }
