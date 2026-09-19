@@ -74,7 +74,10 @@ with socket.create_connection((HOST,PORT),timeout=3) as s:
         ("COUNT invalid",("GEORADIUS","geo:src","15","37","200","km","COUNT","x")),
         ("ANY without COUNT",("GEORADIUS","geo:src","15","37","200","km","ANY")),
         ("STORE with WITHDIST",("GEORADIUS","geo:src","15","37","200","km","WITHDIST","STORE","geo:store")),
-        ("STORE plus STOREDIST",("GEORADIUS","geo:src","15","37","200","km","STORE","geo:store","STOREDIST","geo:dist")),
+        ("clear dual-store targets",("DEL","geo:store2","geo:dist2")),
+        ("STORE plus STOREDIST",("GEORADIUS","geo:src","15","37","200","km","STORE","geo:store2","STOREDIST","geo:dist2")),
+        ("dual-store geo target",("ZRANGE","geo:store2","0","-1","WITHSCORES")),
+        ("dual-store dist target",("ZRANGE","geo:dist2","0","-1","WITHSCORES")),
         ("missing args",("GEORADIUS","geo:src")),
         ("extra junk",("GEORADIUS","geo:src","15","37","200","km","JUNK")),
     ]
