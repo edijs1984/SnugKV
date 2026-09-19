@@ -174,7 +174,7 @@ func (s *Store) hashShapeID(pairs []HashPair, packedLen int) (uint16, bool) {
 	}
 
 	s.memory.mu.Lock()
-	if s.memory.max > 0 && s.memory.used+charge > s.memory.max {
+	if s.memory.max.Load() > 0 && s.memory.used+charge > s.memory.max.Load() {
 		s.memory.mu.Unlock()
 		return 0, false
 	}
