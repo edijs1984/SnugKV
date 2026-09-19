@@ -269,7 +269,7 @@ func TestScriptDebugInspectAndBreakpointTCP(t *testing.T) {
 		reader,
 		"*2\r\n"+
 			"+* Stopped at 3, stop reason = break point\r\n"+
-			"+-> 3   return y\r\n",
+			"+->#3   return y\r\n",
 	)
 
 	writeRESPCommand(t, conn, "P", "y")
@@ -372,6 +372,9 @@ func TestScriptDebugRedisStatementStepAndBreakpointFormattingTCP(t *testing.T) {
 			"+1 breakpoints set:\r\n"+
 			"+  #4     return c\r\n",
 	)
+
+	writeRESPCommand(t, conn, "B", "-4")
+	readExactReply(t, reader, "*1\r\n+Breakpoint removed.\r\n")
 
 	writeRESPCommand(t, conn, "C")
 	readExactReply(t, reader, "*1\r\n+<endsession>\r\n:15\r\n")
