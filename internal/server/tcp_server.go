@@ -673,6 +673,7 @@ func errorResponse(err error) []byte {
 		!strings.HasPrefix(message, "WRONGPASS ") &&
 		!strings.HasPrefix(message, "NOPERM ") &&
 		!strings.HasPrefix(message, "BUSYGROUP ") &&
+		!strings.HasPrefix(message, "BUSYKEY ") &&
 		!strings.HasPrefix(message, "NOGROUP ") {
 		message = "ERR " + message
 	}
