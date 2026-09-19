@@ -105,12 +105,15 @@ func (s *Server) authorizeConnectionCommand(
 		username = session.username
 	}
 
-	user, ok := s.acl.GetUser(username)
+	s.acl.mu.RLock()
+	user, ok := s.acl.users[username]
 	if !ok || !user.Enabled {
+		s.acl.mu.RUnlock()
 		return errors.New(
 			"NOAUTH Authentication required.",
 		)
 	}
+	defer s.acl.mu.RUnlock()
 
 	if aclUserAllowsCommand(user, args) {
 		return nil
