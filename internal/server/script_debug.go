@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -35,6 +37,7 @@ type scriptDebugEvent struct {
 	line   int
 	depth  int
 	reason string
+	state  *lua.LState
 	result []byte
 	err    error
 	done   bool
@@ -45,6 +48,10 @@ type scriptDebugRuntime struct {
 	source     string
 	body       string
 	lineOffset int
+
+	mu          sync.RWMutex
+	current     scriptDebugEvent
+	breakpoints map[int]struct{}
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -76,7 +83,54 @@ func newScriptDebugRuntime(command [][]byte, source string) (*scriptDebugRuntime
 		cancel:     cancel,
 		resume:     make(chan scriptDebugResume),
 		events:     make(chan scriptDebugEvent, 1),
+		breakpoints: make(map[int]struct{}),
 	}, nil
+}
+
+func (r *scriptDebugRuntime) setCurrent(event scriptDebugEvent) {
+	r.mu.Lock()
+	r.current = event
+	r.mu.Unlock()
+}
+
+func (r *scriptDebugRuntime) currentEvent() scriptDebugEvent {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.current
+}
+
+func (r *scriptDebugRuntime) clearCurrent() {
+	r.mu.Lock()
+	r.current = scriptDebugEvent{}
+	r.mu.Unlock()
+}
+
+func (r *scriptDebugRuntime) hasBreakpoint(luaLine int) bool {
+	r.mu.RLock()
+	_, ok := r.breakpoints[luaLine]
+	r.mu.RUnlock()
+	return ok
+}
+
+func (r *scriptDebugRuntime) setBreakpoint(luaLine int, enabled bool) {
+	r.mu.Lock()
+	if enabled {
+		r.breakpoints[luaLine] = struct{}{}
+	} else {
+		delete(r.breakpoints, luaLine)
+	}
+	r.mu.Unlock()
+}
+
+func (r *scriptDebugRuntime) breakpointLines() []int {
+	r.mu.RLock()
+	lines := make([]int, 0, len(r.breakpoints))
+	for line := range r.breakpoints {
+		lines = append(lines, line+r.lineOffset)
+	}
+	r.mu.RUnlock()
+	sort.Ints(lines)
+	return lines
 }
 
 func (r *scriptDebugRuntime) close() {
@@ -101,12 +155,13 @@ func (r *scriptDebugRuntime) lineHook() lua.LineHook {
 	mode := scriptDebugContinue
 	nextDepth := 0
 
-	pause := func(event lua.HookEvent, reason string) bool {
+	pause := func(L *lua.LState, event lua.HookEvent, reason string) bool {
 		select {
 		case r.events <- scriptDebugEvent{
 			line:   event.Line,
 			depth:  event.Depth,
 			reason: reason,
+			state:  L,
 		}:
 		case <-r.ctx.Done():
 			return false
@@ -124,18 +179,23 @@ func (r *scriptDebugRuntime) lineHook() lua.LineHook {
 		}
 	}
 
-	return func(_ *lua.LState, event lua.HookEvent) {
+	return func(L *lua.LState, event lua.HookEvent) {
 		if event.Line <= 0 || r.ctx.Err() != nil {
 			return
 		}
 
 		if !initialized {
 			initialized = true
-			_ = pause(event, "step over")
+			_ = pause(L, event, "step over")
 			return
 		}
 
 		shouldStop := false
+		if r.hasBreakpoint(event.Line) {
+			_ = pause(L, event, "break point")
+			return
+		}
+
 		switch mode {
 		case scriptDebugStep:
 			shouldStop = true
@@ -146,7 +206,7 @@ func (r *scriptDebugRuntime) lineHook() lua.LineHook {
 		}
 
 		if shouldStop {
-			_ = pause(event, "step over")
+			_ = pause(L, event, "step over")
 		}
 	}
 }
@@ -334,7 +394,130 @@ func (s *TCPServer) beginScriptDebugEval(
 		}
 		return true, scriptDebugEndReply(event.result), nil
 	}
+	runtime.setCurrent(event)
 	return true, scriptDebugStopReply(runtime, event), nil
+}
+
+
+func scriptDebugValue(value lua.LValue) string {
+	switch v := value.(type) {
+	case *lua.LNilType:
+		return "nil"
+	case lua.LBool:
+		if bool(v) {
+			return "true"
+		}
+		return "false"
+	case lua.LNumber:
+		return strconv.FormatFloat(float64(v), 'g', -1, 64)
+	case lua.LString:
+		return strconv.Quote(string(v))
+	default:
+		return value.String()
+	}
+}
+
+func (r *scriptDebugRuntime) sourceLines() []string {
+	return strings.Split(strings.ReplaceAll(r.body, "\r\n", "\n"), "\n")
+}
+
+func (r *scriptDebugRuntime) listReply(centerDisplayLine, radius int) []byte {
+	lines := r.sourceLines()
+	center := centerDisplayLine - r.lineOffset
+	if center < 1 {
+		center = 1
+	}
+	start := center - radius
+	if start < 1 {
+		start = 1
+	}
+	end := center + radius
+	if end > len(lines) {
+		end = len(lines)
+	}
+
+	current := r.currentEvent().line
+	items := make([][]byte, 0, end-start+1)
+	for luaLine := start; luaLine <= end; luaLine++ {
+		displayLine := luaLine + r.lineOffset
+		prefix := "  "
+		if luaLine == current {
+			prefix = "->"
+		}
+		if r.hasBreakpoint(luaLine) {
+			if luaLine == current {
+				prefix = "->#"
+			} else {
+				prefix = " # "
+			}
+		}
+		items = append(items, []byte(fmt.Sprintf("+%s %d   %s\r\n", prefix, displayLine, strings.TrimSuffix(lines[luaLine-1], "\r"))))
+	}
+	return array(items...)
+}
+
+func (r *scriptDebugRuntime) printReply(name string) []byte {
+	event := r.currentEvent()
+	if event.state == nil {
+		return array([]byte("+No such variable.\r\n"))
+	}
+	dbg, ok := event.state.GetStack(0)
+	if !ok {
+		return array([]byte("+No such variable.\r\n"))
+	}
+	for i := 1; ; i++ {
+		localName, value := event.state.GetLocal(dbg, i)
+		if localName == "" {
+			break
+		}
+		if localName == name {
+			return array([]byte(fmt.Sprintf("+<value> %s\r\n", scriptDebugValue(value))))
+		}
+	}
+	return array([]byte("+No such variable.\r\n"))
+}
+
+func (r *scriptDebugRuntime) traceReply() []byte {
+	event := r.currentEvent()
+	if event.state == nil {
+		return array([]byte("+In top level:\r\n"))
+	}
+	items := make([][]byte, 0, 4)
+	for level := 0; ; level++ {
+		dbg, ok := event.state.GetStack(level)
+		if !ok {
+			break
+		}
+		_, _ = event.state.GetInfo("Sln", dbg, lua.LNil)
+		if level == 0 && dbg.What == "main" {
+			items = append(items, []byte("+In top level:\r\n"))
+		} else {
+			name := dbg.Name
+			if name == "" {
+				name = "function"
+			}
+			items = append(items, []byte(fmt.Sprintf("+In %s:\r\n", name)))
+		}
+		line := dbg.CurrentLine
+		if line <= 0 && level == 0 {
+			line = event.line
+		}
+		display, source := r.displayLine(line)
+		items = append(items, []byte(fmt.Sprintf("+-> %d   %s\r\n", display, source)))
+	}
+	if len(items) == 0 {
+		items = append(items, []byte("+In top level:\r\n"))
+	}
+	return array(items...)
+}
+
+func scriptDebugCommandParts(args [][]byte) []string {
+	parts := make([]string, 0, len(args))
+	for _, arg := range args {
+		fields := strings.Fields(string(arg))
+		parts = append(parts, fields...)
+	}
+	return parts
 }
 
 func parseScriptDebugResume(args [][]byte) (scriptDebugResumeMode, bool) {
@@ -363,11 +546,77 @@ func (s *TCPServer) executeScriptDebugCommand(
 		return false, nil, nil
 	}
 
-	mode, ok := parseScriptDebugResume(args)
-	if !ok {
-		return true, nil, errors.New("ERR unknown debugger command")
+	parts := scriptDebugCommandParts(args)
+	if len(parts) == 0 {
+		return true, array([]byte("+<error> Unknown Redis Lua debugger command or wrong number of arguments.\r\n")), nil
 	}
 
+	command := strings.ToUpper(parts[0])
+	switch command {
+	case "L":
+		if len(parts) != 1 {
+			return true, array([]byte("+<error> Unknown Redis Lua debugger command or wrong number of arguments.\r\n")), nil
+		}
+		event := runtime.currentEvent()
+		display, _ := runtime.displayLine(event.line)
+		return true, runtime.listReply(display, 5), nil
+
+	case "P":
+		if len(parts) != 2 {
+			return true, array([]byte("+<error> Unknown Redis Lua debugger command or wrong number of arguments.\r\n")), nil
+		}
+		return true, runtime.printReply(parts[1]), nil
+
+	case "T":
+		if len(parts) != 1 {
+			return true, array([]byte("+<error> Unknown Redis Lua debugger command or wrong number of arguments.\r\n")), nil
+		}
+		return true, runtime.traceReply(), nil
+
+	case "B":
+		if len(parts) == 1 {
+			lines := runtime.breakpointLines()
+			if len(lines) == 0 {
+				return true, array([]byte("+No breakpoints set. Use 'b <line>' to add one.\r\n")), nil
+			}
+			items := make([][]byte, 0, len(lines))
+			for _, line := range lines {
+				items = append(items, []byte(fmt.Sprintf("+%d\r\n", line)))
+			}
+			return true, array(items...), nil
+		}
+		if len(parts) != 2 {
+			return true, array([]byte("+<error> Unknown Redis Lua debugger command or wrong number of arguments.\r\n")), nil
+		}
+
+		raw := parts[1]
+		remove := strings.HasPrefix(raw, "-")
+		if remove {
+			raw = strings.TrimPrefix(raw, "-")
+		}
+		displayLine, err := strconv.Atoi(raw)
+		if err != nil {
+			return true, array([]byte("+<error> Unknown Redis Lua debugger command or wrong number of arguments.\r\n")), nil
+		}
+		luaLine := displayLine - runtime.lineOffset
+		lines := runtime.sourceLines()
+		if luaLine < 1 || luaLine > len(lines) {
+			return true, array([]byte("+<error> Unknown Redis Lua debugger command or wrong number of arguments.\r\n")), nil
+		}
+		if remove {
+			runtime.setBreakpoint(luaLine, false)
+			return true, array([]byte("+Breakpoint removed.\r\n")), nil
+		}
+		runtime.setBreakpoint(luaLine, true)
+		return true, runtime.listReply(displayLine, 1), nil
+	}
+
+	mode, ok := parseScriptDebugResume(args)
+	if !ok {
+		return true, array([]byte("+<error> Unknown Redis Lua debugger command or wrong number of arguments.\r\n")), nil
+	}
+
+	runtime.clearCurrent()
 	select {
 	case runtime.resume <- scriptDebugResume{mode: mode}:
 	case <-runtime.ctx.Done():
@@ -385,5 +634,6 @@ func (s *TCPServer) executeScriptDebugCommand(
 		return true, scriptDebugEndReply(event.result), nil
 	}
 
+	runtime.setCurrent(event)
 	return true, scriptDebugStopReply(runtime, event), nil
 }
