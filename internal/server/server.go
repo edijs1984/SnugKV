@@ -1376,7 +1376,12 @@ func optionalBulk(v []byte, found bool) []byte {
 }
 func formatBulkString(v []byte) []byte {
 	out := make([]byte, 0, len(v)+32)
-	out = append(out, '
+	out = append(out, '$')
+	out = strconv.AppendInt(out, int64(len(v)), 10)
+	out = append(out, '\r', '\n')
+	out = append(out, v...)
+	return append(out, '\r', '\n')
+}
 func array(items ...[]byte) []byte {
 	out := []byte(fmt.Sprintf("*%d\r\n", len(items)))
 	for _, item := range items {
