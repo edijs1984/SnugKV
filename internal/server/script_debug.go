@@ -559,7 +559,7 @@ func scriptDebugSourceLine(prefix string, displayLine int, source string) []byte
 }
 
 func scriptDebugErrorReply() []byte {
-	return scriptDebugErrorReply()
+	return array([]byte("+<error> Unknown Redis Lua debugger command or wrong number of arguments.\r\n"))
 }
 
 func (r *scriptDebugRuntime) protocolErrorReply() []byte {
