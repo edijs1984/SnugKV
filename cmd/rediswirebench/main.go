@@ -52,14 +52,20 @@ func main() {
 
 	control, err := dial(*addr)
 	if err != nil { fatalf("connect: %v", err) }
-	defer control.Close()
 
 	if *reset {
-		if err := control.expectSimple("OK", b("FLUSHDB")); err != nil { fatalf("FLUSHDB: %v", err) }
+		if err := control.expectSimple("OK", b("FLUSHDB")); err != nil {
+			control.Close()
+			fatalf("FLUSHDB: %v", err)
+		}
 	}
 
 	before, err := control.usedMemory()
-	if err != nil { fatalf("INFO memory before: %v", err) }
+	if err != nil {
+		control.Close()
+		fatalf("INFO memory before: %v", err)
+	}
+	control.Close()
 
 	var elapsed time.Duration
 	var samples []int64
@@ -70,6 +76,10 @@ func main() {
 	case "get", "mixed", "ttl":
 		elapsed, samples, errs = runConcurrent(*addr, *workload, *keys, *ops, *workers, *valueBytes, *seed)
 	}
+
+	control, err = dial(*addr)
+	if err != nil { fatalf("reconnect after workload: %v", err) }
+	defer control.Close()
 
 	after, err := control.usedMemory()
 	if err != nil { fatalf("INFO memory after: %v", err) }
