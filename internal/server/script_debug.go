@@ -1,10 +1,13 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
+	lua "github.com/yuin/gopher-lua"
 	"snugkv/internal/engine"
 )
 
@@ -16,57 +19,186 @@ const (
 	scriptDebugSync
 )
 
-type scriptDebugPending struct {
-	command [][]byte
+type scriptDebugResumeMode uint8
+
+const (
+	scriptDebugContinue scriptDebugResumeMode = iota
+	scriptDebugStep
+	scriptDebugNext
+)
+
+type scriptDebugResume struct {
+	mode scriptDebugResumeMode
+}
+
+type scriptDebugEvent struct {
+	line   int
+	depth  int
+	reason string
+	result []byte
+	err    error
+	done   bool
+}
+
+type scriptDebugRuntime struct {
+	command    [][]byte
+	source     string
+	body       string
+	lineOffset int
+
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	resume chan scriptDebugResume
+	events chan scriptDebugEvent
+
+	closeOnce sync.Once
+}
+
+func newScriptDebugRuntime(command [][]byte, source string) (*scriptDebugRuntime, error) {
+	meta, err := parseEvalScriptMetadata(source)
+	if err != nil {
+		return nil, err
+	}
+
+	offset := 0
+	if meta.flagged {
+		offset = 1
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	return &scriptDebugRuntime{
+		command:    cloneCommandArgs(command),
+		source:     source,
+		body:       meta.body,
+		lineOffset: offset,
+		ctx:        ctx,
+		cancel:     cancel,
+		resume:     make(chan scriptDebugResume),
+		events:     make(chan scriptDebugEvent, 1),
+	}, nil
+}
+
+func (r *scriptDebugRuntime) close() {
+	if r == nil {
+		return
+	}
+	r.closeOnce.Do(r.cancel)
+}
+
+func (r *scriptDebugRuntime) displayLine(luaLine int) (int, string) {
+	lineNo := luaLine + r.lineOffset
+	lines := strings.Split(strings.ReplaceAll(r.body, "\r\n", "\n"), "\n")
+	text := ""
+	if luaLine > 0 && luaLine <= len(lines) {
+		text = strings.TrimSuffix(lines[luaLine-1], "\r")
+	}
+	return lineNo, text
+}
+
+func (r *scriptDebugRuntime) lineHook() lua.LineHook {
+	initialized := false
+	mode := scriptDebugContinue
+	nextDepth := 0
+
+	pause := func(event lua.HookEvent, reason string) bool {
+		select {
+		case r.events <- scriptDebugEvent{
+			line:   event.Line,
+			depth:  event.Depth,
+			reason: reason,
+		}:
+		case <-r.ctx.Done():
+			return false
+		}
+
+		select {
+		case resume := <-r.resume:
+			mode = resume.mode
+			if mode == scriptDebugNext {
+				nextDepth = event.Depth
+			}
+			return true
+		case <-r.ctx.Done():
+			return false
+		}
+	}
+
+	return func(_ *lua.LState, event lua.HookEvent) {
+		if event.Line <= 0 || r.ctx.Err() != nil {
+			return
+		}
+
+		if !initialized {
+			initialized = true
+			_ = pause(event, "step over")
+			return
+		}
+
+		shouldStop := false
+		switch mode {
+		case scriptDebugStep:
+			shouldStop = true
+		case scriptDebugNext:
+			shouldStop = event.Depth <= nextDepth
+		case scriptDebugContinue:
+			return
+		}
+
+		if shouldStop {
+			_ = pause(event, "step over")
+		}
+	}
 }
 
 func (c *clientSession) setScriptDebugMode(mode scriptDebugMode) {
 	c.mu.Lock()
+	oldRuntime := c.scriptDebugRuntime
 	c.scriptDebugMode = mode
 	if mode == scriptDebugOff {
-		c.scriptDebugPending = nil
+		c.scriptDebugRuntime = nil
 	}
 	c.mu.Unlock()
+
+	if mode == scriptDebugOff && oldRuntime != nil {
+		oldRuntime.close()
+	}
 }
 
-func (c *clientSession) scriptDebugState() (scriptDebugMode, *scriptDebugPending) {
+func (c *clientSession) scriptDebugState() (scriptDebugMode, *scriptDebugRuntime) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-
-	var pending *scriptDebugPending
-	if c.scriptDebugPending != nil {
-		pending = &scriptDebugPending{
-			command: cloneCommandArgs(c.scriptDebugPending.command),
-		}
-	}
-	return c.scriptDebugMode, pending
+	return c.scriptDebugMode, c.scriptDebugRuntime
 }
 
-func (c *clientSession) setScriptDebugPending(pending *scriptDebugPending) {
+func (c *clientSession) setScriptDebugRuntime(runtime *scriptDebugRuntime) {
 	c.mu.Lock()
-	c.scriptDebugPending = pending
+	c.scriptDebugRuntime = runtime
 	c.mu.Unlock()
 }
 
-func scriptDebugStopReply(source string) []byte {
-	meta, err := parseEvalScriptMetadata(source)
-	if err == nil {
-		source = meta.body
+func (c *clientSession) clearScriptDebugRuntime(runtime *scriptDebugRuntime) {
+	c.mu.Lock()
+	if c.scriptDebugRuntime == runtime {
+		c.scriptDebugRuntime = nil
 	}
+	c.mu.Unlock()
+}
 
-	lineNo := 1
-	if meta.flagged {
-		lineNo = 2
+func (c *clientSession) closeScriptDebugRuntime() {
+	c.mu.Lock()
+	runtime := c.scriptDebugRuntime
+	c.scriptDebugRuntime = nil
+	c.mu.Unlock()
+	if runtime != nil {
+		runtime.close()
 	}
-	line := source
-	if newline := strings.IndexByte(source, '\n'); newline >= 0 {
-		line = source[:newline]
-	}
-	line = strings.TrimSuffix(line, "\r")
-	line = strings.NewReplacer("\r", " ", "\n", " ").Replace(line)
+}
 
+func scriptDebugStopReply(runtime *scriptDebugRuntime, event scriptDebugEvent) []byte {
+	lineNo, line := runtime.displayLine(event.line)
 	return array(
-		[]byte(fmt.Sprintf("+* Stopped at %d, stop reason = step over\r\n", lineNo)),
+		[]byte(fmt.Sprintf("+* Stopped at %d, stop reason = %s\r\n", lineNo, event.reason)),
 		[]byte(fmt.Sprintf("+-> %d   %s\r\n", lineNo, line)),
 	)
 }
@@ -107,12 +239,53 @@ func (s *TCPServer) executeScriptDebugControl(
 	return true, []byte("+OK\r\n"), nil
 }
 
+func cloneServerForScriptDebug(source *Server) (*Server, error) {
+	cloneStore := engine.New()
+	if err := cloneStore.Restore(source.store.Export(nil), true); err != nil {
+		return nil, err
+	}
+	cloneStore.SetMaxMemory(source.store.MaxMemory())
+
+	clone := New(cloneStore)
+	clone.eviction = source.eviction
+	clone.acl = source.acl
+	clone.aclLog = source.aclLog
+	return clone, nil
+}
+
+func (s *TCPServer) runScriptDebugRuntime(
+	runtime *scriptDebugRuntime,
+	target *Server,
+	auth *authSession,
+) {
+	target.durableMu.Lock()
+	result, err := target.withExecutionACLContextLocked(
+		auth,
+		runtime.command,
+		func() ([]byte, error) {
+			return target.executeEvalDebug(runtime.command, runtime)
+		},
+	)
+	target.durableMu.Unlock()
+
+	event := scriptDebugEvent{result: result, err: err, done: true}
+	select {
+	case runtime.events <- event:
+	case <-runtime.ctx.Done():
+		select {
+		case runtime.events <- event:
+		default:
+		}
+	}
+}
+
 func (s *TCPServer) beginScriptDebugEval(
 	session *clientSession,
+	auth *authSession,
 	args [][]byte,
 ) (bool, []byte, error) {
-	mode, pending := session.scriptDebugState()
-	if mode == scriptDebugOff || pending != nil || len(args) == 0 {
+	mode, runtime := session.scriptDebugState()
+	if mode == scriptDebugOff || runtime != nil || len(args) == 0 {
 		return false, nil, nil
 	}
 
@@ -135,24 +308,49 @@ func (s *TCPServer) beginScriptDebugEval(
 		return true, nil, err
 	}
 
-	session.setScriptDebugPending(&scriptDebugPending{
-		command: cloneCommandArgs(args),
-	})
-	return true, scriptDebugStopReply(source), nil
+	runtime, err := newScriptDebugRuntime(args, source)
+	if err != nil {
+		return true, nil, err
+	}
+
+	target := s.server
+	if mode == scriptDebugAsync {
+		target, err = cloneServerForScriptDebug(s.server)
+		if err != nil {
+			runtime.close()
+			return true, nil, err
+		}
+	}
+
+	session.setScriptDebugRuntime(runtime)
+	go s.runScriptDebugRuntime(runtime, target, auth)
+
+	event := <-runtime.events
+	if event.done {
+		session.clearScriptDebugRuntime(runtime)
+		runtime.close()
+		if event.err != nil {
+			return true, nil, event.err
+		}
+		return true, scriptDebugEndReply(event.result), nil
+	}
+	return true, scriptDebugStopReply(runtime, event), nil
 }
 
-func cloneServerForScriptDebug(source *Server) (*Server, error) {
-	cloneStore := engine.New()
-	if err := cloneStore.Restore(source.store.Export(nil), true); err != nil {
-		return nil, err
+func parseScriptDebugResume(args [][]byte) (scriptDebugResumeMode, bool) {
+	if len(args) != 1 {
+		return 0, false
 	}
-	cloneStore.SetMaxMemory(source.store.MaxMemory())
-
-	clone := New(cloneStore)
-	clone.eviction = source.eviction
-	clone.acl = source.acl
-	clone.aclLog = source.aclLog
-	return clone, nil
+	switch strings.ToUpper(string(args[0])) {
+	case "C", "CONTINUE":
+		return scriptDebugContinue, true
+	case "S", "STEP":
+		return scriptDebugStep, true
+	case "N", "NEXT":
+		return scriptDebugNext, true
+	default:
+		return 0, false
+	}
 }
 
 func (s *TCPServer) executeScriptDebugCommand(
@@ -160,51 +358,32 @@ func (s *TCPServer) executeScriptDebugCommand(
 	auth *authSession,
 	args [][]byte,
 ) (bool, []byte, error) {
-	mode, pending := session.scriptDebugState()
-	if pending == nil {
+	_, runtime := session.scriptDebugState()
+	if runtime == nil {
 		return false, nil, nil
 	}
 
-	if len(args) != 1 {
+	mode, ok := parseScriptDebugResume(args)
+	if !ok {
 		return true, nil, errors.New("ERR unknown debugger command")
 	}
 
-	command := strings.ToUpper(string(args[0]))
-	if command != "C" && command != "CONTINUE" {
-		return true, nil, errors.New("ERR unknown debugger command")
+	select {
+	case runtime.resume <- scriptDebugResume{mode: mode}:
+	case <-runtime.ctx.Done():
+		session.clearScriptDebugRuntime(runtime)
+		return true, nil, errors.New("ERR debugger session ended")
 	}
 
-	var (
-		result []byte
-		err    error
-	)
-
-	switch mode {
-	case scriptDebugAsync:
-		clone, cloneErr := cloneServerForScriptDebug(s.server)
-		if cloneErr != nil {
-			return true, nil, cloneErr
+	event := <-runtime.events
+	if event.done {
+		session.clearScriptDebugRuntime(runtime)
+		runtime.close()
+		if event.err != nil {
+			return true, nil, event.err
 		}
-		clone.durableMu.Lock()
-		result, err = clone.withExecutionACLContextLocked(
-			auth,
-			pending.command,
-			func() ([]byte, error) {
-				return clone.executePressure(pending.command)
-			},
-		)
-		clone.durableMu.Unlock()
-
-	case scriptDebugSync:
-		result, err = s.server.executeForSession(pending.command, auth)
-
-	default:
-		return true, nil, errors.New("ERR debugger is not enabled")
+		return true, scriptDebugEndReply(event.result), nil
 	}
 
-	session.setScriptDebugPending(nil)
-	if err != nil {
-		return true, nil, err
-	}
-	return true, scriptDebugEndReply(result), nil
+	return true, scriptDebugStopReply(runtime, event), nil
 }
