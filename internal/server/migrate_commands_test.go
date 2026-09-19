@@ -199,3 +199,104 @@ func TestMigrateMissingReturnsNoKeyWithoutConnecting(t *testing.T) {
 		t.Fatalf("response=%q err=%v", response, err)
 	}
 }
+
+
+func TestMigratePartialMovePersistsAcknowledgedDeletion(t *testing.T) {
+	got := make(chan [][][]byte, 1)
+	host, port := startMigrateTarget(t,
+		[]string{
+			"+OK\r\n",
+			"+OK\r\n",
+			"-BUSYKEY Target key name already exists.\r\n",
+		},
+		got,
+	)
+
+	store := engine.New()
+	s := New(store)
+	journal := &transactionCaptureJournal{}
+	s.SetJournal(journal)
+
+	if _, err := s.Execute([][]byte{[]byte("SET"), []byte("a"), []byte("1")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Execute([][]byte{[]byte("SET"), []byte("b"), []byte("2")}); err != nil {
+		t.Fatal(err)
+	}
+	journal.frames = nil
+
+	_, err := s.Execute([][]byte{
+		[]byte("MIGRATE"), []byte(host), []byte(port), []byte(""),
+		[]byte("0"), []byte("5000"), []byte("KEYS"), []byte("a"), []byte("b"),
+	})
+	if err == nil || err.Error() != "ERR Target instance replied with error: BUSYKEY Target key name already exists." {
+		t.Fatalf("MIGRATE err=%v", err)
+	}
+	if len(journal.frames) != 1 {
+		t.Fatalf("journal frames=%d, want 1", len(journal.frames))
+	}
+	if len(journal.frames[0]) != 2 {
+		t.Fatalf("journal records=%d, want 2", len(journal.frames[0]))
+	}
+
+	deleted := map[string]bool{}
+	for _, record := range journal.frames[0] {
+		if record.Deleted {
+			deleted[string(record.Key)] = true
+		}
+	}
+	if !deleted["a"] {
+		t.Fatalf("acknowledged key a deletion not journaled: %#v", journal.frames[0])
+	}
+	if deleted["b"] {
+		t.Fatalf("failed key b deletion was journaled: %#v", journal.frames[0])
+	}
+	<-got
+}
+
+func TestMigrateMoveInvalidatesWatch(t *testing.T) {
+	got := make(chan [][][]byte, 1)
+	host, port := startMigrateTarget(t,
+		[]string{"+OK\r\n", "+OK\r\n"},
+		got,
+	)
+
+	tcp, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tcp.Close()
+
+	watcher, err := net.Dial("tcp", tcp.listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer watcher.Close()
+	mover, err := net.Dial("tcp", tcp.listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mover.Close()
+
+	rw := bufio.NewReader(watcher)
+	rm := bufio.NewReader(mover)
+
+	if got := txCommand(t, mover, rm, "SET", "watched:migrate", "v"); got != "+OK\r\n" {
+		t.Fatalf("SET = %q", got)
+	}
+	if got := txCommand(t, watcher, rw, "WATCH", "watched:migrate"); got != "+OK\r\n" {
+		t.Fatalf("WATCH = %q", got)
+	}
+	if got := txCommand(t, mover, rm,
+		"MIGRATE", host, port, "watched:migrate", "0", "5000",
+	); got != "+OK\r\n" {
+		t.Fatalf("MIGRATE = %q", got)
+	}
+
+	_ = txCommand(t, watcher, rw, "MULTI")
+	_ = txCommand(t, watcher, rw, "PING")
+	if got := txCommand(t, watcher, rw, "EXEC"); got != "*-1\r\n" {
+		t.Fatalf("MIGRATE did not invalidate WATCH: %q", got)
+	}
+	<-got
+}
