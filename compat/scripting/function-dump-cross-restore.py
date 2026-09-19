@@ -16,11 +16,10 @@ redis.register_function{
 """
 
 def encode(parts):
-    out = [f"*{len(parts)}\r\n".encode()]
+    out = [("*" + str(len(parts)) + "\r\n").encode()]
     for part in parts:
         b = part if isinstance(part, bytes) else str(part).encode()
-        out.append(f"$"+"{len(b)}\r\n")
-        out[-1] = out[-1].encode()
+        out.append(("$" + str(len(b)) + "\r\n").encode())
         out.append(b)
         out.append(b"\r\n")
     return b"".join(out)
