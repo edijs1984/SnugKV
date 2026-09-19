@@ -192,6 +192,41 @@ func (s *Store) Get(key string) ([]byte, bool) {
 	}
 	return s.decode(sh, e), true
 }
+
+// GetString performs the Redis string GET type check and value lookup under one
+// shard lock. wrongType is true only for native container values that GET must
+// reject; missing/expired keys return found=false.
+func (s *Store) GetString(key string) (value []byte, found bool, wrongType bool) {
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	e, ok := sh.get(key)
+	if !ok || sh.expired(key, e, s.now()) {
+		return nil, false, false
+	}
+
+	switch e.valueType {
+	case TypeHash, TypeSet, TypeList, TypeZSet:
+		return nil, false, true
+	}
+
+	// Keep the same activity accounting semantics as Get.
+	if s.shouldTrackActivity(e) && e.entryMeta != nil {
+		now := s.now()
+		meta := e.entryMeta
+		if now.Sub(meta.lastAccess.Time()) > time.Minute {
+			meta.reads = 0
+		}
+		meta.lastAccess = activityStampOf(now)
+		if meta.reads < ^uint8(0) {
+			meta.reads++
+		}
+		sh.set(key, e)
+	}
+
+	return s.decode(sh, e), true, false
+}
 func (s *Store) Delete(key string) bool {
 	sh := s.shardFor(key)
 	sh.mu.Lock()
