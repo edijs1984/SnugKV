@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"errors"
-	"snugkv/internal/engine"
 	"snugkv/internal/persistence"
 	"strings"
 	"sync/atomic"
@@ -135,18 +134,14 @@ func (s *Server) executeAuthorizedConcurrentSet(args [][]byte) (response []byte,
 	}
 
 	key := string(args[1])
-	applied, _, _, setErr := s.store.SetWithOptions(
-		key,
-		args[2],
-		engine.SetOptions{},
-	)
+	setErr := s.store.SetPlain(key, args[2])
 	s.durableMu.RUnlock()
 
 	atomic.AddUint64(&s.commands, 1)
 	if setErr != nil {
 		return nil, true, setErr
 	}
-	if applied && s.optimizer != nil {
+	if s.optimizer != nil {
 		s.optimizer.Queue(key)
 	}
 	return []byte("+OK\r\n"), true, nil

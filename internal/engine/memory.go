@@ -235,7 +235,17 @@ func (s *Store) publishRecord(
 	admission memoryAdmission,
 ) error {
 	old, exists := sh.get(key)
+	return s.publishRecordKnown(sh, key, e, admission, old, exists)
+}
 
+func (s *Store) publishRecordKnown(
+	sh *shard,
+	key string,
+	e preparedEntry,
+	admission memoryAdmission,
+	old entry,
+	exists bool,
+) error {
 	if s.shouldTrackActivity(e.entry) && e.entryMeta == nil {
 		e.entryMeta = &entryMeta{}
 	}
