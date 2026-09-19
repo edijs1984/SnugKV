@@ -44,8 +44,10 @@ func (w *serializedResponseWriter) writeBuffered(response []byte) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	if err := w.conn.SetWriteDeadline(time.Now().Add(time.Duration(w.server.config.WriteTimeoutMS) * time.Millisecond)); err != nil {
-		return err
+	if len(response) > w.buf.Available() {
+		if err := w.conn.SetWriteDeadline(time.Now().Add(time.Duration(w.server.config.WriteTimeoutMS) * time.Millisecond)); err != nil {
+			return err
+		}
 	}
 	_, err := w.buf.Write(response)
 	return err
