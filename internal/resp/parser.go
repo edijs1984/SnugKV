@@ -133,13 +133,12 @@ func (d *Decoder) ReadCommand() (args [][]byte, err error) {
 	if n > d.remaining/6 {
 		return nil, errors.New("request exceeds byte limit")
 	}
+	args = make([][]byte, n)
 	for i := 0; i < n; i++ {
-		var value []byte
-		value, err = d.bulk()
+		args[i], err = d.bulk()
 		if err != nil {
 			return nil, err
 		}
-		args = append(args, value)
 	}
 	return args, nil
 }
