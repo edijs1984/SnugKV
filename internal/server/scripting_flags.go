@@ -132,35 +132,45 @@ func (s *Server) withFlaggedScriptMemoryAdmission(
 }
 
 type legacyScriptOOMState struct {
-	writeAdmitted bool
+	startedOOM      bool
+	writeAdmitted   bool
+	bypassActive    bool
+	savedMaxMemory  uint64
 }
 
-func (s *Server) executeLegacyLuaNested(
-	state *legacyScriptOOMState,
+func newLegacyScriptOOMState(s *Server) *legacyScriptOOMState {
+	return &legacyScriptOOMState{
+		startedOOM: s.scriptAlreadyOOM(),
+	}
+}
+
+func (state *legacyScriptOOMState) afterSuccessfulCommand(
+	s *Server,
 	args [][]byte,
-	run func() ([]byte, error),
-) ([]byte, error) {
-	if state == nil {
-		return run()
+) {
+	if state == nil ||
+		!state.startedOOM ||
+		state.writeAdmitted ||
+		!scriptCommandWritesOrReplicates(args) {
+
+		return
 	}
 
-	if state.writeAdmitted {
-		maxMemory := s.store.MaxMemory()
-		if maxMemory == 0 {
-			return run()
-		}
+	// Legacy Eval scripts use Redis's pre-shebang behavior: while already OOM,
+	// the first write command is the admission boundary. If that command is
+	// allowed and succeeds (for example DEL), later writes in the same script
+	// are allowed even if they carry denyoom.
+	state.writeAdmitted = true
+	state.savedMaxMemory = s.store.MaxMemory()
+	if state.savedMaxMemory > 0 {
 		s.store.SetMaxMemory(0)
-		defer s.store.SetMaxMemory(maxMemory)
-		return run()
+		state.bypassActive = true
 	}
+}
 
-	result, err := run()
-	if err == nil && scriptCommandWritesOrReplicates(args) {
-		// Legacy Eval scripts use Redis's pre-shebang behavior: when already
-		// OOM, the first write command is the admission boundary. A successful
-		// non-denyoom write (for example DEL) admits subsequent writes for the
-		// remainder of this invocation.
-		state.writeAdmitted = true
+func (state *legacyScriptOOMState) restore(s *Server) {
+	if state != nil && state.bypassActive {
+		s.store.SetMaxMemory(state.savedMaxMemory)
+		state.bypassActive = false
 	}
-	return result, err
 }
