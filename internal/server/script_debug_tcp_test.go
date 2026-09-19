@@ -379,3 +379,43 @@ func TestScriptDebugRedisStatementStepAndBreakpointFormattingTCP(t *testing.T) {
 	writeRESPCommand(t, conn, "C")
 	readExactReply(t, reader, "*1\r\n+<endsession>\r\n:15\r\n")
 }
+
+
+func TestScriptDebugErrorProtocolTCP(t *testing.T) {
+	_, conn, reader := newScriptDebugTCP(t)
+
+	writeRESPCommand(t, conn, "SCRIPT", "DEBUG", "YES")
+	readExactReply(t, reader, "+OK\r\n")
+
+	writeRESPCommand(t, conn, "EVAL", "local a=1\nreturn a", "0")
+	readExactReply(
+		t,
+		reader,
+		"*2\r\n"+
+			"+* Stopped at 1, stop reason = step over\r\n"+
+			"+-> 1   local a=1\r\n",
+	)
+
+	writeRESPCommand(t, conn, "QWERTY")
+	readExactReply(
+		t,
+		reader,
+		"*1\r\n+<error> Unknown Redis Lua debugger command or wrong number of arguments.\r\n",
+	)
+
+	writeRESPCommand(t, conn, "P", ")")
+	readExactReply(
+		t,
+		reader,
+		"*1\r\n+<error> Unknown Redis Lua debugger command or wrong number of arguments.\r\n",
+	)
+
+	writeRESPCommand(t, conn, "")
+	readExactReply(
+		t,
+		reader,
+		"*1\r\n"+
+			"+<endsession>\r\n"+
+			"-ERR protocol error script: fd5b805c25b880c80ea924c9e4f8797d27ae2ba3, on @user_script:1.\r\n",
+	)
+}
