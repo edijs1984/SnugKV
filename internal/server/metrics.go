@@ -11,6 +11,7 @@ import (
 
 // Metrics uses a separate loopback-only HTTP listener and exports no keys/values.
 func (s *TCPServer) Metrics(addr string) (*http.Server, error) {
+	atomic.StoreUint32(&s.server.metricsEnabled, 1)
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		return nil, err
