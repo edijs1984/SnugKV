@@ -87,6 +87,7 @@ client-library-specific parity are not yet claimed.
 | CLIENT | Partial | ID/name/setinfo/info/list/list filters/kill/unblock/help implemented and differentially tested; tracking/caching/redirection not implemented |
 | COMMAND metadata | Supported for implemented surface | Redis-shaped INFO/DOCS/GETKEYS/GETKEYSANDFLAGS, parent/subcommand metadata, dynamic key extraction, differential audit complete |
 | RESP3 | Broad audited support | `HELLO 3`, protocol switching, audited null/map/set/double/verbatim reply shapes, Streams/tooling maps, GEO/ZSET numeric forms, and Pub/Sub push semantics; optional client/attribute hardening remains |
+| Key migration payloads | Supported | Redis 8.2-compatible key-level `DUMP` / `RESTORE` across STRING/HLL/HASH/SET/LIST/ZSET/STREAM; STREAM tombstone byte-for-byte re-emission after XDEL is a documented storage-model boundary |
 | Replication / Sentinel / Cluster | Not implemented | Outside current single-node scope |
 
 ## HASH
@@ -200,6 +201,17 @@ index returns `ERR DB index is out of range`. Cross-database copying is therefor
 not available. COPY participates in max-memory admission/OOM rollback, logical
 AOF persistence and restart recovery, MULTI/EXEC, WATCH invalidation, and
 LIST/ZSET/STREAM waiter wakeups when a successful copy creates a ready destination.
+
+## DUMP / RESTORE
+
+Supported syntax:
+
+```text
+DUMP key
+RESTORE key ttl serialized-value [REPLACE] [ABSTTL] [IDLETIME seconds | FREQ frequency]
+```
+
+SnugKV uses Redis 8.2 RDB object payloads with version/CRC64 validation. Live cross-restore is verified in both directions for STRING, HyperLogLog, HASH, SET, LIST, ZSET, and STREAM. Audited fixtures are byte-identical for STRING/HLL/HASH/SET/LIST/ZSET and for STREAMs without deleted tombstones. Redis STREAM tombstone payloads restore semantically, including lifetime and consumer-group/PEL metadata, but SnugKV does not retain deleted field/value tombstone bytes for exact later re-emission. See `docs/DUMP-RESTORE-COMPATIBILITY.md`.
 
 ## HyperLogLog
 
