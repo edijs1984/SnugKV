@@ -161,9 +161,13 @@ func (s *Server) executeScriptCommand(args [][]byte) ([]byte, error) {
 }
 
 func validateLuaScript(source string) error {
+	meta, err := parseEvalScriptMetadata(source)
+	if err != nil {
+		return err
+	}
 	L := newScriptLuaState()
 	defer L.Close()
-	_, err := L.LoadString(source)
+	_, err = L.LoadString(meta.body)
 	return err
 }
 
@@ -200,12 +204,31 @@ func (s *Server) executeEval(args [][]byte, bySHA bool) ([]byte, error) {
 		}
 	} else {
 		if err := validateLuaScript(source); err != nil {
+			if strings.HasPrefix(err.Error(), "ERR ") {
+				return nil, err
+			}
 			return nil, fmt.Errorf("ERR Error compiling script (new function): %v", err)
 		}
 		sha = cache.put(source)
 	}
 
-	return s.runLuaScript(source, sha, keys, argv)
+	meta, err := parseEvalScriptMetadata(source)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.rejectFlaggedScriptInvocationOOM(meta); err != nil {
+		return nil, err
+	}
+
+	return s.withFlaggedScriptMemoryAdmission(
+		meta,
+		func() ([]byte, error) {
+			if meta.noWrites {
+				return s.runLuaScriptReadOnly(meta.body, sha, keys, argv)
+			}
+			return s.runLuaScript(meta.body, sha, keys, argv, !meta.flagged)
+		},
+	)
 }
 
 func newScriptLuaState() *lua.LState {
@@ -238,7 +261,7 @@ func luaBytesTable(L *lua.LState, values [][]byte) *lua.LTable {
 	return table
 }
 
-func (s *Server) runLuaScript(source, sha string, keys, argv [][]byte) ([]byte, error) {
+func (s *Server) runLuaScript(source, sha string, keys, argv [][]byte, legacyOOM bool) ([]byte, error) {
 	L := newScriptLuaState()
 	defer L.Close()
 
@@ -248,7 +271,11 @@ func (s *Server) runLuaScript(source, sha string, keys, argv [][]byte) ([]byte, 
 
 	L.SetGlobal("KEYS", luaBytesTable(L, keys))
 	L.SetGlobal("ARGV", luaBytesTable(L, argv))
-	L.SetGlobal("redis", s.luaRedisModule(L))
+	if legacyOOM {
+		L.SetGlobal("redis", s.luaRedisModuleLegacyOOM(L))
+	} else {
+		L.SetGlobal("redis", s.luaRedisModule(L))
+	}
 
 	fn, err := L.LoadString(source)
 	if err != nil {
@@ -270,10 +297,21 @@ func (s *Server) runLuaScript(source, sha string, keys, argv [][]byte) ([]byte, 
 }
 
 func (s *Server) luaRedisModule(L *lua.LState) *lua.LTable {
+	return s.luaRedisModuleWithLegacyState(L, nil)
+}
+
+func (s *Server) luaRedisModuleLegacyOOM(L *lua.LState) *lua.LTable {
+	return s.luaRedisModuleWithLegacyState(L, &legacyScriptOOMState{})
+}
+
+func (s *Server) luaRedisModuleWithLegacyState(
+	L *lua.LState,
+	state *legacyScriptOOMState,
+) *lua.LTable {
 	module := L.NewTable()
 	L.SetFuncs(module, map[string]lua.LGFunction{
-		"call":         s.luaRedisCall(false),
-		"pcall":        s.luaRedisCall(true),
+		"call":         s.luaRedisCallWithLegacyOOM(false, state),
+		"pcall":        s.luaRedisCallWithLegacyOOM(true, state),
 		"error_reply":  luaRedisErrorReply,
 		"status_reply": luaRedisStatusReply,
 		"sha1hex":      luaRedisSHA1Hex,
@@ -316,6 +354,13 @@ func scriptCommandForbidden(args [][]byte) bool {
 }
 
 func (s *Server) luaRedisCall(protected bool) lua.LGFunction {
+	return s.luaRedisCallWithLegacyOOM(protected, nil)
+}
+
+func (s *Server) luaRedisCallWithLegacyOOM(
+	protected bool,
+	state *legacyScriptOOMState,
+) lua.LGFunction {
 	return func(L *lua.LState) int {
 		if L.GetTop() < 1 {
 			return luaPushCommandError(L, protected, errors.New("ERR Please specify at least one argument for redis.call()"))
@@ -341,10 +386,16 @@ func (s *Server) luaRedisCall(protected bool) lua.LGFunction {
 			return luaPushCommandError(L, protected, err)
 		}
 
-		result, err := s.withNestedExecutionCommand(
+		result, err := s.executeLegacyLuaNested(
+			state,
 			args,
 			func() ([]byte, error) {
-				return s.executePressureMode(args, false)
+				return s.withNestedExecutionCommand(
+					args,
+					func() ([]byte, error) {
+						return s.executePressureMode(args, false)
+					},
+				)
 			},
 		)
 		if err != nil {
