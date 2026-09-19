@@ -117,10 +117,14 @@ func (s *Server) withFlaggedScriptMemoryAdmission(
 	meta evalScriptMetadata,
 	run func() ([]byte, error),
 ) ([]byte, error) {
-	if !meta.flagged || meta.noWrites {
+	if !meta.flagged || meta.noWrites || s.eviction != "noeviction" {
 		return run()
 	}
 
+	// Under noeviction Redis performs the flagged-script OOM decision at
+	// invocation admission. Once admitted, nested writes are not independently
+	// denied by maxmemory. Eviction policies are different: they must retain
+	// their normal eviction/retry path, so they are handled per nested command.
 	maxMemory := s.store.MaxMemory()
 	if maxMemory == 0 {
 		return run()
@@ -129,6 +133,30 @@ func (s *Server) withFlaggedScriptMemoryAdmission(
 	s.store.SetMaxMemory(0)
 	defer s.store.SetMaxMemory(maxMemory)
 	return run()
+}
+
+func (s *Server) executeScriptNestedPressure(
+	args [][]byte,
+	allowOOM bool,
+) ([]byte, error) {
+	result, err := s.executePressureMode(args, false)
+	if !allowOOM || !errors.Is(err, engine.ErrOOM) {
+		return result, err
+	}
+
+	// allow-oom does not suppress normal eviction. First let executePressureMode
+	// clean up, compact, and evict according to the configured policy. Only when
+	// that path is exhausted do we retry this one nested command without the
+	// engine's max-memory admission. This is required for volatile-* policies
+	// when no eligible expiring victim exists.
+	maxMemory := s.store.MaxMemory()
+	if maxMemory == 0 {
+		return result, err
+	}
+
+	s.store.SetMaxMemory(0)
+	defer s.store.SetMaxMemory(maxMemory)
+	return s.executePressureCommand(args)
 }
 
 type legacyScriptOOMState struct {

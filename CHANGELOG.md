@@ -6,6 +6,7 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Added
 
+- Redis 8.2 Lua eviction-policy parity for `allkeys-lru` and `volatile-lru`, including policy-preserving nested eviction/retry, persistent-key protection for volatile eviction, and `allow-oom` fallback only after eligible victims are exhausted.
 - Redis 8.2 Lua Eval shebang/OOM flag parity for the audited noeviction surface, including legacy first-write admission, `#!lua` metadata parsing, `allow-oom`, `no-writes`, `_RO` enforcement, SCRIPT LOAD/EVALSHA propagation, and live differential coverage.
 - Redis 8.2 command-level OOM admission parity for the audited noeviction surface, including exact `denyoom`/`fast` COMMAND flags, pre-execution rejection for denyoom commands, execution of non-denyoom shrinking/mutating commands while already over maxmemory, exact OOM error text, and a live differential harness.
 - Redis 8.2 Function `allow-oom` flag with OOM-entry gating, scoped nested-command
