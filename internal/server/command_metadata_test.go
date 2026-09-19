@@ -868,6 +868,9 @@ func TestCommandInfoParentHasSupportedSubcommands(t *testing.T) {
 		[]byte("$11\r\nclient|list\r\n"),
 		[]byte("$11\r\nclient|kill\r\n"),
 		[]byte("$14\r\nclient|unblock\r\n"),
+		[]byte("$15\r\nclient|tracking\r\n"),
+		[]byte("$14\r\nclient|caching\r\n"),
+		[]byte("$15\r\nclient|getredir\r\n"),
 	} {
 		if !bytes.Contains(reply, want) {
 			t.Fatalf(
@@ -878,15 +881,6 @@ func TestCommandInfoParentHasSupportedSubcommands(t *testing.T) {
 		}
 	}
 
-	if bytes.Contains(
-		reply,
-		[]byte("client|tracking"),
-	) {
-		t.Fatalf(
-			"unsupported CLIENT TRACKING advertised: %q",
-			reply,
-		)
-	}
 }
 
 func TestCommandInfoSubcommandLeaf(t *testing.T) {
@@ -1006,6 +1000,9 @@ func TestCommandParentsAdvertiseOnlyImplementedChildren(t *testing.T) {
 			"CLIENT|KILL",
 			"CLIENT|UNBLOCK",
 			"CLIENT|HELP",
+			"CLIENT|TRACKING",
+			"CLIENT|CACHING",
+			"CLIENT|GETREDIR",
 		},
 		"FUNCTION": {
 			"FUNCTION|LOAD",
@@ -1052,6 +1049,9 @@ func TestCommandInfoSupportedIncludesSubcommands(t *testing.T) {
 		"COMMAND|DOCS",
 		"CLIENT|ID",
 		"CLIENT|UNBLOCK",
+		"CLIENT|TRACKING",
+		"CLIENT|CACHING",
+		"CLIENT|GETREDIR",
 		"FUNCTION|LOAD",
 		"FUNCTION|STATS",
 		"SCRIPT|LOAD",
@@ -1067,7 +1067,6 @@ func TestCommandInfoSupportedIncludesSubcommands(t *testing.T) {
 	}
 
 	for _, name := range []string{
-		"CLIENT|TRACKING",
 		"DOESNOTEXIST",
 	} {
 		if commandInfoSupported(name) {
@@ -1083,6 +1082,9 @@ func TestCommandInfoSubcommandMetadataIsNotNull(t *testing.T) {
 	for _, name := range []string{
 		"COMMAND|COUNT",
 		"CLIENT|ID",
+		"CLIENT|TRACKING",
+		"CLIENT|CACHING",
+		"CLIENT|GETREDIR",
 		"FUNCTION|LOAD",
 		"SCRIPT|KILL",
 		"SCRIPT|DEBUG",

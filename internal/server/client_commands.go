@@ -42,6 +42,9 @@ type clientSession struct {
 	unblockCh   chan struct{}
 	unblockMode clientUnblockMode
 
+	tracking     clientTrackingState
+	trackingPush func([]byte) error
+
 	scriptDebugMode    scriptDebugMode
 	scriptDebugPending *scriptDebugPending
 }
