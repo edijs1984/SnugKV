@@ -40,8 +40,8 @@ def send(sock,label,*parts):
     sock.sendall(resp(*parts))
     return recv_idle(sock,label)
 
-def line(sock,label,text):
-    sock.sendall(text.encode()+b"\r\n")
+def dbg(sock,label,*parts):
+    sock.sendall(resp(*parts))
     return recv_idle(sock,label)
 
 print("SCRIPT DEBUG LDB differential %s:%d"%(HOST,PORT))
@@ -65,37 +65,37 @@ with socket.create_connection((HOST,PORT),timeout=3) as s:
     recv_idle(s,"initial stop")
 
     # Source listing and trace at the first stop.
-    line(s,"L source list","L")
-    line(s,"T stack trace","T")
+    dbg(s,"L source list","L")
+    dbg(s,"T stack trace","T")
 
     # Variable inspection.
-    line(s,"print x","P x")
-    line(s,"print missing","P missing_name")
+    dbg(s,"print x","P","x")
+    dbg(s,"print missing","P","missing_name")
 
     # Single-step. This should advance to the next executable line.
-    line(s,"S step","S")
+    dbg(s,"S step","S")
 
     # NEXT behavior, especially around function call boundaries.
-    line(s,"N next","N")
+    dbg(s,"N next","N")
 
     # Breakpoint management grammar.
-    line(s,"B list","B")
-    line(s,"B set line 4","B 4")
-    line(s,"B list after set","B")
-    line(s,"B clear line 4","B -4")
-    line(s,"B list after clear","B")
+    dbg(s,"B list","B")
+    dbg(s,"B set line 4","B","4")
+    dbg(s,"B list after set","B")
+    dbg(s,"B clear line 4","B","-4")
+    dbg(s,"B list after clear","B")
 
     # Continue through redis.debug() and redis.breakpoint().
-    line(s,"C continue to runtime debug/breakpoint","C")
+    dbg(s,"C continue to runtime debug/breakpoint","C")
     recv_idle(s,"runtime debug or breakpoint follow-up")
 
     # Inspect variables at breakpoint if session is paused.
-    line(s,"P y at breakpoint","P y")
-    line(s,"L around breakpoint","L")
-    line(s,"T at breakpoint","T")
+    dbg(s,"P y at breakpoint","P","y")
+    dbg(s,"L around breakpoint","L")
+    dbg(s,"T at breakpoint","T")
 
     # Continue to end.
-    line(s,"C finish","C")
+    dbg(s,"C finish","C")
     recv_idle(s,"final trailing frame")
 
 # Dedicated breakpoint-by-line session.
@@ -103,10 +103,10 @@ with socket.create_connection((HOST,PORT),timeout=3) as s:
     send(s,"SCRIPT DEBUG YES second","SCRIPT","DEBUG","YES")
     s.sendall(resp("EVAL",SCRIPT,"0"))
     recv_idle(s,"second initial stop")
-    line(s,"set breakpoint line 8","B 8")
-    line(s,"continue to line breakpoint","C")
-    line(s,"P y line breakpoint","P y")
-    line(s,"continue second finish","C")
+    dbg(s,"set breakpoint line 8","B","8")
+    dbg(s,"continue to line breakpoint","C")
+    dbg(s,"P y line breakpoint","P","y")
+    dbg(s,"continue second finish","C")
     recv_idle(s,"second final trailing frame")
 
 # Syntax/error behavior for debugger commands.
@@ -120,8 +120,8 @@ with socket.create_connection((HOST,PORT),timeout=3) as s:
         ("bad print expression","P )"),
         ("empty command",""),
     ]:
-        line(s,label,cmd)
-    line(s,"finish error session","C")
+        dbg(s,label,*([cmd] if cmd else [""]))
+    dbg(s,"finish error session","C")
     recv_idle(s,"error-session final trailing frame")
 
 print("\ndone")
