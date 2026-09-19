@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync/atomic"
 )
 
 type clientTrackingMode uint8
@@ -28,6 +29,13 @@ type clientTrackingState struct {
 	//  1 => track it (OPTIN + CACHING YES)
 	// -1 => do not track it (OPTOUT + CACHING NO)
 	cacheOverride int
+}
+
+func (c *clientSession) trackingIsEnabled() bool {
+	c.mu.RLock()
+	enabled := c.tracking.enabled
+	c.mu.RUnlock()
+	return enabled
 }
 
 func (c *clientSession) trackingSnapshot() clientTrackingState {
@@ -232,7 +240,11 @@ func (s *TCPServer) executeClientTracking(
 			if len(args) != 3 {
 				return true, nil, errors.New("ERR syntax error")
 			}
+			wasEnabled := session.trackingIsEnabled()
 			session.configureTracking(false, false, false, clientTrackingDefault, nil, 0)
+			if wasEnabled {
+				atomic.AddUint64(&s.trackingClients, ^uint64(0))
+			}
 			return true, []byte("+OK\r\n"), nil
 
 		case "ON":
@@ -311,7 +323,11 @@ func (s *TCPServer) executeClientTracking(
 			mode = clientTrackingOptOut
 		}
 
+		wasEnabled := session.trackingIsEnabled()
 		session.configureTracking(true, bcast, noLoop, mode, prefixes, redirectID)
+		if !wasEnabled {
+			atomic.AddUint64(&s.trackingClients, 1)
+		}
 		return true, []byte("+OK\r\n"), nil
 	}
 
@@ -398,6 +414,9 @@ func (s *TCPServer) trackCommandRead(
 	session *clientSession,
 	args [][]byte,
 ) {
+	if atomic.LoadUint64(&s.trackingClients) == 0 {
+		return
+	}
 	_, track := session.consumeTrackingDecision()
 	if !track {
 		return
@@ -411,6 +430,9 @@ func (s *TCPServer) invalidateTrackingKeys(
 	writer *clientSession,
 	args [][]byte,
 ) {
+	if atomic.LoadUint64(&s.trackingClients) == 0 {
+		return
+	}
 	keys := trackingWriteKeys(args)
 	if len(keys) == 0 {
 		return
