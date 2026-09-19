@@ -18,6 +18,7 @@ const (
 	keyRDBTypeZSetListpack   = byte(17)
 	keyRDBTypeListQuicklist2 = byte(18)
 	keyRDBTypeSetListpack    = byte(20)
+	keyRDBTypeStreamListpacks3 = byte(21)
 	keyRDBVersion            = functionRDBVersion
 )
 
@@ -200,6 +201,7 @@ type decodedKeyObject struct {
 	set       [][]byte
 	list      [][]byte
 	zset      []engine.ZSetItem
+	stream    *engine.StreamSnapshot
 }
 
 func decodeSingleRDBString(body []byte, pos *int) ([]byte, error) {
@@ -310,6 +312,13 @@ func decodeKeyDumpObject(data []byte) (decodedKeyObject, error) {
 		}
 		return decodedKeyObject{valueType: engine.TypeZSet, zset: items}, nil
 
+	case keyRDBTypeStreamListpacks3:
+		snapshot, err := decodeStreamDump(body, &pos)
+		if err != nil || pos != len(body) {
+			return decodedKeyObject{}, errors.New("ERR Bad data format")
+		}
+		return decodedKeyObject{valueType: engine.TypeStream, stream: &snapshot}, nil
+
 	default:
 		return decodedKeyObject{}, errors.New("ERR Bad data format")
 	}
@@ -349,6 +358,17 @@ func buildRestoreRecord(key string, object decodedKeyObject, expiresAtMS int64) 
 		if _, _, _, err := tmp.ZSetAdd(tempKey, object.zset, engine.ZSetAddOptions{}); err != nil {
 			return persistence.Record{}, err
 		}
+	case engine.TypeStream:
+		if object.stream == nil {
+			return persistence.Record{}, errors.New("ERR Bad data format")
+		}
+		value, err := engine.StreamSnapshotRecordValue(*object.stream)
+		if err != nil {
+			return persistence.Record{}, err
+		}
+		return persistence.Record{
+			Key: []byte(key), Value: value, ValueType: uint8(engine.TypeStream), ExpiresAtMS: expiresAtMS,
+		}, nil
 	default:
 		return persistence.Record{}, errors.New("ERR Bad data format")
 	}
@@ -450,6 +470,15 @@ func (s *Server) dumpKey(key string, valueType engine.ValueType) ([]byte, error)
 			return nil, err
 		}
 		return encodeZSetDump(items)
+	case engine.TypeStream:
+		snapshot, found, err := s.store.StreamSnapshot(key)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nil, nil
+		}
+		return encodeStreamDump(snapshot)
 	default:
 		if !keyDumpScalarTypeSupported(valueType) {
 			return nil, errors.New("ERR DUMP object type is not supported yet")
