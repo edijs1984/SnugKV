@@ -1,8 +1,7 @@
-# SCRIPT DEBUG full LDB implementation plan
+# SCRIPT DEBUG full LDB implementation
 
-This document records the Redis 8.2 oracle and the minimum Lua VM extension
-required to complete SnugKV's `SCRIPT DEBUG` implementation without faking
-line-by-line execution.
+This document records the implemented Redis 8.2 LDB design, the controlled
+GopherLua VM extension used by SnugKV, and the differential acceptance evidence.
 
 ## Redis 8.2 wire semantics
 
@@ -205,25 +204,15 @@ The fork must retain all v1.1.2 tests and add focused tests proving that hooks:
 
 ## SnugKV debugger architecture
 
-The current `scriptDebugPending` model defers execution until `C`. Full LDB
-requires replacing that with a persistent debug execution object holding:
+SnugKV now uses a persistent `scriptDebugRuntime` that owns the paused-debug
+session state, including source text, breakpoints, current stop metadata,
+continue/step/next mode, queued `redis.debug()` messages, cancellation, and
+the VM resume/event channels.
 
-- the target server (clone for YES, real server for SYNC);
-- `*lua.LState`;
-- compiled script function;
-- source lines;
-- current line;
-- current call depth;
-- stop reason;
-- breakpoints;
-- execution mode: continue / step / next;
-- next-depth baseline;
-- queued `redis.debug()` messages;
-- result/error;
-- cancellation / timeout state.
-
-Execution should run in a dedicated goroutine and block at line-hook safe points.
-The TCP connection remains the debugger command channel.
+Debug execution runs in a dedicated goroutine. The GopherLua host line hook
+publishes a stop event and blocks until the TCP debugger command resumes it.
+`YES` executes against a cloned server/store; `SYNC` executes against the
+real server while preserving the invoking ACL execution context.
 
 A condition-variable/channel handshake should be used rather than busy waiting:
 
@@ -290,13 +279,22 @@ breakpoint. The next emitted Lua line hook stops with reason
 - Debug execution must not leak Lua states or goroutines.
 - Existing non-debug EVAL/EVALSHA behavior must remain byte-for-byte unchanged.
 
-## Acceptance
+## Acceptance status
 
-The implementation is complete only when:
+The audited implementation now satisfies the Redis 8.2 LDB wire oracle for the
+covered surface. Redis and SnugKV produce identical debugger frames; the saved
+harness outputs differ only in the printed target port.
 
-1. the Redis 8.2 LDB wire oracle passes for the audited surface;
-2. YES rollback and SYNC persistence still match Redis;
-3. nested-step/next tests pass;
-4. breakpoints and runtime `redis.breakpoint()` interact correctly;
-5. locals and stack inspection work at real VM suspension points;
-6. race, vet, and RESP fuzz gates pass.
+Verified behavior includes:
+
+1. initial pause, continue, step, and next;
+2. YES rollback and SYNC persistence;
+3. line breakpoints and runtime `redis.breakpoint()` interaction;
+4. source listing, top-level stack trace, and local inspection;
+5. `redis.debug()` message framing;
+6. invalid debugger-command replies;
+7. empty-command protocol-error end-session plus connection close;
+8. focused race and vet checks.
+
+Before merge, the branch must still pass the repository-wide race, vet, and RESP
+fuzz gates.
