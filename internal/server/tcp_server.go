@@ -237,6 +237,10 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 		peer.LocalAddr().String(),
 	)
 
+	clientSession.mu.Lock()
+	clientSession.trackingPush = writer.write
+	clientSession.mu.Unlock()
+
 	s.registerClient(clientSession)
 	defer s.unregisterClient(clientSession.id)
 
@@ -497,6 +501,20 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			continue
 		}
 
+		if handled, trackingResponse, trackingErr :=
+			s.executeClientTracking(
+				clientSession,
+				msg,
+			); handled {
+			if trackingErr != nil {
+				trackingResponse = errorResponse(trackingErr)
+			}
+			if writeProtocol(msg, trackingResponse) != nil {
+				return
+			}
+			continue
+		}
+
 		if handled, clientResponse, clientErr := s.executeClientConnectionCommand(clientSession, msg); handled {
 			if clientErr != nil {
 				clientResponse = errorResponse(clientErr)
@@ -617,8 +635,13 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 		if err != nil {
 			result = errorResponse(err)
 		}
+		commandSucceeded := err == nil
 		if err = writeProtocol(msg, result); err != nil {
 			return
+		}
+		if commandSucceeded {
+			s.trackCommandRead(clientSession, msg)
+			s.invalidateTrackingKeys(clientSession, msg)
 		}
 		if len(msg) == 1 && strings.EqualFold(string(msg[0]), "QUIT") {
 			return
