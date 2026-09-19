@@ -125,8 +125,9 @@ func TestListMoveOOMIsAtomic(t *testing.T) {
 	beforeMemory := s.Memory()
 
 	s.memory.mu.Lock()
-	s.memory.max = s.memory.used
+	max := s.memory.used
 	s.memory.mu.Unlock()
+	s.memory.max.Store(max)
 
 	if _, _, err := s.ListMove("source", "dest", true, false); err != ErrOOM {
 		t.Fatalf("move err=%v want ErrOOM", err)

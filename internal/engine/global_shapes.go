@@ -40,7 +40,7 @@ func (s *Store) ensureGlobalShapeStore() *jsonshape.Store {
 	s.memory.mu.Lock()
 
 	next := s.memory.used + shapeStoreBaseBytes
-	if s.memory.max > 0 && next > s.memory.max {
+	if max := s.memory.max.Load(); max > 0 && next > max {
 		s.memory.mu.Unlock()
 		return nil
 	}
