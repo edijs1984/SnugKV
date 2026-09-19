@@ -89,10 +89,10 @@ func lzfCompressRedis(src []byte, outLimit int) ([]byte, bool) {
 		return out, true
 	}
 
-	hval := (int(src[0]) << 8) | int(src[1])
+	hval := (uint32(src[0]) << 8) | uint32(src[1])
 	for ip < len(src)-2 {
-		hval = (hval << 8) | int(src[ip+2])
-		idx := (((hval >> (24 - hlog)) - hval*5) & (hsize - 1))
+		hval = (hval << 8) | uint32(src[ip+2])
+		idx := int(((hval >> (24 - hlog)) - hval*5) & uint32(hsize-1))
 		ref := htab[idx]
 		htab[idx] = ip
 
@@ -149,13 +149,13 @@ func lzfCompressRedis(src []byte, outLimit int) ([]byte, bool) {
 
 			// VERY_FAST=1 path from Redis liblzf.
 			ip--
-			hval = (int(src[ip]) << 8) | int(src[ip+1])
-			hval = (hval << 8) | int(src[ip+2])
-			idx = (((hval >> (24 - hlog)) - hval*5) & (hsize - 1))
+			hval = (uint32(src[ip]) << 8) | uint32(src[ip+1])
+			hval = (hval << 8) | uint32(src[ip+2])
+			idx = int(((hval >> (24 - hlog)) - hval*5) & uint32(hsize-1))
 			htab[idx] = ip
 			ip++
-			hval = (hval << 8) | int(src[ip+2])
-			idx = (((hval >> (24 - hlog)) - hval*5) & (hsize - 1))
+			hval = (hval << 8) | uint32(src[ip+2])
+			idx = int(((hval >> (24 - hlog)) - hval*5) & uint32(hsize-1))
 			htab[idx] = ip
 			ip++
 			continue
