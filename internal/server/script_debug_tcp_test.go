@@ -153,3 +153,49 @@ func TestScriptDebugSyncContinuePersists(t *testing.T) {
 		t.Fatalf("debug:counter = %q ok=%v", value, ok)
 	}
 }
+
+
+func TestScriptDebugStepAndNextUsePausedVM(t *testing.T) {
+	_, conn, reader := newScriptDebugTCP(t)
+
+	source := "local x = 1\n" +
+		"x = x + 1\n" +
+		"return x"
+
+	writeRESPCommand(t, conn, "SCRIPT", "DEBUG", "YES")
+	readExactReply(t, reader, "+OK\r\n")
+
+	writeRESPCommand(t, conn, "EVAL", source, "0")
+	readExactReply(
+		t,
+		reader,
+		"*2\r\n"+
+			"+* Stopped at 1, stop reason = step over\r\n"+
+			"+-> 1   local x = 1\r\n",
+	)
+
+	writeRESPCommand(t, conn, "S")
+	readExactReply(
+		t,
+		reader,
+		"*2\r\n"+
+			"+* Stopped at 2, stop reason = step over\r\n"+
+			"+-> 2   x = x + 1\r\n",
+	)
+
+	writeRESPCommand(t, conn, "N")
+	readExactReply(
+		t,
+		reader,
+		"*2\r\n"+
+			"+* Stopped at 3, stop reason = step over\r\n"+
+			"+-> 3   return x\r\n",
+	)
+
+	writeRESPCommand(t, conn, "C")
+	readExactReply(
+		t,
+		reader,
+		"*1\r\n+<endsession>\r\n:2\r\n",
+	)
+}
