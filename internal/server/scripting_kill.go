@@ -121,17 +121,46 @@ func (s *Server) executeKillableScripting(args [][]byte) ([]byte, error) {
 		}
 	} else {
 		if err := validateLuaScript(source); err != nil {
+			if strings.HasPrefix(err.Error(), "ERR ") {
+				return nil, err
+			}
 			return nil, fmt.Errorf("ERR Error compiling script (new function): %v", err)
 		}
 		sha = cache.put(source)
 	}
 
+	meta, err := parseEvalScriptMetadata(source)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.rejectFlaggedScriptInvocationOOM(meta); err != nil {
+		return nil, err
+	}
+	if readOnly {
+		if err := validateReadOnlyEvalMetadata(meta); err != nil {
+			return nil, err
+		}
+	}
+
 	finish := beginRunningScript(s)
 	defer finish()
-	return s.runKillableLuaScript(source, sha, keys, argv, readOnly)
+
+	return s.withFlaggedScriptMemoryAdmission(
+		meta,
+		func() ([]byte, error) {
+			return s.runKillableLuaScript(
+				meta.body,
+				sha,
+				keys,
+				argv,
+				readOnly || meta.noWrites,
+				!meta.flagged,
+			)
+		},
+	)
 }
 
-func (s *Server) runKillableLuaScript(source, sha string, keys, argv [][]byte, readOnly bool) ([]byte, error) {
+func (s *Server) runKillableLuaScript(source, sha string, keys, argv [][]byte, readOnly bool, legacyOOM bool) ([]byte, error) {
 	L := newScriptLuaState()
 	defer L.Close()
 
@@ -140,8 +169,13 @@ func (s *Server) runKillableLuaScript(source, sha string, keys, argv [][]byte, r
 	L.SetContext(ctx)
 	L.SetGlobal("KEYS", luaBytesTable(L, keys))
 	L.SetGlobal("ARGV", luaBytesTable(L, argv))
+	var legacyState *legacyScriptOOMState
 	if readOnly {
 		L.SetGlobal("redis", s.luaRedisModuleReadOnly(L))
+	} else if legacyOOM {
+		legacyState = newLegacyScriptOOMState(s)
+		defer legacyState.restore(s)
+		L.SetGlobal("redis", s.luaRedisModuleKillableWithLegacyState(L, legacyState))
 	} else {
 		L.SetGlobal("redis", s.luaRedisModuleKillable(L))
 	}
@@ -171,10 +205,17 @@ func (s *Server) runKillableLuaScript(source, sha string, keys, argv [][]byte, r
 }
 
 func (s *Server) luaRedisModuleKillable(L *lua.LState) *lua.LTable {
+	return s.luaRedisModuleKillableWithLegacyState(L, nil)
+}
+
+func (s *Server) luaRedisModuleKillableWithLegacyState(
+	L *lua.LState,
+	state *legacyScriptOOMState,
+) *lua.LTable {
 	module := L.NewTable()
 	L.SetFuncs(module, map[string]lua.LGFunction{
-		"call":         s.luaRedisCallKillable(false),
-		"pcall":        s.luaRedisCallKillable(true),
+		"call":         s.luaRedisCallKillableWithLegacyState(false, state),
+		"pcall":        s.luaRedisCallKillableWithLegacyState(true, state),
 		"error_reply":  luaRedisErrorReply,
 		"status_reply": luaRedisStatusReply,
 		"sha1hex":      luaRedisSHA1Hex,
@@ -183,6 +224,13 @@ func (s *Server) luaRedisModuleKillable(L *lua.LState) *lua.LTable {
 }
 
 func (s *Server) luaRedisCallKillable(protected bool) lua.LGFunction {
+	return s.luaRedisCallKillableWithLegacyState(protected, nil)
+}
+
+func (s *Server) luaRedisCallKillableWithLegacyState(
+	protected bool,
+	state *legacyScriptOOMState,
+) lua.LGFunction {
 	return func(L *lua.LState) int {
 		if L.GetTop() < 1 {
 			return luaPushCommandError(L, protected, errors.New("ERR Please specify at least one argument for redis.call()"))
@@ -222,6 +270,7 @@ func (s *Server) luaRedisCallKillable(protected bool) lua.LGFunction {
 		if err != nil {
 			return luaPushCommandError(L, protected, err)
 		}
+		state.afterSuccessfulCommand(s, args)
 		s.signalListAvailability(args, result)
 		s.signalZSetAvailability(args, result)
 		s.signalStreamAvailability(args, result)
