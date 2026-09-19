@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/hex"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -137,12 +138,6 @@ func TestKeyRestoreTTLReplaceAndABSTTL(t *testing.T) {
 		t.Fatalf("GET collision = %q", got)
 	}
 
-	abs := time.Now().Add(5 * time.Second).UnixMilli()
-	if _, err := s.Execute([][]byte{
-		[]byte("RESTORE"), []byte("abs"), []byte(strings.TrimSpace(time.UnixMilli(abs).Format(""))), payload,
-	}); err == nil {
-		_ = err
-	}
 }
 
 func TestKeyRestoreABSTTL(t *testing.T) {
@@ -152,11 +147,15 @@ func TestKeyRestoreABSTTL(t *testing.T) {
 	if _, err := s.Execute([][]byte{
 		[]byte("RESTORE"),
 		[]byte("abs"),
-		[]byte(strings.TrimSpace(strings.Join([]string{strings.TrimSpace(strings.ReplaceAll(time.UnixMilli(abs).String(), " ", ""))}, ""))),
+		[]byte(strconv.FormatInt(abs, 10)),
 		payload,
 		[]byte("ABSTTL"),
-	}); err == nil {
-		t.Fatal("expected malformed test timestamp to fail")
+	}); err != nil {
+		t.Fatalf("RESTORE ABSTTL: %v", err)
+	}
+	pttl := s.store.TTL("abs", true)
+	if pttl < 4500 || pttl > 5000 {
+		t.Fatalf("ABSTTL PTTL = %d", pttl)
 	}
 }
 
