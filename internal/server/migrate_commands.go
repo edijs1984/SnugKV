@@ -222,7 +222,7 @@ func (s *Server) executeMigrate(args [][]byte) ([]byte, error) {
 
 	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), timeout)
 	if err != nil {
-		return nil, errors.New("IOERR error or timeout writing to target instance")
+		return nil, errors.New("IOERR error or timeout connecting to the client")
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(timeout))
@@ -256,8 +256,13 @@ func (s *Server) executeMigrate(args [][]byte) ([]byte, error) {
 	if err := conn.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
 		return nil, errors.New("IOERR error or timeout writing to target instance")
 	}
-	if _, err := conn.Write(request.Bytes()); err != nil {
-		return nil, errors.New("IOERR error or timeout writing to target instance")
+	payload := request.Bytes()
+	for len(payload) > 0 {
+		n, writeErr := conn.Write(payload)
+		if writeErr != nil || n <= 0 {
+			return nil, errors.New("IOERR error or timeout writing to target instance")
+		}
+		payload = payload[n:]
 	}
 
 	reader := bufio.NewReader(conn)
