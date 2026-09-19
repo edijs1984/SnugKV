@@ -506,6 +506,9 @@ func (session *transactionSession) handleCommand(args [][]byte) (bool, []byte, e
 
 func (s *Server) observeTransactionCommand(args [][]byte, started time.Time, err error) {
 	atomic.AddUint64(&s.commands, 1)
+	if atomic.LoadUint32(&s.metricsEnabled) == 0 {
+		return
+	}
 	name := "unknown"
 	if len(args) > 0 {
 		candidate := strings.ToUpper(string(args[0]))
@@ -517,7 +520,10 @@ func (s *Server) observeTransactionCommand(args [][]byte, started time.Time, err
 }
 
 func (s *Server) executeTransactionConnectionCommand(session *transactionSession, args [][]byte) (handled bool, response []byte, err error) {
-	started := time.Now()
+	var started time.Time
+	if atomic.LoadUint32(&s.metricsEnabled) != 0 {
+		started = time.Now()
+	}
 	handled, response, err = session.handleCommand(args)
 	if handled {
 		s.observeTransactionCommand(args, started, err)
