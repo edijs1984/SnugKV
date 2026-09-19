@@ -62,3 +62,25 @@ with socket.create_connection((HOST, PORT), timeout=3) as check:
     recv_window(check, "EXISTS after async session")
 
 print("done")
+
+
+print("\n=== sync session ===")
+with socket.create_connection((HOST, PORT), timeout=3) as s:
+    s.sendall(resp("DEL", "debug:wire", "debug:wire:counter"))
+    recv_window(s, "SYNC DEL")
+
+    s.sendall(resp("SCRIPT", "DEBUG", "SYNC"))
+    recv_window(s, "SCRIPT DEBUG SYNC")
+
+    s.sendall(resp("EVAL", script, "0"))
+    recv_window(s, "SYNC EVAL initial debugger reply")
+
+    print(">>> debugger command 'C'")
+    s.sendall(resp("C"))
+    recv_window(s, "SYNC debugger C", idle=0.25, total=3.0)
+
+with socket.create_connection((HOST, PORT), timeout=3) as check:
+    check.sendall(resp("GET", "debug:wire"))
+    recv_window(check, "GET after sync session")
+    check.sendall(resp("GET", "debug:wire:counter"))
+    recv_window(check, "counter after sync session")
