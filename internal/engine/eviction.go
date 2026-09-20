@@ -18,7 +18,7 @@ func (s *Store) Victim(excluded map[string]bool, volatile bool) (string, bool) {
 		if ok && (!volatile || e.hasExpiry) {
 			age := time.Time{}
 			if e.entryMeta != nil {
-				age = e.entryMeta.lastAccessStamp().Time()
+				age = e.entryMeta.lastAccess.Time()
 			}
 			if sh.expired(key, e, s.now()) {
 				age = time.Time{}
