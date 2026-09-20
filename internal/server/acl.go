@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 type ACLUser struct {
@@ -35,8 +36,9 @@ type ACLUser struct {
 }
 
 type ACL struct {
-	mu    sync.RWMutex
-	users map[string]*ACLUser
+	mu                  sync.RWMutex
+	users               map[string]*ACLUser
+	defaultUnrestricted atomic.Bool
 }
 
 func NewACL() *ACL {
@@ -58,8 +60,24 @@ func NewACL() *ACL {
 		ChannelPatterns: []string{"*"},
 		SanitizePayload: true,
 	}
+	a.refreshDefaultUnrestrictedLocked()
 
 	return a
+}
+
+func (a *ACL) refreshDefaultUnrestrictedLocked() {
+	u, ok := a.users["default"]
+	a.defaultUnrestricted.Store(ok &&
+		u.Enabled &&
+		u.AllCommands &&
+		len(u.CommandAllow) == 0 &&
+		u.AllKeys &&
+		u.AllChannels &&
+		len(u.Selectors) == 0)
+}
+
+func (a *ACL) DefaultUnrestricted() bool {
+	return a.defaultUnrestricted.Load()
 }
 
 func newACLUser(name string) *ACLUser {
@@ -270,7 +288,12 @@ func (a *ACL) SetUser(name string, rules []string) error {
 	}
 
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	defer func() {
+		if name == "default" {
+			a.refreshDefaultUnrestrictedLocked()
+		}
+		a.mu.Unlock()
+	}()
 
 	u, ok := a.users[name]
 	if !ok {
@@ -829,5 +852,6 @@ func (a *ACL) ReplaceFrom(source *ACL) {
 
 	a.mu.Lock()
 	a.users = users
+	a.refreshDefaultUnrestrictedLocked()
 	a.mu.Unlock()
 }
