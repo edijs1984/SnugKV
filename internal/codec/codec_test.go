@@ -2,6 +2,8 @@ package codec
 
 import (
 	"bytes"
+	"errors"
+	"sync"
 	"testing"
 )
 
@@ -143,5 +145,45 @@ func TestBooleanRejectsInvalidStoredForms(t *testing.T) {
 		if _, err := r.Decode(rec, 16); err == nil {
 			t.Fatalf("accepted invalid bool record: %+v", rec)
 		}
+	}
+}
+
+
+func TestGeneralCompressionConcurrent(t *testing.T) {
+	r := NewRegistry()
+	value := bytes.Repeat([]byte("concurrent compression payload "), 256)
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 16)
+
+	for worker := 0; worker < 8; worker++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 100; i++ {
+				for _, id := range []ID{LZ4, Zstandard} {
+					c := r.codecs[id]
+					data, ok := c.Encode(value)
+					if !ok {
+						errs <- errors.New("compression rejected")
+						return
+					}
+					out, err := c.Decode(data, len(value))
+					if err != nil || !bytes.Equal(out, value) {
+						if err == nil {
+							err = errors.New("compression round trip mismatch")
+						}
+						errs <- err
+						return
+					}
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
 	}
 }

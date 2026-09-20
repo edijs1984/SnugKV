@@ -5,12 +5,54 @@ import (
 	"errors"
 	"github.com/klauspost/compress/zstd"
 	"github.com/pierrec/lz4/v4"
+	"sync"
 )
 
 const (
 	LZ4       ID = 9
 	Zstandard ID = 10
 )
+
+const (
+	maxPooledLZ4Scratch = 4 << 20
+	zstdDecoderMaxMemory = 64 << 20
+)
+
+var lz4ScratchPool = sync.Pool{
+	New: func() any {
+		return make([]byte, 0, 64<<10)
+	},
+}
+
+var zstdEncoderPool = sync.Pool{
+	New: func() any {
+		encoder, err := zstd.NewWriter(
+			nil,
+			zstd.WithEncoderConcurrency(1),
+			zstd.WithEncoderLevel(zstd.SpeedFastest),
+			zstd.WithWindowSize(64<<10),
+		)
+		if err != nil {
+			panic(err)
+		}
+		return encoder
+	},
+}
+
+var zstdDecoderPool = sync.Pool{
+	New: func() any {
+		decoder, err := zstd.NewReader(
+			nil,
+			zstd.WithDecoderConcurrency(1),
+			zstd.WithDecoderMaxMemory(zstdDecoderMaxMemory),
+			zstd.WithDecodeAllCapLimit(true),
+		)
+		if err != nil {
+			panic(err)
+		}
+		return decoder
+	},
+}
 
 type lz4Codec struct{}
 
@@ -20,12 +62,29 @@ func (lz4Codec) Encode(src []byte) ([]byte, bool) {
 	if len(src) < 256 {
 		return nil, false
 	}
-	dst := make([]byte, lz4.CompressBlockBound(len(src)))
-	n, err := lz4.CompressBlock(src, dst, nil)
+
+	bound := lz4.CompressBlockBound(len(src))
+	scratch := lz4ScratchPool.Get().([]byte)
+	if cap(scratch) < bound {
+		scratch = make([]byte, bound)
+	} else {
+		scratch = scratch[:bound]
+	}
+
+	n, err := lz4.CompressBlock(src, scratch, nil)
 	if err != nil || n == 0 || n*8 > len(src)*7 {
+		if cap(scratch) <= maxPooledLZ4Scratch {
+			lz4ScratchPool.Put(scratch[:0])
+		}
 		return nil, false
 	}
-	return bytes.Clone(dst[:n]), true
+
+	out := make([]byte, n)
+	copy(out, scratch[:n])
+	if cap(scratch) <= maxPooledLZ4Scratch {
+		lz4ScratchPool.Put(scratch[:0])
+	}
+	return out, true
 }
 func (lz4Codec) Decode(src []byte, n int) ([]byte, error) {
 	out := make([]byte, n)
@@ -47,28 +106,24 @@ func (zstdCodec) Encode(src []byte) ([]byte, bool) {
 	if len(src) < 1024 {
 		return nil, false
 	}
-	encoder, err := zstd.NewWriter(nil, zstd.WithEncoderConcurrency(1), zstd.WithEncoderLevel(zstd.SpeedFastest), zstd.WithWindowSize(64<<10))
-	if err != nil {
-		return nil, false
-	}
-	defer encoder.Close()
+
+	encoder := zstdEncoderPool.Get().(*zstd.Encoder)
 	out := encoder.EncodeAll(src, nil)
+	zstdEncoderPool.Put(encoder)
+
 	if len(out)*5 > len(src)*4 {
 		return nil, false
 	}
 	return out, true
 }
 func (zstdCodec) Decode(src []byte, n int) ([]byte, error) {
-	bound := uint64(n)
-	if bound < 1<<20 {
-		bound = 1 << 20
+	if n < 0 || n > zstdDecoderMaxMemory {
+		return nil, errors.New("Zstandard length out of range")
 	}
-	decoder, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(1), zstd.WithDecoderMaxMemory(bound), zstd.WithDecodeAllCapLimit(true))
-	if err != nil {
-		return nil, err
-	}
-	defer decoder.Close()
+
+	decoder := zstdDecoderPool.Get().(*zstd.Decoder)
 	out, err := decoder.DecodeAll(src, make([]byte, 0, n))
+	zstdDecoderPool.Put(decoder)
 	if err != nil {
 		return nil, err
 	}
