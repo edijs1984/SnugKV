@@ -198,13 +198,7 @@ func (s *Store) makeEntryForShard(sh *shard, value []byte) preparedEntry {
 }
 
 func (s *Store) decodeInto(sh *shard, e entry, dst []byte) []byte {
-	// Every decodeInto caller holds the owning shard lock and obtained e from
-	// the live index. Avoid paying Arena.View's generation-header reread on
-	// this locked hot path; stale refs remain checked by all general View users.
-	encoded, err := sh.arena.ViewLive(e.ref)
-	if err != nil {
-		panic(err)
-	}
+	encoded := sh.encoded(e)
 	if e.valueType == TypeHash && isShapedHash(encoded) {
 		return s.decode(sh, e)
 	}
