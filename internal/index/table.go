@@ -50,6 +50,21 @@ func Hash(key string) uint64 {
 	return h
 }
 
+func HashBytes(key []byte) uint64 {
+	h := uint64(14695981039346656037)
+	for _, b := range key {
+		h ^= uint64(b)
+		h *= 1099511628211
+	}
+
+	h ^= h >> 33
+	h *= 0xff51afd7ed558ccd
+	h ^= h >> 33
+	h *= 0xc4ceb9fe1a85ec53
+	h ^= h >> 33
+	return h
+}
+
 func tinyFilterBits(hash uint64) uint32 {
 	return 1<<uint32(hash&31) | 1<<uint32((hash>>32)&31)
 }
@@ -154,6 +169,40 @@ func (t *Table[V]) GetHashed(key string, hash uint64) (V, bool) {
 			return zero, false
 		case stateLive:
 			if s.keyLen() == len(key) && s.key() == key {
+				return s.value(), true
+			}
+		}
+	}
+	return zero, false
+}
+
+func (t *Table[V]) GetHashedBytes(key []byte, hash uint64) (V, bool) {
+	var zero V
+	if len(t.slots) == 0 {
+		return zero, false
+	}
+	if len(t.slots) == initialCapacity && t.count == initialCapacity {
+		bits := tinyFilterBits(hash)
+		if t.tinyFilter&bits != bits {
+			return zero, false
+		}
+	}
+
+	// The transient string aliases only the caller's lookup bytes for the
+	// duration of this method. It is never stored in the table.
+	var lookup string
+	if len(key) > 0 {
+		lookup = unsafe.String(unsafe.SliceData(key), len(key))
+	}
+
+	mask := uint64(len(t.slots) - 1)
+	for n := 0; n < len(t.slots); n++ {
+		s := &t.slots[(hash+uint64(n))&mask]
+		switch s.state() {
+		case stateEmpty:
+			return zero, false
+		case stateLive:
+			if s.keyLen() == len(key) && s.key() == lookup {
 				return s.value(), true
 			}
 		}
