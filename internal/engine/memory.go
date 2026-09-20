@@ -281,6 +281,31 @@ func (s *Store) publishRecordKnown(
 	old entry,
 	exists bool,
 ) error {
+	return s.publishRecordKnownWithHash(sh, key, 0, false, e, admission, old, exists)
+}
+
+func (s *Store) publishRecordKnownHashed(
+	sh *shard,
+	key string,
+	hash uint64,
+	e preparedEntry,
+	admission memoryAdmission,
+	old entry,
+	exists bool,
+) error {
+	return s.publishRecordKnownWithHash(sh, key, hash, true, e, admission, old, exists)
+}
+
+func (s *Store) publishRecordKnownWithHash(
+	sh *shard,
+	key string,
+	hash uint64,
+	hashKnown bool,
+	e preparedEntry,
+	admission memoryAdmission,
+	old entry,
+	exists bool,
+) error {
 	var oldCost uint64
 	if exists {
 		oldCost = entryCharge(key, old)
@@ -397,7 +422,11 @@ func (s *Store) publishRecordKnown(
 	// The queue owns the expiration timestamp. The hot entry stores only this
 	// one-byte presence bit so persistent reads never need a map lookup.
 	e.hasExpiry = !e.expiresAt.IsZero()
-	sh.set(key, e.entry)
+	if hashKnown {
+		sh.setKnownHashed(key, hash, e.entry, exists)
+	} else {
+		sh.set(key, e.entry)
+	}
 
 	if exists {
 		sh.arena.Free(old.ref)
