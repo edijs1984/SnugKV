@@ -75,9 +75,10 @@ func newClientSession(
 	return client
 }
 
-func (c *clientSession) touch(args [][]byte) {
+func (c *clientSession) touch(args [][]byte) time.Time {
+	now := time.Now()
 	if c == nil {
-		return
+		return now
 	}
 
 	var cmd *string
@@ -102,8 +103,9 @@ func (c *clientSession) touch(args [][]byte) {
 		}
 	}
 
-	c.lastSeen.Store(time.Now().UnixNano())
+	c.lastSeen.Store(now.UnixNano())
 	c.lastCmd.Store(cmd)
+	return now
 }
 
 func (c *clientSession) setProtocol(protocol int) {
