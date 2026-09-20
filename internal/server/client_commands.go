@@ -75,6 +75,19 @@ func newClientSession(
 	return client
 }
 
+func (c *clientSession) touchKnownGET() time.Time {
+	now := time.Now()
+	if c == nil {
+		return now
+	}
+
+	c.lastSeen.Store(now.UnixNano())
+	if c.lastCmd.Load() != &clientCommandGET {
+		c.lastCmd.Store(&clientCommandGET)
+	}
+	return now
+}
+
 func (c *clientSession) touch(args [][]byte) time.Time {
 	now := time.Now()
 	if c == nil {
