@@ -226,7 +226,9 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 	// Serialize complete responses so partial socket writes cannot interleave.
 	writer := newSerializedResponseWriter(s, conn)
 	var getScratch []byte
+	var getKeyScratch []byte
 	const maxRetainedGetScratch = 64 << 10
+	const maxRetainedGetKeyScratch = 64 << 10
 
 	clientID := atomic.AddUint64(
 		&s.nextClientID,
@@ -319,14 +321,22 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 		}
 		var borrowedGET [2][]byte
 		var msg [][]byte
-		borrowed, borrowErr := decoder.ReadBufferedGET(&borrowedGET)
+		borrowedKey, borrowed, borrowErr := decoder.ReadBufferedGET(getKeyScratch)
 		if borrowErr != nil {
 			return
 		}
-		var err error
 		if borrowed {
+			borrowedGET[0] = []byte("GET")
+			borrowedGET[1] = borrowedKey
 			msg = borrowedGET[:]
-		} else {
+			if cap(borrowedKey) <= maxRetainedGetKeyScratch {
+				getKeyScratch = borrowedKey[:0]
+			} else {
+				getKeyScratch = nil
+			}
+		}
+		var err error
+		if !borrowed {
 			msg, err = decoder.ReadCommand()
 		}
 		if err != nil {
