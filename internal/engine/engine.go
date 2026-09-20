@@ -214,7 +214,9 @@ func (s *Store) GetStringInto(key string, dst []byte) (value []byte, found bool,
 		if meta.reads < ^uint8(0) {
 			meta.reads++
 		}
-		sh.set(key, e)
+		// entryMeta is shared by pointer with the stored entry. Updating the
+		// pointed-to metadata is sufficient; rewriting the entry/index on every
+		// GET only adds lock-held work.
 	}
 
 	return s.decodeInto(sh, e, dst), true, false
@@ -249,7 +251,7 @@ func (s *Store) GetString(key string) (value []byte, found bool, wrongType bool)
 		if meta.reads < ^uint8(0) {
 			meta.reads++
 		}
-		sh.set(key, e)
+		// entryMeta is shared by pointer with the stored entry.
 	}
 
 	return s.decode(sh, e), true, false
