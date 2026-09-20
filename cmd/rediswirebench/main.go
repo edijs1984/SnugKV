@@ -35,7 +35,7 @@ func main() {
 	ops := flag.Int("ops", 1000000, "operations for get/mixed/ttl")
 	workers := flag.Int("workers", runtime.NumCPU(), "concurrent workers")
 	valueBytes := flag.Int("value-bytes", 64, "value bytes")
-	valueShape := flag.String("value-shape", "repetitive", "value shape: random, repetitive, or json")
+	valueShape := flag.String("value-shape", "repetitive", "value shape: random, repetitive, json, session-json, api-json, counter, uuid, text, or compressed")
 	pipeline := flag.Int("pipeline", 256, "pipeline depth for load/get")
 	seed := flag.Int64("seed", 1, "deterministic seed")
 	settleMS := flag.Int("settle-ms", 0, "milliseconds to wait after workload before post-workload memory snapshot")
@@ -52,12 +52,21 @@ func main() {
 		fatalf("workload must be load, get, get-seq, mixed, or ttl")
 	}
 	switch *valueShape {
-	case "random", "repetitive", "json":
+	case "random", "repetitive", "json", "session-json", "api-json", "counter", "uuid", "text", "compressed":
 	default:
-		fatalf("value-shape must be random, repetitive, or json")
+		fatalf("unsupported value-shape %q", *valueShape)
 	}
-	if *valueShape == "json" && *valueBytes < 32 {
-		fatalf("json value-shape requires value-bytes >= 32")
+	if (*valueShape == "json" || *valueShape == "session-json" || *valueShape == "api-json") && *valueBytes < 64 {
+		fatalf("%s value-shape requires value-bytes >= 64", *valueShape)
+	}
+	if *valueShape == "counter" && *valueBytes != 10 {
+		fatalf("counter value-shape requires value-bytes=10")
+	}
+	if *valueShape == "uuid" && *valueBytes != 36 {
+		fatalf("uuid value-shape requires value-bytes=36")
+	}
+	if *valueShape == "compressed" && *valueBytes < 16 {
+		fatalf("compressed value-shape requires value-bytes >= 16")
 	}
 	if *settleMS < 0 {
 		fatalf("settle-ms must be non-negative")
@@ -343,19 +352,70 @@ func benchmarkValue(shape string, size, keyIndex int, seed int64) []byte {
 		return v
 
 	case "json":
-		prefix := []byte(fmt.Sprintf("{\"id\":%d,\"name\":\"user-%d\",\"message\":\"", keyIndex, keyIndex))
-		suffix := []byte("\"}")
-		if len(prefix)+len(suffix) > size {
-			v := append([]byte(nil), prefix...)
-			v = append(v, suffix...)
-			return v[:size]
-		}
+		return paddedJSON(size,
+			fmt.Sprintf("{\"id\":%d,\"name\":\"user-%d\",\"message\":\"", keyIndex, keyIndex),
+			"\"}",
+			keyIndex,
+		)
+
+	case "session-json":
+		return paddedJSON(size,
+			fmt.Sprintf("{\"user_id\":%d,\"role\":\"user\",\"authenticated\":true,\"expires_in\":3600,\"csrf\":\"%08x\",\"state\":\"", keyIndex, uint32(uint64(seed)^uint64(keyIndex)*2654435761)),
+			"\"}",
+			keyIndex+17,
+		)
+
+	case "api-json":
+		return paddedJSON(size,
+			fmt.Sprintf("{\"id\":%d,\"status\":\"ok\",\"page\":%d,\"cached\":true,\"items\":[{\"sku\":\"SKU-%06d\",\"qty\":1}],\"payload\":\"", keyIndex, keyIndex%100, keyIndex%1000000),
+			"\"}",
+			keyIndex+31,
+		)
+
+	case "counter":
+		// Keep a canonical ten-byte integer so SnugKV's integer codec and Redis's
+		// normal string representation see a realistic counter workload.
+		return []byte(strconv.FormatInt(1_000_000_000+int64(keyIndex%1_000_000_000), 10))
+
+	case "uuid":
+		x := uint64(seed) ^ uint64(keyIndex+1)*0x9e3779b97f4a7c15
+		y := x ^ 0xd6e8feb86659fd93
+		return []byte(fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+			uint32(x>>32),
+			uint16(x>>16),
+			uint16(x),
+			uint16(y>>48),
+			y&0x0000ffffffffffff,
+		))
+
+	case "text":
+		prefix := []byte(fmt.Sprintf("user %d cached response: ", keyIndex))
 		v := make([]byte, 0, size)
 		v = append(v, prefix...)
-		for len(v)+len(suffix) < size {
-			v = append(v, byte('a'+(keyIndex+len(v))%23))
+		words := []byte("profile settings dashboard notifications preferences ")
+		for len(v) < size {
+			remain := size - len(v)
+			if remain >= len(words) {
+				v = append(v, words...)
+			} else {
+				v = append(v, words[:remain]...)
+			}
 		}
-		v = append(v, suffix...)
+		return v
+
+	case "compressed":
+		// Simulate an already-compressed/binary payload. The gzip signature lets
+		// SnugKV's compressed-data detector avoid futile recompression while the
+		// remaining bytes are deterministic high entropy.
+		v := make([]byte, size)
+		v[0], v[1] = 0x1f, 0x8b
+		x := uint64(seed) ^ uint64(keyIndex+1)*0x9e3779b97f4a7c15
+		for i := 2; i < len(v); i++ {
+			x ^= x << 13
+			x ^= x >> 7
+			x ^= x << 17
+			v[i] = byte(x)
+		}
 		return v
 
 	default:
@@ -367,6 +427,21 @@ func benchmarkValue(shape string, size, keyIndex int, seed int64) []byte {
 		return v
 	}
 }
+func paddedJSON(size int, prefix, suffix string, salt int) []byte {
+	p := []byte(prefix)
+	s := []byte(suffix)
+	if len(p)+len(s) > size {
+		panic("benchmark JSON template exceeds requested size")
+	}
+	v := make([]byte, 0, size)
+	v = append(v, p...)
+	for len(v)+len(s) < size {
+		v = append(v, byte('a'+(salt+len(v))%23))
+	}
+	v = append(v, s...)
+	return v
+}
+
 func key(i int) []byte { return []byte(fmt.Sprintf("bench:%09d",i)) }
 func b(s string) []byte { return []byte(s) }
 
