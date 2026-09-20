@@ -236,26 +236,48 @@ func (t *Table[V]) GetHashedBytes(key []byte, hash uint64) (V, bool) {
 }
 
 func (t *Table[V]) Set(key string, value V) {
-	if _, ok := t.Get(key); !ok {
-		capacity := t.capacityFor(int(t.count) + 1)
-		if capacity != len(t.slots) {
-			old := t.slots
-			t.slots = make([]slot[V], capacity)
-			t.count = 0
-			t.tinyFilter = 0
-			for i := range old {
-				s := &old[i]
-				if s.state() == stateLive {
-					t.insert(s.key(), s.value())
-				}
-			}
+	hash := Hash(key)
+	if _, ok := t.GetHashed(key, hash); !ok {
+		t.growForInsert()
+	}
+	t.insertHashed(key, value, hash)
+}
+
+// SetKnownHashed updates or inserts using a hash and existence result already
+// established by the caller while holding the owning shard lock.
+func (t *Table[V]) SetKnownHashed(key string, value V, hash uint64, exists bool) {
+	if exists {
+		if _, ok := t.GetHashed(key, hash); !ok {
+			panic("known index entry is missing")
+		}
+	} else {
+		t.growForInsert()
+	}
+	t.insertHashed(key, value, hash)
+}
+
+func (t *Table[V]) growForInsert() {
+	capacity := t.capacityFor(int(t.count) + 1)
+	if capacity == len(t.slots) {
+		return
+	}
+	old := t.slots
+	t.slots = make([]slot[V], capacity)
+	t.count = 0
+	t.tinyFilter = 0
+	for i := range old {
+		s := &old[i]
+		if s.state() == stateLive {
+			t.insert(s.key(), s.value())
 		}
 	}
-	t.insert(key, value)
 }
 
 func (t *Table[V]) insert(key string, value V) {
-	hash := Hash(key)
+	t.insertHashed(key, value, Hash(key))
+}
+
+func (t *Table[V]) insertHashed(key string, value V, hash uint64) {
 	if len(t.slots) == initialCapacity {
 		t.tinyFilter |= tinyFilterBits(hash)
 	}
