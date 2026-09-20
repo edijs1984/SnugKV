@@ -1,6 +1,7 @@
 package server
 
 import (
+	"snugkv/internal/optimizer"
 	"bufio"
 	"errors"
 	"fmt"
@@ -441,4 +442,34 @@ func TestTCPBulkSizeBoundary(t *testing.T) {
 			t.Fatalf("PING response = %q", reply)
 		}
 	})
+}
+
+
+func TestOptimizeSampleDoesNotContinuouslyRescanWithoutDrops(t *testing.T) {
+	store, err := engine.NewWithOptions(engine.Options{
+		Shards:      1,
+		Encoding:    true,
+		Compression: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := New(store)
+	opt, err := optimizer.New(store, optimizer.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer opt.Close()
+	s.optimizer = opt
+
+	tcp := &TCPServer{server: s}
+
+	for i := 0; i < 99; i++ {
+		tcp.OptimizeSample()
+	}
+
+	if got := opt.Stats().Queued; got != 0 {
+		t.Fatalf("queued=%d before periodic discovery, want 0", got)
+	}
 }

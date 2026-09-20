@@ -23,6 +23,8 @@ type TCPServer struct {
 	inputBytes, outputBytes  uint64
 	nextClientID             uint64
 	trackingClients          uint64
+	optimizerMaintainTicks   uint64
+	optimizerDroppedSeen     uint64
 	listener                 net.Listener
 	server                   *Server
 	config                   config.Config
@@ -754,11 +756,26 @@ func writeWithTimeout(conn net.Conn, response []byte, timeout time.Duration) err
 }
 
 func (s *TCPServer) OptimizeSample() {
-	if s.server.optimizer != nil {
-		// Large bounded bursts make dropped write-time candidates discoverable
-		// quickly after a load spike. Optimizer.Sample caps the request to actual
-		// queue capacity, so this does not create an unbounded backlog.
+	if s.server.optimizer == nil {
+		return
+	}
+
+	stats := s.server.optimizer.Stats()
+
+	// Fresh queue drops are the signal for aggressive recovery sampling.
+	// Sample a large bounded burst only when drops have actually increased.
+	if stats.Dropped > s.optimizerDroppedSeen {
+		s.optimizerDroppedSeen = stats.Dropped
 		s.server.optimizer.Sample(4096)
+		return
+	}
+
+	// When direct write-time enqueue is keeping up, a large 100ms sampling burst
+	// just rechecks already-optimized keys. Keep a small periodic discovery pass
+	// for uncommon mutation paths that do not enqueue directly.
+	s.optimizerMaintainTicks++
+	if s.optimizerMaintainTicks%100 == 0 {
+		s.server.optimizer.Sample(256)
 	}
 }
 

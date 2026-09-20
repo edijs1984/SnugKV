@@ -692,6 +692,7 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			"accounted_bytes:%d\n"+
 				"index_reserved_bytes:%d\n"+
 				"entry_bytes:%d\n"+
+				"meta_bytes:%d\n"+
 				"arena_bytes:%d\n"+
 				"arena_payload_bytes:%d\n"+
 				"arena_live_block_bytes:%d\n"+
@@ -710,6 +711,7 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			m.AccountedBytes,
 			m.IndexReservedBytes,
 			m.EntryBytes,
+			m.MetaBytes,
 			m.ArenaBytes,
 			m.ArenaPayloadBytes,
 			m.ArenaLiveBlockBytes,
