@@ -115,6 +115,31 @@ func (s *Server) executeAuthorizedConcurrentRawGet(
 	return handled, err
 }
 
+func (s *Server) executeAuthorizedConcurrentKnownGetInto(
+	key []byte,
+	dst []byte,
+) (value []byte, found bool, handled bool, err error) {
+	if s.journal != nil ||
+		atomic.LoadUint32(&s.metricsEnabled) != 0 {
+		return nil, false, false, nil
+	}
+
+	s.durableMu.RLock()
+	if s.hasWatchSessionsLocked() {
+		s.durableMu.RUnlock()
+		return nil, false, false, nil
+	}
+
+	value, found, wrongType := s.store.GetStringInto(string(key), dst)
+	s.durableMu.RUnlock()
+
+	atomic.AddUint64(&s.commands, 1)
+	if wrongType {
+		return nil, false, true, errWrongType
+	}
+	return value, found, true, nil
+}
+
 func (s *Server) executeAuthorizedConcurrentGetInto(
 	args [][]byte,
 	dst []byte,
