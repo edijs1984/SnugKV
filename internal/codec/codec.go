@@ -111,6 +111,34 @@ func (r *Registry) Encode(src []byte) Record {
 	}
 	return best
 }
+type decodeIntoCodec interface {
+	DecodeInto([]byte, int, []byte) ([]byte, error)
+}
+
+func (r *Registry) DecodeInto(rec Record, max int, dst []byte) ([]byte, error) {
+	if rec.RawLength < 0 || rec.RawLength > max {
+		return nil, errors.New("decoded length exceeds limit")
+	}
+	if rec.ID == 5 {
+		return r.Decode(rec, max)
+	}
+	c, ok := r.codecs[rec.ID]
+	if !ok {
+		return nil, errors.New("unknown codec ID")
+	}
+	if into, ok := c.(decodeIntoCodec); ok {
+		out, err := into.DecodeInto(rec.Data, rec.RawLength, dst)
+		if err != nil {
+			return nil, err
+		}
+		if len(out) != rec.RawLength {
+			return nil, errors.New("decoded length mismatch")
+		}
+		return out, nil
+	}
+	return r.Decode(rec, max)
+}
+
 func (r *Registry) Decode(rec Record, max int) ([]byte, error) {
 	if rec.RawLength < 0 || rec.RawLength > max {
 		return nil, errors.New("decoded length exceeds limit")
@@ -146,6 +174,18 @@ func (rawCodec) Decode(src []byte, n int) ([]byte, error) {
 		return nil, errors.New("invalid raw length")
 	}
 	return bytes.Clone(src), nil
+}
+func (rawCodec) DecodeInto(src []byte, n int, dst []byte) ([]byte, error) {
+	if len(src) != n {
+		return nil, errors.New("invalid raw length")
+	}
+	if cap(dst) < n {
+		dst = make([]byte, n)
+	} else {
+		dst = dst[:n]
+	}
+	copy(dst, src)
+	return dst, nil
 }
 
 type integerCodec struct{}
