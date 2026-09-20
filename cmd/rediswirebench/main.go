@@ -30,13 +30,13 @@ type client struct {
 func main() {
 	server := flag.String("server", "server", "label for JSON output")
 	addr := flag.String("addr", "127.0.0.1:6379", "server address")
-	workload := flag.String("workload", "load", "load, get, mixed, ttl")
+	workload := flag.String("workload", "load", "load, get, get-seq, mixed, ttl")
 	keys := flag.Int("keys", 1000000, "dataset key count")
 	ops := flag.Int("ops", 1000000, "operations for get/mixed/ttl")
 	workers := flag.Int("workers", runtime.NumCPU(), "concurrent workers")
 	valueBytes := flag.Int("value-bytes", 64, "value bytes")
 	valueShape := flag.String("value-shape", "repetitive", "value shape: random, repetitive, or json")
-	pipeline := flag.Int("pipeline", 256, "load pipeline depth")
+	pipeline := flag.Int("pipeline", 256, "pipeline depth for load/get")
 	seed := flag.Int64("seed", 1, "deterministic seed")
 	settleMS := flag.Int("settle-ms", 0, "milliseconds to wait after workload before post-workload memory snapshot")
 	reset := flag.Bool("reset", false, "FLUSHDB before workload")
@@ -47,9 +47,9 @@ func main() {
 		fatalf("keys, ops, workers, value-bytes and pipeline must be positive")
 	}
 	switch *workload {
-	case "load", "get", "mixed", "ttl":
+	case "load", "get", "get-seq", "mixed", "ttl":
 	default:
-		fatalf("workload must be load, get, mixed, or ttl")
+		fatalf("workload must be load, get, get-seq, mixed, or ttl")
 	}
 	switch *valueShape {
 	case "random", "repetitive", "json":
@@ -86,7 +86,11 @@ func main() {
 	switch *workload {
 	case "load":
 		elapsed, samples, errs = runLoad(*addr, *keys, *valueBytes, *valueShape, *pipeline, *seed)
-	case "get", "mixed", "ttl":
+	case "get":
+		elapsed, samples, errs = runPipelinedGet(*addr, *keys, *ops, *workers, *pipeline, *seed)
+	case "get-seq":
+		elapsed, samples, errs = runConcurrent(*addr, "get", *keys, *ops, *workers, *valueBytes, *valueShape, *seed)
+	case "mixed", "ttl":
 		elapsed, samples, errs = runConcurrent(*addr, *workload, *keys, *ops, *workers, *valueBytes, *valueShape, *seed)
 	}
 
@@ -140,7 +144,7 @@ func main() {
 		"os": runtime.GOOS,
 		"arch": runtime.GOARCH,
 		"cpus": runtime.NumCPU(),
-		"measurement_note": "black-box RESP2/TCP single run; use multiple repetitions before product claims",
+		"measurement_note": measurementNote(*workload, *pipeline),
 	}
 	if err := json.NewEncoder(os.Stdout).Encode(out); err != nil { fatalf("encode: %v", err) }
 
@@ -174,6 +178,67 @@ func runLoad(addr string, keys, valueBytes int, valueShape string, pipeline int,
 		samples=append(samples,time.Since(batchStart).Nanoseconds()/int64(end-base))
 	}
 	return time.Since(start),samples,errs
+}
+
+func runPipelinedGet(addr string, keys, ops, workers, pipeline int, seed int64) (time.Duration, []int64, uint64) {
+	samples := make([]int64, ops)
+	var next uint64
+	var errs uint64
+	var wg sync.WaitGroup
+	start := time.Now()
+
+	for worker := 0; worker < workers; worker++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+
+			c, err := dial(addr)
+			if err != nil {
+				atomic.AddUint64(&errs, 1)
+				return
+			}
+			defer c.Close()
+
+			rng := rand.New(rand.NewSource(seed + int64(id+1)*1000003))
+			for {
+				base := int(atomic.AddUint64(&next, uint64(pipeline)) - uint64(pipeline))
+				if base >= ops {
+					return
+				}
+				end := base + pipeline
+				if end > ops {
+					end = ops
+				}
+
+				batchStart := time.Now()
+				for i := base; i < end; i++ {
+					k := rng.Intn(keys)
+					if err := c.write(b("GET"), key(k)); err != nil {
+						atomic.AddUint64(&errs, uint64(end-i))
+						return
+					}
+				}
+				if err := c.w.Flush(); err != nil {
+					atomic.AddUint64(&errs, uint64(end-base))
+					return
+				}
+
+				for i := base; i < end; i++ {
+					if err := c.readGetReply(); err != nil {
+						atomic.AddUint64(&errs, 1)
+					}
+				}
+
+				perOp := time.Since(batchStart).Nanoseconds() / int64(end-base)
+				for i := base; i < end; i++ {
+					samples[i] = perOp
+				}
+			}
+		}(worker)
+	}
+
+	wg.Wait()
+	return time.Since(start), samples, errs
 }
 
 func runConcurrent(addr, workload string, keys, ops, workers, valueBytes int, valueShape string, seed int64) (time.Duration, []int64, uint64) {
@@ -311,11 +376,65 @@ func(c *client)setPX(k,v []byte,ttl int)error{return c.expectSimple("OK",b("SET"
 func(c *client)get(k []byte)error{
 	if err:=c.write(b("GET"),k);err!=nil{return err}
 	if err:=c.w.Flush();err!=nil{return err}
+	return c.readGetReply()
+}
+
+func(c *client)readGetReply()error{
 	line,err:=c.readLine()
 	if err!=nil{return err}
 	if len(line)==0{return io.ErrUnexpectedEOF}
 	if line[0]=='-'{return errors.New(string(line[1:]))}
-	if line[0]!='$'{return fmt.Errorf("unexpected GET reply %q",line)}
+	if line[0]!='
+
+func(c *client)usedMemory()(uint64,error){
+	if err:=c.write(b("INFO"),b("memory"));err!=nil{return 0,err}
+	if err:=c.w.Flush();err!=nil{return 0,err}
+	payload,err:=c.readBulk()
+	if err!=nil{return 0,err}
+	for _,line:=range strings.Split(string(payload),"\r\n"){
+		if strings.HasPrefix(line,"used_memory:"){return strconv.ParseUint(strings.TrimPrefix(line,"used_memory:"),10,64)}
+	}
+	return 0,errors.New("used_memory missing")
+}
+
+func(c *client)dbsize()(int64,error){
+	if err:=c.write(b("DBSIZE"));err!=nil{return 0,err}
+	if err:=c.w.Flush();err!=nil{return 0,err}
+	line,err:=c.readLine()
+	if err!=nil{return 0,err}
+	if len(line)==0||line[0]!=':'{return 0,fmt.Errorf("unexpected DBSIZE reply %q",line)}
+	return strconv.ParseInt(string(line[1:]),10,64)
+}
+
+func(c *client)readBulk()([]byte,error){
+	line,err:=c.readLine()
+	if err!=nil{return nil,err}
+	if len(line)==0{return nil,io.ErrUnexpectedEOF}
+	if line[0]=='-'{return nil,errors.New(string(line[1:]))}
+	if line[0]!='$'{return nil,fmt.Errorf("unexpected bulk reply %q",line)}
+	n,err:=strconv.Atoi(string(line[1:]))
+	if err!=nil||n<0{return nil,fmt.Errorf("invalid bulk length %q",line)}
+	payload:=make([]byte,n+2)
+	if _,err:=io.ReadFull(c.r,payload);err!=nil{return nil,err}
+	if !bytes.Equal(payload[n:],[]byte("\r\n")){return nil,errors.New("invalid bulk terminator")}
+	return payload[:n],nil
+}
+
+func measurementNote(workload string, pipeline int) string {
+	if workload == "get" {
+		return fmt.Sprintf("black-box RESP2/TCP pipelined GET (depth=%d); percentile samples are amortized per-op batch times; use multiple repetitions before product claims", pipeline)
+	}
+	if workload == "get-seq" {
+		return "black-box RESP2/TCP sequential GET; use multiple repetitions before product claims"
+	}
+	return "black-box RESP2/TCP single run; use multiple repetitions before product claims"
+}
+
+func fatalf(format string,args ...any){
+	fmt.Fprintf(os.Stderr,"rediswirebench: "+format+"\n",args...)
+	os.Exit(1)
+}
+{return fmt.Errorf("unexpected GET reply %q",line)}
 	n,err:=strconv.Atoi(string(line[1:]))
 	if err!=nil{return err}
 	if n<0{return nil}
