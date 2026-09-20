@@ -196,14 +196,19 @@ func (t *Table[V]) GetHashedBytes(key []byte, hash uint64) (V, bool) {
 	}
 
 	mask := uint64(len(t.slots) - 1)
+	keyLen := uint64(len(key))
 	for n := 0; n < len(t.slots); n++ {
 		s := &t.slots[(hash+uint64(n))&mask]
-		switch s.state() {
+		meta := s.meta
+		switch meta >> stateShift {
 		case stateEmpty:
 			return zero, false
 		case stateLive:
-			if s.keyLen() == len(key) && s.key() == lookup {
-				return s.value(), true
+			if (meta>>32)&keyLengthMask != keyLen {
+				continue
+			}
+			if len(key) == 0 || unsafe.String(s.keyData, len(key)) == lookup {
+				return V(uint32(meta)), true
 			}
 		}
 	}
