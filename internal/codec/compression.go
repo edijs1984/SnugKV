@@ -176,54 +176,6 @@ func alreadyCompressed(src []byte) bool {
 	return false
 }
 
-func likelyIncompressible(src []byte) bool {
-	if len(src) < 256 {
-		return false
-	}
-
-	// Sample the whole value uniformly into a fixed-size stack buffer. Random
-	// payloads have high byte diversity and almost never repeat an 8-byte chunk.
-	// Repetitive/text/JSON values usually fail one or both checks and continue
-	// to the real codec, so this gate stays deliberately conservative.
-	const sampleSize = 256
-	var sample [sampleSize]byte
-	var seen [256]bool
-	unique := 0
-
-	if len(src) == sampleSize {
-		copy(sample[:], src)
-	} else {
-		for i := 0; i < sampleSize; i++ {
-			idx := i * (len(src) - 1) / (sampleSize - 1)
-			sample[i] = src[idx]
-		}
-	}
-
-	for _, b := range sample {
-		if !seen[b] {
-			seen[b] = true
-			unique++
-		}
-	}
-
-	// A uniform random 256-byte sample averages about 162 distinct byte values.
-	// Keep enough headroom to avoid rejecting normal textual/structured data.
-	if unique < 144 {
-		return false
-	}
-
-	const chunkSize = 8
-	for i := chunkSize; i < sampleSize; i += chunkSize {
-		chunk := sample[i : i+chunkSize]
-		for j := 0; j < i; j += chunkSize {
-			if bytes.Equal(chunk, sample[j:j+chunkSize]) {
-				return false
-			}
-		}
-	}
-
-	return true
-}
 
 type CompressionCandidate struct {
 	Name  string
@@ -270,7 +222,7 @@ func (r *Registry) CompressionCandidates(src []byte) []CompressionCandidate {
 // EncodeGeneral is called only by the optimizer, never ordinary SET.
 func (r *Registry) EncodeGeneral(src []byte, cold bool) Record {
 	best := Record{ID: Raw, RawLength: len(src), Data: bytes.Clone(src)}
-	if len(src) < 256 || alreadyCompressed(src) || likelyIncompressible(src) {
+	if len(src) < 256 || alreadyCompressed(src) {
 		return best
 	}
 	candidates := []ID{LZ4}
