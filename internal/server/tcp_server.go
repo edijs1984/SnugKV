@@ -227,8 +227,12 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 	writer := newSerializedResponseWriter(s, conn)
 	var getScratch []byte
 	var getKeyScratch []byte
+	var setKeyScratch []byte
+	var setValueScratch []byte
 	const maxRetainedGetScratch = 64 << 10
 	const maxRetainedGetKeyScratch = 64 << 10
+	const maxRetainedSetKeyScratch = 64 << 10
+	const maxRetainedSetValueScratch = 64 << 10
 
 	clientID := atomic.AddUint64(
 		&s.nextClientID,
@@ -320,6 +324,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			}
 		}
 		var borrowedGET [2][]byte
+		var borrowedSET [3][]byte
 		var msg [][]byte
 		borrowedKey, borrowed, borrowErr := decoder.ReadBufferedGET(getKeyScratch)
 		if borrowErr != nil {
@@ -335,8 +340,34 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				getKeyScratch = nil
 			}
 		}
+
+		borrowedSet := false
+		if !borrowed && !txSession.multi {
+			setKey, setValue, ok, setErr := decoder.ReadBufferedSET(setKeyScratch, setValueScratch)
+			if setErr != nil {
+				return
+			}
+			if ok {
+				borrowedSET[0] = []byte("SET")
+				borrowedSET[1] = setKey
+				borrowedSET[2] = setValue
+				msg = borrowedSET[:]
+				borrowedSet = true
+				if cap(setKey) <= maxRetainedSetKeyScratch {
+					setKeyScratch = setKey[:0]
+				} else {
+					setKeyScratch = nil
+				}
+				if cap(setValue) <= maxRetainedSetValueScratch {
+					setValueScratch = setValue[:0]
+				} else {
+					setValueScratch = nil
+				}
+			}
+		}
+
 		var err error
-		if !borrowed {
+		if !borrowed && !borrowedSet {
 			msg, err = decoder.ReadCommand()
 		}
 		if err != nil {
