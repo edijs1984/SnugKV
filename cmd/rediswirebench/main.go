@@ -191,7 +191,6 @@ func runPipelinedGet(addr string, keys, ops, workers, pipeline int, seed int64) 
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-
 			c, err := dial(addr)
 			if err != nil {
 				atomic.AddUint64(&errs, 1)
@@ -222,7 +221,6 @@ func runPipelinedGet(addr string, keys, ops, workers, pipeline int, seed int64) 
 					atomic.AddUint64(&errs, uint64(end-base))
 					return
 				}
-
 				for i := base; i < end; i++ {
 					if err := c.readGetReply(); err != nil {
 						atomic.AddUint64(&errs, 1)
@@ -236,7 +234,6 @@ func runPipelinedGet(addr string, keys, ops, workers, pipeline int, seed int64) 
 			}
 		}(worker)
 	}
-
 	wg.Wait()
 	return time.Since(start), samples, errs
 }
