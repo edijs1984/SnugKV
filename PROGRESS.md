@@ -486,6 +486,32 @@ Recent real-server verification includes:
 - multi-group `KEEPREF` / `DELREF` / `ACKED` behavior for trimming/deletion,
   including dangling PEL cleanup through `XDELEX` / `XACKDEL`.
 
+## Redis-wire SET/load optimization milestone — 2026-09-20
+
+The million-key RESP2/TCP load path was profiled and optimized without removing
+encoding/compression features. The completed work includes concurrent load-worker
+support in `cmd/rediswirebench`, transient raw-clone removal on SET, a reusable
+buffered plain-SET decoder, reusable optimizer candidate scratch, borrowed raw
+optimizer fallbacks, known-hash indexed publication, and backlog-aware optimizer
+CPU yielding.
+
+On the 4-logical-CPU development machine with 1,000,000 random 256-byte values,
+8 workers, and pipeline depth 256, the final five-run SnugKV median was 315,256
+SET/s (best 318,331) versus the recorded Redis 8.2 reference of about 318,145
+SET/s. SnugKV's engine-accounted load delta was 362.27 B/key versus Redis's
+~392.39 B/key on that exact workload. Three sustained 5,000,000-key SnugKV runs
+had a 299,270 SET/s median and 352.68 B/key load delta.
+
+Allocation profiling during the work reduced 1M-load allocation traffic from
+roughly 1.38 GB to about 467 MB. The remaining dominant allocation sites are
+primarily persistent arena/index/entry growth rather than request/optimizer
+garbage. CPU profiling still shows background compression as a meaningful cost
+on intentionally incompressible values, so future tuning should preserve the
+memory feature set and focus on scheduling/admission rather than benchmark-only
+feature disabling.
+
+See `benchmarks/README.md` for exact runs, caveats, and reproduction details.
+
 ## Native datatype benchmark snapshot
 
 The existing 100k-key benchmark tables remain in `benchmarks/README.md`. Recorded
