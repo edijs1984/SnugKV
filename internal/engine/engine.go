@@ -226,14 +226,7 @@ func (s *Store) Get(key string) ([]byte, bool) {
 	// read path, because GET has no error channel for max-memory admission.
 	if s.shouldTrackActivity(e) && e.entryMeta != nil {
 		now := s.now()
-		meta := e.entryMeta
-		if now.Sub(meta.lastAccess.Time()) > time.Minute {
-			meta.reads = 0
-		}
-		meta.lastAccess = activityStampOf(now)
-		if meta.reads < ^uint8(0) {
-			meta.reads++
-		}
+		e.entryMeta.recordRead(now)
 		sh.set(key, e)
 	}
 	return s.decode(sh, e), true
