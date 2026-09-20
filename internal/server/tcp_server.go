@@ -224,6 +224,8 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 	// connection goroutine is blocked reading the next subscriber command.
 	// Serialize complete responses so partial socket writes cannot interleave.
 	writer := newSerializedResponseWriter(s, conn)
+	var getScratch []byte
+	const maxRetainedGetScratch = 64 << 10
 
 	clientID := atomic.AddUint64(
 		&s.nextClientID,
@@ -634,7 +636,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			continue
 		}
 
-		if value, found, handled, fastErr := s.server.executeAuthorizedConcurrentGetValue(msg); handled {
+		if value, found, handled, fastErr := s.server.executeAuthorizedConcurrentGetInto(msg, getScratch); handled {
 			if fastErr != nil {
 				if writeProtocol(msg, errorResponse(fastErr)) != nil {
 					return
@@ -644,6 +646,11 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			if found {
 				if writer.writeBulkBuffered(value) != nil {
 					return
+				}
+				if cap(value) <= maxRetainedGetScratch {
+					getScratch = value[:0]
+				} else {
+					getScratch = nil
 				}
 			} else if writeProtocol(msg, nullBulk()) != nil {
 				return
