@@ -67,7 +67,11 @@ func (sh *shard) entryCapacityFor(additional int) int {
 }
 
 func (sh *shard) get(key string) (entry, bool) {
-	id, ok := sh.data.Get(key)
+	return sh.getHashed(key, index.Hash(key))
+}
+
+func (sh *shard) getHashed(key string, hash uint64) (entry, bool) {
+	id, ok := sh.data.GetHashed(key, hash)
 	if !ok {
 		return entry{}, false
 	}
@@ -141,6 +145,9 @@ func (sh *shard) all() func(func(string, entry) bool) {
 }
 
 func (s *Store) shardFor(key string) *shard {
-	hash := index.Hash(key)
+	return s.shardForHash(index.Hash(key))
+}
+
+func (s *Store) shardForHash(hash uint64) *shard {
 	return &s.shards[(hash>>32)&uint64(len(s.shards)-1)]
 }

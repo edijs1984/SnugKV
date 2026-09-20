@@ -419,3 +419,22 @@ func TestPackedSlotTombstonesRemainCollisionSafe(t *testing.T) {
 		t.Fatal("deleted colliding key returned")
 	}
 }
+
+
+func TestGetHashedMatchesGet(t *testing.T) {
+	tbl := New[uint32]()
+	keys := []string{"alpha", "beta", "bench:000000001", "bench:000000999"}
+	for i, key := range keys {
+		tbl.Set(key, uint32(i+1))
+	}
+	for i, key := range keys {
+		want := uint32(i+1)
+		got, ok := tbl.GetHashed(key, Hash(key))
+		if !ok || got != want {
+			t.Fatalf("GetHashed(%q)=(%d,%t) want=(%d,true)", key, got, ok, want)
+		}
+	}
+	if _, ok := tbl.GetHashed("missing", Hash("missing")); ok {
+		t.Fatal("GetHashed missing key unexpectedly found")
+	}
+}

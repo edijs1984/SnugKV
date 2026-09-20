@@ -132,11 +132,14 @@ func (t *Table[V]) GrowthBytes(additional int) uint64 {
 }
 
 func (t *Table[V]) Get(key string) (V, bool) {
+	return t.GetHashed(key, Hash(key))
+}
+
+func (t *Table[V]) GetHashed(key string, hash uint64) (V, bool) {
 	var zero V
 	if len(t.slots) == 0 {
 		return zero, false
 	}
-	hash := Hash(key)
 	if len(t.slots) == initialCapacity && t.count == initialCapacity {
 		bits := tinyFilterBits(hash)
 		if t.tinyFilter&bits != bits {

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 	"math/bits"
+	"snugkv/internal/index"
 	"sort"
 	"strconv"
 	"time"
@@ -35,11 +36,12 @@ func (s *Store) SetPlain(key string, value []byte) error {
 		return errors.New("ERR value exceeds 32 MiB limit")
 	}
 
-	sh := s.shardFor(key)
+	hash := index.Hash(key)
+	sh := s.shardForHash(hash)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
 
-	old, exists := sh.get(key)
+	old, exists := sh.getHashed(key, hash)
 	if exists && old.hasExpiry && sh.expired(key, old, s.now()) {
 		s.remove(sh, key)
 		old = entry{}

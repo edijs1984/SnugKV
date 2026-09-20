@@ -197,11 +197,12 @@ func (s *Store) Get(key string) ([]byte, bool) {
 // shard lock. wrongType is true only for native container values that GET must
 // reject; missing/expired keys return found=false.
 func (s *Store) GetString(key string) (value []byte, found bool, wrongType bool) {
-	sh := s.shardFor(key)
+	hash := index.Hash(key)
+	sh := s.shardForHash(hash)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
 
-	e, ok := sh.get(key)
+	e, ok := sh.getHashed(key, hash)
 	if !ok || sh.expired(key, e, s.now()) {
 		return nil, false, false
 	}
