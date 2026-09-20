@@ -45,30 +45,36 @@ func (d *Decoder) readByte() (byte, error) {
 	return b, err
 }
 func (d *Decoder) length(marker byte, max int) (int, error) {
-	b, err := d.readByte()
+	line, err := d.reader.ReadSlice('\n')
 	if err != nil {
 		return 0, err
 	}
-	if b != marker {
-		return 0, fmt.Errorf("expected %q", marker)
+	if len(line) > d.remaining {
+		return 0, errors.New("request exceeds byte limit")
 	}
-	n, digits := 0, 0
-	for {
-		b, err = d.readByte()
-		if err != nil {
-			return 0, err
+	d.remaining -= len(line)
+
+	if len(line) < 4 || line[0] != marker {
+		if len(line) > 0 && line[0] != marker {
+			return 0, fmt.Errorf("expected %q", marker)
 		}
-		if b == '\r' {
-			b, err = d.readByte()
-			if err != nil {
-				return 0, err
-			}
-			if b != '\n' || digits == 0 {
-				return 0, errors.New("invalid length terminator")
-			}
-			return n, nil
-		}
-		if b < '0' || b > '9' || digits >= 20 {
+		return 0, errors.New("invalid length terminator")
+	}
+	if line[len(line)-2] != '\r' {
+		return 0, errors.New("invalid length terminator")
+	}
+
+	digits := line[1 : len(line)-2]
+	if len(digits) == 0 {
+		return 0, errors.New("invalid length terminator")
+	}
+	if len(digits) > 20 {
+		return 0, errors.New("invalid length")
+	}
+
+	n := 0
+	for _, b := range digits {
+		if b < '0' || b > '9' {
 			return 0, errors.New("invalid length")
 		}
 		digit := int(b - '0')
@@ -76,8 +82,8 @@ func (d *Decoder) length(marker byte, max int) (int, error) {
 			return 0, errors.New("declared length exceeds limit")
 		}
 		n = n*10 + digit
-		digits++
 	}
+	return n, nil
 }
 func (d *Decoder) bulk() ([]byte, error) {
 	n, err := d.length('$', d.limits.MaxBulkBytes)
