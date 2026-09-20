@@ -115,23 +115,22 @@ func (s *Server) executeAuthorizedConcurrentRawGet(
 	return handled, err
 }
 
-// executeAuthorizedConcurrentGet serves a previously ACL-authorized plain GET
-// without passing through the generic function/blocking/pressure dispatch stack.
-// It is only used when the same concurrent-scalar conditions as the ordinary
-// durability path hold. Callers must have already handled connection-local
-// semantics such as MULTI, Pub/Sub and CLIENT commands.
-func (s *Server) executeAuthorizedConcurrentGet(args [][]byte) (response []byte, handled bool, err error) {
+// executeAuthorizedConcurrentGetValue serves a previously ACL-authorized plain
+// GET without formatting the successful bulk response. The TCP fast path can
+// frame caller-owned decoded bytes directly into its existing connection buffer,
+// avoiding a second value-sized allocation and copy after codec decode.
+func (s *Server) executeAuthorizedConcurrentGetValue(args [][]byte) (value []byte, found bool, handled bool, err error) {
 	if len(args) != 2 ||
 		!bytes.EqualFold(args[0], []byte("GET")) ||
 		s.journal != nil ||
 		atomic.LoadUint32(&s.metricsEnabled) != 0 {
-		return nil, false, nil
+		return nil, false, false, nil
 	}
 
 	s.durableMu.RLock()
 	if s.hasWatchSessionsLocked() {
 		s.durableMu.RUnlock()
-		return nil, false, nil
+		return nil, false, false, nil
 	}
 
 	value, found, wrongType := s.store.GetString(string(args[1]))
@@ -139,7 +138,18 @@ func (s *Server) executeAuthorizedConcurrentGet(args [][]byte) (response []byte,
 
 	atomic.AddUint64(&s.commands, 1)
 	if wrongType {
-		return nil, true, errWrongType
+		return nil, false, true, errWrongType
+	}
+	return value, found, true, nil
+}
+
+// executeAuthorizedConcurrentGet preserves the formatted-response helper used
+// by in-process callers and tests. TCP uses executeAuthorizedConcurrentGetValue
+// so successful GETs do not copy the decoded value into another response slice.
+func (s *Server) executeAuthorizedConcurrentGet(args [][]byte) (response []byte, handled bool, err error) {
+	value, found, handled, err := s.executeAuthorizedConcurrentGetValue(args)
+	if !handled || err != nil {
+		return nil, handled, err
 	}
 	return optionalBulk(value, found), true, nil
 }
