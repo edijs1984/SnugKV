@@ -196,6 +196,106 @@ func (d *Decoder) ReadBufferedGET(scratch []byte) (key []byte, ok bool, err erro
 	return scratch, true, nil
 }
 
+
+// ReadBufferedSET copies a complete plain SET key/value pair from the current
+// bufio.Reader buffer into caller-owned scratch. It only accepts the exact
+// three-argument form SET key value. Partial or non-plain SET frames consume
+// nothing and fall back to ReadCommand.
+//
+// The caller may reuse keyScratch/valueScratch after the command finishes;
+// the engine copies the value into owned arena storage before returning.
+func (d *Decoder) ReadBufferedSET(keyScratch, valueScratch []byte) (key, value []byte, ok bool, err error) {
+	buffered := d.reader.Buffered()
+	if buffered < len("*3\r\n$3\r\nSET\r\n$0\r\n\r\n$0\r\n\r\n") {
+		return keyScratch[:0], valueScratch[:0], false, nil
+	}
+	if buffered > d.limits.MaxRequestBytes {
+		buffered = d.limits.MaxRequestBytes
+	}
+	buf, err := d.reader.Peek(buffered)
+	if err != nil {
+		return keyScratch[:0], valueScratch[:0], false, nil
+	}
+	if len(buf) < 13 ||
+		buf[0] != '*' || buf[1] != '3' || buf[2] != '\r' || buf[3] != '\n' ||
+		buf[4] != '$' || buf[5] != '3' || buf[6] != '\r' || buf[7] != '\n' ||
+		!((buf[8] == 'S' || buf[8] == 's') &&
+			(buf[9] == 'E' || buf[9] == 'e') &&
+			(buf[10] == 'T' || buf[10] == 't')) ||
+		buf[11] != '\r' || buf[12] != '\n' {
+		return keyScratch[:0], valueScratch[:0], false, nil
+	}
+	if d.limits.MaxArguments < 3 {
+		return keyScratch[:0], valueScratch[:0], false, nil
+	}
+
+	parseBulk := func(pos int) (payloadStart, payloadLen, next int, complete bool) {
+		if pos >= len(buf) || buf[pos] != '$' {
+			return 0, 0, 0, false
+		}
+		pos++
+		n := 0
+		digits := 0
+		for pos < len(buf) {
+			b := buf[pos]
+			if b == '\r' {
+				if digits == 0 || pos+1 >= len(buf) || buf[pos+1] != '\n' {
+					return 0, 0, 0, false
+				}
+				pos += 2
+				break
+			}
+			if b < '0' || b > '9' || digits >= 20 {
+				return 0, 0, 0, false
+			}
+			digit := int(b - '0')
+			if n > d.limits.MaxBulkBytes/10 ||
+				n == d.limits.MaxBulkBytes/10 && digit > d.limits.MaxBulkBytes%10 {
+				return 0, 0, 0, false
+			}
+			n = n*10 + digit
+			digits++
+			pos++
+		}
+		if digits == 0 || pos+n+2 > len(buf) {
+			return 0, 0, 0, false
+		}
+		payloadStart = pos
+		if buf[pos+n] != '\r' || buf[pos+n+1] != '\n' {
+			return 0, 0, 0, false
+		}
+		return payloadStart, n, pos + n + 2, true
+	}
+
+	keyStart, keyLen, pos, complete := parseBulk(13)
+	if !complete {
+		return keyScratch[:0], valueScratch[:0], false, nil
+	}
+	valueStart, valueLen, frameLen, complete := parseBulk(pos)
+	if !complete || frameLen > d.limits.MaxRequestBytes {
+		return keyScratch[:0], valueScratch[:0], false, nil
+	}
+
+	if cap(keyScratch) < keyLen {
+		keyScratch = make([]byte, keyLen)
+	} else {
+		keyScratch = keyScratch[:keyLen]
+	}
+	copy(keyScratch, buf[keyStart:keyStart+keyLen])
+
+	if cap(valueScratch) < valueLen {
+		valueScratch = make([]byte, valueLen)
+	} else {
+		valueScratch = valueScratch[:valueLen]
+	}
+	copy(valueScratch, buf[valueStart:valueStart+valueLen])
+
+	if _, err := d.reader.Discard(frameLen); err != nil {
+		return keyScratch[:0], valueScratch[:0], false, err
+	}
+	return keyScratch, valueScratch, true, nil
+}
+
 // ReadCommand accepts only nonempty, flat arrays of non-null bulk strings.
 // io.EOF means clean end of stream; truncated requests return io.ErrUnexpectedEOF.
 // After any other error the stream must be closed, not resynchronized.
