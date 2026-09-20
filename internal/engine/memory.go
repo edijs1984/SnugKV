@@ -251,9 +251,6 @@ func (s *Store) publishRecordKnown(
 	old entry,
 	exists bool,
 ) error {
-	if s.shouldTrackActivity(e.entry) && e.entryMeta == nil {
-		e.entryMeta = &entryMeta{}
-	}
 	var oldCost uint64
 	if exists {
 		oldCost = entryCharge(key, old)
@@ -347,8 +344,8 @@ func (s *Store) publishRecordKnown(
 
 	s.memory.mu.Unlock()
 
-	if s.shouldTrackActivity(e.entry) {
-		meta := e.ensureMeta()
+	if s.shouldTrackActivity(e.entry) && e.entryMeta != nil {
+		meta := e.entryMeta
 		if meta.lastWrite.IsZero() {
 			now := s.now()
 			meta.lastWrite = activityStampOf(now)
