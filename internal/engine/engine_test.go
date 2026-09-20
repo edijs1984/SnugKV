@@ -55,6 +55,46 @@ func TestIncrBasic(t *testing.T) {
 }
 
 
+func TestGetStringIntoPersistsActivityThroughSharedMetadata(t *testing.T) {
+	store := New()
+	store.encoding = true
+	now := time.Unix(1_700_000_000, 0)
+	store.now = func() time.Time { return now }
+
+	if err := store.Set("hot", []byte("value"), 0); err != nil {
+		t.Fatal(err)
+	}
+
+	sh := store.shardFor("hot")
+	sh.mu.Lock()
+	e, ok := sh.get("hot")
+	if !ok {
+		sh.mu.Unlock()
+		t.Fatal("missing setup key")
+	}
+	e.entryMeta = &entryMeta{}
+	sh.set("hot", e)
+	sh.mu.Unlock()
+
+	value, found, wrongType := store.GetStringInto("hot", nil)
+	if !found || wrongType || string(value) != "value" {
+		t.Fatalf("GetStringInto value=%q found=%t wrongType=%t", value, found, wrongType)
+	}
+
+	sh.mu.RLock()
+	got, ok := sh.get("hot")
+	sh.mu.RUnlock()
+	if !ok || got.entryMeta == nil {
+		t.Fatal("metadata missing after GET")
+	}
+	if got.entryMeta.reads != 1 {
+		t.Fatalf("reads=%d want 1", got.entryMeta.reads)
+	}
+	if got.entryMeta.lastAccess.IsZero() {
+		t.Fatal("last access was not persisted")
+	}
+}
+
 func TestGetStringRejectsStream(t *testing.T) {
 	store := New()
 	if _, _, err := store.StreamAdd(
