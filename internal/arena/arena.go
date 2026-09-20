@@ -360,6 +360,33 @@ func (a *Arena) View(ref Ref) ([]byte, error) {
 	return data[start+8 : end : end], nil
 }
 
+
+// ViewLive returns the bytes for a reference that the caller already knows is
+// live while holding the arena owner's synchronization lock. Unlike View, it
+// deliberately skips rereading the allocation generation header.
+//
+// Engine shard lookups satisfy this invariant because an entry's Ref cannot be
+// freed or replaced while the owning shard lock is held. General callers that
+// may hold stale references must continue using View.
+func (a *Arena) ViewLive(ref Ref) ([]byte, error) {
+	if ref.generation == 0 {
+		if ref.length() == 0 {
+			return []byte{}, nil
+		}
+		return nil, errors.New("invalid empty reference")
+	}
+	if int(ref.segment()) >= len(a.segments) {
+		return nil, errors.New("invalid segment")
+	}
+	data := a.segments[ref.segment()].data
+	start := uint64(ref.offset())
+	end := start + 8 + uint64(ref.length())
+	if end > uint64(len(data)) {
+		return nil, errors.New("invalid arena reference")
+	}
+	return data[start+8 : end : end], nil
+}
+
 func (a *Arena) Free(ref Ref) {
 	if ref.generation == 0 {
 		return
