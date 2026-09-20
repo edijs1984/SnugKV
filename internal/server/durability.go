@@ -130,7 +130,7 @@ func (s *Server) executeAuthorizedConcurrentKnownGetInto(
 		return nil, false, false, nil
 	}
 
-	value, found, wrongType := s.store.GetStringInto(string(key), dst)
+	value, found, wrongType := s.store.GetStringBytesInto(key, dst)
 	s.durableMu.RUnlock()
 
 	atomic.AddUint64(&s.commands, 1)
