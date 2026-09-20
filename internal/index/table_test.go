@@ -59,11 +59,10 @@ func TestByteLookupHandlesCollisionsAndEmptyKey(t *testing.T) {
 	table := New[uint32]()
 	const hash = uint64(7)
 
-	// Force several keys through the same probe chain.
+	// Use a non-tiny table so this test isolates collision probing. The helper
+	// below intentionally bypasses normal Set bookkeeping, including tinyFilter.
+	table.slots = make([]slot[uint32], initialCapacity*2)
 	for i, key := range []string{"", "alpha", "beta", "gamma"} {
-		if len(table.slots) == 0 {
-			table.slots = make([]slot[uint32], initialCapacity)
-		}
 		testInsertHashed(table, key, uint32(i+1), hash)
 	}
 
