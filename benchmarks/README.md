@@ -247,6 +247,48 @@ At around 1,000 keys, sparse-shard effects are much larger because active shards
 reserve entry capacity and arena segments. Small-dataset measurements should not
 be extrapolated from the 100k-key matrices.
 
+## Realistic application workload matrix
+
+The random 256-byte scalar case remains useful as an incompressible worst-case
+control, but it is not intended to represent typical application data by itself.
+`scripts/bench/compare-realistic-workloads.sh` runs the same Redis/SnugKV
+black-box load, GET, mixed 90/10, and TTL harness across a deterministic profile
+matrix:
+
+| Profile | Size | Intended analogue |
+|---|---:|---|
+| `session-json` | 384 B | authenticated user/session/cache state with repeated field names |
+| `api-json` | 768 B | cached API response/object with repeated schema |
+| `counter` | 10 B | canonical integer counters |
+| `uuid` | 36 B | UUID identifiers stored as scalar values |
+| `text` | 256 B | human/application text with recurring vocabulary |
+| `repetitive` | 256 B | highly compressible control |
+| `compressed` | 256 B | deterministic high-entropy binary with a gzip signature |
+| `random` | 256 B | deterministic incompressible worst-case control |
+
+The JSON profiles are valid fixed-size JSON documents, the counter and UUID
+profiles use canonical encodings that exercise SnugKV's scalar codecs, and the
+compressed profile intentionally carries an already-compressed signature so the
+optimizer can exercise its recompression-avoidance path.
+
+Run the full matrix against the configured Redis, SnugKV raw, and SnugKV
+optimized servers:
+
+```sh
+KEYS=1000000 \
+OPS=5000000 \
+WORKERS=8 \
+PIPELINE=256 \
+RUNS=3 \
+bash scripts/bench/compare-realistic-workloads.sh
+```
+
+Each profile writes its raw JSON measurements plus a `summary.json`; the matrix
+script also writes a combined `matrix-summary.json`. Treat these profiles as
+representative synthetic workloads, not measurements of a specific production
+application. For product claims, pair them with traces or distributions from an
+actual deployment when available.
+
 ## Benchmark discipline
 
 For public performance claims, rerun Redis from a fresh dedicated instance or
