@@ -223,6 +223,10 @@ func (s *Store) GetStringInto(key string, dst []byte) (value []byte, found bool,
 }
 
 func (s *Store) GetStringBytesInto(key []byte, dst []byte) (value []byte, found bool, wrongType bool) {
+	return s.GetStringBytesIntoAt(key, dst, s.now())
+}
+
+func (s *Store) GetStringBytesIntoAt(key []byte, dst []byte, now time.Time) (value []byte, found bool, wrongType bool) {
 	hash := index.HashBytes(key)
 	sh := s.shardForHash(hash)
 	sh.mu.Lock()
@@ -233,7 +237,6 @@ func (s *Store) GetStringBytesInto(key []byte, dst []byte) (value []byte, found 
 		return nil, false, false
 	}
 
-	now := s.now()
 	if e.hasExpiry && sh.expired(string(key), e, now) {
 		return nil, false, false
 	}
