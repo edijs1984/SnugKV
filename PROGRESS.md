@@ -1,3 +1,25 @@
+## 1M Redis scalar benchmark / GET fast-path tuning
+
+- Added a black-box RESP2/TCP benchmark path for true pipelined GET; the previous
+  GET workload was sequential request/response despite reporting a pipeline flag.
+- On the 1,000,000-key / 256-byte repetitive development workload, Redis 8.2
+  measured 432,213 GET/s, SnugKV raw measured 526,951 GET/s, and optimized
+  SnugKV measured 430,233 GET/s after the encoded-response copy removal.
+- The encoded GET TCP fast path now writes decoded bytes directly into the
+  connection response buffer rather than allocating and copying a second
+  value-sized RESP bulk payload.
+- The optimized GET change improved the observed 3M-operation pipelined run from
+  404,451 GET/s to 430,233 GET/s (~6.4%) while preserving the optimized memory
+  footprint.
+- The optimized dataset accounted about 162.6 MB after settling versus Redis
+  reported memory of about 393.3 MB on this deliberately repetitive synthetic
+  workload (~58.6% lower reported memory). This is not a claim for arbitrary
+  values; incompressible datasets must be measured separately.
+- Clean CPU profiling is continuing to isolate the remaining optimized-vs-raw
+  read overhead, especially codec decode, allocation/GC, activity metadata, and
+  locking costs.
+- Detailed methodology and caveats are recorded in `benchmarks/README.md`.
+
 ## Redis MIGRATE
 
 - Implemented Redis 8.2-compatible `MIGRATE` for the audited standalone surface.
