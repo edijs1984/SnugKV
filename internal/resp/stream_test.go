@@ -12,6 +12,45 @@ import (
 	"testing/iotest"
 )
 
+func TestReadBufferedGETBorrowsCompleteFrame(t *testing.T) {
+	wire := "*2\r\n$3\r\nGET\r\n$5\r\na\x00bcd\r\n*1\r\n$4\r\nPING\r\n"
+	reader := bufio.NewReader(strings.NewReader(wire))
+	d, _ := NewDecoder(reader, DefaultLimits())
+
+	var args [2][]byte
+	ok, err := d.ReadBufferedGET(&args)
+	if err != nil || !ok {
+		t.Fatalf("borrowed GET ok=%t err=%v", ok, err)
+	}
+	if string(args[0]) != "GET" || !bytes.Equal(args[1], []byte{'a', 0, 'b', 'c', 'd'}) {
+		t.Fatalf("borrowed GET args=%q", args)
+	}
+
+	next, err := d.ReadCommand()
+	if err != nil || len(next) != 1 || string(next[0]) != "PING" {
+		t.Fatalf("next command=%q err=%v", next, err)
+	}
+}
+
+func TestReadBufferedGETFallsBackWithoutConsuming(t *testing.T) {
+	for _, wire := range []string{
+		"*2\r\n$3\r\nSET\r\n$1\r\nk\r\n",
+		"*2\r\n$3\r\nGET\r\n$5\r\nabc",
+	} {
+		reader := bufio.NewReader(strings.NewReader(wire))
+		d, _ := NewDecoder(reader, DefaultLimits())
+		before := reader.Buffered()
+		var args [2][]byte
+		ok, err := d.ReadBufferedGET(&args)
+		if err != nil || ok {
+			t.Fatalf("wire %q ok=%t err=%v", wire, ok, err)
+		}
+		if got := reader.Buffered(); got != before {
+			t.Fatalf("wire %q consumed bytes: before=%d after=%d", wire, before, got)
+		}
+	}
+}
+
 func TestStreamingBinaryPipeline(t *testing.T) {
 	wire := "*3\r\n$3\r\nSET\r\n$0\r\n\r\n$5\r\na\r\n\x00b\r\n*1\r\n$4\r\nPING\r\n"
 	d, _ := NewDecoder(bufio.NewReader(iotest.OneByteReader(strings.NewReader(wire))), DefaultLimits())
