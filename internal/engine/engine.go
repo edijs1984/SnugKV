@@ -194,7 +194,11 @@ func (s *Store) GetStringInto(key string, dst []byte) (value []byte, found bool,
 	defer sh.mu.Unlock()
 
 	e, ok := sh.getHashed(key, hash)
-	if !ok || sh.expired(key, e, s.now()) {
+	if !ok {
+		return nil, false, false
+	}
+	now := s.now()
+	if sh.expired(key, e, now) {
 		return nil, false, false
 	}
 	if isNativeContainerType(e.valueType) {
@@ -202,9 +206,8 @@ func (s *Store) GetStringInto(key string, dst []byte) (value []byte, found bool,
 	}
 
 	if s.shouldTrackActivity(e) && e.entryMeta != nil {
-		now := s.now()
 		meta := e.entryMeta
-		if now.Sub(meta.lastAccess.Time()) > time.Minute {
+		if meta.lastAccess.IsOlderThan(now, time.Minute) {
 			meta.reads = 0
 		}
 		meta.lastAccess = activityStampOf(now)
@@ -224,7 +227,11 @@ func (s *Store) GetString(key string) (value []byte, found bool, wrongType bool)
 	defer sh.mu.Unlock()
 
 	e, ok := sh.getHashed(key, hash)
-	if !ok || sh.expired(key, e, s.now()) {
+	if !ok {
+		return nil, false, false
+	}
+	now := s.now()
+	if sh.expired(key, e, now) {
 		return nil, false, false
 	}
 
@@ -234,9 +241,8 @@ func (s *Store) GetString(key string) (value []byte, found bool, wrongType bool)
 
 	// Keep the same activity accounting semantics as Get.
 	if s.shouldTrackActivity(e) && e.entryMeta != nil {
-		now := s.now()
 		meta := e.entryMeta
-		if now.Sub(meta.lastAccess.Time()) > time.Minute {
+		if meta.lastAccess.IsOlderThan(now, time.Minute) {
 			meta.reads = 0
 		}
 		meta.lastAccess = activityStampOf(now)
