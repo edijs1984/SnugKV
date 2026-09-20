@@ -352,7 +352,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 		}
 		requestNow := clientSession.touch(msg)
 
-		if len(msg) > 0 &&
+		if !borrowed && len(msg) > 0 &&
 			strings.EqualFold(string(msg[0]), "HELLO") {
 			response, helloErr :=
 				s.executeHelloConnectionCommand(
@@ -372,7 +372,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			continue
 		}
 
-		if len(msg) > 0 && strings.EqualFold(string(msg[0]), "AUTH") {
+		if !borrowed && len(msg) > 0 && strings.EqualFold(string(msg[0]), "AUTH") {
 			response, authErr := s.server.executeAUTH(authSession, msg)
 
 			if authErr != nil {
@@ -407,12 +407,13 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			continue
 		}
 
-		if handled, debugResponse, debugErr :=
-			s.executeScriptDebugCommand(
-				clientSession,
-				authSession,
-				msg,
-			); handled {
+		if !borrowed {
+			if handled, debugResponse, debugErr :=
+				s.executeScriptDebugCommand(
+					clientSession,
+					authSession,
+					msg,
+				); handled {
 			if errors.Is(debugErr, errScriptDebugCloseAfterReply) {
 				if writer.write(debugResponse) != nil {
 					return
@@ -422,10 +423,11 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			if debugErr != nil {
 				debugResponse = errorResponse(debugErr)
 			}
-			if writer.write(debugResponse) != nil {
-				return
+				if writer.write(debugResponse) != nil {
+					return
+				}
+				continue
 			}
-			continue
 		}
 
 		if authErr := s.server.authorizeConnectionCommand(authSession, msg); authErr != nil {
