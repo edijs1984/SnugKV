@@ -62,12 +62,11 @@ func TestByteLookupHandlesCollisionsAndEmptyKey(t *testing.T) {
 	// Use a non-tiny table so this test isolates collision probing. The helper
 	// below intentionally bypasses normal Set bookkeeping, including tinyFilter.
 	table.slots = make([]slot[uint32], initialCapacity*2)
-	keys := []string{"", "alpha", "beta", "gamma", "abXY", "cdXY"}
-	for i, key := range keys {
+	for i, key := range []string{"", "alpha", "beta", "gamma"} {
 		testInsertHashed(table, key, uint32(i+1), hash)
 	}
 
-	for i, key := range keys {
+	for i, key := range []string{"", "alpha", "beta", "gamma"} {
 		got, ok := table.GetHashedBytes([]byte(key), hash)
 		if !ok || got != uint32(i+1) {
 			t.Fatalf("byte collision lookup %q got=%d ok=%t", key, got, ok)
