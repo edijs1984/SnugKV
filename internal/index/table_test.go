@@ -55,6 +55,30 @@ func TestByteLookupMatchesStringLookup(t *testing.T) {
 	}
 }
 
+func TestByteLookupHandlesCollisionsAndEmptyKey(t *testing.T) {
+	table := New[uint32]()
+	const hash = uint64(7)
+
+	// Force several keys through the same probe chain.
+	for i, key := range []string{"", "alpha", "beta", "gamma"} {
+		if len(table.slots) == 0 {
+			table.slots = make([]slot[uint32], initialCapacity)
+		}
+		testInsertHashed(table, key, uint32(i+1), hash)
+	}
+
+	for i, key := range []string{"", "alpha", "beta", "gamma"} {
+		got, ok := table.GetHashedBytes([]byte(key), hash)
+		if !ok || got != uint32(i+1) {
+			t.Fatalf("byte collision lookup %q got=%d ok=%t", key, got, ok)
+		}
+	}
+
+	if _, ok := table.GetHashedBytes([]byte("missing"), hash); ok {
+		t.Fatal("missing colliding byte key found")
+	}
+}
+
 func TestPackedSlotIs16Bytes(t *testing.T) {
 	table := New[uint32]()
 	if got := table.EntryBytes(); got != 16 {
