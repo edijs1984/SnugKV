@@ -350,7 +350,12 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			_ = writer.write([]byte("-ERR invalid RESP\r\n"))
 			return
 		}
-		requestNow := clientSession.touch(msg)
+		var requestNow time.Time
+		if borrowed {
+			requestNow = clientSession.touchKnownGET()
+		} else {
+			requestNow = clientSession.touch(msg)
+		}
 
 		if !borrowed && len(msg) > 0 &&
 			strings.EqualFold(string(msg[0]), "HELLO") {
