@@ -10,14 +10,15 @@ import (
 )
 
 type Candidate struct {
-	Key          string
-	Version      uint64
-	Value        []byte
-	EncodedBytes int
-	LastRewrite  time.Time
-	LastWrite    time.Time
-	Heat         string
-	expiresAt    stamp
+	Key                     string
+	Version                 uint64
+	Value                   []byte
+	EncodedBytes            int
+	AdditionalMetadataBytes int
+	LastRewrite             time.Time
+	LastWrite               time.Time
+	Heat                    string
+	expiresAt               stamp
 }
 
 // OptimizationEligible performs the cheap read-only eligibility check before
@@ -92,7 +93,11 @@ func (s *Store) MarkOptimizationAttempt(
 		return false
 	}
 
-	meta = e.ensureMeta()
+	if meta == nil {
+		// Keep metadata sparse. A successful Rewrite will allocate and account
+		// metadata as part of the published replacement.
+		return true
+	}
 	meta.lastOptimize = activityStampOf(now)
 	sh.set(key, e)
 
@@ -109,19 +114,23 @@ func (s *Store) Candidate(key string, maxBytes int) (Candidate, bool) {
 	}
 	meta := e.entryMeta
 	var lastRewrite, lastWrite time.Time
+	additionalMetadataBytes := 0
 	if meta != nil {
 		lastRewrite = meta.lastRewrite.Time()
 		lastWrite = meta.lastWrite.Time()
+	} else {
+		additionalMetadataBytes = int(entryMetaBytes)
 	}
 	return Candidate{
-		Key:          key,
-		Version:      e.ref.Generation(),
-		Value:        s.decode(sh, e),
-		EncodedBytes: len(sh.encoded(e)),
-		LastRewrite:  lastRewrite,
-		LastWrite:    lastWrite,
-		Heat:         heat(meta, s.now()),
-		expiresAt:    sh.expirationAt(key, e),
+		Key:                     key,
+		Version:                 e.ref.Generation(),
+		Value:                   s.decode(sh, e),
+		EncodedBytes:            len(sh.encoded(e)),
+		AdditionalMetadataBytes: additionalMetadataBytes,
+		LastRewrite:             lastRewrite,
+		LastWrite:               lastWrite,
+		Heat:                    heat(meta, s.now()),
+		expiresAt:               sh.expirationAt(key, e),
 	}, true
 }
 func heat(meta *entryMeta, now time.Time) string {
