@@ -373,18 +373,16 @@ func (s *Store) publishRecordKnown(
 		if meta.lastWrite.IsZero() {
 			now := s.now()
 			meta.lastWrite = activityStampOf(now)
-			meta.setAccessAndReads(meta.lastWrite, 0)
-			writes := uint8(1)
+			meta.lastAccess = meta.lastWrite
+			meta.writes = 1
 
 			if exists && old.entryMeta != nil && now.Sub(old.entryMeta.lastWrite.Time()) < time.Minute {
-				oldWrites := old.entryMeta.writeCount()
-				if oldWrites < ^uint8(0) {
-					writes = oldWrites + 1
+				if old.entryMeta.writes < ^uint8(0) {
+					meta.writes = old.entryMeta.writes + 1
 				} else {
-					writes = oldWrites
+					meta.writes = old.entryMeta.writes
 				}
 			}
-			meta.setWriteCount(writes)
 		}
 	}
 
