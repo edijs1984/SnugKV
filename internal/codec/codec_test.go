@@ -231,3 +231,28 @@ func TestDecodeIntoReusesCompressionBuffer(t *testing.T) {
 		}
 	}
 }
+
+
+func TestEncodeGeneralBorrowedRawAliasesInput(t *testing.T) {
+	r := NewRegistry()
+	value := make([]byte, 256)
+	for i := range value {
+		value[i] = byte(i)
+	}
+
+	record := r.EncodeGeneralBorrowed(value, false)
+	if record.ID != Raw {
+		t.Fatalf("codec=%d want raw", record.ID)
+	}
+	if len(record.Data) == 0 || &record.Data[0] != &value[0] {
+		t.Fatal("borrowed raw fallback unexpectedly cloned input")
+	}
+
+	owned := r.EncodeGeneral(value, false)
+	if owned.ID != Raw {
+		t.Fatalf("owned codec=%d want raw", owned.ID)
+	}
+	if len(owned.Data) == 0 || &owned.Data[0] == &value[0] {
+		t.Fatal("ownership-preserving EncodeGeneral aliased input")
+	}
+}
