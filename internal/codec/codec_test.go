@@ -187,3 +187,29 @@ func TestGeneralCompressionConcurrent(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestDecodeIntoReusesCompressionBuffer(t *testing.T) {
+	r := NewRegistry()
+	value := bytes.Repeat([]byte("decode-into-reuse-"), 128)
+
+	for _, id := range []ID{LZ4, Zstandard} {
+		codec := r.codecs[id]
+		data, ok := codec.Encode(value)
+		if !ok {
+			t.Fatalf("codec %d rejected", id)
+		}
+
+		rec := Record{ID: id, RawLength: len(value), Data: data}
+		scratch := make([]byte, 0, len(value))
+		out, err := r.DecodeInto(rec, len(value), scratch)
+		if err != nil {
+			t.Fatalf("codec %d: %v", id, err)
+		}
+		if !bytes.Equal(out, value) {
+			t.Fatalf("codec %d round trip mismatch", id)
+		}
+		if len(out) > 0 && &out[0] != &scratch[:cap(scratch)][0] {
+			t.Fatalf("codec %d did not reuse provided buffer", id)
+		}
+	}
+}
