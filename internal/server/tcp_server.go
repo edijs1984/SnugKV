@@ -484,6 +484,61 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			continue
 		}
 
+		// ReadBufferedGET has already validated the complete command as exactly
+		// GET with two bulk arguments. On the ordinary data listener, run the
+		// authorized GET path before generic ACL/admin command classification.
+		// Authorization above is unchanged; RESP2 Pub/Sub and MULTI semantics
+		// are still checked before the read. Admin listeners keep the generic
+		// gate below because GET is intentionally unavailable there.
+		if borrowed && !s.adminOnly {
+			if clientSession.protocolVersion() == 2 && pubSession.active() {
+				if handled, quit, pubSubErr := s.server.executePubSubConnectionCommand(pubSession, msg); handled {
+					if pubSubErr != nil {
+						if writeProtocol(msg, errorResponse(pubSubErr)) != nil {
+							return
+						}
+					}
+					if quit {
+						return
+					}
+					continue
+				}
+			}
+
+			if handled, txResponse, txErr := s.server.executeTransactionConnectionCommand(txSession, msg); handled {
+				if txErr != nil {
+					txResponse = errorResponse(txErr)
+				}
+				if writeProtocol(msg, txResponse) != nil {
+					return
+				}
+				continue
+			}
+
+			if value, found, handled, fastErr := s.server.executeAuthorizedConcurrentKnownGetIntoAt(msg[1], getScratch, requestNow); handled {
+				if fastErr != nil {
+					if writeProtocol(msg, errorResponse(fastErr)) != nil {
+						return
+					}
+					continue
+				}
+				if found {
+					if writer.writeBulkBuffered(value) != nil {
+						return
+					}
+					if cap(value) <= maxRetainedGetScratch {
+						getScratch = value[:0]
+					} else {
+						getScratch = nil
+					}
+				} else if writeProtocol(msg, nullBulk()) != nil {
+					return
+				}
+				s.trackCommandRead(clientSession, msg)
+				continue
+			}
+		}
+
 		if len(msg) > 0 && strings.EqualFold(string(msg[0]), "ACL") {
 			response, aclErr := s.server.executeACL(authSession, msg)
 
