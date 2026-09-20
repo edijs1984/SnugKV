@@ -283,7 +283,13 @@ func (s *Store) JSONShapeWarmupPending(candidate Candidate, window time.Duration
 }
 
 func (s *Store) EncodeCandidate(candidate Candidate) codec.Record {
-	best := s.codecs.Encode(candidate.Value)
+	// Candidate owns an immutable snapshot already. Values longer than 36 bytes
+	// cannot use a synchronous scalar codec, so borrow that snapshot as the raw
+	// fallback instead of cloning it again.
+	best := codec.Record{ID: codec.Raw, RawLength: len(candidate.Value), Data: candidate.Value}
+	if len(candidate.Value) <= 36 {
+		best = s.codecs.Encode(candidate.Value)
+	}
 	sh := s.shardFor(candidate.Key)
 	if structuredJSONCandidate(candidate.Value) {
 		shapes := s.ensureShapeStore(sh)
@@ -301,7 +307,7 @@ func (s *Store) EncodeCandidate(candidate Candidate) codec.Record {
 		}
 	}
 	if s.compression && candidate.Heat != "hot" && candidate.Heat != "write-heavy" {
-		compressed := s.codecs.EncodeGeneral(candidate.Value, candidate.Heat == "cold")
+		compressed := s.codecs.EncodeGeneralBorrowed(candidate.Value, candidate.Heat == "cold")
 		if len(compressed.Data) < len(best.Data) {
 			best = compressed
 		}
