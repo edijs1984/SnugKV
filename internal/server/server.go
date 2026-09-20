@@ -28,6 +28,7 @@ type Server struct {
 	journal          Journal
 	durableMu        sync.RWMutex
 	durabilityFailed bool
+	watchSessions    atomic.Int32
 
 	// executionACLUsername / executionACLArgs are valid only while durableMu is
 	// held. TCP and transaction execution populate them so dynamic command
