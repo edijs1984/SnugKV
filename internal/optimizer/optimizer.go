@@ -179,6 +179,8 @@ func (o *Optimizer) retrySoon(key string) {
 
 func (o *Optimizer) worker() {
 	defer o.wg.Done()
+	var candidateScratch []byte
+	const maxRetainedCandidateScratch = 1 << 20
 	for {
 		select {
 		case <-o.ctx.Done():
@@ -201,11 +203,16 @@ func (o *Optimizer) worker() {
 				continue
 			}
 
-			candidate, ok := o.store.Candidate(key, rawBytes)
+			candidate, ok := o.store.CandidateInto(key, rawBytes, candidateScratch)
 			if !ok {
 				atomic.AddUint64(&o.skipped, 1)
 				o.release(rawBytes)
 				continue
+			}
+			if cap(candidate.Value) <= maxRetainedCandidateScratch {
+				candidateScratch = candidate.Value[:0]
+			} else {
+				candidateScratch = nil
 			}
 
 			// Give recently-written structured JSON a very short opportunity
