@@ -86,6 +86,25 @@ func TestTCPBinaryPipeline(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+func TestTCPKnownGetFastPathQueuesInsideMulti(t *testing.T) {
+	conn := connectTestServer(t)
+	wire := "*3\r\n$3\r\nSET\r\n$1\r\nk\r\n$1\r\nv\r\n" +
+		"*1\r\n$5\r\nMULTI\r\n" +
+		"*2\r\n$3\r\nGET\r\n$1\r\nk\r\n" +
+		"*1\r\n$4\r\nEXEC\r\n"
+	if _, err := io.WriteString(conn, wire); err != nil {
+		t.Fatal(err)
+	}
+	want := "+OK\r\n+OK\r\n+QUEUED\r\n*1\r\n$1\r\nv\r\n"
+	got := make([]byte, len(want))
+	if _, err := io.ReadFull(conn, got); err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
 func TestTCPMalformedCloses(t *testing.T) {
 	for _, wire := range []string{"*1\r\n+PING\r\n", "*999999999999\r\n", "*1\r\n$33554433\r\n"} {
 		conn := connectTestServer(t)
