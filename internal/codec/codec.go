@@ -119,24 +119,41 @@ func (r *Registry) DecodeInto(rec Record, max int, dst []byte) ([]byte, error) {
 	if rec.RawLength < 0 || rec.RawLength > max {
 		return nil, errors.New("decoded length exceeds limit")
 	}
-	if rec.ID == 5 {
+
+	// Keep the hottest decode paths free of map lookup and interface assertion
+	// overhead. These codecs are stateless; direct dispatch is equivalent to
+	// retrieving the registered implementation.
+	var (
+		out []byte
+		err error
+	)
+	switch rec.ID {
+	case Raw:
+		out, err = (rawCodec{}).DecodeInto(rec.Data, rec.RawLength, dst)
+	case LZ4:
+		out, err = (lz4Codec{}).DecodeInto(rec.Data, rec.RawLength, dst)
+	case Zstandard:
+		out, err = (zstdCodec{}).DecodeInto(rec.Data, rec.RawLength, dst)
+	case 5:
 		return r.Decode(rec, max)
-	}
-	c, ok := r.codecs[rec.ID]
-	if !ok {
-		return nil, errors.New("unknown codec ID")
-	}
-	if into, ok := c.(decodeIntoCodec); ok {
-		out, err := into.DecodeInto(rec.Data, rec.RawLength, dst)
-		if err != nil {
-			return nil, err
+	default:
+		c, ok := r.codecs[rec.ID]
+		if !ok {
+			return nil, errors.New("unknown codec ID")
 		}
-		if len(out) != rec.RawLength {
-			return nil, errors.New("decoded length mismatch")
+		if into, ok := c.(decodeIntoCodec); ok {
+			out, err = into.DecodeInto(rec.Data, rec.RawLength, dst)
+		} else {
+			return r.Decode(rec, max)
 		}
-		return out, nil
 	}
-	return r.Decode(rec, max)
+	if err != nil {
+		return nil, err
+	}
+	if len(out) != rec.RawLength {
+		return nil, errors.New("decoded length mismatch")
+	}
+	return out, nil
 }
 
 func (r *Registry) Decode(rec Record, max int) ([]byte, error) {
