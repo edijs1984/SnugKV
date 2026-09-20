@@ -115,25 +115,24 @@ func (d *Decoder) bulk() ([]byte, error) {
 	return payload, nil
 }
 
-// ReadBufferedGET borrows a complete two-argument GET command directly from
-// the bufio.Reader buffer. Returned slices remain valid only until the next
-// read from the decoder. The caller must fully process them before decoding the
-// next command.
+// ReadBufferedGET copies a complete two-argument GET key from the current
+// bufio.Reader buffer into caller-owned scratch. It only activates when the
+// full frame is already buffered; otherwise it consumes nothing and ReadCommand
+// remains the fallback.
 //
-// The fast path is deliberately conservative: if the currently buffered bytes
-// are incomplete, malformed, not GET, or exceed configured limits, it consumes
-// nothing and lets ReadCommand handle the stream normally.
-func (d *Decoder) ReadBufferedGET(args *[2][]byte) (bool, error) {
+// Reusing scratch makes steady-state pipelined GET decoding allocation-free
+// without exposing bufio.Reader-owned memory past Discard.
+func (d *Decoder) ReadBufferedGET(scratch []byte) (key []byte, ok bool, err error) {
 	buffered := d.reader.Buffered()
 	if buffered < len("*2\r\n$3\r\nGET\r\n$0\r\n\r\n") {
-		return false, nil
+		return scratch[:0], false, nil
 	}
 	if buffered > d.limits.MaxRequestBytes {
 		buffered = d.limits.MaxRequestBytes
 	}
 	buf, err := d.reader.Peek(buffered)
 	if err != nil {
-		return false, nil
+		return scratch[:0], false, nil
 	}
 
 	if len(buf) < 17 ||
@@ -143,7 +142,7 @@ func (d *Decoder) ReadBufferedGET(args *[2][]byte) (bool, error) {
 			(buf[9] == 'E' || buf[9] == 'e') &&
 			(buf[10] == 'T' || buf[10] == 't')) ||
 		buf[11] != '\r' || buf[12] != '\n' || buf[13] != '$' {
-		return false, nil
+		return scratch[:0], false, nil
 	}
 
 	i := 14
@@ -153,44 +152,48 @@ func (d *Decoder) ReadBufferedGET(args *[2][]byte) (bool, error) {
 		b := buf[i]
 		if b == '\r' {
 			if digits == 0 || i+1 >= len(buf) || buf[i+1] != '\n' {
-				return false, nil
+				return scratch[:0], false, nil
 			}
 			i += 2
 			break
 		}
 		if b < '0' || b > '9' || digits >= 20 {
-			return false, nil
+			return scratch[:0], false, nil
 		}
 		digit := int(b - '0')
 		if keyLen > d.limits.MaxBulkBytes/10 ||
 			keyLen == d.limits.MaxBulkBytes/10 && digit > d.limits.MaxBulkBytes%10 {
-			return false, nil
+			return scratch[:0], false, nil
 		}
 		keyLen = keyLen*10 + digit
 		digits++
 		i++
 	}
 	if digits == 0 || i > len(buf) {
-		return false, nil
+		return scratch[:0], false, nil
 	}
 
 	frameLen := i + keyLen + 2
 	if frameLen > len(buf) || frameLen > d.limits.MaxRequestBytes {
-		return false, nil
+		return scratch[:0], false, nil
 	}
 	if buf[i+keyLen] != '\r' || buf[i+keyLen+1] != '\n' {
-		return false, nil
+		return scratch[:0], false, nil
 	}
 	if d.limits.MaxArguments < 2 {
-		return false, nil
+		return scratch[:0], false, nil
 	}
 
-	args[0] = buf[8:11]
-	args[1] = buf[i : i+keyLen]
-	if _, err := d.reader.Discard(frameLen); err != nil {
-		return false, err
+	if cap(scratch) < keyLen {
+		scratch = make([]byte, keyLen)
+	} else {
+		scratch = scratch[:keyLen]
 	}
-	return true, nil
+	copy(scratch, buf[i:i+keyLen])
+	if _, err := d.reader.Discard(frameLen); err != nil {
+		return scratch[:0], false, err
+	}
+	return scratch, true, nil
 }
 
 // ReadCommand accepts only nonempty, flat arrays of non-null bulk strings.
