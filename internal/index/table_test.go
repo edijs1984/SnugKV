@@ -218,7 +218,7 @@ func testInsertHashed(table *Table[uint32], key string, value uint32, hash uint6
 		switch s.state() {
 		case stateLive:
 			if s.keyLen() == len(key) && s.key() == key {
-				s.setLive(key, value)
+				s.setLive(key, value, hash)
 				return
 			}
 		case stateDeleted:
@@ -229,13 +229,13 @@ func testInsertHashed(table *Table[uint32], key string, value uint32, hash uint6
 			if deleted >= 0 {
 				s = &table.slots[deleted]
 			}
-			s.setLive(key, value)
+			s.setLive(key, value, hash)
 			table.count++
 			return
 		}
 	}
 	if deleted >= 0 {
-		table.slots[deleted].setLive(key, value)
+		table.slots[deleted].setLive(key, value, hash)
 		table.count++
 		return
 	}
