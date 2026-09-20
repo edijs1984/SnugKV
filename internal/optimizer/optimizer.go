@@ -261,17 +261,12 @@ func (o *Optimizer) worker() {
 			}
 			o.release(rawBytes)
 
-			// A sustained backlog means writes have outrun background representation
-			// optimization. Catch up at full worker duty until the queue is small,
-			// then return to the configured low-impact steady-state duty cycle.
+			// Never let optimizer backlog override the configured CPU budget.
+			// During sustained writes the optimizer is best-effort background work;
+			// running every optimizer worker at 100% competes directly with command
+			// execution and can reduce foreground SET throughput. Queue capacity and
+			// periodic sampling provide bounded catch-up without stealing all cores.
 			cpuPercent := o.config.CPUPercent
-			catchUpThreshold := o.config.QueueDepth / 16
-			if catchUpThreshold < 1024 {
-				catchUpThreshold = 1024
-			}
-			if len(o.queue) >= catchUpThreshold {
-				cpuPercent = 100
-			}
 
 			pause := time.Since(start) * time.Duration(100-cpuPercent) / time.Duration(cpuPercent)
 			if pause <= 0 {
