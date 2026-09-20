@@ -222,6 +222,39 @@ func (s *Store) GetStringInto(key string, dst []byte) (value []byte, found bool,
 	return s.decodeInto(sh, e, dst), true, false
 }
 
+func (s *Store) GetStringBytesInto(key []byte, dst []byte) (value []byte, found bool, wrongType bool) {
+	hash := index.HashBytes(key)
+	sh := s.shardForHash(hash)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	e, ok := sh.getHashedBytes(key, hash)
+	if !ok {
+		return nil, false, false
+	}
+
+	now := s.now()
+	if e.hasExpiry && sh.expired(string(key), e, now) {
+		return nil, false, false
+	}
+	if isNativeContainerType(e.valueType) {
+		return nil, false, true
+	}
+
+	if s.shouldTrackActivity(e) && e.entryMeta != nil {
+		meta := e.entryMeta
+		if meta.lastAccess.IsOlderThan(now, time.Minute) {
+			meta.reads = 0
+		}
+		meta.lastAccess = activityStampOf(now)
+		if meta.reads < ^uint8(0) {
+			meta.reads++
+		}
+	}
+
+	return s.decodeInto(sh, e, dst), true, false
+}
+
 func (s *Store) GetString(key string) (value []byte, found bool, wrongType bool) {
 	hash := index.Hash(key)
 	sh := s.shardForHash(hash)
