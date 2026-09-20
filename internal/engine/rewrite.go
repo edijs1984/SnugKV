@@ -137,13 +137,14 @@ func heat(meta *entryMeta, now time.Time) string {
 	if meta == nil {
 		return "warm"
 	}
-	if now.Sub(meta.lastWrite.Time()) < time.Minute && meta.writes >= 10 {
+	if now.Sub(meta.lastWrite.Time()) < time.Minute && meta.writeCount() >= 10 {
 		return "write-heavy"
 	}
-	if now.Sub(meta.lastAccess.Time()) < time.Minute && meta.reads >= 100 {
+	lastAccess := meta.lastAccessStamp()
+	if now.Sub(lastAccess.Time()) < time.Minute && meta.readCount() >= 100 {
 		return "hot"
 	}
-	if now.Sub(meta.lastAccess.Time()) > 5*time.Minute && now.Sub(meta.lastWrite.Time()) > 5*time.Minute {
+	if now.Sub(lastAccess.Time()) > 5*time.Minute && now.Sub(meta.lastWrite.Time()) > 5*time.Minute {
 		return "cold"
 	}
 	return "warm"
