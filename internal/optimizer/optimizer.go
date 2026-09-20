@@ -177,6 +177,34 @@ func (o *Optimizer) retrySoon(key string) {
 	})
 }
 
+
+func (o *Optimizer) cpuPercentForBacklog(depth int) int {
+	cpu := o.config.CPUPercent
+	capacity := cap(o.queue)
+	if capacity <= 0 || depth <= 0 {
+		return cpu
+	}
+
+	// Heavy backlog: prioritize foreground command execution. With the default
+	// two workers on a four-core machine, 15% per worker keeps compression
+	// progress moving without consuming a large fraction of available CPU.
+	if depth*4 >= capacity {
+		if cpu > 15 {
+			return 15
+		}
+		return cpu
+	}
+
+	// Moderate backlog: start yielding before the queue becomes saturated.
+	if depth*16 >= capacity {
+		if cpu > 25 {
+			return 25
+		}
+	}
+
+	return cpu
+}
+
 func (o *Optimizer) worker() {
 	defer o.wg.Done()
 	var candidateScratch []byte
@@ -268,12 +296,12 @@ func (o *Optimizer) worker() {
 			}
 			o.release(rawBytes)
 
-			// Never let optimizer backlog override the configured CPU budget.
-			// During sustained writes the optimizer is best-effort background work;
-			// running every optimizer worker at 100% competes directly with command
-			// execution and can reduce foreground SET throughput. Queue capacity and
-			// periodic sampling provide bounded catch-up without stealing all cores.
-			cpuPercent := o.config.CPUPercent
+			// Background optimization must not compete aggressively with a sustained
+			// write burst. A growing queue is the pressure signal: while backlog is
+			// high, yield below the configured steady-state CPU budget, then return
+			// to that budget as the queue drains. This defers work rather than
+			// guessing that queued values are incompressible.
+			cpuPercent := o.cpuPercentForBacklog(len(o.queue))
 
 			pause := time.Since(start) * time.Duration(100-cpuPercent) / time.Duration(cpuPercent)
 			if pause <= 0 {
