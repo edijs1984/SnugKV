@@ -197,6 +197,30 @@ func (s *Store) makeEntryForShard(sh *shard, value []byte) preparedEntry {
 	return s.makeEntry(value)
 }
 
+func (s *Store) decodeInto(sh *shard, e entry, dst []byte) []byte {
+	encoded := sh.encoded(e)
+	if e.valueType == TypeHash && isShapedHash(encoded) {
+		return s.decode(sh, e)
+	}
+
+	var schema *jsonshape.Schema
+	if e.entryMeta != nil && e.entryMeta.schemaID != 0 {
+		if shapes := s.loadShapeStore(); shapes != nil {
+			schema = shapes.ByID(e.entryMeta.schemaID)
+		}
+	}
+	out, err := s.codecs.DecodeInto(codec.Record{
+		ID:        e.codecID,
+		RawLength: int(e.rawLength),
+		Data:      encoded,
+		Schema:    schema,
+	}, int(e.rawLength), dst)
+	if err != nil {
+		panic(err)
+	}
+	return out
+}
+
 func (s *Store) decode(sh *shard, e entry) []byte {
 	encoded := sh.encoded(e)
 	if e.valueType == TypeHash && isShapedHash(encoded) {
