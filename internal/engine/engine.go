@@ -157,7 +157,6 @@ func (s *Store) Get(key string) ([]byte, bool) {
 		if meta.reads < ^uint8(0) {
 			meta.reads++
 		}
-		sh.set(key, e)
 	}
 	return s.decode(sh, e), true
 }
@@ -213,7 +212,6 @@ func (s *Store) GetString(key string) (value []byte, found bool, wrongType bool)
 		if meta.reads < ^uint8(0) {
 			meta.reads++
 		}
-		sh.set(key, e)
 	}
 
 	return s.decode(sh, e), true, false
