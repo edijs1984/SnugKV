@@ -317,7 +317,18 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				return
 			}
 		}
-		msg, err := decoder.ReadCommand()
+		var borrowedGET [2][]byte
+		var msg [][]byte
+		borrowed, borrowErr := decoder.ReadBufferedGET(&borrowedGET)
+		if borrowErr != nil {
+			return
+		}
+		var err error
+		if borrowed {
+			msg = borrowedGET[:]
+		} else {
+			msg, err = decoder.ReadCommand()
+		}
 		if err != nil {
 			if err == io.EOF {
 				return
