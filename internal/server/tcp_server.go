@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"io"
 	"log"
@@ -495,6 +496,58 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				if writer.write([]byte("-ERR administrative commands require loopback access\r\n")) != nil {
 					return
 				}
+				continue
+			}
+		}
+
+		if len(msg) == 2 && bytes.EqualFold(msg[0], []byte("GET")) {
+			// Preserve RESP2 subscribed-mode semantics before ordinary GET
+			// execution. RESP3 subscribers may issue normal commands.
+			if clientSession.protocolVersion() == 2 && pubSession.active() {
+				if handled, quit, pubSubErr := s.server.executePubSubConnectionCommand(pubSession, msg); handled {
+					if pubSubErr != nil {
+						if writeProtocol(msg, errorResponse(pubSubErr)) != nil {
+							return
+						}
+					}
+					if quit {
+						return
+					}
+					continue
+				}
+			}
+
+			// MULTI must queue GET instead of executing it immediately.
+			if handled, txResponse, txErr := s.server.executeTransactionConnectionCommand(txSession, msg); handled {
+				if txErr != nil {
+					txResponse = errorResponse(txErr)
+				}
+				if writeProtocol(msg, txResponse) != nil {
+					return
+				}
+				continue
+			}
+
+			if value, found, handled, fastErr := s.server.executeAuthorizedConcurrentKnownGetInto(msg[1], getScratch); handled {
+				if fastErr != nil {
+					if writeProtocol(msg, errorResponse(fastErr)) != nil {
+						return
+					}
+					continue
+				}
+				if found {
+					if writer.writeBulkBuffered(value) != nil {
+						return
+					}
+					if cap(value) <= maxRetainedGetScratch {
+						getScratch = value[:0]
+					} else {
+						getScratch = nil
+					}
+				} else if writeProtocol(msg, nullBulk()) != nil {
+					return
+				}
+				s.trackCommandRead(clientSession, msg)
 				continue
 			}
 		}
