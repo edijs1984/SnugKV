@@ -674,6 +674,20 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			arenaDeadWaste = m.ArenaBytes - m.ArenaLiveBlockBytes
 		}
 
+		var optimizerQueued, optimizerRewritten, optimizerSkipped uint64
+		var optimizerStale, optimizerDropped uint64
+		var optimizerQueueDepth, optimizerQueueCapacity int
+		if s.optimizer != nil {
+			stats := s.optimizer.Stats()
+			optimizerQueued = stats.Queued
+			optimizerRewritten = stats.Rewritten
+			optimizerSkipped = stats.Skipped
+			optimizerStale = stats.Stale
+			optimizerDropped = stats.Dropped
+			optimizerQueueDepth = stats.QueueDepth
+			optimizerQueueCapacity = stats.QueueCapacity
+		}
+
 		return formatBulkString([]byte(fmt.Sprintf(
 			"accounted_bytes:%d\n"+
 				"index_reserved_bytes:%d\n"+
@@ -685,7 +699,14 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 				"arena_dead_waste_bytes:%d\n"+
 				"arena_waste_bytes:%d\n"+
 				"schema_reserved_bytes:%d\n"+
-				"max_memory:%d\n",
+				"max_memory:%d\n"+
+				"optimizer_queued:%d\n"+
+				"optimizer_rewritten:%d\n"+
+				"optimizer_skipped:%d\n"+
+				"optimizer_stale:%d\n"+
+				"optimizer_dropped:%d\n"+
+				"optimizer_queue_depth:%d\n"+
+				"optimizer_queue_capacity:%d\n",
 			m.AccountedBytes,
 			m.IndexReservedBytes,
 			m.EntryBytes,
@@ -697,6 +718,13 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			arenaWaste,
 			m.SchemaBytes,
 			m.MaxBytes,
+			optimizerQueued,
+			optimizerRewritten,
+			optimizerSkipped,
+			optimizerStale,
+			optimizerDropped,
+			optimizerQueueDepth,
+			optimizerQueueCapacity,
 		))), nil
 	case "PING":
 		if len(args) == 2 {

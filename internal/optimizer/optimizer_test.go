@@ -3,6 +3,7 @@ package optimizer
 import (
 	"bytes"
 	"snugkv/internal/engine"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -73,4 +74,32 @@ func TestBackgroundCompression(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("rewrite did not complete: %+v", optimizer.Stats())
+}
+
+
+func TestSampleRespectsQueueCapacity(t *testing.T) {
+	store := engine.New()
+	for i := 0; i < 64; i++ {
+		if err := store.Set(strconv.Itoa(i), []byte("value"), 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	config := Default()
+	config.Workers = 1
+	config.QueueDepth = 4
+	optimizer, err := New(store, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer optimizer.Close()
+
+	optimizer.Sample(64)
+	stats := optimizer.Stats()
+	if stats.QueueCapacity != 4 {
+		t.Fatalf("queue capacity=%d want=4", stats.QueueCapacity)
+	}
+	if stats.QueueDepth > stats.QueueCapacity {
+		t.Fatalf("queue depth=%d capacity=%d", stats.QueueDepth, stats.QueueCapacity)
+	}
 }

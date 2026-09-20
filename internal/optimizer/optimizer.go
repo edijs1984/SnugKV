@@ -19,7 +19,7 @@ type Config struct {
 func Default() Config {
 	return Config{
 		Workers:            2,
-		QueueDepth:         4096,
+		QueueDepth:         65536,
 		MaxScratchBytes:    128 << 20,
 		MaxBytesPerSecond:  64 << 20,
 		CPUPercent:         50,
@@ -30,7 +30,7 @@ func Default() Config {
 
 type Stats struct {
 	Queued, Rewritten, Skipped, Stale, Dropped uint64
-	QueueDepth                                 int
+	QueueDepth, QueueCapacity                  int
 }
 type Optimizer struct {
 	store                                      *engine.Store
@@ -78,12 +78,37 @@ func (o *Optimizer) Queue(key string) bool {
 	}
 }
 func (o *Optimizer) Sample(limit int) {
+	if limit <= 0 {
+		return
+	}
+
+	// Sampling is recovery work for keys whose direct write-time enqueue was
+	// dropped. Never generate a sampling burst larger than the queue can accept,
+	// otherwise catch-up creates its own avoidable drop storm.
+	available := cap(o.queue) - len(o.queue)
+	if available <= 0 {
+		return
+	}
+	if limit > available {
+		limit = available
+	}
+
 	for _, key := range o.store.SampleKeys(limit) {
-		o.Queue(key)
+		if !o.Queue(key) {
+			break
+		}
 	}
 }
 func (o *Optimizer) Stats() Stats {
-	return Stats{atomic.LoadUint64(&o.queued), atomic.LoadUint64(&o.rewritten), atomic.LoadUint64(&o.skipped), atomic.LoadUint64(&o.stale), atomic.LoadUint64(&o.dropped), len(o.queue)}
+	return Stats{
+		Queued:        atomic.LoadUint64(&o.queued),
+		Rewritten:     atomic.LoadUint64(&o.rewritten),
+		Skipped:       atomic.LoadUint64(&o.skipped),
+		Stale:         atomic.LoadUint64(&o.stale),
+		Dropped:       atomic.LoadUint64(&o.dropped),
+		QueueDepth:    len(o.queue),
+		QueueCapacity: cap(o.queue),
+	}
 }
 func (o *Optimizer) reserve(n int) bool {
 	o.mu.Lock()
@@ -225,8 +250,23 @@ func (o *Optimizer) worker() {
 				atomic.AddUint64(&o.stale, 1)
 			}
 			o.release(rawBytes)
-			// Duty-cycle throttling bounds worker activity by wall-clock work time.
-			pause := time.Since(start) * time.Duration(100-o.config.CPUPercent) / time.Duration(o.config.CPUPercent)
+
+			// A sustained backlog means writes have outrun background representation
+			// optimization. Catch up at full worker duty until the queue is small,
+			// then return to the configured low-impact steady-state duty cycle.
+			cpuPercent := o.config.CPUPercent
+			catchUpThreshold := o.config.QueueDepth / 16
+			if catchUpThreshold < 1024 {
+				catchUpThreshold = 1024
+			}
+			if len(o.queue) >= catchUpThreshold {
+				cpuPercent = 100
+			}
+
+			pause := time.Since(start) * time.Duration(100-cpuPercent) / time.Duration(cpuPercent)
+			if pause <= 0 {
+				continue
+			}
 			timer := time.NewTimer(pause)
 			select {
 			case <-o.ctx.Done():

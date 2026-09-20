@@ -755,7 +755,10 @@ func writeWithTimeout(conn net.Conn, response []byte, timeout time.Duration) err
 
 func (s *TCPServer) OptimizeSample() {
 	if s.server.optimizer != nil {
-		s.server.optimizer.Sample(256)
+		// Large bounded bursts make dropped write-time candidates discoverable
+		// quickly after a load spike. Optimizer.Sample caps the request to actual
+		// queue capacity, so this does not create an unbounded backlog.
+		s.server.optimizer.Sample(4096)
 	}
 }
 
