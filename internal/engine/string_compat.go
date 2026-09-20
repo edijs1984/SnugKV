@@ -1,5 +1,7 @@
 package engine
 
+import "time"
+
 // MGetStrings implements Redis MGET string semantics for native container keys:
 // a key that exists but is not string-compatible contributes a missing/nil slot
 // rather than exposing its packed physical bytes.
@@ -20,7 +22,14 @@ func (s *Store) MGetStrings(keys []string) ([][]byte, []bool) {
 
 		values[i] = s.decode(sh, e)
 		if s.shouldTrackActivity(e) && e.entryMeta != nil {
-			e.entryMeta.recordRead(now)
+			meta := e.entryMeta
+			if now.Sub(meta.lastAccess.Time()) > time.Minute {
+				meta.reads = 0
+			}
+			meta.lastAccess = activityStampOf(now)
+			if meta.reads < ^uint8(0) {
+				meta.reads++
+			}
 			sh.set(key, e)
 		}
 		found[i] = true
