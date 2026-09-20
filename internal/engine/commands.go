@@ -270,8 +270,8 @@ func (s *Store) MSet(keys []string, values [][]byte) error {
 		if s.shouldTrackActivity(e.entry) {
 			meta := e.ensureMeta()
 			meta.lastWrite = activityStampOf(s.now())
-			meta.setAccessAndReads(meta.lastWrite, 0)
-			meta.setWriteCount(1)
+			meta.lastAccess = meta.lastWrite
+			meta.writes = 1
 		}
 		e.hasExpiry = !e.expiresAt.IsZero()
 		sh.set(k, e.entry)
@@ -415,8 +415,8 @@ func (s *Store) MSetNX(keys []string, values [][]byte) (bool, error) {
 		if s.shouldTrackActivity(e.entry) {
 			meta := e.ensureMeta()
 			meta.lastWrite = activityStampOf(now)
-			meta.setAccessAndReads(meta.lastWrite, 0)
-			meta.setWriteCount(1)
+			meta.lastAccess = meta.lastWrite
+			meta.writes = 1
 		}
 
 		e.hasExpiry = !e.expiresAt.IsZero()
@@ -447,7 +447,15 @@ func (s *Store) MGet(keys []string) ([][]byte, []bool) {
 
 		if s.shouldTrackActivity(e) {
 			meta := e.ensureMeta()
-			meta.recordRead(now)
+			if now.Sub(meta.lastAccess.Time()) > time.Minute {
+				meta.reads = 0
+			}
+
+			meta.lastAccess = activityStampOf(now)
+
+			if meta.reads < ^uint8(0) {
+				meta.reads++
+			}
 
 			sh.set(key, e)
 		}
