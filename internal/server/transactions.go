@@ -122,11 +122,7 @@ func persistenceDiff(before, after []persistence.Record) []persistence.Record {
 }
 
 func (s *Server) hasWatchSessionsLocked() bool {
-	existing, ok := transactionWatchRegistries.Load(s)
-	if !ok {
-		return false
-	}
-	return len(existing.(*transactionWatchRegistry).sessions) != 0
+	return s.watchSessions.Load() != 0
 }
 
 func (s *Server) refreshWatchesLocked() {
@@ -159,7 +155,10 @@ func (s *Server) refreshWatchesLocked() {
 
 func (session *transactionSession) clearWatchLocked() {
 	registry := transactionRegistryForServer(session.server)
-	delete(registry.sessions, session)
+	if _, existed := registry.sessions[session]; existed {
+		delete(registry.sessions, session)
+		session.server.watchSessions.Add(-1)
+	}
 	session.watched = make(map[string]persistence.Record)
 	session.watchDirty = false
 }
@@ -198,7 +197,11 @@ func (session *transactionSession) watch(keys [][]byte) ([]byte, error) {
 		for _, record := range records {
 			session.watched[string(record.Key)] = record
 		}
-		transactionRegistryForServer(s).sessions[session] = struct{}{}
+		registry := transactionRegistryForServer(s)
+		if _, existed := registry.sessions[session]; !existed {
+			registry.sessions[session] = struct{}{}
+			s.watchSessions.Add(1)
+		}
 	}
 	return []byte("+OK\r\n"), nil
 }
