@@ -219,9 +219,21 @@ func (r *Registry) CompressionCandidates(src []byte) []CompressionCandidate {
 	return out
 }
 
-// EncodeGeneral is called only by the optimizer, never ordinary SET.
+// EncodeGeneral is the ownership-preserving form used by callers that need
+// the returned raw record to outlive src.
 func (r *Registry) EncodeGeneral(src []byte, cold bool) Record {
-	best := Record{ID: Raw, RawLength: len(src), Data: bytes.Clone(src)}
+	record := r.EncodeGeneralBorrowed(src, cold)
+	if record.ID == Raw {
+		record.Data = bytes.Clone(record.Data)
+	}
+	return record
+}
+
+// EncodeGeneralBorrowed evaluates background compression without cloning the
+// raw fallback. The caller must keep src alive and unchanged while inspecting
+// the returned record. Successful compressed records own their Data.
+func (r *Registry) EncodeGeneralBorrowed(src []byte, cold bool) Record {
+	best := Record{ID: Raw, RawLength: len(src), Data: src}
 	if len(src) < 256 || alreadyCompressed(src) {
 		return best
 	}
