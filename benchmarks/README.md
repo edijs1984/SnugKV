@@ -33,6 +33,7 @@ generalized to incompressible data.
 | SnugKV optimized, GET dispatch bypass | 506,322 | 7.21 us | 12.34 us | 19.15 us |
 | SnugKV optimized, redundant activity write removed | 522,399 | 7.00 us | 11.98 us | 18.61 us |
 | SnugKV optimized, byte-key GET + buffered RESP length parsing | 547,522 avg / 553,991 best | 6.69 us best | 10.82 us best | 15.43 us best |
+| SnugKV optimized, direct hot-codec DecodeInto dispatch | 554,543 avg / 564,404 best | 6.54 us best | 10.69 us best | 14.82 us best |
 
 The GET percentile samples for pipelined runs are amortized per-operation batch
 times, not independent request latencies. The later optimized path combines
@@ -40,7 +41,9 @@ caller-owned decode scratch, direct bulk framing, a known-GET dispatch path afte
 authorization, and pointer-only activity metadata updates.
 
 Across three consecutive clean SnugKV runs after byte-key lookup and buffered RESP
-length parsing, throughput averaged 547,522 GET/s (best 553,991). Three Redis 8.2
+length parsing, throughput averaged 547,522 GET/s (best 553,991). After direct
+hot-codec DecodeInto dispatch, three consecutive runs averaged 554,543 GET/s,
+with a best observed run of 564,404 GET/s. Three Redis 8.2
 runs in the same comparison window averaged 435,561 GET/s. On this exact
 synthetic workload, SnugKV averaged about 25.7% higher GET throughput while
 retaining the optimized memory footprint. This is not a universal Redis performance claim:
