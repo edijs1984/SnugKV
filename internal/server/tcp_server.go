@@ -507,14 +507,19 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				}
 			}
 
-			if handled, txResponse, txErr := s.server.executeTransactionConnectionCommand(txSession, msg); handled {
-				if txErr != nil {
-					txResponse = errorResponse(txErr)
+			// A buffered GET cannot itself be a transaction-control command.
+			// Only consult the transaction dispatcher when this connection is
+			// already inside MULTI, where GET must be queued.
+			if txSession.multi {
+				if handled, txResponse, txErr := s.server.executeTransactionConnectionCommand(txSession, msg); handled {
+					if txErr != nil {
+						txResponse = errorResponse(txErr)
+					}
+					if writeProtocol(msg, txResponse) != nil {
+						return
+					}
+					continue
 				}
-				if writeProtocol(msg, txResponse) != nil {
-					return
-				}
-				continue
 			}
 
 			if value, found, handled, fastErr := s.server.executeAuthorizedConcurrentKnownGetIntoAt(msg[1], getScratch, requestNow); handled {
