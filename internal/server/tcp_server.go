@@ -634,17 +634,21 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			continue
 		}
 
-		if result, handled, fastErr := s.server.executeAuthorizedConcurrentGet(msg); handled {
+		if value, found, handled, fastErr := s.server.executeAuthorizedConcurrentGetValue(msg); handled {
 			if fastErr != nil {
-				result = errorResponse(fastErr)
+				if writeProtocol(msg, errorResponse(fastErr)) != nil {
+					return
+				}
+				continue
 			}
-			commandSucceeded := fastErr == nil
-			if writeProtocol(msg, result) != nil {
+			if found {
+				if writer.writeBulkBuffered(value) != nil {
+					return
+				}
+			} else if writeProtocol(msg, nullBulk()) != nil {
 				return
 			}
-			if commandSucceeded {
-				s.trackCommandRead(clientSession, msg)
-			}
+			s.trackCommandRead(clientSession, msg)
 			continue
 		}
 
