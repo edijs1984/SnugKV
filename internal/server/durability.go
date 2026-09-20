@@ -119,6 +119,14 @@ func (s *Server) executeAuthorizedConcurrentKnownGetInto(
 	key []byte,
 	dst []byte,
 ) (value []byte, found bool, handled bool, err error) {
+	return s.executeAuthorizedConcurrentKnownGetIntoAt(key, dst, time.Time{})
+}
+
+func (s *Server) executeAuthorizedConcurrentKnownGetIntoAt(
+	key []byte,
+	dst []byte,
+	now time.Time,
+) (value []byte, found bool, handled bool, err error) {
 	if s.journal != nil ||
 		atomic.LoadUint32(&s.metricsEnabled) != 0 {
 		return nil, false, false, nil
@@ -130,7 +138,12 @@ func (s *Server) executeAuthorizedConcurrentKnownGetInto(
 		return nil, false, false, nil
 	}
 
-	value, found, wrongType := s.store.GetStringBytesInto(key, dst)
+	var wrongType bool
+	if now.IsZero() {
+		value, found, wrongType = s.store.GetStringBytesInto(key, dst)
+	} else {
+		value, found, wrongType = s.store.GetStringBytesIntoAt(key, dst, now)
+	}
 	s.durableMu.RUnlock()
 
 	atomic.AddUint64(&s.commands, 1)
