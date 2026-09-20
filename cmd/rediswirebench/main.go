@@ -85,7 +85,7 @@ func main() {
 	var errs uint64
 	switch *workload {
 	case "load":
-		elapsed, samples, errs = runLoad(*addr, *keys, *valueBytes, *valueShape, *pipeline, *seed)
+		elapsed, samples, errs = runLoad(*addr, *keys, *workers, *valueBytes, *valueShape, *pipeline, *seed)
 	case "get":
 		elapsed, samples, errs = runPipelinedGet(*addr, *keys, *ops, *workers, *pipeline, *seed)
 	case "get-seq":
@@ -154,30 +154,71 @@ func main() {
 	if errs != 0 { os.Exit(1) }
 }
 
-func runLoad(addr string, keys, valueBytes int, valueShape string, pipeline int, seed int64) (time.Duration, []int64, uint64) {
-	c, err := dial(addr)
-	if err != nil { fatalf("load connect: %v", err) }
-	defer c.Close()
-	samples := make([]int64,0,(keys+pipeline-1)/pipeline)
+func runLoad(addr string, keys, workers, valueBytes int, valueShape string, pipeline int, seed int64) (time.Duration, []int64, uint64) {
+	samples := make([]int64, keys)
+	var next uint64
 	var errs uint64
+	var wg sync.WaitGroup
 	start := time.Now()
-	for base:=0;base<keys;base+=pipeline {
-		end:=base+pipeline
-		if end>keys { end=keys }
-		batchStart:=time.Now()
-		for i:=base;i<end;i++ {
-			value := benchmarkValue(valueShape, valueBytes, i, seed)
-			if err:=c.write(b("SET"),key(i),value);err!=nil { fatalf("SET write: %v",err) }
-		}
-		if err:=c.w.Flush();err!=nil { fatalf("SET flush: %v",err) }
-		for i:=base;i<end;i++ {
-			line,err:=c.readLine()
-			if err!=nil { fatalf("SET reply: %v",err) }
-			if string(line)!="+OK" { errs++ }
-		}
-		samples=append(samples,time.Since(batchStart).Nanoseconds()/int64(end-base))
+
+	for worker := 0; worker < workers; worker++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+
+			c, err := dial(addr)
+			if err != nil {
+				atomic.AddUint64(&errs, 1)
+				return
+			}
+			defer c.Close()
+
+			for {
+				base := int(atomic.AddUint64(&next, uint64(pipeline)) - uint64(pipeline))
+				if base >= keys {
+					return
+				}
+
+				end := base + pipeline
+				if end > keys {
+					end = keys
+				}
+
+				batchStart := time.Now()
+				for i := base; i < end; i++ {
+					value := benchmarkValue(valueShape, valueBytes, i, seed)
+					if err := c.write(b("SET"), key(i), value); err != nil {
+						atomic.AddUint64(&errs, uint64(end-i))
+						return
+					}
+				}
+
+				if err := c.w.Flush(); err != nil {
+					atomic.AddUint64(&errs, uint64(end-base))
+					return
+				}
+
+				for i := base; i < end; i++ {
+					line, err := c.readLine()
+					if err != nil {
+						atomic.AddUint64(&errs, uint64(end-i))
+						return
+					}
+					if string(line) != "+OK" {
+						atomic.AddUint64(&errs, 1)
+					}
+				}
+
+				perOp := time.Since(batchStart).Nanoseconds() / int64(end-base)
+				for i := base; i < end; i++ {
+					samples[i] = perOp
+				}
+			}
+		}(worker)
 	}
-	return time.Since(start),samples,errs
+
+	wg.Wait()
+	return time.Since(start), samples, errs
 }
 
 func runPipelinedGet(addr string, keys, ops, workers, pipeline int, seed int64) (time.Duration, []int64, uint64) {
@@ -432,7 +473,7 @@ func measurementNote(workload string, pipeline int) string {
 	if workload == "get-seq" {
 		return "black-box RESP2/TCP sequential GET; use multiple repetitions before product claims"
 	}
-	return "black-box RESP2/TCP single run; use multiple repetitions before product claims"
+	if workload == "load" {\n\t\treturn fmt.Sprintf("black-box RESP2/TCP pipelined SET (depth=%d) with concurrent workers; percentile samples are amortized per-op batch times; use multiple repetitions before product claims", pipeline)\n\t}\n\treturn "black-box RESP2/TCP single run; use multiple repetitions before product claims"
 }
 
 func fatalf(format string,args ...any){
