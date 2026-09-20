@@ -138,3 +138,31 @@ func TestGetStringRejectsStream(t *testing.T) {
 		t.Fatalf("GetString stream found=%t wrongType=%t", found, wrongType)
 	}
 }
+
+
+func TestSetPlainOwnsBorrowedRawInput(t *testing.T) {
+	store, err := NewWithOptions(Options{Shards: 1, Encoding: true, Compression: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	value := bytes.Repeat([]byte("x"), 256)
+	want := bytes.Clone(value)
+	if err := store.SetPlain("k", value); err != nil {
+		t.Fatal(err)
+	}
+
+	// Mutating the caller buffer after SET must not affect stored data even
+	// though makeEntry borrows it transiently before Arena.Alloc takes ownership.
+	for i := range value {
+		value[i] = 'y'
+	}
+
+	got, ok := store.Get("k")
+	if !ok {
+		t.Fatal("missing key")
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatal("stored value aliases caller buffer")
+	}
+}
