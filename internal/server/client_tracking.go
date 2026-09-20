@@ -465,8 +465,8 @@ func (s *TCPServer) invalidateTrackingKeys(
 			if target == nil {
 				client.mu.RLock()
 				sourcePush := client.trackingPush
-				sourceProtocol := client.protocol
 				client.mu.RUnlock()
+				sourceProtocol := client.protocolVersion()
 
 				if sourceProtocol == 3 && sourcePush != nil {
 					_ = sourcePush(trackingRedirBrokenPush(state.redirectID))
@@ -477,8 +477,8 @@ func (s *TCPServer) invalidateTrackingKeys(
 
 		target.mu.RLock()
 		push := target.trackingPush
-		protocol := target.protocol
 		target.mu.RUnlock()
+		protocol := target.protocolVersion()
 
 		// Redis delivers redirected invalidations as RESP3 pushes. A plain
 		// RESP2 redirect target that is not in Pub/Sub invalidate mode receives
