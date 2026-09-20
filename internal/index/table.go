@@ -7,19 +7,23 @@ const (
 	stateEmpty      = uint64(0)
 	stateLive       = uint64(1)
 	stateDeleted    = uint64(2)
-	stateShift      = 62
-	keyLengthMask   = uint64(1<<30) - 1
-	initialCapacity = 4
+	stateShift       = 62
+	fingerprintShift = 58
+	fingerprintMask  = uint64(0x0f)
+	keyLengthMask    = uint64(1<<26) - 1
+	initialCapacity  = 4
 )
 
 // slot is intentionally 16 bytes on 64-bit targets:
 //
 //   - keyData keeps the immutable Go string bytes alive and gives exact-key
 //     comparison without retaining a full 16-byte string header in every slot;
-//   - meta packs 2 bits of state, 30 bits of key length, and the full uint32 value.
+//   - meta packs 2 bits of state, a 4-bit hash fingerprint, 26 bits of key
+//     length, and the full uint32 value.
 //
-// SnugKV's RESP key limit is far below the 1 GiB key-length ceiling. Exact key
-// bytes are still compared after hashing, so hash collisions remain fully safe.
+// SnugKV's RESP bulk/key limit is 32 MiB, comfortably below the ~64 MiB
+// 26-bit key-length ceiling. The fingerprint rejects most probe candidates
+// before touching key bytes; exact comparison still makes hash collisions safe.
 type slot[V ~uint32] struct {
 	keyData *byte
 	meta    uint64
@@ -69,6 +73,10 @@ func tinyFilterBits(hash uint64) uint32 {
 	return 1<<uint32(hash&31) | 1<<uint32((hash>>32)&31)
 }
 
+func hashFingerprint(hash uint64) uint64 {
+	return (hash >> fingerprintShift) & fingerprintMask
+}
+
 func New[V ~uint32]() *Table[V] { return &Table[V]{} }
 func (t *Table[V]) Len() int     { return int(t.count) }
 
@@ -96,7 +104,7 @@ func (s *slot[V]) key() string {
 	return unsafe.String(s.keyData, n)
 }
 
-func (s *slot[V]) setLive(key string, value V) {
+func (s *slot[V]) setLive(key string, value V, hash uint64) {
 	if uint64(len(key)) > keyLengthMask {
 		panic("index key too large")
 	}
@@ -105,7 +113,10 @@ func (s *slot[V]) setLive(key string, value V) {
 	} else {
 		s.keyData = unsafe.StringData(key)
 	}
-	s.meta = stateLive<<stateShift | uint64(len(key))<<32 | uint64(uint32(value))
+	s.meta = stateLive<<stateShift |
+		hashFingerprint(hash)<<fingerprintShift |
+		uint64(len(key))<<32 |
+		uint64(uint32(value))
 }
 
 func (s *slot[V]) setDeleted() {
@@ -162,14 +173,21 @@ func (t *Table[V]) GetHashed(key string, hash uint64) (V, bool) {
 		}
 	}
 	mask := uint64(len(t.slots) - 1)
+	keyLen := uint64(len(key))
+	fingerprint := hashFingerprint(hash)
 	for n := 0; n < len(t.slots); n++ {
 		s := &t.slots[(hash+uint64(n))&mask]
-		switch s.state() {
+		meta := s.meta
+		switch meta >> stateShift {
 		case stateEmpty:
 			return zero, false
 		case stateLive:
-			if s.keyLen() == len(key) && s.key() == key {
-				return s.value(), true
+			if (meta>>32)&keyLengthMask != keyLen ||
+				(meta>>fingerprintShift)&fingerprintMask != fingerprint {
+				continue
+			}
+			if len(key) == 0 || unsafe.String(s.keyData, len(key)) == key {
+				return V(uint32(meta)), true
 			}
 		}
 	}
@@ -197,6 +215,7 @@ func (t *Table[V]) GetHashedBytes(key []byte, hash uint64) (V, bool) {
 
 	mask := uint64(len(t.slots) - 1)
 	keyLen := uint64(len(key))
+	fingerprint := hashFingerprint(hash)
 	for n := 0; n < len(t.slots); n++ {
 		s := &t.slots[(hash+uint64(n))&mask]
 		meta := s.meta
@@ -204,7 +223,8 @@ func (t *Table[V]) GetHashedBytes(key []byte, hash uint64) (V, bool) {
 		case stateEmpty:
 			return zero, false
 		case stateLive:
-			if (meta>>32)&keyLengthMask != keyLen {
+			if (meta>>32)&keyLengthMask != keyLen ||
+				(meta>>fingerprintShift)&fingerprintMask != fingerprint {
 				continue
 			}
 			if len(key) == 0 || unsafe.String(s.keyData, len(key)) == lookup {
@@ -247,7 +267,7 @@ func (t *Table[V]) insert(key string, value V) {
 		switch s.state() {
 		case stateLive:
 			if s.keyLen() == len(key) && s.key() == key {
-				s.setLive(key, value)
+				s.setLive(key, value, hash)
 				return
 			}
 		case stateDeleted:
@@ -258,13 +278,13 @@ func (t *Table[V]) insert(key string, value V) {
 			if deleted >= 0 {
 				s = &t.slots[deleted]
 			}
-			s.setLive(key, value)
+			s.setLive(key, value, hash)
 			t.count++
 			return
 		}
 	}
 	if deleted >= 0 {
-		t.slots[deleted].setLive(key, value)
+		t.slots[deleted].setLive(key, value, hash)
 		t.count++
 		return
 	}
@@ -283,13 +303,20 @@ func (t *Table[V]) Delete(key string) {
 		}
 	}
 	mask := uint64(len(t.slots) - 1)
+	keyLen := uint64(len(key))
+	fingerprint := hashFingerprint(hash)
 	for n := 0; n < len(t.slots); n++ {
 		s := &t.slots[(hash+uint64(n))&mask]
-		switch s.state() {
+		meta := s.meta
+		switch meta >> stateShift {
 		case stateEmpty:
 			return
 		case stateLive:
-			if s.keyLen() == len(key) && s.key() == key {
+			if (meta>>32)&keyLengthMask != keyLen ||
+				(meta>>fingerprintShift)&fingerprintMask != fingerprint {
+				continue
+			}
+			if len(key) == 0 || unsafe.String(s.keyData, len(key)) == key {
 				s.setDeleted()
 				t.count--
 				if t.count == 0 {
