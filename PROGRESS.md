@@ -3,8 +3,9 @@
 - Added a black-box RESP2/TCP benchmark path for true pipelined GET; the previous
   GET workload was sequential request/response despite reporting a pipeline flag.
 - Current 1,000,000-key / 256-byte repetitive development reference: Redis 8.2
-  clean run 429,664 GET/s; SnugKV raw 526,951 GET/s; optimized SnugKV latest
-  522,399 GET/s with p50/p95/p99 of 7.00/11.98/18.61 us.
+  clean run 429,664 GET/s; SnugKV raw 526,951 GET/s; optimized SnugKV latest three-run average 547,522 GET/s (best 553,991) after
+  byte-key lookup and buffered RESP length parsing; best p50/p95/p99 was
+  6.69/10.82/15.43 us.
 - Optimized accounted memory settles around 162.64 MB versus Redis reported
   memory around 393.26 MB on this deliberately repetitive workload, about 58.6%
   lower. This is workload-specific and not representative of incompressible data.
@@ -13,8 +14,9 @@
   decoded bulk framing, reusable per-connection decode scratch, single GET clock
   read, known-GET TCP dispatch bypass, and removal of the redundant shard entry
   rewrite after pointer-based activity metadata updates.
-- The latest development run is about 21.6% above the cited Redis clean reference
-  on this exact workload. Machine load caused substantial variance during tuning,
+- Three consecutive SnugKV runs averaged 547,522 GET/s versus 435,561 GET/s across
+  three Redis 8.2 runs in the same comparison window, about 25.7% higher on this
+  exact workload. Machine load caused substantial variance during tuning,
   so repeated clean runs remain mandatory before product claims.
 - The next profiling target is the remaining key lookup conversion/index path,
   followed by codec decode and RESP parsing only where measurements justify it.
