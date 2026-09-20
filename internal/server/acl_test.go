@@ -35,6 +35,51 @@ func TestACLDefaultUser(t *testing.T) {
 	}
 }
 
+func TestACLDefaultUnrestrictedCacheTracksMutations(t *testing.T) {
+	acl := NewACL()
+
+	if !acl.DefaultUnrestricted() {
+		t.Fatal("default user should start unrestricted")
+	}
+
+	if err := acl.SetUser("default", []string{"resetkeys", "~allowed:*"}); err != nil {
+		t.Fatal(err)
+	}
+	if acl.DefaultUnrestricted() {
+		t.Fatal("restricted default key scope left fast-path cache enabled")
+	}
+
+	if err := acl.SetUser("default", []string{"allkeys"}); err != nil {
+		t.Fatal(err)
+	}
+	if !acl.DefaultUnrestricted() {
+		t.Fatal("restoring all keys did not re-enable fast-path cache")
+	}
+
+	if err := acl.SetUser("default", []string{"-get"}); err != nil {
+		t.Fatal(err)
+	}
+	if acl.DefaultUnrestricted() {
+		t.Fatal("command override left fast-path cache enabled")
+	}
+
+	if err := acl.SetUser("default", []string{"allcommands"}); err != nil {
+		t.Fatal(err)
+	}
+	if !acl.DefaultUnrestricted() {
+		t.Fatal("restoring all commands did not re-enable fast-path cache")
+	}
+
+	replacement := NewACL()
+	if err := replacement.SetUser("default", []string{"off"}); err != nil {
+		t.Fatal(err)
+	}
+	acl.ReplaceFrom(replacement)
+	if acl.DefaultUnrestricted() {
+		t.Fatal("ACL replacement left disabled default user cached as unrestricted")
+	}
+}
+
 func TestACLPasswordHashMatchesRedisAudit(t *testing.T) {
 	const want = "c2cb2efd78983b299d2478eb602351cfba7ea59a53fc080853f8542bfa7537e2"
 
