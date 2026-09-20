@@ -97,6 +97,21 @@ func (lz4Codec) Decode(src []byte, n int) ([]byte, error) {
 	}
 	return out, nil
 }
+func (lz4Codec) DecodeInto(src []byte, n int, dst []byte) ([]byte, error) {
+	if cap(dst) < n {
+		dst = make([]byte, n)
+	} else {
+		dst = dst[:n]
+	}
+	size, err := lz4.UncompressBlock(src, dst)
+	if err != nil {
+		return nil, err
+	}
+	if size != n {
+		return nil, errors.New("LZ4 length mismatch")
+	}
+	return dst, nil
+}
 
 type zstdCodec struct{}
 
@@ -123,6 +138,26 @@ func (zstdCodec) Decode(src []byte, n int) ([]byte, error) {
 
 	decoder := zstdDecoderPool.Get().(*zstd.Decoder)
 	out, err := decoder.DecodeAll(src, make([]byte, 0, n))
+	zstdDecoderPool.Put(decoder)
+	if err != nil {
+		return nil, err
+	}
+	if len(out) != n {
+		return nil, errors.New("Zstandard length mismatch")
+	}
+	return out, nil
+}
+func (zstdCodec) DecodeInto(src []byte, n int, dst []byte) ([]byte, error) {
+	if n < 0 || n > zstdDecoderMaxMemory {
+		return nil, errors.New("Zstandard length out of range")
+	}
+	if cap(dst) < n {
+		dst = make([]byte, 0, n)
+	} else {
+		dst = dst[:0]
+	}
+	decoder := zstdDecoderPool.Get().(*zstd.Decoder)
+	out, err := decoder.DecodeAll(src, dst)
 	zstdDecoderPool.Put(decoder)
 	if err != nil {
 		return nil, err
