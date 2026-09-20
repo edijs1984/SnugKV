@@ -220,16 +220,6 @@ func (o *Optimizer) worker() {
 				continue
 			}
 
-			if !o.store.MarkOptimizationAttempt(
-				key,
-				o.config.MinRewriteInterval,
-				o.config.MinAttemptInterval,
-			) {
-				o.release(rawBytes)
-				atomic.AddUint64(&o.skipped, 1)
-				continue
-			}
-
 			// The optimizer requires at least 16 bytes of absolute savings.
 			// If the current physical representation is already smaller than
 			// 16 bytes, no possible codec can satisfy that requirement.
@@ -240,11 +230,31 @@ func (o *Optimizer) worker() {
 			}
 
 			record := o.store.EncodeCandidate(candidate)
-			// Hysteresis requires at least 16 bytes and 12.5% improvement.
 			saving := candidate.EncodedBytes - len(record.Data)
-			if saving < 16 || saving*8 < candidate.EncodedBytes {
+
+			// A key that does not yet own optimizer metadata must also earn back
+			// that allocation. Otherwise enabling optimization can increase the
+			// total footprint even when the encoded payload is smaller.
+			requiredSaving := 16 + candidate.AdditionalMetadataBytes
+			if saving < requiredSaving || saving*8 < candidate.EncodedBytes {
 				atomic.AddUint64(&o.skipped, 1)
-			} else if o.store.Rewrite(candidate, record) {
+				o.release(rawBytes)
+				continue
+			}
+
+			// Record the attempt only after a representation has proven to be a
+			// net memory win. Sparse keys therefore stay metadata-free.
+			if !o.store.MarkOptimizationAttempt(
+				key,
+				o.config.MinRewriteInterval,
+				o.config.MinAttemptInterval,
+			) {
+				o.release(rawBytes)
+				atomic.AddUint64(&o.skipped, 1)
+				continue
+			}
+
+			if o.store.Rewrite(candidate, record) {
 				atomic.AddUint64(&o.rewritten, 1)
 			} else {
 				atomic.AddUint64(&o.stale, 1)
