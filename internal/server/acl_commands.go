@@ -105,10 +105,6 @@ func (s *Server) authorizeConnectionCommand(
 		username = session.username
 	}
 
-	if username == "default" && s.acl.DefaultUnrestricted() {
-		return nil
-	}
-
 	s.acl.mu.RLock()
 	user, ok := s.acl.users[username]
 	if !ok || !user.Enabled {
