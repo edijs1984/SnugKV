@@ -7,13 +7,90 @@ import (
 	"snugkv/internal/codec"
 	"snugkv/internal/index"
 	"strconv"
+	"sync/atomic"
 	"time"
 )
 
 type entryMeta struct {
-	lastRewrite, lastOptimize, lastAccess, lastWrite activityStamp
-	schemaID                                          uint32
-	reads, writes                                    uint8
+	lastRewrite, lastOptimize, lastWrite activityStamp
+	schemaID                               uint32
+	activity                               uint64
+}
+
+const (
+	activityAccessMask = uint64(1<<32) - 1
+	activityReadsShift = 32
+	activityWritesShift = 40
+	activityCounterMask = uint64(0xff)
+)
+
+func (m *entryMeta) activitySnapshot() (activityStamp, uint8, uint8) {
+	if m == nil {
+		return 0, 0, 0
+	}
+	state := atomic.LoadUint64(&m.activity)
+	return activityStamp(uint32(state)),
+		uint8((state >> activityReadsShift) & activityCounterMask),
+		uint8((state >> activityWritesShift) & activityCounterMask)
+}
+
+func (m *entryMeta) lastAccessStamp() activityStamp {
+	last, _, _ := m.activitySnapshot()
+	return last
+}
+
+func (m *entryMeta) readCount() uint8 {
+	_, reads, _ := m.activitySnapshot()
+	return reads
+}
+
+func (m *entryMeta) writeCount() uint8 {
+	_, _, writes := m.activitySnapshot()
+	return writes
+}
+
+func (m *entryMeta) setAccessAndReads(last activityStamp, reads uint8) {
+	for {
+		old := atomic.LoadUint64(&m.activity)
+		next := old & ^(activityAccessMask | activityCounterMask<<activityReadsShift)
+		next |= uint64(last)
+		next |= uint64(reads) << activityReadsShift
+		if atomic.CompareAndSwapUint64(&m.activity, old, next) {
+			return
+		}
+	}
+}
+
+func (m *entryMeta) setWriteCount(writes uint8) {
+	for {
+		old := atomic.LoadUint64(&m.activity)
+		next := old & ^(activityCounterMask << activityWritesShift)
+		next |= uint64(writes) << activityWritesShift
+		if atomic.CompareAndSwapUint64(&m.activity, old, next) {
+			return
+		}
+	}
+}
+
+func (m *entryMeta) recordRead(now time.Time) {
+	stamp := activityStampOf(now)
+	for {
+		old := atomic.LoadUint64(&m.activity)
+		last := activityStamp(uint32(old))
+		reads := uint8((old >> activityReadsShift) & activityCounterMask)
+		if last.IsOlderThan(now, time.Minute) {
+			reads = 0
+		}
+		if reads < ^uint8(0) {
+			reads++
+		}
+		next := old & ^(activityAccessMask | activityCounterMask<<activityReadsShift)
+		next |= uint64(stamp)
+		next |= uint64(reads) << activityReadsShift
+		if atomic.CompareAndSwapUint64(&m.activity, old, next) {
+			return
+		}
+	}
 }
 
 type entry struct {
@@ -206,17 +283,8 @@ func (s *Store) GetStringInto(key string, dst []byte) (value []byte, found bool,
 	}
 
 	if s.shouldTrackActivity(e) && e.entryMeta != nil {
-		meta := e.entryMeta
-		if meta.lastAccess.IsOlderThan(now, time.Minute) {
-			meta.reads = 0
-		}
-		meta.lastAccess = activityStampOf(now)
-		if meta.reads < ^uint8(0) {
-			meta.reads++
-		}
-		// entryMeta is shared by pointer with the stored entry. Updating the
-		// pointed-to metadata is sufficient; rewriting the entry/index on every
-		// GET only adds lock-held work.
+		e.entryMeta.recordRead(now)
+		// entryMeta is shared by pointer with the stored entry.
 	}
 
 	return s.decodeInto(sh, e, dst), true, false
@@ -229,8 +297,8 @@ func (s *Store) GetStringBytesInto(key []byte, dst []byte) (value []byte, found 
 func (s *Store) GetStringBytesIntoAt(key []byte, dst []byte, now time.Time) (value []byte, found bool, wrongType bool) {
 	hash := index.HashBytes(key)
 	sh := s.shardForHash(hash)
-	sh.mu.Lock()
-	defer sh.mu.Unlock()
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
 
 	e, ok := sh.getHashedBytes(key, hash)
 	if !ok {
@@ -245,14 +313,7 @@ func (s *Store) GetStringBytesIntoAt(key []byte, dst []byte, now time.Time) (val
 	}
 
 	if s.shouldTrackActivity(e) && e.entryMeta != nil {
-		meta := e.entryMeta
-		if meta.lastAccess.IsOlderThan(now, time.Minute) {
-			meta.reads = 0
-		}
-		meta.lastAccess = activityStampOf(now)
-		if meta.reads < ^uint8(0) {
-			meta.reads++
-		}
+		e.entryMeta.recordRead(now)
 	}
 
 	return s.decodeInto(sh, e, dst), true, false
@@ -279,15 +340,7 @@ func (s *Store) GetString(key string) (value []byte, found bool, wrongType bool)
 
 	// Keep the same activity accounting semantics as Get.
 	if s.shouldTrackActivity(e) && e.entryMeta != nil {
-		meta := e.entryMeta
-		if meta.lastAccess.IsOlderThan(now, time.Minute) {
-			meta.reads = 0
-		}
-		meta.lastAccess = activityStampOf(now)
-		if meta.reads < ^uint8(0) {
-			meta.reads++
-		}
-		// entryMeta is shared by pointer with the stored entry.
+		e.entryMeta.recordRead(now)
 	}
 
 	return s.decode(sh, e), true, false
