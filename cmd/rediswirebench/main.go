@@ -473,7 +473,10 @@ func measurementNote(workload string, pipeline int) string {
 	if workload == "get-seq" {
 		return "black-box RESP2/TCP sequential GET; use multiple repetitions before product claims"
 	}
-	if workload == "load" {\n\t\treturn fmt.Sprintf("black-box RESP2/TCP pipelined SET (depth=%d) with concurrent workers; percentile samples are amortized per-op batch times; use multiple repetitions before product claims", pipeline)\n\t}\n\treturn "black-box RESP2/TCP single run; use multiple repetitions before product claims"
+	if workload == "load" {
+		return fmt.Sprintf("black-box RESP2/TCP pipelined SET (depth=%d) with concurrent workers; percentile samples are amortized per-op batch times; use multiple repetitions before product claims", pipeline)
+	}
+	return "black-box RESP2/TCP single run; use multiple repetitions before product claims"
 }
 
 func fatalf(format string,args ...any){
