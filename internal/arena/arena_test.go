@@ -36,6 +36,23 @@ func TestReuseAndGeneration(t *testing.T) {
 	}
 }
 
+func TestViewLiveMatchesValidatedViewForLiveReference(t *testing.T) {
+	var a Arena
+	ref := a.Alloc([]byte("hello"))
+
+	validated, err := a.View(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live, err := a.ViewLive(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(live, validated) {
+		t.Fatalf("ViewLive=%q View=%q", live, validated)
+	}
+}
+
 func TestBatchProjection(t *testing.T) {
 	var a Arena
 	lengths := []int{0, 1, 100, 65000, 65536, 130000, 10}
