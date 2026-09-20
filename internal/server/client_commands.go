@@ -33,7 +33,7 @@ type clientSession struct {
 	libName string
 	libVer  string
 
-	protocol int
+	protocol atomic.Int32
 
 	createdAt time.Time
 	lastSeen  atomic.Int64
@@ -68,9 +68,9 @@ func newClientSession(
 		conn:       conn,
 		remoteAddr: remoteAddr,
 		localAddr:  localAddr,
-		protocol:   2,
 		createdAt:  now,
 	}
+	client.protocol.Store(2)
 	client.lastSeen.Store(now.UnixNano())
 	return client
 }
@@ -109,20 +109,15 @@ func (c *clientSession) touch(args [][]byte) time.Time {
 }
 
 func (c *clientSession) setProtocol(protocol int) {
-	c.mu.Lock()
-	c.protocol = protocol
-	c.mu.Unlock()
+	c.protocol.Store(int32(protocol))
 }
 
 func (c *clientSession) protocolVersion() int {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if c.protocol == 0 {
+	protocol := c.protocol.Load()
+	if protocol == 0 {
 		return 2
 	}
-
-	return c.protocol
+	return int(protocol)
 }
 
 func (c *clientSession) setName(name string) {
@@ -224,7 +219,7 @@ func (c *clientSession) snapshot() clientSnapshot {
 		name:       c.name,
 		libName:    c.libName,
 		libVer:     c.libVer,
-		protocol:   c.protocol,
+		protocol:   int(c.protocol.Load()),
 		createdAt:  c.createdAt,
 		lastSeen:   lastSeen,
 		lastCmd:    lastCmd,
