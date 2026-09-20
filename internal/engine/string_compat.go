@@ -1,7 +1,5 @@
 package engine
 
-import "time"
-
 // MGetStrings implements Redis MGET string semantics for native container keys:
 // a key that exists but is not string-compatible contributes a missing/nil slot
 // rather than exposing its packed physical bytes.
