@@ -80,6 +80,13 @@ func (r *Registry) Name(id ID) string {
 func (r *Registry) Encode(src []byte) Record {
 	best := Record{ID: Raw, RawLength: len(src), Data: bytes.Clone(src)}
 
+	// No synchronous scalar codec can represent a canonical value longer
+	// than a UUID (36 bytes). Larger values are handled by background
+	// compression/shape optimization instead of paying scalar parse costs.
+	if len(src) > 36 {
+		return best
+	}
+
 	// JSON objects and arrays cannot be represented by the cheap scalar
 	// codecs below. Avoid feeding them through integer/float/UUID/timestamp
 	// parsers just to reject them. JSON-shape and compression are evaluated
