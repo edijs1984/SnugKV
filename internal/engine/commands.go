@@ -49,9 +49,10 @@ func (s *Store) SetPlain(key string, value []byte) error {
 	}
 
 	e := s.makeEntryForShard(sh, value)
-	if err := s.publishRecordKnown(
+	if err := s.publishRecordKnownHashed(
 		sh,
 		key,
+		hash,
 		e,
 		enforceMemoryLimit,
 		old,
