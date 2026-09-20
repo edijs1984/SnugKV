@@ -81,6 +81,14 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Changed
 
+- Optimized the Redis-wire plain SET/load path: concurrent benchmark load workers,
+  reusable buffered SET parsing, transient raw-clone removal, reusable optimizer
+  candidate scratch, borrowed optimizer raw fallbacks, known-hash indexed
+  publication, and backlog-aware optimizer CPU yielding. On the recorded
+  1M-key/256-byte-random/8-worker development comparison, SnugKV reached a
+  five-run median of ~315k SET/s versus ~318k/s for the Redis 8.2 reference while
+  using ~7.7% fewer engine-accounted bytes per key.
+
 - Native container formats are now excluded from the generic scalar optimizer.
 - HASH, SET, LIST, and ZSET storage designs are frozen for v1; further memory work
   is directed toward shared index/entry/shard/arena overhead.
