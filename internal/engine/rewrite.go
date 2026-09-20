@@ -105,6 +105,14 @@ func (s *Store) MarkOptimizationAttempt(
 }
 
 func (s *Store) Candidate(key string, maxBytes int) (Candidate, bool) {
+	return s.CandidateInto(key, maxBytes, nil)
+}
+
+// CandidateInto snapshots a candidate into caller-owned scratch when possible.
+// The returned Value remains valid until the caller reuses or mutates dst.
+// Candidate remains the ownership-preserving convenience wrapper for callers
+// that do not provide scratch.
+func (s *Store) CandidateInto(key string, maxBytes int, dst []byte) (Candidate, bool) {
 	sh := s.shardFor(key)
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
@@ -124,7 +132,7 @@ func (s *Store) Candidate(key string, maxBytes int) (Candidate, bool) {
 	return Candidate{
 		Key:                     key,
 		Version:                 e.ref.Generation(),
-		Value:                   s.decode(sh, e),
+		Value:                   s.decodeInto(sh, e, dst),
 		EncodedBytes:            len(sh.encoded(e)),
 		AdditionalMetadataBytes: additionalMetadataBytes,
 		LastRewrite:             lastRewrite,
