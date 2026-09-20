@@ -171,7 +171,7 @@ func (s *Server) executeAuthorizedConcurrentSet(args [][]byte) (response []byte,
 	if setErr != nil {
 		return nil, true, setErr
 	}
-	if s.optimizer != nil {
+	if s.optimizer != nil && s.store.ShouldQueueOptimization(args[2]) {
 		s.optimizer.Queue(key)
 	}
 	return []byte("+OK\r\n"), true, nil
