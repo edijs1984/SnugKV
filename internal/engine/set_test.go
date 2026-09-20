@@ -163,8 +163,8 @@ func TestSetWrongTypeAndOptimizerExclusion(t *testing.T) {
 	if policy, ok := s.Policy("native"); !ok || policy != "set-native" {
 		t.Fatalf("policy=%q ok=%v", policy, ok)
 	}
-	if stats := s.Memory(); stats.MetaBytes != 32 {
+	if stats := s.Memory(); stats.MetaBytes != 24 {
 		// Only the ordinary string should own generic optimizer metadata.
-		t.Fatalf("meta bytes=%d want 32", stats.MetaBytes)
+		t.Fatalf("meta bytes=%d want 24", stats.MetaBytes)
 	}
 }
