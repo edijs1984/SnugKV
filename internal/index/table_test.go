@@ -483,3 +483,23 @@ func TestGetHashedMatchesGet(t *testing.T) {
 		t.Fatal("GetHashed missing key unexpectedly found")
 	}
 }
+
+
+func TestSetKnownHashedInsertAndUpdate(t *testing.T) {
+	table := New[uint32]()
+	key := "known-hash-key"
+	hash := Hash(key)
+
+	table.SetKnownHashed(key, 7, hash, false)
+	if got, ok := table.GetHashed(key, hash); !ok || got != 7 {
+		t.Fatalf("insert got=%d ok=%t", got, ok)
+	}
+
+	table.SetKnownHashed(key, 9, hash, true)
+	if got, ok := table.GetHashed(key, hash); !ok || got != 9 {
+		t.Fatalf("update got=%d ok=%t", got, ok)
+	}
+	if table.Len() != 1 {
+		t.Fatalf("len=%d want=1", table.Len())
+	}
+}
