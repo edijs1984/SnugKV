@@ -87,10 +87,10 @@ func TestGetStringIntoPersistsActivityThroughSharedMetadata(t *testing.T) {
 	if !ok || got.entryMeta == nil {
 		t.Fatal("metadata missing after GET")
 	}
-	if got.entryMeta.reads != 1 {
-		t.Fatalf("reads=%d want 1", got.entryMeta.reads)
+	if got.entryMeta.readCount() != 1 {
+		t.Fatalf("reads=%d want 1", got.entryMeta.readCount())
 	}
-	if got.entryMeta.lastAccess.IsZero() {
+	if got.entryMeta.lastAccessStamp().IsZero() {
 		t.Fatal("last access was not persisted")
 	}
 }
