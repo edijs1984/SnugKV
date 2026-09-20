@@ -101,28 +101,42 @@ func (sh *shard) set(key string, e entry) {
 		sh.entries[id] = e
 		return
 	}
+	sh.insertEntry(key, index.Hash(key), e, false)
+}
 
+func (sh *shard) setKnownHashed(key string, hash uint64, e entry, exists bool) {
+	if exists {
+		id, ok := sh.data.GetHashed(key, hash)
+		if !ok {
+			panic("known shard entry is missing")
+		}
+		sh.entries[id] = e
+		return
+	}
+	sh.insertEntry(key, hash, e, true)
+}
+
+func (sh *shard) insertEntry(key string, hash uint64, e entry, hashKnown bool) {
 	var id uint32
-
 	if n := len(sh.freeIDs); n > 0 {
 		id = sh.freeIDs[n-1]
 		sh.freeIDs = sh.freeIDs[:n-1]
 		sh.entries[id] = e
 	} else {
 		id = uint32(len(sh.entries))
-
 		if len(sh.entries) == cap(sh.entries) {
 			next := sh.entryCapacityFor(1)
-
 			entries := make([]entry, len(sh.entries), next)
 			copy(entries, sh.entries)
 			sh.entries = entries
 		}
-
 		sh.entries = append(sh.entries, e)
 	}
-
-	sh.data.Set(key, id)
+	if hashKnown {
+		sh.data.SetKnownHashed(key, id, hash, false)
+	} else {
+		sh.data.Set(key, id)
+	}
 }
 
 func (sh *shard) delete(key string) bool {
