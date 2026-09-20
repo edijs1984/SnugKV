@@ -260,8 +260,12 @@ func (s *Store) MSet(keys []string, values [][]byte) error {
 		e := replacements[k]
 		sh := s.shardFor(k)
 		old, exists := sh.get(k)
-		if exists && old.entryMeta != nil && old.entryMeta.schema != nil {
-			sh.shapes.ReleaseRecord(old.entryMeta.schema, sh.encoded(old))
+		if exists && old.entryMeta != nil && old.entryMeta.schemaID != 0 {
+			schema := sh.shapes.ByID(old.entryMeta.schemaID)
+			if schema == nil {
+				panic("stored schema handle is invalid")
+			}
+			sh.shapes.ReleaseRecord(schema, sh.encoded(old))
 		}
 		if s.shouldTrackActivity(e.entry) {
 			meta := e.ensureMeta()

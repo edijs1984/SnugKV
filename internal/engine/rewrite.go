@@ -462,7 +462,11 @@ func (s *Store) Rewrite(candidate Candidate, record codec.Record) bool {
 	meta := prepared.ensureMeta()
 
 	prepared.codecID = record.ID
-	meta.schema = record.Schema
+	if record.Schema != nil {
+		meta.schemaID = record.Schema.ID
+	} else {
+		meta.schemaID = 0
+	}
 	prepared.rawLength = uint32(record.RawLength)
 	meta.lastRewrite = activityStampOf(s.now())
 

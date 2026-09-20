@@ -182,7 +182,7 @@ func (s *Store) makeEntryForShard(sh *shard, value []byte) preparedEntry {
 				if err == nil && bytes.Equal(decoded, value) {
 					return preparedEntry{
 						entry: entry{
-							entryMeta: &entryMeta{schema: schema},
+							entryMeta: &entryMeta{schemaID: schema.ID},
 							codecID:   5, // JSON-shape physical codec
 							valueType: classifyValue(value),
 							rawLength: uint32(len(value)),
@@ -208,8 +208,10 @@ func (s *Store) decode(sh *shard, e entry) []byte {
 	}
 
 	var schema *jsonshape.Schema
-	if e.entryMeta != nil {
-		schema = e.entryMeta.schema
+	if e.entryMeta != nil && e.entryMeta.schemaID != 0 {
+		if shapes := s.loadShapeStore(); shapes != nil {
+			schema = shapes.ByID(e.entryMeta.schemaID)
+		}
 	}
 	out, err := s.codecs.Decode(codec.Record{
 		ID:        e.codecID,
@@ -252,15 +254,6 @@ func (s *Store) publishRecordKnown(
 	if s.shouldTrackActivity(e.entry) && e.entryMeta == nil {
 		e.entryMeta = &entryMeta{}
 	}
-	if s.shouldTrackActivity(e.entry) {
-		meta := e.ensureMeta()
-		if exists {
-			meta.revision = nextEntryRevision(old)
-		} else {
-			meta.revision = 1
-		}
-	}
-
 	var oldCost uint64
 	if exists {
 		oldCost = entryCharge(key, old)
@@ -291,8 +284,13 @@ func (s *Store) publishRecordKnown(
 	}
 
 	var newSchema *jsonshape.Schema
-	if e.entryMeta != nil {
-		newSchema = e.entryMeta.schema
+	if e.entryMeta != nil && e.entryMeta.schemaID != 0 {
+		if sh.shapes != nil {
+			newSchema = sh.shapes.ByID(e.entryMeta.schemaID)
+		}
+		if newSchema == nil {
+			return errors.New("ERR schema handle is invalid")
+		}
 	}
 
 	// Reserve the accounting delta atomically with maxmemory admission, but do
@@ -323,8 +321,13 @@ func (s *Store) publishRecordKnown(
 		return ErrOOM
 	}
 
-	if exists && old.entryMeta != nil && old.entryMeta.schema != nil {
-		sh.shapes.ReleaseRecord(old.entryMeta.schema, sh.encoded(old))
+	if exists && old.entryMeta != nil && old.entryMeta.schemaID != 0 {
+		oldSchema := sh.shapes.ByID(old.entryMeta.schemaID)
+		if oldSchema == nil {
+			s.memory.mu.Unlock()
+			return errors.New("ERR stored schema handle is invalid")
+		}
+		sh.shapes.ReleaseRecord(oldSchema, sh.encoded(old))
 	}
 
 	s.memory.used = next
@@ -385,8 +388,13 @@ func (s *Store) remove(sh *shard, key string) {
 		}
 		freeGrowth := sh.arena.FreeGrowth(e.ref)
 		s.memory.mu.Lock()
-		if e.entryMeta != nil && e.entryMeta.schema != nil {
-			sh.shapes.ReleaseRecord(e.entryMeta.schema, sh.encoded(e))
+		if e.entryMeta != nil && e.entryMeta.schemaID != 0 {
+			schema := sh.shapes.ByID(e.entryMeta.schemaID)
+			if schema == nil {
+				s.memory.mu.Unlock()
+				panic("stored schema handle is invalid")
+			}
+			sh.shapes.ReleaseRecord(schema, sh.encoded(e))
 		}
 		cost := entryCharge(key, e)
 		metaCost := metadataCharge(e)

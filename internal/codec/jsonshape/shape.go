@@ -21,15 +21,18 @@ type Schema struct {
 	Literal    [][]byte
 	Key        string
 	Bytes      int
+	ID         uint32
 	refs       int
 }
 type Store struct {
 	dictionary *dictionary.Store
 	mu         sync.Mutex
 	schemas    map[string]*Schema
+	byID       map[uint32]*Schema
 	frequency  [256]uint8
 	observed   map[string]uint8
 	used, max  int
+	nextID     uint32
 	threshold  uint8
 }
 
@@ -37,7 +40,15 @@ func New(maxBytes int, threshold uint8) *Store {
 	if threshold == 0 {
 		threshold = 8
 	}
-	return &Store{dictionary: dictionary.New(1024), schemas: make(map[string]*Schema), observed: make(map[string]uint8), max: maxBytes, threshold: threshold}
+	return &Store{
+		dictionary: dictionary.New(1024),
+		schemas:    make(map[string]*Schema),
+		byID:       make(map[uint32]*Schema),
+		observed:   make(map[string]uint8),
+		max:        maxBytes,
+		nextID:     1,
+		threshold:  threshold,
+	}
 }
 
 // Split validates JSON and preserves every byte outside primitive value spans.
@@ -232,6 +243,7 @@ func (s *Store) Candidate(src []byte) (*Schema, [][]byte, bool) {
 		}
 		if schema.refs == 0 {
 			delete(s.schemas, name)
+			delete(s.byID, schema.ID)
 			s.used -= schema.Bytes
 		}
 	}
@@ -248,8 +260,14 @@ func (s *Store) Candidate(src []byte) (*Schema, [][]byte, bool) {
 		Literal:    ownedLiterals,
 		Key:        key,
 		Bytes:      cost,
+		ID:         s.nextID,
+	}
+	s.nextID++
+	if s.nextID == 0 {
+		s.nextID = 1
 	}
 	s.schemas[key] = schema
+	s.byID[schema.ID] = schema
 	delete(s.observed, key)
 	s.used += cost
 	return schema, slots, true
@@ -268,11 +286,31 @@ func (s *Store) Retain(schema *Schema) bool {
 		if s.used+schema.Bytes > s.max {
 			return false
 		}
+		if schema.ID == 0 {
+			schema.ID = s.nextID
+			s.nextID++
+			if s.nextID == 0 {
+				s.nextID = 1
+			}
+		} else if existing := s.byID[schema.ID]; existing != nil && existing != schema {
+			return false
+		}
 		s.schemas[schema.Key] = schema
+		s.byID[schema.ID] = schema
 		s.used += schema.Bytes
 	}
 	schema.refs++
 	return true
+}
+
+func (s *Store) ByID(id uint32) *Schema {
+	if id == 0 {
+		return nil
+	}
+	s.mu.Lock()
+	schema := s.byID[id]
+	s.mu.Unlock()
+	return schema
 }
 func (s *Store) Release(schema *Schema) {
 	if schema == nil {
