@@ -136,141 +136,17 @@ func (d *Decoder) ReadBufferedGET(args *[2][]byte) (bool, error) {
 		return false, nil
 	}
 
-	const prefixLen = len("*2\r\n$3\r\nGET\r\n$")
-	if len(buf) < prefixLen+3 ||
+	if len(buf) < 17 ||
 		buf[0] != '*' || buf[1] != '2' || buf[2] != '\r' || buf[3] != '\n' ||
-		buf[4] != '// io.EOF means clean end of stream; truncated requests return io.ErrUnexpectedEOF.
-// After any other error the stream must be closed, not resynchronized.
-func (d *Decoder) ReadCommand() (args [][]byte, err error) {
-	d.remaining = d.limits.MaxRequestBytes
-	if _, err = d.reader.Peek(1); err != nil {
-		return nil, err
-	}
-	defer func() {
-		if err == io.EOF {
-			err = io.ErrUnexpectedEOF
-		}
-	}()
-	n, err := d.length('*', d.limits.MaxArguments)
-	if err != nil {
-		return nil, err
-	}
-	if n == 0 {
-		return nil, errors.New("empty command array")
-	}
-	// Even an empty bulk needs six framing bytes.
-	if n > d.remaining/6 {
-		return nil, errors.New("request exceeds byte limit")
-	}
-	args = make([][]byte, n)
-	for i := 0; i < n; i++ {
-		args[i], err = d.bulk()
-		if err != nil {
-			return nil, err
-		}
-	}
-	return args, nil
-}
-
-// Parse accepts a complete command or a standalone bulk string for callers
-// parsing values. TCP command decoding always requires an array.
-func Parse(data []byte) ([][]byte, error) {
-	limits := DefaultLimits()
-	if len(data) > limits.MaxRequestBytes {
-		return nil, errors.New("request exceeds byte limit")
-	}
-	reader := bufio.NewReader(bytes.NewReader(data))
-	d, _ := NewDecoder(reader, limits)
-	var args [][]byte
-	var err error
-	if len(data) > 0 && data[0] == '$' {
-		d.remaining = limits.MaxRequestBytes
-		var value []byte
-		value, err = d.bulk()
-		args = [][]byte{value}
-	} else {
-		args, err = d.ReadCommand()
-	}
-	if err != nil {
-		return nil, err
-	}
-	if _, err = reader.Peek(1); err != io.EOF {
-		return nil, errors.New("trailing bytes")
-	}
-	return args, nil
-}
- || buf[5] != '3' || buf[6] != '\r' || buf[7] != '\n' ||
+		buf[4] != '$' || buf[5] != '3' || buf[6] != '\r' || buf[7] != '\n' ||
 		!((buf[8] == 'G' || buf[8] == 'g') &&
 			(buf[9] == 'E' || buf[9] == 'e') &&
 			(buf[10] == 'T' || buf[10] == 't')) ||
-		buf[11] != '\r' || buf[12] != '\n' || buf[13] != '// io.EOF means clean end of stream; truncated requests return io.ErrUnexpectedEOF.
-// After any other error the stream must be closed, not resynchronized.
-func (d *Decoder) ReadCommand() (args [][]byte, err error) {
-	d.remaining = d.limits.MaxRequestBytes
-	if _, err = d.reader.Peek(1); err != nil {
-		return nil, err
-	}
-	defer func() {
-		if err == io.EOF {
-			err = io.ErrUnexpectedEOF
-		}
-	}()
-	n, err := d.length('*', d.limits.MaxArguments)
-	if err != nil {
-		return nil, err
-	}
-	if n == 0 {
-		return nil, errors.New("empty command array")
-	}
-	// Even an empty bulk needs six framing bytes.
-	if n > d.remaining/6 {
-		return nil, errors.New("request exceeds byte limit")
-	}
-	args = make([][]byte, n)
-	for i := 0; i < n; i++ {
-		args[i], err = d.bulk()
-		if err != nil {
-			return nil, err
-		}
-	}
-	return args, nil
-}
-
-// Parse accepts a complete command or a standalone bulk string for callers
-// parsing values. TCP command decoding always requires an array.
-func Parse(data []byte) ([][]byte, error) {
-	limits := DefaultLimits()
-	if len(data) > limits.MaxRequestBytes {
-		return nil, errors.New("request exceeds byte limit")
-	}
-	reader := bufio.NewReader(bytes.NewReader(data))
-	d, _ := NewDecoder(reader, limits)
-	var args [][]byte
-	var err error
-	if len(data) > 0 && data[0] == '$' {
-		d.remaining = limits.MaxRequestBytes
-		var value []byte
-		value, err = d.bulk()
-		args = [][]byte{value}
-	} else {
-		args, err = d.ReadCommand()
-	}
-	if err != nil {
-		return nil, err
-	}
-	if _, err = reader.Peek(1); err != io.EOF {
-		return nil, errors.New("trailing bytes")
-	}
-	return args, nil
-}
- {
+		buf[11] != '\r' || buf[12] != '\n' || buf[13] != '$' {
 		return false, nil
 	}
 
 	i := 14
-	if i >= len(buf) {
-		return false, nil
-	}
 	keyLen := 0
 	digits := 0
 	for i < len(buf) {
