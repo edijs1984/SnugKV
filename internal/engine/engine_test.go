@@ -95,6 +95,34 @@ func TestGetStringIntoPersistsActivityThroughSharedMetadata(t *testing.T) {
 	}
 }
 
+func TestGetStringBytesIntoBinaryKeyAndExpiry(t *testing.T) {
+	store := New()
+	store.encoding = true
+	now := time.Unix(1_700_000_000, 0)
+	store.now = func() time.Time { return now }
+
+	key := "binary:\x00key"
+	if err := store.Set(key, []byte("value"), 0); err != nil {
+		t.Fatal(err)
+	}
+	value, found, wrongType := store.GetStringBytesInto([]byte(key), nil)
+	if !found || wrongType || string(value) != "value" {
+		t.Fatalf("persistent byte GET value=%q found=%t wrongType=%t", value, found, wrongType)
+	}
+
+	if err := store.SetWithTTL("expiring", []byte("ttl"), time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if value, found, wrongType := store.GetStringBytesInto([]byte("expiring"), nil); !found || wrongType || string(value) != "ttl" {
+		t.Fatalf("live expiring byte GET value=%q found=%t wrongType=%t", value, found, wrongType)
+	}
+
+	now = now.Add(time.Second)
+	if value, found, wrongType := store.GetStringBytesInto([]byte("expiring"), nil); found || wrongType || value != nil {
+		t.Fatalf("expired byte GET value=%q found=%t wrongType=%t", value, found, wrongType)
+	}
+}
+
 func TestGetStringRejectsStream(t *testing.T) {
 	store := New()
 	if _, _, err := store.StreamAdd(
