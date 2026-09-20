@@ -12,18 +12,27 @@ import (
 	"testing/iotest"
 )
 
-func TestReadBufferedGETBorrowsCompleteFrame(t *testing.T) {
+func TestReadBufferedGETUsesReusableKeyScratch(t *testing.T) {
 	wire := "*2\r\n$3\r\nGET\r\n$5\r\na\x00bcd\r\n*1\r\n$4\r\nPING\r\n"
 	reader := bufio.NewReader(strings.NewReader(wire))
 	d, _ := NewDecoder(reader, DefaultLimits())
 
-	var args [2][]byte
-	ok, err := d.ReadBufferedGET(&args)
-	if err != nil || !ok {
-		t.Fatalf("borrowed GET ok=%t err=%v", ok, err)
+	// Prime the reader so the conservative fast path sees an already-buffered
+	// complete frame, matching pipelined TCP operation after the first read.
+	if _, err := reader.Peek(1); err != nil {
+		t.Fatal(err)
 	}
-	if string(args[0]) != "GET" || !bytes.Equal(args[1], []byte{'a', 0, 'b', 'c', 'd'}) {
-		t.Fatalf("borrowed GET args=%q", args)
+
+	scratch := make([]byte, 0, 16)
+	key, ok, err := d.ReadBufferedGET(scratch)
+	if err != nil || !ok {
+		t.Fatalf("buffered GET ok=%t err=%v", ok, err)
+	}
+	if !bytes.Equal(key, []byte{'a', 0, 'b', 'c', 'd'}) {
+		t.Fatalf("buffered GET key=%q", key)
+	}
+	if len(key) > 0 && &key[0] != &scratch[:cap(scratch)][0] {
+		t.Fatal("buffered GET did not reuse caller scratch")
 	}
 
 	next, err := d.ReadCommand()
@@ -39,11 +48,13 @@ func TestReadBufferedGETFallsBackWithoutConsuming(t *testing.T) {
 	} {
 		reader := bufio.NewReader(strings.NewReader(wire))
 		d, _ := NewDecoder(reader, DefaultLimits())
+		if _, err := reader.Peek(1); err != nil {
+			t.Fatal(err)
+		}
 		before := reader.Buffered()
-		var args [2][]byte
-		ok, err := d.ReadBufferedGET(&args)
-		if err != nil || ok {
-			t.Fatalf("wire %q ok=%t err=%v", wire, ok, err)
+		key, ok, err := d.ReadBufferedGET(nil)
+		if err != nil || ok || len(key) != 0 {
+			t.Fatalf("wire %q key=%q ok=%t err=%v", wire, key, ok, err)
 		}
 		if got := reader.Buffered(); got != before {
 			t.Fatalf("wire %q consumed bytes: before=%d after=%d", wire, before, got)
