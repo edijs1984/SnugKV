@@ -83,6 +83,19 @@ func (sh *shard) getHashed(key string, hash uint64) (entry, bool) {
 	return sh.entries[id], true
 }
 
+func (sh *shard) getHashedBytes(key []byte, hash uint64) (entry, bool) {
+	id, ok := sh.data.GetHashedBytes(key, hash)
+	if !ok {
+		return entry{}, false
+	}
+
+	if int(id) >= len(sh.entries) {
+		panic("invalid entry id")
+	}
+
+	return sh.entries[id], true
+}
+
 func (sh *shard) set(key string, e entry) {
 	if id, ok := sh.data.Get(key); ok {
 		sh.entries[id] = e
