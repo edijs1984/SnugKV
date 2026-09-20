@@ -5,7 +5,6 @@ import (
 	"math"
 	"snugkv/internal/arena"
 	"snugkv/internal/codec"
-	"snugkv/internal/codec/jsonshape"
 	"snugkv/internal/index"
 	"strconv"
 	"time"
