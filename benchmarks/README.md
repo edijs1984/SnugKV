@@ -1,5 +1,47 @@
 # Benchmark results
 
+## Redis 8.2 comparison — 1M repetitive scalar keys, 2026-09-20
+
+Black-box RESP2/TCP measurements on Linux amd64, Go 1.27.1, 4 logical CPUs,
+1,000,000 keys, 256-byte deliberately repetitive values, 4 GET workers, and GET
+pipeline depth 256. Redis and SnugKV were preloaded with the same logical
+dataset. These are single-run development measurements; repeat runs are required
+before making public performance claims.
+
+### Memory after load
+
+| Server/config | Reported memory | Bytes/key |
+|---|---:|---:|
+| Redis 8.2 | 393,260,912 B | 392.39 B/key load delta |
+| SnugKV raw | 362,314,176 B | 362.27 B/key load delta |
+| SnugKV optimized | 162,631,296 B | ~162.6 B/key accounted |
+
+For this synthetic highly-compressible workload, optimized SnugKV used about
+58.6% less reported memory than Redis while preserving all 1,000,000 logical
+256-byte values. This percentage is workload-specific and must not be generalized
+to incompressible data.
+
+### Pipelined GET
+
+| Server/config | GET ops/s | p50 | p95 | p99 |
+|---|---:|---:|---:|---:|
+| Redis 8.2 | 432,213 | 9.14 us | 12.72 us | 16.14 us |
+| SnugKV raw | 526,951 | 6.93 us | 11.73 us | 17.41 us |
+| SnugKV optimized, before response-copy fix | 404,451 | 8.43 us | 18.07 us | 27.83 us |
+| SnugKV optimized, after response-copy fix | 430,233 | 8.05 us | 15.69 us | 25.28 us |
+
+The GET percentile samples for pipelined runs are amortized per-operation batch
+times, not independent request latencies. The response-copy optimization removed
+the extra value-sized allocation/copy previously performed after decoding an
+encoded value; optimized throughput improved by about 6.4% in the measured run.
+
+At this point optimized SnugKV was within about 0.5% of the Redis throughput
+measurement on this workload, while raw SnugKV remained faster. The remaining
+optimized-vs-raw gap is under profiling and should not yet be attributed to one
+component.
+
+Reproduce with `cmd/rediswirebench`.
+
 This page records engineering measurements used to guide SnugKV storage decisions.
 They are workload-specific measurements, not universal performance claims.
 
