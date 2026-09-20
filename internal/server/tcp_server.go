@@ -350,7 +350,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			_ = writer.write([]byte("-ERR invalid RESP\r\n"))
 			return
 		}
-		clientSession.touch(msg)
+		requestNow := clientSession.touch(msg)
 
 		if len(msg) > 0 &&
 			strings.EqualFold(string(msg[0]), "HELLO") {
@@ -549,7 +549,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				continue
 			}
 
-			if value, found, handled, fastErr := s.server.executeAuthorizedConcurrentKnownGetInto(msg[1], getScratch); handled {
+			if value, found, handled, fastErr := s.server.executeAuthorizedConcurrentKnownGetIntoAt(msg[1], getScratch, requestNow); handled {
 				if fastErr != nil {
 					if writeProtocol(msg, errorResponse(fastErr)) != nil {
 						return
