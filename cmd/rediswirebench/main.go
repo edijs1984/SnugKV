@@ -381,7 +381,15 @@ func(c *client)readGetReply()error{
 	if err!=nil{return err}
 	if len(line)==0{return io.ErrUnexpectedEOF}
 	if line[0]=='-'{return errors.New(string(line[1:]))}
-	if line[0]!='
+	if line[0]!='$'{return fmt.Errorf("unexpected GET reply %q",line)}
+	n,err:=strconv.Atoi(string(line[1:]))
+	if err!=nil{return err}
+	if n<0{return nil}
+	payload:=make([]byte,n+2)
+	if _,err:=io.ReadFull(c.r,payload);err!=nil{return err}
+	if !bytes.Equal(payload[n:],[]byte("\r\n")){return errors.New("invalid bulk terminator")}
+	return nil
+}
 
 func(c *client)usedMemory()(uint64,error){
 	if err:=c.write(b("INFO"),b("memory"));err!=nil{return 0,err}
@@ -425,54 +433,6 @@ func measurementNote(workload string, pipeline int) string {
 		return "black-box RESP2/TCP sequential GET; use multiple repetitions before product claims"
 	}
 	return "black-box RESP2/TCP single run; use multiple repetitions before product claims"
-}
-
-func fatalf(format string,args ...any){
-	fmt.Fprintf(os.Stderr,"rediswirebench: "+format+"\n",args...)
-	os.Exit(1)
-}
-{return fmt.Errorf("unexpected GET reply %q",line)}
-	n,err:=strconv.Atoi(string(line[1:]))
-	if err!=nil{return err}
-	if n<0{return nil}
-	payload:=make([]byte,n+2)
-	if _,err:=io.ReadFull(c.r,payload);err!=nil{return err}
-	if !bytes.Equal(payload[n:],[]byte("\r\n")){return errors.New("invalid bulk terminator")}
-	return nil
-}
-
-func(c *client)usedMemory()(uint64,error){
-	if err:=c.write(b("INFO"),b("memory"));err!=nil{return 0,err}
-	if err:=c.w.Flush();err!=nil{return 0,err}
-	payload,err:=c.readBulk()
-	if err!=nil{return 0,err}
-	for _,line:=range strings.Split(string(payload),"\r\n"){
-		if strings.HasPrefix(line,"used_memory:"){return strconv.ParseUint(strings.TrimPrefix(line,"used_memory:"),10,64)}
-	}
-	return 0,errors.New("used_memory missing")
-}
-
-func(c *client)dbsize()(int64,error){
-	if err:=c.write(b("DBSIZE"));err!=nil{return 0,err}
-	if err:=c.w.Flush();err!=nil{return 0,err}
-	line,err:=c.readLine()
-	if err!=nil{return 0,err}
-	if len(line)==0||line[0]!=':'{return 0,fmt.Errorf("unexpected DBSIZE reply %q",line)}
-	return strconv.ParseInt(string(line[1:]),10,64)
-}
-
-func(c *client)readBulk()([]byte,error){
-	line,err:=c.readLine()
-	if err!=nil{return nil,err}
-	if len(line)==0{return nil,io.ErrUnexpectedEOF}
-	if line[0]=='-'{return nil,errors.New(string(line[1:]))}
-	if line[0]!='$'{return nil,fmt.Errorf("unexpected bulk reply %q",line)}
-	n,err:=strconv.Atoi(string(line[1:]))
-	if err!=nil||n<0{return nil,fmt.Errorf("invalid bulk length %q",line)}
-	payload:=make([]byte,n+2)
-	if _,err:=io.ReadFull(c.r,payload);err!=nil{return nil,err}
-	if !bytes.Equal(payload[n:],[]byte("\r\n")){return nil,errors.New("invalid bulk terminator")}
-	return payload[:n],nil
 }
 
 func fatalf(format string,args ...any){
