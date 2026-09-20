@@ -187,6 +187,36 @@ func (s *Store) VisitRawString(key string, visit func([]byte) error) (handled bo
 // GetString performs the Redis string GET type check and value lookup under one
 // shard lock. wrongType is true only for native container values that GET must
 // reject; missing/expired keys return found=false.
+func (s *Store) GetStringInto(key string, dst []byte) (value []byte, found bool, wrongType bool) {
+	hash := index.Hash(key)
+	sh := s.shardForHash(hash)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	e, ok := sh.getHashed(key, hash)
+	if !ok || sh.expired(key, e, s.now()) {
+		return nil, false, false
+	}
+	if isNativeContainerType(e.valueType) {
+		return nil, false, true
+	}
+
+	if s.shouldTrackActivity(e) && e.entryMeta != nil {
+		now := s.now()
+		meta := e.entryMeta
+		if now.Sub(meta.lastAccess.Time()) > time.Minute {
+			meta.reads = 0
+		}
+		meta.lastAccess = activityStampOf(now)
+		if meta.reads < ^uint8(0) {
+			meta.reads++
+		}
+		sh.set(key, e)
+	}
+
+	return s.decodeInto(sh, e, dst), true, false
+}
+
 func (s *Store) GetString(key string) (value []byte, found bool, wrongType bool) {
 	hash := index.Hash(key)
 	sh := s.shardForHash(hash)
