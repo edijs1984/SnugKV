@@ -207,23 +207,7 @@ func (t *Table[V]) GetHashedBytes(key []byte, hash uint64) (V, bool) {
 			if (meta>>32)&keyLengthMask != keyLen {
 				continue
 			}
-			if len(key) == 0 {
-				return V(uint32(meta)), true
-			}
-
-			// Most probe-chain candidates are unrelated keys of the same
-			// length. Reject them using the tail bytes before invoking the
-			// full runtime string equality path. Exact comparison still
-			// follows, so hash collisions remain fully safe.
-			last := len(key) - 1
-			if *(*byte)(unsafe.Add(unsafe.Pointer(s.keyData), last)) != key[last] {
-				continue
-			}
-			if last > 0 &&
-				*(*byte)(unsafe.Add(unsafe.Pointer(s.keyData), last-1)) != key[last-1] {
-				continue
-			}
-			if unsafe.String(s.keyData, len(key)) == lookup {
+			if len(key) == 0 || unsafe.String(s.keyData, len(key)) == lookup {
 				return V(uint32(meta)), true
 			}
 		}
