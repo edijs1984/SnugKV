@@ -2,22 +2,22 @@
 
 - Added a black-box RESP2/TCP benchmark path for true pipelined GET; the previous
   GET workload was sequential request/response despite reporting a pipeline flag.
-- On the 1,000,000-key / 256-byte repetitive development workload, Redis 8.2
-  measured 432,213 GET/s, SnugKV raw measured 526,951 GET/s, and optimized
-  SnugKV measured 430,233 GET/s after the encoded-response copy removal.
-- The encoded GET TCP fast path now writes decoded bytes directly into the
-  connection response buffer rather than allocating and copying a second
-  value-sized RESP bulk payload.
-- The optimized GET change improved the observed 3M-operation pipelined run from
-  404,451 GET/s to 430,233 GET/s (~6.4%) while preserving the optimized memory
-  footprint.
-- The optimized dataset accounted about 162.6 MB after settling versus Redis
-  reported memory of about 393.3 MB on this deliberately repetitive synthetic
-  workload (~58.6% lower reported memory). This is not a claim for arbitrary
-  values; incompressible datasets must be measured separately.
-- Clean CPU profiling is continuing to isolate the remaining optimized-vs-raw
-  read overhead, especially codec decode, allocation/GC, activity metadata, and
-  locking costs.
+- Current 1,000,000-key / 256-byte repetitive development reference: Redis 8.2
+  clean run 429,664 GET/s; SnugKV raw 526,951 GET/s; optimized SnugKV latest
+  522,399 GET/s with p50/p95/p99 of 7.00/11.98/18.61 us.
+- Optimized accounted memory settles around 162.64 MB versus Redis reported
+  memory around 393.26 MB on this deliberately repetitive workload, about 58.6%
+  lower. This is workload-specific and not representative of incompressible data.
+- GET tuning completed so far: true pipelining, sparse optimizer metadata,
+  optimizer admission prefilter, scalar codec bypass for long values, direct
+  decoded bulk framing, reusable per-connection decode scratch, single GET clock
+  read, known-GET TCP dispatch bypass, and removal of the redundant shard entry
+  rewrite after pointer-based activity metadata updates.
+- The latest development run is about 21.6% above the cited Redis clean reference
+  on this exact workload. Machine load caused substantial variance during tuning,
+  so repeated clean runs remain mandatory before product claims.
+- The next profiling target is the remaining key lookup conversion/index path,
+  followed by codec decode and RESP parsing only where measurements justify it.
 - Detailed methodology and caveats are recorded in `benchmarks/README.md`.
 
 ## Redis MIGRATE
