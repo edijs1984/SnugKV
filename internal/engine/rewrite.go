@@ -198,6 +198,20 @@ func (s *Store) ensureShapeStore(sh *shard) *jsonshape.Store {
 	return s.ensureShapeStoreLocked(sh)
 }
 
+// ShouldQueueOptimization performs the cheapest possible write-time gate.
+// Specialized scalar codecs already run synchronously in makeEntry. Background
+// work is only useful for JSON shape sharing or general compression, whose
+// minimum input size is 256 bytes.
+func (s *Store) ShouldQueueOptimization(value []byte) bool {
+	if !s.encoding {
+		return false
+	}
+	if s.shapeEncoding && structuredJSONCandidate(value) {
+		return true
+	}
+	return s.compression && len(value) >= 256
+}
+
 func structuredJSONCandidate(src []byte) bool {
 	for _, b := range src {
 		switch b {
