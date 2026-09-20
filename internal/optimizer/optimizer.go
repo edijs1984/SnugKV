@@ -19,7 +19,7 @@ type Config struct {
 func Default() Config {
 	return Config{
 		Workers:            2,
-		QueueDepth:         4096,
+		QueueDepth:         65536,
 		MaxScratchBytes:    128 << 20,
 		MaxBytesPerSecond:  64 << 20,
 		CPUPercent:         50,
@@ -30,7 +30,7 @@ func Default() Config {
 
 type Stats struct {
 	Queued, Rewritten, Skipped, Stale, Dropped uint64
-	QueueDepth                                 int
+	QueueDepth, QueueCapacity                  int
 }
 type Optimizer struct {
 	store                                      *engine.Store
@@ -78,12 +78,37 @@ func (o *Optimizer) Queue(key string) bool {
 	}
 }
 func (o *Optimizer) Sample(limit int) {
+	if limit <= 0 {
+		return
+	}
+
+	// Sampling is recovery work for keys whose direct write-time enqueue was
+	// dropped. Never generate a sampling burst larger than the queue can accept,
+	// otherwise catch-up creates its own avoidable drop storm.
+	available := cap(o.queue) - len(o.queue)
+	if available <= 0 {
+		return
+	}
+	if limit > available {
+		limit = available
+	}
+
 	for _, key := range o.store.SampleKeys(limit) {
-		o.Queue(key)
+		if !o.Queue(key) {
+			break
+		}
 	}
 }
 func (o *Optimizer) Stats() Stats {
-	return Stats{atomic.LoadUint64(&o.queued), atomic.LoadUint64(&o.rewritten), atomic.LoadUint64(&o.skipped), atomic.LoadUint64(&o.stale), atomic.LoadUint64(&o.dropped), len(o.queue)}
+	return Stats{
+		Queued:        atomic.LoadUint64(&o.queued),
+		Rewritten:     atomic.LoadUint64(&o.rewritten),
+		Skipped:       atomic.LoadUint64(&o.skipped),
+		Stale:         atomic.LoadUint64(&o.stale),
+		Dropped:       atomic.LoadUint64(&o.dropped),
+		QueueDepth:    len(o.queue),
+		QueueCapacity: cap(o.queue),
+	}
 }
 func (o *Optimizer) reserve(n int) bool {
 	o.mu.Lock()
@@ -152,8 +177,38 @@ func (o *Optimizer) retrySoon(key string) {
 	})
 }
 
+
+func (o *Optimizer) cpuPercentForBacklog(depth int) int {
+	cpu := o.config.CPUPercent
+	capacity := cap(o.queue)
+	if capacity <= 0 || depth <= 0 {
+		return cpu
+	}
+
+	// Heavy backlog: prioritize foreground command execution. With the default
+	// two workers on a four-core machine, 15% per worker keeps compression
+	// progress moving without consuming a large fraction of available CPU.
+	if depth*4 >= capacity {
+		if cpu > 15 {
+			return 15
+		}
+		return cpu
+	}
+
+	// Moderate backlog: start yielding before the queue becomes saturated.
+	if depth*16 >= capacity {
+		if cpu > 25 {
+			return 25
+		}
+	}
+
+	return cpu
+}
+
 func (o *Optimizer) worker() {
 	defer o.wg.Done()
+	var candidateScratch []byte
+	const maxRetainedCandidateScratch = 1 << 20
 	for {
 		select {
 		case <-o.ctx.Done():
@@ -176,11 +231,16 @@ func (o *Optimizer) worker() {
 				continue
 			}
 
-			candidate, ok := o.store.Candidate(key, rawBytes)
+			candidate, ok := o.store.CandidateInto(key, rawBytes, candidateScratch)
 			if !ok {
 				atomic.AddUint64(&o.skipped, 1)
 				o.release(rawBytes)
 				continue
+			}
+			if cap(candidate.Value) <= maxRetainedCandidateScratch {
+				candidateScratch = candidate.Value[:0]
+			} else {
+				candidateScratch = nil
 			}
 
 			// Give recently-written structured JSON a very short opportunity
@@ -195,16 +255,6 @@ func (o *Optimizer) worker() {
 				continue
 			}
 
-			if !o.store.MarkOptimizationAttempt(
-				key,
-				o.config.MinRewriteInterval,
-				o.config.MinAttemptInterval,
-			) {
-				o.release(rawBytes)
-				atomic.AddUint64(&o.skipped, 1)
-				continue
-			}
-
 			// The optimizer requires at least 16 bytes of absolute savings.
 			// If the current physical representation is already smaller than
 			// 16 bytes, no possible codec can satisfy that requirement.
@@ -215,18 +265,48 @@ func (o *Optimizer) worker() {
 			}
 
 			record := o.store.EncodeCandidate(candidate)
-			// Hysteresis requires at least 16 bytes and 12.5% improvement.
 			saving := candidate.EncodedBytes - len(record.Data)
-			if saving < 16 || saving*8 < candidate.EncodedBytes {
+
+			// A key that does not yet own optimizer metadata must also earn back
+			// that allocation. Otherwise enabling optimization can increase the
+			// total footprint even when the encoded payload is smaller.
+			requiredSaving := 16 + candidate.AdditionalMetadataBytes
+			if saving < requiredSaving || saving*8 < candidate.EncodedBytes {
 				atomic.AddUint64(&o.skipped, 1)
-			} else if o.store.Rewrite(candidate, record) {
+				o.release(rawBytes)
+				continue
+			}
+
+			// Record the attempt only after a representation has proven to be a
+			// net memory win. Sparse keys therefore stay metadata-free.
+			if !o.store.MarkOptimizationAttempt(
+				key,
+				o.config.MinRewriteInterval,
+				o.config.MinAttemptInterval,
+			) {
+				o.release(rawBytes)
+				atomic.AddUint64(&o.skipped, 1)
+				continue
+			}
+
+			if o.store.Rewrite(candidate, record) {
 				atomic.AddUint64(&o.rewritten, 1)
 			} else {
 				atomic.AddUint64(&o.stale, 1)
 			}
 			o.release(rawBytes)
-			// Duty-cycle throttling bounds worker activity by wall-clock work time.
-			pause := time.Since(start) * time.Duration(100-o.config.CPUPercent) / time.Duration(o.config.CPUPercent)
+
+			// Background optimization must not compete aggressively with a sustained
+			// write burst. A growing queue is the pressure signal: while backlog is
+			// high, yield below the configured steady-state CPU budget, then return
+			// to that budget as the queue drains. This defers work rather than
+			// guessing that queued values are incompressible.
+			cpuPercent := o.cpuPercentForBacklog(len(o.queue))
+
+			pause := time.Since(start) * time.Duration(100-cpuPercent) / time.Duration(cpuPercent)
+			if pause <= 0 {
+				continue
+			}
 			timer := time.NewTimer(pause)
 			select {
 			case <-o.ctx.Done():

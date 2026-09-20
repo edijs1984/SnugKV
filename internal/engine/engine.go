@@ -5,16 +5,14 @@ import (
 	"math"
 	"snugkv/internal/arena"
 	"snugkv/internal/codec"
-	"snugkv/internal/codec/jsonshape"
 	"snugkv/internal/index"
 	"strconv"
 	"time"
 )
 
 type entryMeta struct {
-	schema                                           *jsonshape.Schema
 	lastRewrite, lastOptimize, lastAccess, lastWrite activityStamp
-	revision                                         uint32
+	schemaID                                          uint32
 	reads, writes                                    uint8
 }
 
@@ -46,35 +44,6 @@ func cloneEntryMeta(meta *entryMeta) *entryMeta {
 	}
 	clone := *meta
 	return &clone
-}
-
-func entryRevision(e entry) uint32 {
-	if e.entryMeta == nil {
-		return 0
-	}
-	return e.entryMeta.revision
-}
-
-// bumpEntryRevision invalidates optimizer candidates for metadata-only logical
-// mutations such as EXPIRE/PERSIST. Optimizer candidates are short-lived; a
-// 32-bit per-key revision keeps the optional sidecar at 32 bytes while allowing
-// more than four billion mutations before wraparound.
-func bumpEntryRevision(e *entry) {
-	if e.entryMeta == nil {
-		return
-	}
-	e.entryMeta.revision++
-	if e.entryMeta.revision == 0 {
-		e.entryMeta.revision = 1
-	}
-}
-
-func nextEntryRevision(old entry) uint32 {
-	revision := entryRevision(old) + 1
-	if revision == 0 {
-		revision = 1
-	}
-	return revision
 }
 
 func isNativeContainerType(t ValueType) bool {
@@ -150,9 +119,9 @@ func NewWithOptions(options Options) (*Store, error) {
 		memory: accounting{
 			used:  base,
 			index: base,
-			max:   options.MaxMemory,
 		},
 	}
+	s.memory.max.Store(options.MaxMemory)
 	for i := range s.shards {
 		s.shards[i].data = *index.New[uint32]()
 	}
@@ -191,6 +160,137 @@ func (s *Store) Get(key string) ([]byte, bool) {
 		sh.set(key, e)
 	}
 	return s.decode(sh, e), true
+}
+
+// VisitRawString exposes an immutable raw string only for stores with encoding
+// disabled. The visitor runs while the owning shard is read-locked, so the arena
+// bytes stay valid without cloning. Missing, expired, encoded and native
+// container values return handled=false and use the ordinary GET path.
+func (s *Store) VisitRawString(key string, visit func([]byte) error) (handled bool, err error) {
+	if s.encoding {
+		return false, nil
+	}
+
+	hash := index.Hash(key)
+	sh := s.shardForHash(hash)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
+
+	e, ok := sh.getHashed(key, hash)
+	if !ok || sh.expired(key, e, s.now()) || isNativeContainerType(e.valueType) || e.codecID != codec.Raw {
+		return false, nil
+	}
+
+	return true, visit(sh.encoded(e))
+}
+
+// GetString performs the Redis string GET type check and value lookup under one
+// shard lock. wrongType is true only for native container values that GET must
+// reject; missing/expired keys return found=false.
+func (s *Store) GetStringInto(key string, dst []byte) (value []byte, found bool, wrongType bool) {
+	hash := index.Hash(key)
+	sh := s.shardForHash(hash)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	e, ok := sh.getHashed(key, hash)
+	if !ok {
+		return nil, false, false
+	}
+	now := s.now()
+	if sh.expired(key, e, now) {
+		return nil, false, false
+	}
+	if isNativeContainerType(e.valueType) {
+		return nil, false, true
+	}
+
+	if s.shouldTrackActivity(e) && e.entryMeta != nil {
+		meta := e.entryMeta
+		if meta.lastAccess.IsOlderThan(now, time.Minute) {
+			meta.reads = 0
+		}
+		meta.lastAccess = activityStampOf(now)
+		if meta.reads < ^uint8(0) {
+			meta.reads++
+		}
+		// entryMeta is shared by pointer with the stored entry. Updating the
+		// pointed-to metadata is sufficient; rewriting the entry/index on every
+		// GET only adds lock-held work.
+	}
+
+	return s.decodeInto(sh, e, dst), true, false
+}
+
+func (s *Store) GetStringBytesInto(key []byte, dst []byte) (value []byte, found bool, wrongType bool) {
+	return s.GetStringBytesIntoAt(key, dst, s.now())
+}
+
+func (s *Store) GetStringBytesIntoAt(key []byte, dst []byte, now time.Time) (value []byte, found bool, wrongType bool) {
+	hash := index.HashBytes(key)
+	sh := s.shardForHash(hash)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	e, ok := sh.getHashedBytes(key, hash)
+	if !ok {
+		return nil, false, false
+	}
+
+	if e.hasExpiry && sh.expired(string(key), e, now) {
+		return nil, false, false
+	}
+	if isNativeContainerType(e.valueType) {
+		return nil, false, true
+	}
+
+	if s.shouldTrackActivity(e) && e.entryMeta != nil {
+		meta := e.entryMeta
+		if meta.lastAccess.IsOlderThan(now, time.Minute) {
+			meta.reads = 0
+		}
+		meta.lastAccess = activityStampOf(now)
+		if meta.reads < ^uint8(0) {
+			meta.reads++
+		}
+	}
+
+	return s.decodeInto(sh, e, dst), true, false
+}
+
+func (s *Store) GetString(key string) (value []byte, found bool, wrongType bool) {
+	hash := index.Hash(key)
+	sh := s.shardForHash(hash)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	e, ok := sh.getHashed(key, hash)
+	if !ok {
+		return nil, false, false
+	}
+	now := s.now()
+	if sh.expired(key, e, now) {
+		return nil, false, false
+	}
+
+	if isNativeContainerType(e.valueType) {
+		return nil, false, true
+	}
+
+	// Keep the same activity accounting semantics as Get.
+	if s.shouldTrackActivity(e) && e.entryMeta != nil {
+		meta := e.entryMeta
+		if meta.lastAccess.IsOlderThan(now, time.Minute) {
+			meta.reads = 0
+		}
+		meta.lastAccess = activityStampOf(now)
+		if meta.reads < ^uint8(0) {
+			meta.reads++
+		}
+		// entryMeta is shared by pointer with the stored entry.
+	}
+
+	return s.decode(sh, e), true, false
 }
 func (s *Store) Delete(key string) bool {
 	sh := s.shardFor(key)

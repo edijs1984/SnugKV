@@ -2,6 +2,8 @@ package codec
 
 import (
 	"bytes"
+	"errors"
+	"sync"
 	"testing"
 )
 
@@ -143,5 +145,114 @@ func TestBooleanRejectsInvalidStoredForms(t *testing.T) {
 		if _, err := r.Decode(rec, 16); err == nil {
 			t.Fatalf("accepted invalid bool record: %+v", rec)
 		}
+	}
+}
+
+
+func TestGeneralCompressionConcurrent(t *testing.T) {
+	r := NewRegistry()
+	value := bytes.Repeat([]byte("concurrent compression payload "), 256)
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 16)
+
+	for worker := 0; worker < 8; worker++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 100; i++ {
+				for _, id := range []ID{LZ4, Zstandard} {
+					c := r.codecs[id]
+					data, ok := c.Encode(value)
+					if !ok {
+						errs <- errors.New("compression rejected")
+						return
+					}
+					out, err := c.Decode(data, len(value))
+					if err != nil || !bytes.Equal(out, value) {
+						if err == nil {
+							err = errors.New("compression round trip mismatch")
+						}
+						errs <- err
+						return
+					}
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+}
+
+func TestDecodeIntoReusesRawBuffer(t *testing.T) {
+	r := NewRegistry()
+	value := []byte("raw decode into")
+	rec := Record{ID: Raw, RawLength: len(value), Data: value}
+	scratch := make([]byte, 0, len(value))
+
+	out, err := r.DecodeInto(rec, len(value), scratch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(out, value) {
+		t.Fatalf("round trip mismatch: got %q want %q", out, value)
+	}
+	if len(out) > 0 && &out[0] != &scratch[:cap(scratch)][0] {
+		t.Fatal("raw DecodeInto did not reuse provided buffer")
+	}
+}
+
+func TestDecodeIntoReusesCompressionBuffer(t *testing.T) {
+	r := NewRegistry()
+	value := bytes.Repeat([]byte("decode-into-reuse-"), 128)
+
+	for _, id := range []ID{LZ4, Zstandard} {
+		codec := r.codecs[id]
+		data, ok := codec.Encode(value)
+		if !ok {
+			t.Fatalf("codec %d rejected", id)
+		}
+
+		rec := Record{ID: id, RawLength: len(value), Data: data}
+		scratch := make([]byte, 0, len(value))
+		out, err := r.DecodeInto(rec, len(value), scratch)
+		if err != nil {
+			t.Fatalf("codec %d: %v", id, err)
+		}
+		if !bytes.Equal(out, value) {
+			t.Fatalf("codec %d round trip mismatch", id)
+		}
+		if len(out) > 0 && &out[0] != &scratch[:cap(scratch)][0] {
+			t.Fatalf("codec %d did not reuse provided buffer", id)
+		}
+	}
+}
+
+
+func TestEncodeGeneralBorrowedRawAliasesInput(t *testing.T) {
+	r := NewRegistry()
+	value := make([]byte, 256)
+	for i := range value {
+		value[i] = byte(i)
+	}
+
+	record := r.EncodeGeneralBorrowed(value, false)
+	if record.ID != Raw {
+		t.Fatalf("codec=%d want raw", record.ID)
+	}
+	if len(record.Data) == 0 || &record.Data[0] != &value[0] {
+		t.Fatal("borrowed raw fallback unexpectedly cloned input")
+	}
+
+	owned := r.EncodeGeneral(value, false)
+	if owned.ID != Raw {
+		t.Fatalf("owned codec=%d want raw", owned.ID)
+	}
+	if len(owned.Data) == 0 || &owned.Data[0] == &value[0] {
+		t.Fatal("ownership-preserving EncodeGeneral aliased input")
 	}
 }

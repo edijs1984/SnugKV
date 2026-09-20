@@ -5,12 +5,54 @@ import (
 	"errors"
 	"github.com/klauspost/compress/zstd"
 	"github.com/pierrec/lz4/v4"
+	"sync"
 )
 
 const (
 	LZ4       ID = 9
 	Zstandard ID = 10
 )
+
+const (
+	maxPooledLZ4Scratch = 4 << 20
+	zstdDecoderMaxMemory = 64 << 20
+)
+
+var lz4ScratchPool = sync.Pool{
+	New: func() any {
+		return make([]byte, 0, 64<<10)
+	},
+}
+
+var zstdEncoderPool = sync.Pool{
+	New: func() any {
+		encoder, err := zstd.NewWriter(
+			nil,
+			zstd.WithEncoderConcurrency(1),
+			zstd.WithEncoderLevel(zstd.SpeedFastest),
+			zstd.WithWindowSize(64<<10),
+		)
+		if err != nil {
+			panic(err)
+		}
+		return encoder
+	},
+}
+
+var zstdDecoderPool = sync.Pool{
+	New: func() any {
+		decoder, err := zstd.NewReader(
+			nil,
+			zstd.WithDecoderConcurrency(1),
+			zstd.WithDecoderMaxMemory(zstdDecoderMaxMemory),
+			zstd.WithDecodeAllCapLimit(true),
+		)
+		if err != nil {
+			panic(err)
+		}
+		return decoder
+	},
+}
 
 type lz4Codec struct{}
 
@@ -20,12 +62,29 @@ func (lz4Codec) Encode(src []byte) ([]byte, bool) {
 	if len(src) < 256 {
 		return nil, false
 	}
-	dst := make([]byte, lz4.CompressBlockBound(len(src)))
-	n, err := lz4.CompressBlock(src, dst, nil)
+
+	bound := lz4.CompressBlockBound(len(src))
+	scratch := lz4ScratchPool.Get().([]byte)
+	if cap(scratch) < bound {
+		scratch = make([]byte, bound)
+	} else {
+		scratch = scratch[:bound]
+	}
+
+	n, err := lz4.CompressBlock(src, scratch, nil)
 	if err != nil || n == 0 || n*8 > len(src)*7 {
+		if cap(scratch) <= maxPooledLZ4Scratch {
+			lz4ScratchPool.Put(scratch[:0])
+		}
 		return nil, false
 	}
-	return bytes.Clone(dst[:n]), true
+
+	out := make([]byte, n)
+	copy(out, scratch[:n])
+	if cap(scratch) <= maxPooledLZ4Scratch {
+		lz4ScratchPool.Put(scratch[:0])
+	}
+	return out, true
 }
 func (lz4Codec) Decode(src []byte, n int) ([]byte, error) {
 	out := make([]byte, n)
@@ -38,6 +97,21 @@ func (lz4Codec) Decode(src []byte, n int) ([]byte, error) {
 	}
 	return out, nil
 }
+func (lz4Codec) DecodeInto(src []byte, n int, dst []byte) ([]byte, error) {
+	if cap(dst) < n {
+		dst = make([]byte, n)
+	} else {
+		dst = dst[:n]
+	}
+	size, err := lz4.UncompressBlock(src, dst)
+	if err != nil {
+		return nil, err
+	}
+	if size != n {
+		return nil, errors.New("LZ4 length mismatch")
+	}
+	return dst, nil
+}
 
 type zstdCodec struct{}
 
@@ -47,28 +121,44 @@ func (zstdCodec) Encode(src []byte) ([]byte, bool) {
 	if len(src) < 1024 {
 		return nil, false
 	}
-	encoder, err := zstd.NewWriter(nil, zstd.WithEncoderConcurrency(1), zstd.WithEncoderLevel(zstd.SpeedFastest), zstd.WithWindowSize(64<<10))
-	if err != nil {
-		return nil, false
-	}
-	defer encoder.Close()
+
+	encoder := zstdEncoderPool.Get().(*zstd.Encoder)
 	out := encoder.EncodeAll(src, nil)
+	zstdEncoderPool.Put(encoder)
+
 	if len(out)*5 > len(src)*4 {
 		return nil, false
 	}
 	return out, true
 }
 func (zstdCodec) Decode(src []byte, n int) ([]byte, error) {
-	bound := uint64(n)
-	if bound < 1<<20 {
-		bound = 1 << 20
+	if n < 0 || n > zstdDecoderMaxMemory {
+		return nil, errors.New("Zstandard length out of range")
 	}
-	decoder, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(1), zstd.WithDecoderMaxMemory(bound), zstd.WithDecodeAllCapLimit(true))
+
+	decoder := zstdDecoderPool.Get().(*zstd.Decoder)
+	out, err := decoder.DecodeAll(src, make([]byte, 0, n))
+	zstdDecoderPool.Put(decoder)
 	if err != nil {
 		return nil, err
 	}
-	defer decoder.Close()
-	out, err := decoder.DecodeAll(src, make([]byte, 0, n))
+	if len(out) != n {
+		return nil, errors.New("Zstandard length mismatch")
+	}
+	return out, nil
+}
+func (zstdCodec) DecodeInto(src []byte, n int, dst []byte) ([]byte, error) {
+	if n < 0 || n > zstdDecoderMaxMemory {
+		return nil, errors.New("Zstandard length out of range")
+	}
+	if cap(dst) < n {
+		dst = make([]byte, 0, n)
+	} else {
+		dst = dst[:0]
+	}
+	decoder := zstdDecoderPool.Get().(*zstd.Decoder)
+	out, err := decoder.DecodeAll(src, dst)
+	zstdDecoderPool.Put(decoder)
 	if err != nil {
 		return nil, err
 	}
@@ -85,6 +175,7 @@ func alreadyCompressed(src []byte) bool {
 	}
 	return false
 }
+
 
 type CompressionCandidate struct {
 	Name  string
@@ -128,9 +219,21 @@ func (r *Registry) CompressionCandidates(src []byte) []CompressionCandidate {
 	return out
 }
 
-// EncodeGeneral is called only by the optimizer, never ordinary SET.
+// EncodeGeneral is the ownership-preserving form used by callers that need
+// the returned raw record to outlive src.
 func (r *Registry) EncodeGeneral(src []byte, cold bool) Record {
-	best := Record{ID: Raw, RawLength: len(src), Data: bytes.Clone(src)}
+	record := r.EncodeGeneralBorrowed(src, cold)
+	if record.ID == Raw {
+		record.Data = bytes.Clone(record.Data)
+	}
+	return record
+}
+
+// EncodeGeneralBorrowed evaluates background compression without cloning the
+// raw fallback. The caller must keep src alive and unchanged while inspecting
+// the returned record. Successful compressed records own their Data.
+func (r *Registry) EncodeGeneralBorrowed(src []byte, cold bool) Record {
+	best := Record{ID: Raw, RawLength: len(src), Data: src}
 	if len(src) < 256 || alreadyCompressed(src) {
 		return best
 	}

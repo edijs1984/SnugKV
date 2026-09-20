@@ -121,8 +121,19 @@ func persistenceDiff(before, after []persistence.Record) []persistence.Record {
 	return changes
 }
 
+func (s *Server) hasWatchSessionsLocked() bool {
+	return s.watchSessions.Load() != 0
+}
+
 func (s *Server) refreshWatchesLocked() {
-	registry := transactionRegistryForServer(s)
+	existing, ok := transactionWatchRegistries.Load(s)
+	if !ok {
+		return
+	}
+	registry := existing.(*transactionWatchRegistry)
+	if len(registry.sessions) == 0 {
+		return
+	}
 	for session := range registry.sessions {
 		if session.watchDirty || len(session.watched) == 0 {
 			continue
@@ -144,7 +155,10 @@ func (s *Server) refreshWatchesLocked() {
 
 func (session *transactionSession) clearWatchLocked() {
 	registry := transactionRegistryForServer(session.server)
-	delete(registry.sessions, session)
+	if _, existed := registry.sessions[session]; existed {
+		delete(registry.sessions, session)
+		session.server.watchSessions.Add(-1)
+	}
 	session.watched = make(map[string]persistence.Record)
 	session.watchDirty = false
 }
@@ -183,7 +197,11 @@ func (session *transactionSession) watch(keys [][]byte) ([]byte, error) {
 		for _, record := range records {
 			session.watched[string(record.Key)] = record
 		}
-		transactionRegistryForServer(s).sessions[session] = struct{}{}
+		registry := transactionRegistryForServer(s)
+		if _, existed := registry.sessions[session]; !existed {
+			registry.sessions[session] = struct{}{}
+			s.watchSessions.Add(1)
+		}
 	}
 	return []byte("+OK\r\n"), nil
 }
@@ -491,6 +509,9 @@ func (session *transactionSession) handleCommand(args [][]byte) (bool, []byte, e
 
 func (s *Server) observeTransactionCommand(args [][]byte, started time.Time, err error) {
 	atomic.AddUint64(&s.commands, 1)
+	if atomic.LoadUint32(&s.metricsEnabled) == 0 {
+		return
+	}
 	name := "unknown"
 	if len(args) > 0 {
 		candidate := strings.ToUpper(string(args[0]))
@@ -502,7 +523,10 @@ func (s *Server) observeTransactionCommand(args [][]byte, started time.Time, err
 }
 
 func (s *Server) executeTransactionConnectionCommand(session *transactionSession, args [][]byte) (handled bool, response []byte, err error) {
-	started := time.Now()
+	var started time.Time
+	if atomic.LoadUint32(&s.metricsEnabled) != 0 {
+		started = time.Now()
+	}
 	handled, response, err = session.handleCommand(args)
 	if handled {
 		s.observeTransactionCommand(args, started, err)

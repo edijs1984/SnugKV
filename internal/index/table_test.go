@@ -7,6 +7,77 @@ import (
 	"unsafe"
 )
 
+
+func TestDecimalKeyHashesDoNotClusterLowBuckets(t *testing.T) {
+	const buckets = 2048
+	const keys = 100000
+
+	counts := make([]int, buckets)
+	for i := 0; i < keys; i++ {
+		key := fmt.Sprintf("key:%012d", i)
+		counts[int(Hash(key)&(buckets-1))]++
+	}
+
+	max := 0
+	for _, n := range counts {
+		if n > max {
+			max = n
+		}
+	}
+
+	// Average occupancy is about 48.8 keys/bucket. A 4x ceiling is deliberately
+	// loose enough to avoid testing a particular hash implementation while still
+	// catching severe low-bit clustering.
+	if max > 196 {
+		t.Fatalf("decimal-key bucket clustering too high: max=%d", max)
+	}
+}
+
+func TestByteLookupMatchesStringLookup(t *testing.T) {
+	table := New[uint32]()
+	keys := []string{"alpha", "binary:\x00key", "", "longer:key:1234567890"}
+
+	for i, key := range keys {
+		table.Set(key, uint32(i+1))
+		bytesKey := []byte(key)
+		if got, want := HashBytes(bytesKey), Hash(key); got != want {
+			t.Fatalf("HashBytes(%q)=%d want %d", key, got, want)
+		}
+		got, ok := table.GetHashedBytes(bytesKey, HashBytes(bytesKey))
+		if !ok || got != uint32(i+1) {
+			t.Fatalf("byte lookup %q got=%d ok=%t", key, got, ok)
+		}
+	}
+
+	missing := []byte("missing")
+	if _, ok := table.GetHashedBytes(missing, HashBytes(missing)); ok {
+		t.Fatal("missing byte key found")
+	}
+}
+
+func TestByteLookupHandlesCollisionsAndEmptyKey(t *testing.T) {
+	table := New[uint32]()
+	const hash = uint64(7)
+
+	// Use a non-tiny table so this test isolates collision probing. The helper
+	// below intentionally bypasses normal Set bookkeeping, including tinyFilter.
+	table.slots = make([]slot[uint32], initialCapacity*2)
+	for i, key := range []string{"", "alpha", "beta", "gamma"} {
+		testInsertHashed(table, key, uint32(i+1), hash)
+	}
+
+	for i, key := range []string{"", "alpha", "beta", "gamma"} {
+		got, ok := table.GetHashedBytes([]byte(key), hash)
+		if !ok || got != uint32(i+1) {
+			t.Fatalf("byte collision lookup %q got=%d ok=%t", key, got, ok)
+		}
+	}
+
+	if _, ok := table.GetHashedBytes([]byte("missing"), hash); ok {
+		t.Fatal("missing colliding byte key found")
+	}
+}
+
 func TestPackedSlotIs16Bytes(t *testing.T) {
 	table := New[uint32]()
 	if got := table.EntryBytes(); got != 16 {
@@ -147,7 +218,7 @@ func testInsertHashed(table *Table[uint32], key string, value uint32, hash uint6
 		switch s.state() {
 		case stateLive:
 			if s.keyLen() == len(key) && s.key() == key {
-				s.setLive(key, value)
+				s.setLive(key, value, hash)
 				return
 			}
 		case stateDeleted:
@@ -158,13 +229,13 @@ func testInsertHashed(table *Table[uint32], key string, value uint32, hash uint6
 			if deleted >= 0 {
 				s = &table.slots[deleted]
 			}
-			s.setLive(key, value)
+			s.setLive(key, value, hash)
 			table.count++
 			return
 		}
 	}
 	if deleted >= 0 {
-		table.slots[deleted].setLive(key, value)
+		table.slots[deleted].setLive(key, value, hash)
 		table.count++
 		return
 	}
@@ -391,5 +462,44 @@ func TestPackedSlotTombstonesRemainCollisionSafe(t *testing.T) {
 	}
 	if _, ok := testGetHashed(table, "beta", hash); ok {
 		t.Fatal("deleted colliding key returned")
+	}
+}
+
+
+func TestGetHashedMatchesGet(t *testing.T) {
+	tbl := New[uint32]()
+	keys := []string{"alpha", "beta", "bench:000000001", "bench:000000999"}
+	for i, key := range keys {
+		tbl.Set(key, uint32(i+1))
+	}
+	for i, key := range keys {
+		want := uint32(i+1)
+		got, ok := tbl.GetHashed(key, Hash(key))
+		if !ok || got != want {
+			t.Fatalf("GetHashed(%q)=(%d,%t) want=(%d,true)", key, got, ok, want)
+		}
+	}
+	if _, ok := tbl.GetHashed("missing", Hash("missing")); ok {
+		t.Fatal("GetHashed missing key unexpectedly found")
+	}
+}
+
+
+func TestSetKnownHashedInsertAndUpdate(t *testing.T) {
+	table := New[uint32]()
+	key := "known-hash-key"
+	hash := Hash(key)
+
+	table.SetKnownHashed(key, 7, hash, false)
+	if got, ok := table.GetHashed(key, hash); !ok || got != 7 {
+		t.Fatalf("insert got=%d ok=%t", got, ok)
+	}
+
+	table.SetKnownHashed(key, 9, hash, true)
+	if got, ok := table.GetHashed(key, hash); !ok || got != 9 {
+		t.Fatalf("update got=%d ok=%t", got, ok)
+	}
+	if table.Len() != 1 {
+		t.Fatalf("len=%d want=1", table.Len())
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"snugkv/internal/engine"
 	"sort"
 	"sync"
+	"sync/atomic"
 )
 
 type pubSubHub struct {
@@ -20,6 +21,7 @@ type pubSubSession struct {
 	shardChannels map[string]struct{}
 	send          func([]byte) error
 	closed        bool
+	activeState   atomic.Bool
 }
 
 var pubSubHubs sync.Map // map[*Server]*pubSubHub
@@ -76,6 +78,7 @@ func (h *pubSubHub) removeSessionLocked(session *pubSubSession) {
 	session.patterns = make(map[string]struct{})
 	session.shardChannels = make(map[string]struct{})
 	session.closed = true
+	session.activeState.Store(false)
 }
 
 func (session *pubSubSession) close() {
@@ -93,11 +96,13 @@ func (session *pubSubSession) shardSubscriptionCountLocked() int {
 	return len(session.shardChannels)
 }
 
+func (session *pubSubSession) refreshActiveLocked() {
+	session.activeState.Store(!session.closed &&
+		(session.subscriptionCountLocked() > 0 || session.shardSubscriptionCountLocked() > 0))
+}
+
 func (session *pubSubSession) active() bool {
-	h := session.hub
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return !session.closed && (session.subscriptionCountLocked() > 0 || session.shardSubscriptionCountLocked() > 0)
+	return session.activeState.Load()
 }
 
 func (h *pubSubHub) publish(channel, message []byte) int64 {

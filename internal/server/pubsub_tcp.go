@@ -1,8 +1,11 @@
 package server
 
 import (
+	"bufio"
 	"net"
+	"strconv"
 	"sync"
+	"time"
 )
 
 // serializedResponseWriter serializes complete RESP responses, not individual
@@ -11,11 +14,85 @@ import (
 type serializedResponseWriter struct {
 	server *TCPServer
 	conn   net.Conn
+	buf    *bufio.Writer
 	mu     sync.Mutex
 }
 
+func newSerializedResponseWriter(server *TCPServer, conn net.Conn) *serializedResponseWriter {
+	return &serializedResponseWriter{
+		server: server,
+		conn:   conn,
+		buf:    bufio.NewWriterSize(conn, 256<<10),
+	}
+}
+
+// write is used for asynchronous pushes and other responses that must become
+// visible immediately.
 func (w *serializedResponseWriter) write(response []byte) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+
+	if err := w.flushLocked(); err != nil {
+		return err
+	}
 	return w.server.write(w.conn, response)
+}
+
+// writeBuffered appends an ordinary command response to the per-connection
+// output buffer. The TCP command loop flushes when the currently buffered input
+// pipeline has been drained.
+func (w *serializedResponseWriter) writeBuffered(response []byte) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if len(response) > w.buf.Available() {
+		if err := w.conn.SetWriteDeadline(time.Now().Add(time.Duration(w.server.config.WriteTimeoutMS) * time.Millisecond)); err != nil {
+			return err
+		}
+	}
+	_, err := w.buf.Write(response)
+	return err
+}
+
+func (w *serializedResponseWriter) writeBulkBuffered(payload []byte) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	// RESP bulk header fits in this stack buffer for every supported value size.
+	var header [32]byte
+	header[0] = 36
+	framed := strconv.AppendInt(header[:1], int64(len(payload)), 10)
+	framed = append(framed, 13, 10)
+
+	total := len(framed) + len(payload) + 2
+	if total > w.buf.Available() {
+		if err := w.conn.SetWriteDeadline(time.Now().Add(time.Duration(w.server.config.WriteTimeoutMS) * time.Millisecond)); err != nil {
+			return err
+		}
+	}
+
+	if _, err := w.buf.Write(framed); err != nil {
+		return err
+	}
+	if _, err := w.buf.Write(payload); err != nil {
+		return err
+	}
+	_, err := w.buf.Write([]byte{13, 10})
+	return err
+}
+
+func (w *serializedResponseWriter) flush() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.flushLocked()
+}
+
+func (w *serializedResponseWriter) flushLocked() error {
+	if w.buf.Buffered() == 0 {
+		return nil
+	}
+	if err := w.conn.SetWriteDeadline(time.Now().Add(time.Duration(w.server.config.WriteTimeoutMS) * time.Millisecond)); err != nil {
+		return err
+	}
+	return w.buf.Flush()
 }

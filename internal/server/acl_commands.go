@@ -105,12 +105,26 @@ func (s *Server) authorizeConnectionCommand(
 		username = session.username
 	}
 
-	user, ok := s.acl.GetUser(username)
+	s.acl.mu.RLock()
+	user, ok := s.acl.users[username]
 	if !ok || !user.Enabled {
+		s.acl.mu.RUnlock()
 		return errors.New(
 			"NOAUTH Authentication required.",
 		)
 	}
+	// Common unrestricted-user fast path. The default Redis-compatible user
+	// normally grants all commands, keys and channels with no selectors. In
+	// that case there is nothing command-specific to evaluate.
+	if user.AllCommands &&
+		len(user.CommandAllow) == 0 &&
+		user.AllKeys &&
+		user.AllChannels &&
+		len(user.Selectors) == 0 {
+		s.acl.mu.RUnlock()
+		return nil
+	}
+	defer s.acl.mu.RUnlock()
 
 	if aclUserAllowsCommand(user, args) {
 		return nil

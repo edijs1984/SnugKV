@@ -23,7 +23,7 @@ func (s *Server) withExecutionACLContextLocked(
 
 	if session != nil && session.authenticated && session.username != "" {
 		s.executionACLUsername = session.username
-		s.executionACLArgs = cloneCommandArgs(args)
+		s.executionACLArgs = args
 	}
 
 	defer func() {
@@ -43,7 +43,7 @@ func (s *Server) withNestedExecutionCommand(
 	}
 
 	previousArgs := s.executionACLArgs
-	s.executionACLArgs = cloneCommandArgs(args)
+	s.executionACLArgs = args
 	defer func() {
 		s.executionACLArgs = previousArgs
 	}()

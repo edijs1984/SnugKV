@@ -1,3 +1,28 @@
+## 1M Redis scalar benchmark / GET fast-path tuning
+
+- Added a black-box RESP2/TCP benchmark path for true pipelined GET; the previous
+  GET workload was sequential request/response despite reporting a pipeline flag.
+- Current 1,000,000-key / 256-byte repetitive development reference: Redis 8.2
+  clean run 429,664 GET/s; SnugKV raw 526,951 GET/s; optimized SnugKV latest three-run average 599,559 GET/s (best 612,393) after
+  byte-key lookup, buffered RESP length parsing, direct hot-codec DecodeInto
+  dispatch, and reusable per-connection GET key decoding; best p50/p95/p99 was
+  5.95/9.88/14.30 us.
+- Optimized accounted memory settles around 162.64 MB versus Redis reported
+  memory around 393.26 MB on this deliberately repetitive workload, about 58.6%
+  lower. This is workload-specific and not representative of incompressible data.
+- GET tuning completed so far: true pipelining, sparse optimizer metadata,
+  optimizer admission prefilter, scalar codec bypass for long values, direct
+  decoded bulk framing, reusable per-connection decode scratch, single GET clock
+  read, known-GET TCP dispatch bypass, and removal of the redundant shard entry
+  rewrite after pointer-based activity metadata updates.
+- Three consecutive SnugKV runs now average 599,559 GET/s versus 435,561 GET/s across
+  three Redis 8.2 runs in the same comparison window, about 25.7% higher on this
+  exact workload. Machine load caused substantial variance during tuning,
+  so repeated clean runs remain mandatory before product claims.
+- The next profiling target is the remaining key lookup conversion/index path,
+  followed by codec decode and RESP parsing only where measurements justify it.
+- Detailed methodology and caveats are recorded in `benchmarks/README.md`.
+
 ## Redis MIGRATE
 
 - Implemented Redis 8.2-compatible `MIGRATE` for the audited standalone surface.
@@ -460,6 +485,32 @@ Recent real-server verification includes:
   from the last successful delivery;
 - multi-group `KEEPREF` / `DELREF` / `ACKED` behavior for trimming/deletion,
   including dangling PEL cleanup through `XDELEX` / `XACKDEL`.
+
+## Redis-wire SET/load optimization milestone — 2026-09-20
+
+The million-key RESP2/TCP load path was profiled and optimized without removing
+encoding/compression features. The completed work includes concurrent load-worker
+support in `cmd/rediswirebench`, transient raw-clone removal on SET, a reusable
+buffered plain-SET decoder, reusable optimizer candidate scratch, borrowed raw
+optimizer fallbacks, known-hash indexed publication, and backlog-aware optimizer
+CPU yielding.
+
+On the 4-logical-CPU development machine with 1,000,000 random 256-byte values,
+8 workers, and pipeline depth 256, the final five-run SnugKV median was 315,256
+SET/s (best 318,331) versus the recorded Redis 8.2 reference of about 318,145
+SET/s. SnugKV's engine-accounted load delta was 362.27 B/key versus Redis's
+~392.39 B/key on that exact workload. Three sustained 5,000,000-key SnugKV runs
+had a 299,270 SET/s median and 352.68 B/key load delta.
+
+Allocation profiling during the work reduced 1M-load allocation traffic from
+roughly 1.38 GB to about 467 MB. The remaining dominant allocation sites are
+primarily persistent arena/index/entry growth rather than request/optimizer
+garbage. CPU profiling still shows background compression as a meaningful cost
+on intentionally incompressible values, so future tuning should preserve the
+memory feature set and focus on scheduling/admission rather than benchmark-only
+feature disabling.
+
+See `benchmarks/README.md` for exact runs, caveats, and reproduction details.
 
 ## Native datatype benchmark snapshot
 

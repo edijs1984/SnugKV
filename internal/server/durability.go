@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"errors"
 	"snugkv/internal/persistence"
 	"strings"
@@ -50,15 +51,17 @@ func (s *Server) executeWithCancelSession(
 	session *authSession,
 ) (response []byte, resultErr error) {
 	atomic.AddUint64(&s.commands, 1)
-	start := time.Now()
-	name := "unknown"
-	if len(args) > 0 {
-		candidate := strings.ToUpper(string(args[0]))
-		if _, ok := commandTable[candidate]; ok {
-			name = candidate
+	if atomic.LoadUint32(&s.metricsEnabled) != 0 {
+		start := time.Now()
+		name := "unknown"
+		if len(args) > 0 {
+			candidate := strings.ToUpper(string(args[0]))
+			if _, ok := commandTable[candidate]; ok {
+				name = candidate
+			}
 		}
+		defer func() { s.metrics.Observe(name, time.Since(start), resultErr != nil) }()
 	}
-	defer func() { s.metrics.Observe(name, time.Since(start), resultErr != nil) }()
 
 	// Redis allows FUNCTION STATS while a function is busy. It therefore cannot
 	// wait on durableMu, which is intentionally held for the whole FCALL. HELP is
@@ -82,6 +85,173 @@ func (s *Server) executeWithCancelSession(
 	return s.executeDurableForSession(args, session)
 }
 
+// executeAuthorizedConcurrentRawGet keeps the raw value in the engine arena and
+// lets the TCP layer frame it directly into its existing connection buffer.
+// It is intentionally limited to encoding-disabled stores; encoded values keep
+// the ordinary GET path and its activity/codec semantics.
+func (s *Server) executeAuthorizedConcurrentRawGet(
+	args [][]byte,
+	writeBulk func([]byte) error,
+) (handled bool, err error) {
+	if len(args) != 2 ||
+		!bytes.EqualFold(args[0], []byte("GET")) ||
+		s.journal != nil ||
+		atomic.LoadUint32(&s.metricsEnabled) != 0 {
+		return false, nil
+	}
+
+	s.durableMu.RLock()
+	if s.hasWatchSessionsLocked() {
+		s.durableMu.RUnlock()
+		return false, nil
+	}
+
+	handled, err = s.store.VisitRawString(string(args[1]), func(value []byte) error {
+		atomic.AddUint64(&s.commands, 1)
+		return writeBulk(value)
+	})
+	s.durableMu.RUnlock()
+
+	return handled, err
+}
+
+func (s *Server) executeAuthorizedConcurrentKnownGetInto(
+	key []byte,
+	dst []byte,
+) (value []byte, found bool, handled bool, err error) {
+	return s.executeAuthorizedConcurrentKnownGetIntoAt(key, dst, time.Time{})
+}
+
+func (s *Server) executeAuthorizedConcurrentKnownGetIntoAt(
+	key []byte,
+	dst []byte,
+	now time.Time,
+) (value []byte, found bool, handled bool, err error) {
+	if s.journal != nil ||
+		atomic.LoadUint32(&s.metricsEnabled) != 0 {
+		return nil, false, false, nil
+	}
+
+	s.durableMu.RLock()
+	if s.hasWatchSessionsLocked() {
+		s.durableMu.RUnlock()
+		return nil, false, false, nil
+	}
+
+	var wrongType bool
+	if now.IsZero() {
+		value, found, wrongType = s.store.GetStringBytesInto(key, dst)
+	} else {
+		value, found, wrongType = s.store.GetStringBytesIntoAt(key, dst, now)
+	}
+	s.durableMu.RUnlock()
+
+	atomic.AddUint64(&s.commands, 1)
+	if wrongType {
+		return nil, false, true, errWrongType
+	}
+	return value, found, true, nil
+}
+
+func (s *Server) executeAuthorizedConcurrentGetInto(
+	args [][]byte,
+	dst []byte,
+) (value []byte, found bool, handled bool, err error) {
+	if len(args) != 2 ||
+		!bytes.EqualFold(args[0], []byte("GET")) ||
+		s.journal != nil ||
+		atomic.LoadUint32(&s.metricsEnabled) != 0 {
+		return nil, false, false, nil
+	}
+
+	s.durableMu.RLock()
+	if s.hasWatchSessionsLocked() {
+		s.durableMu.RUnlock()
+		return nil, false, false, nil
+	}
+
+	value, found, wrongType := s.store.GetStringInto(string(args[1]), dst)
+	s.durableMu.RUnlock()
+
+	atomic.AddUint64(&s.commands, 1)
+	if wrongType {
+		return nil, false, true, errWrongType
+	}
+	return value, found, true, nil
+}
+
+// executeAuthorizedConcurrentGetValue serves a previously ACL-authorized plain
+// GET without formatting the successful bulk response. The TCP fast path can
+// frame caller-owned decoded bytes directly into its existing connection buffer,
+// avoiding a second value-sized allocation and copy after codec decode.
+func (s *Server) executeAuthorizedConcurrentGetValue(args [][]byte) (value []byte, found bool, handled bool, err error) {
+	if len(args) != 2 ||
+		!bytes.EqualFold(args[0], []byte("GET")) ||
+		s.journal != nil ||
+		atomic.LoadUint32(&s.metricsEnabled) != 0 {
+		return nil, false, false, nil
+	}
+
+	s.durableMu.RLock()
+	if s.hasWatchSessionsLocked() {
+		s.durableMu.RUnlock()
+		return nil, false, false, nil
+	}
+
+	value, found, wrongType := s.store.GetString(string(args[1]))
+	s.durableMu.RUnlock()
+
+	atomic.AddUint64(&s.commands, 1)
+	if wrongType {
+		return nil, false, true, errWrongType
+	}
+	return value, found, true, nil
+}
+
+// executeAuthorizedConcurrentGet preserves the formatted-response helper used
+// by in-process callers and tests. TCP uses executeAuthorizedConcurrentGetValue
+// so successful GETs do not copy the decoded value into another response slice.
+func (s *Server) executeAuthorizedConcurrentGet(args [][]byte) (response []byte, handled bool, err error) {
+	value, found, handled, err := s.executeAuthorizedConcurrentGetValue(args)
+	if !handled || err != nil {
+		return nil, handled, err
+	}
+	return optionalBulk(value, found), true, nil
+}
+
+// executeAuthorizedConcurrentSet serves a previously ACL-authorized plain SET
+// without passing through the generic function/blocking/pressure dispatch stack.
+// It is only used when persistence, metrics, WATCH and maxmemory semantics do not
+// require the ordinary durability/pressure path.
+func (s *Server) executeAuthorizedConcurrentSet(args [][]byte) (response []byte, handled bool, err error) {
+	if len(args) != 3 ||
+		!bytes.EqualFold(args[0], []byte("SET")) ||
+		s.journal != nil ||
+		atomic.LoadUint32(&s.metricsEnabled) != 0 ||
+		s.store.MaxMemory() != 0 {
+		return nil, false, nil
+	}
+
+	s.durableMu.RLock()
+	if s.hasWatchSessionsLocked() {
+		s.durableMu.RUnlock()
+		return nil, false, nil
+	}
+
+	key := string(args[1])
+	setErr := s.store.SetPlain(key, args[2])
+	s.durableMu.RUnlock()
+
+	atomic.AddUint64(&s.commands, 1)
+	if setErr != nil {
+		return nil, true, setErr
+	}
+	if s.optimizer != nil && s.store.ShouldQueueOptimization(args[2]) {
+		s.optimizer.Queue(key)
+	}
+	return []byte("+OK\r\n"), true, nil
+}
+
 func (s *Server) executeDurable(args [][]byte) ([]byte, error) {
 	return s.executeDurableForSession(args, nil)
 }
@@ -90,6 +260,20 @@ func (s *Server) executeDurableForSession(
 	args [][]byte,
 	session *authSession,
 ) ([]byte, error) {
+	// GET and SET are single-key engine operations whose Store paths are already
+	// concurrency-safe. When AOF is disabled and no WATCH session exists, they
+	// do not need the global exclusive command lock. An RLock still excludes
+	// MULTI/EXEC and every complex command, preserving transaction atomicity.
+	if s.journal == nil && isConcurrentScalarCommand(args) {
+		s.durableMu.RLock()
+		if !s.hasWatchSessionsLocked() {
+			result, err := s.executePressure(args)
+			s.durableMu.RUnlock()
+			return result, err
+		}
+		s.durableMu.RUnlock()
+	}
+
 	s.durableMu.Lock()
 	defer s.durableMu.Unlock()
 
@@ -226,4 +410,14 @@ func (s *Server) executeDurableLocked(args [][]byte) ([]byte, error) {
 	s.signalZSetAvailability(args, result)
 	s.signalStreamAvailability(args, result)
 	return result, nil
+}
+
+func isConcurrentScalarCommand(args [][]byte) bool {
+	if len(args) == 2 && bytes.EqualFold(args[0], []byte("GET")) {
+		return true
+	}
+	// Keep only the plain SET key value form on the concurrent fast path.
+	// Option parsing can involve TTL/conditional semantics and stays on the
+	// serialized path until separately audited.
+	return len(args) == 3 && bytes.EqualFold(args[0], []byte("SET"))
 }

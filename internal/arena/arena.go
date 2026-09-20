@@ -360,6 +360,7 @@ func (a *Arena) View(ref Ref) ([]byte, error) {
 	return data[start+8 : end : end], nil
 }
 
+
 func (a *Arena) Free(ref Ref) {
 	if ref.generation == 0 {
 		return
@@ -375,6 +376,16 @@ func (a *Arena) Free(ref Ref) {
 	binary.LittleEndian.PutUint64(data[ref.offset():], 0)
 	binary.LittleEndian.PutUint64(data[ref.offset()+8:], a.free[bucket])
 	a.free[bucket] = (uint64(ref.segment())+1)<<32 | uint64(ref.offset())
+}
+
+// AllocationBytesForLength returns the physical arena block that would be
+// reserved for a value of the given logical length.
+func AllocationBytesForLength(length int) uint64 {
+	if length == 0 {
+		return 0
+	}
+	_, block := class(length)
+	return uint64(block)
 }
 
 // AllocationBytes returns the physical arena block reserved for ref.

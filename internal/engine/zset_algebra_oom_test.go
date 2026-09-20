@@ -29,8 +29,9 @@ func TestZSetAlgebraStoreOOMLeavesDestinationUntouched(t *testing.T) {
 	beforeMemory := s.Memory()
 
 	s.memory.mu.Lock()
-	s.memory.max = s.memory.used
+	max := s.memory.used
 	s.memory.mu.Unlock()
+	s.memory.max.Store(max)
 
 	if _, err := s.ZSetUnionStore("dest", []string{"source"}, nil, ZSetAggregateSum); err != ErrOOM {
 		t.Fatalf("store err=%v want ErrOOM", err)

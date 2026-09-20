@@ -2995,3 +2995,39 @@ func TestACLSelectorMissingOpeningParen(t *testing.T) {
 		)
 	}
 }
+
+
+func TestAuthorizeConnectionCommandAllCommandsExplicitDeny(t *testing.T) {
+	acl := NewACL()
+	s := &Server{acl: acl}
+	if err := acl.SetUser("limited", []string{
+		"on",
+		"nopass",
+		"+@all",
+		"-get",
+		"allkeys",
+		"allchannels",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	session := &authSession{
+		username:      "limited",
+		authenticated: true,
+	}
+
+	err := s.authorizeConnectionCommand(
+		session,
+		[][]byte{[]byte("GET"), []byte("key")},
+	)
+	if err == nil || !strings.Contains(err.Error(), "no permissions to run") {
+		t.Fatalf("GET deny was bypassed: %v", err)
+	}
+
+	if err := s.authorizeConnectionCommand(
+		session,
+		[][]byte{[]byte("SET"), []byte("key"), []byte("value")},
+	); err != nil {
+		t.Fatalf("SET should remain allowed: %v", err)
+	}
+}

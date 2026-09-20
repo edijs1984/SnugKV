@@ -111,8 +111,9 @@ func TestZSetRangeStoreOOMLeavesDestinationUntouched(t *testing.T) {
 	}
 	before := s.Memory()
 	s.memory.mu.Lock()
-	s.memory.max = s.memory.used
+	max := s.memory.used
 	s.memory.mu.Unlock()
+	s.memory.max.Store(max)
 	if _, err := s.ZSetRangeStoreByRank("dest", "src", 0, -1, false); err != ErrOOM {
 		t.Fatalf("err=%v want OOM", err)
 	}

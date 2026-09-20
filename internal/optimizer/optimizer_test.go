@@ -3,6 +3,7 @@ package optimizer
 import (
 	"bytes"
 	"snugkv/internal/engine"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -73,4 +74,79 @@ func TestBackgroundCompression(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("rewrite did not complete: %+v", optimizer.Stats())
+}
+
+
+func TestSampleRespectsQueueCapacity(t *testing.T) {
+	store := engine.New()
+	for i := 0; i < 64; i++ {
+		if err := store.Set(strconv.Itoa(i), []byte("value"), 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	config := Default()
+	config.Workers = 1
+	config.QueueDepth = 4
+	optimizer, err := New(store, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer optimizer.Close()
+
+	optimizer.Sample(64)
+	stats := optimizer.Stats()
+	if stats.QueueCapacity != 4 {
+		t.Fatalf("queue capacity=%d want=4", stats.QueueCapacity)
+	}
+	if stats.QueueDepth > stats.QueueCapacity {
+		t.Fatalf("queue depth=%d capacity=%d", stats.QueueDepth, stats.QueueCapacity)
+	}
+}
+
+
+func TestCPUPercentForBacklog(t *testing.T) {
+	store := engine.New()
+	config := Default()
+	config.Workers = 1
+	config.QueueDepth = 160
+	config.CPUPercent = 50
+	o, err := New(store, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer o.Close()
+
+	for _, tc := range []struct {
+		depth int
+		want  int
+	}{
+		{0, 50},
+		{9, 50},
+		{10, 25},
+		{39, 25},
+		{40, 15},
+		{160, 15},
+	} {
+		if got := o.cpuPercentForBacklog(tc.depth); got != tc.want {
+			t.Fatalf("depth=%d cpu=%d want=%d", tc.depth, got, tc.want)
+		}
+	}
+}
+
+func TestCPUPercentForBacklogNeverRaisesConfiguredBudget(t *testing.T) {
+	store := engine.New()
+	config := Default()
+	config.Workers = 1
+	config.QueueDepth = 160
+	config.CPUPercent = 10
+	o, err := New(store, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer o.Close()
+
+	if got := o.cpuPercentForBacklog(160); got != 10 {
+		t.Fatalf("cpu=%d want=10", got)
+	}
 }

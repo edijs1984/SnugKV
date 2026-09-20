@@ -45,30 +45,36 @@ func (d *Decoder) readByte() (byte, error) {
 	return b, err
 }
 func (d *Decoder) length(marker byte, max int) (int, error) {
-	b, err := d.readByte()
+	line, err := d.reader.ReadSlice('\n')
 	if err != nil {
 		return 0, err
 	}
-	if b != marker {
-		return 0, fmt.Errorf("expected %q", marker)
+	if len(line) > d.remaining {
+		return 0, errors.New("request exceeds byte limit")
 	}
-	n, digits := 0, 0
-	for {
-		b, err = d.readByte()
-		if err != nil {
-			return 0, err
+	d.remaining -= len(line)
+
+	if len(line) < 4 || line[0] != marker {
+		if len(line) > 0 && line[0] != marker {
+			return 0, fmt.Errorf("expected %q", marker)
 		}
-		if b == '\r' {
-			b, err = d.readByte()
-			if err != nil {
-				return 0, err
-			}
-			if b != '\n' || digits == 0 {
-				return 0, errors.New("invalid length terminator")
-			}
-			return n, nil
-		}
-		if b < '0' || b > '9' || digits >= 20 {
+		return 0, errors.New("invalid length terminator")
+	}
+	if line[len(line)-2] != '\r' {
+		return 0, errors.New("invalid length terminator")
+	}
+
+	digits := line[1 : len(line)-2]
+	if len(digits) == 0 {
+		return 0, errors.New("invalid length terminator")
+	}
+	if len(digits) > 20 {
+		return 0, errors.New("invalid length")
+	}
+
+	n := 0
+	for _, b := range digits {
+		if b < '0' || b > '9' {
 			return 0, errors.New("invalid length")
 		}
 		digit := int(b - '0')
@@ -76,8 +82,8 @@ func (d *Decoder) length(marker byte, max int) (int, error) {
 			return 0, errors.New("declared length exceeds limit")
 		}
 		n = n*10 + digit
-		digits++
 	}
+	return n, nil
 }
 func (d *Decoder) bulk() ([]byte, error) {
 	n, err := d.length('$', d.limits.MaxBulkBytes)
@@ -109,6 +115,187 @@ func (d *Decoder) bulk() ([]byte, error) {
 	return payload, nil
 }
 
+// ReadBufferedGET copies a complete two-argument GET key from the current
+// bufio.Reader buffer into caller-owned scratch. It only activates when the
+// full frame is already buffered; otherwise it consumes nothing and ReadCommand
+// remains the fallback.
+//
+// Reusing scratch makes steady-state pipelined GET decoding allocation-free
+// without exposing bufio.Reader-owned memory past Discard.
+func (d *Decoder) ReadBufferedGET(scratch []byte) (key []byte, ok bool, err error) {
+	buffered := d.reader.Buffered()
+	if buffered < len("*2\r\n$3\r\nGET\r\n$0\r\n\r\n") {
+		return scratch[:0], false, nil
+	}
+	if buffered > d.limits.MaxRequestBytes {
+		buffered = d.limits.MaxRequestBytes
+	}
+	buf, err := d.reader.Peek(buffered)
+	if err != nil {
+		return scratch[:0], false, nil
+	}
+
+	if len(buf) < 17 ||
+		buf[0] != '*' || buf[1] != '2' || buf[2] != '\r' || buf[3] != '\n' ||
+		buf[4] != '$' || buf[5] != '3' || buf[6] != '\r' || buf[7] != '\n' ||
+		!((buf[8] == 'G' || buf[8] == 'g') &&
+			(buf[9] == 'E' || buf[9] == 'e') &&
+			(buf[10] == 'T' || buf[10] == 't')) ||
+		buf[11] != '\r' || buf[12] != '\n' || buf[13] != '$' {
+		return scratch[:0], false, nil
+	}
+
+	i := 14
+	keyLen := 0
+	digits := 0
+	for i < len(buf) {
+		b := buf[i]
+		if b == '\r' {
+			if digits == 0 || i+1 >= len(buf) || buf[i+1] != '\n' {
+				return scratch[:0], false, nil
+			}
+			i += 2
+			break
+		}
+		if b < '0' || b > '9' || digits >= 20 {
+			return scratch[:0], false, nil
+		}
+		digit := int(b - '0')
+		if keyLen > d.limits.MaxBulkBytes/10 ||
+			keyLen == d.limits.MaxBulkBytes/10 && digit > d.limits.MaxBulkBytes%10 {
+			return scratch[:0], false, nil
+		}
+		keyLen = keyLen*10 + digit
+		digits++
+		i++
+	}
+	if digits == 0 || i > len(buf) {
+		return scratch[:0], false, nil
+	}
+
+	frameLen := i + keyLen + 2
+	if frameLen > len(buf) || frameLen > d.limits.MaxRequestBytes {
+		return scratch[:0], false, nil
+	}
+	if buf[i+keyLen] != '\r' || buf[i+keyLen+1] != '\n' {
+		return scratch[:0], false, nil
+	}
+	if d.limits.MaxArguments < 2 {
+		return scratch[:0], false, nil
+	}
+
+	if cap(scratch) < keyLen {
+		scratch = make([]byte, keyLen)
+	} else {
+		scratch = scratch[:keyLen]
+	}
+	copy(scratch, buf[i:i+keyLen])
+	if _, err := d.reader.Discard(frameLen); err != nil {
+		return scratch[:0], false, err
+	}
+	return scratch, true, nil
+}
+
+
+// ReadBufferedSET copies a complete plain SET key/value pair from the current
+// bufio.Reader buffer into caller-owned scratch. It only accepts the exact
+// three-argument form SET key value. Partial or non-plain SET frames consume
+// nothing and fall back to ReadCommand.
+//
+// The caller may reuse keyScratch/valueScratch after the command finishes;
+// the engine copies the value into owned arena storage before returning.
+func (d *Decoder) ReadBufferedSET(keyScratch, valueScratch []byte) (key, value []byte, ok bool, err error) {
+	buffered := d.reader.Buffered()
+	if buffered < len("*3\r\n$3\r\nSET\r\n$0\r\n\r\n$0\r\n\r\n") {
+		return keyScratch[:0], valueScratch[:0], false, nil
+	}
+	if buffered > d.limits.MaxRequestBytes {
+		buffered = d.limits.MaxRequestBytes
+	}
+	buf, err := d.reader.Peek(buffered)
+	if err != nil {
+		return keyScratch[:0], valueScratch[:0], false, nil
+	}
+	if len(buf) < 13 ||
+		buf[0] != '*' || buf[1] != '3' || buf[2] != '\r' || buf[3] != '\n' ||
+		buf[4] != '$' || buf[5] != '3' || buf[6] != '\r' || buf[7] != '\n' ||
+		!((buf[8] == 'S' || buf[8] == 's') &&
+			(buf[9] == 'E' || buf[9] == 'e') &&
+			(buf[10] == 'T' || buf[10] == 't')) ||
+		buf[11] != '\r' || buf[12] != '\n' {
+		return keyScratch[:0], valueScratch[:0], false, nil
+	}
+	if d.limits.MaxArguments < 3 {
+		return keyScratch[:0], valueScratch[:0], false, nil
+	}
+
+	parseBulk := func(pos int) (payloadStart, payloadLen, next int, complete bool) {
+		if pos >= len(buf) || buf[pos] != '$' {
+			return 0, 0, 0, false
+		}
+		pos++
+		n := 0
+		digits := 0
+		for pos < len(buf) {
+			b := buf[pos]
+			if b == '\r' {
+				if digits == 0 || pos+1 >= len(buf) || buf[pos+1] != '\n' {
+					return 0, 0, 0, false
+				}
+				pos += 2
+				break
+			}
+			if b < '0' || b > '9' || digits >= 20 {
+				return 0, 0, 0, false
+			}
+			digit := int(b - '0')
+			if n > d.limits.MaxBulkBytes/10 ||
+				n == d.limits.MaxBulkBytes/10 && digit > d.limits.MaxBulkBytes%10 {
+				return 0, 0, 0, false
+			}
+			n = n*10 + digit
+			digits++
+			pos++
+		}
+		if digits == 0 || pos+n+2 > len(buf) {
+			return 0, 0, 0, false
+		}
+		payloadStart = pos
+		if buf[pos+n] != '\r' || buf[pos+n+1] != '\n' {
+			return 0, 0, 0, false
+		}
+		return payloadStart, n, pos + n + 2, true
+	}
+
+	keyStart, keyLen, pos, complete := parseBulk(13)
+	if !complete {
+		return keyScratch[:0], valueScratch[:0], false, nil
+	}
+	valueStart, valueLen, frameLen, complete := parseBulk(pos)
+	if !complete || frameLen > d.limits.MaxRequestBytes {
+		return keyScratch[:0], valueScratch[:0], false, nil
+	}
+
+	if cap(keyScratch) < keyLen {
+		keyScratch = make([]byte, keyLen)
+	} else {
+		keyScratch = keyScratch[:keyLen]
+	}
+	copy(keyScratch, buf[keyStart:keyStart+keyLen])
+
+	if cap(valueScratch) < valueLen {
+		valueScratch = make([]byte, valueLen)
+	} else {
+		valueScratch = valueScratch[:valueLen]
+	}
+	copy(valueScratch, buf[valueStart:valueStart+valueLen])
+
+	if _, err := d.reader.Discard(frameLen); err != nil {
+		return keyScratch[:0], valueScratch[:0], false, err
+	}
+	return keyScratch, valueScratch, true, nil
+}
+
 // ReadCommand accepts only nonempty, flat arrays of non-null bulk strings.
 // io.EOF means clean end of stream; truncated requests return io.ErrUnexpectedEOF.
 // After any other error the stream must be closed, not resynchronized.
@@ -133,13 +320,12 @@ func (d *Decoder) ReadCommand() (args [][]byte, err error) {
 	if n > d.remaining/6 {
 		return nil, errors.New("request exceeds byte limit")
 	}
+	args = make([][]byte, n)
 	for i := 0; i < n; i++ {
-		var value []byte
-		value, err = d.bulk()
+		args[i], err = d.bulk()
 		if err != nil {
 			return nil, err
 		}
-		args = append(args, value)
 	}
 	return args, nil
 }

@@ -21,12 +21,14 @@ type Server struct {
 	aclLog           *ACLLog
 	eviction         string
 	metrics          *stats.Registry
+	metricsEnabled   uint32
 	optimizer        *optimizer.Optimizer
 	store            *engine.Store
 	commands         uint64
 	journal          Journal
-	durableMu        sync.Mutex
+	durableMu        sync.RWMutex
 	durabilityFailed bool
+	watchSessions    atomic.Int32
 
 	// executionACLUsername / executionACLArgs are valid only while durableMu is
 	// held. TCP and transaction execution populate them so dynamic command
@@ -673,10 +675,25 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			arenaDeadWaste = m.ArenaBytes - m.ArenaLiveBlockBytes
 		}
 
+		var optimizerQueued, optimizerRewritten, optimizerSkipped uint64
+		var optimizerStale, optimizerDropped uint64
+		var optimizerQueueDepth, optimizerQueueCapacity int
+		if s.optimizer != nil {
+			stats := s.optimizer.Stats()
+			optimizerQueued = stats.Queued
+			optimizerRewritten = stats.Rewritten
+			optimizerSkipped = stats.Skipped
+			optimizerStale = stats.Stale
+			optimizerDropped = stats.Dropped
+			optimizerQueueDepth = stats.QueueDepth
+			optimizerQueueCapacity = stats.QueueCapacity
+		}
+
 		return formatBulkString([]byte(fmt.Sprintf(
 			"accounted_bytes:%d\n"+
 				"index_reserved_bytes:%d\n"+
 				"entry_bytes:%d\n"+
+				"meta_bytes:%d\n"+
 				"arena_bytes:%d\n"+
 				"arena_payload_bytes:%d\n"+
 				"arena_live_block_bytes:%d\n"+
@@ -684,10 +701,18 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 				"arena_dead_waste_bytes:%d\n"+
 				"arena_waste_bytes:%d\n"+
 				"schema_reserved_bytes:%d\n"+
-				"max_memory:%d\n",
+				"max_memory:%d\n"+
+				"optimizer_queued:%d\n"+
+				"optimizer_rewritten:%d\n"+
+				"optimizer_skipped:%d\n"+
+				"optimizer_stale:%d\n"+
+				"optimizer_dropped:%d\n"+
+				"optimizer_queue_depth:%d\n"+
+				"optimizer_queue_capacity:%d\n",
 			m.AccountedBytes,
 			m.IndexReservedBytes,
 			m.EntryBytes,
+			m.MetaBytes,
 			m.ArenaBytes,
 			m.ArenaPayloadBytes,
 			m.ArenaLiveBlockBytes,
@@ -696,6 +721,13 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			arenaWaste,
 			m.SchemaBytes,
 			m.MaxBytes,
+			optimizerQueued,
+			optimizerRewritten,
+			optimizerSkipped,
+			optimizerStale,
+			optimizerDropped,
+			optimizerQueueDepth,
+			optimizerQueueCapacity,
 		))), nil
 	case "PING":
 		if len(args) == 2 {
@@ -744,9 +776,9 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		}
 
 		if applied {
-			// Newly written values are the highest-priority optimization candidates.
-			// Shape admission is trained inside the engine write path.
-			if s.optimizer != nil {
+			// Only queue values that can benefit from background work.
+			// Cheap scalar codecs already run synchronously in the engine.
+			if s.optimizer != nil && s.store.ShouldQueueOptimization(args[2]) {
 				s.optimizer.Queue(key)
 			}
 		}
@@ -1375,9 +1407,11 @@ func optionalBulk(v []byte, found bool) []byte {
 }
 func formatBulkString(v []byte) []byte {
 	out := make([]byte, 0, len(v)+32)
-	out = append(out, fmt.Sprintf("$%d\r\n", len(v))...)
+	out = append(out, '$')
+	out = strconv.AppendInt(out, int64(len(v)), 10)
+	out = append(out, 13, 10)
 	out = append(out, v...)
-	return append(out, '\r', '\n')
+	return append(out, 13, 10)
 }
 func array(items ...[]byte) []byte {
 	out := []byte(fmt.Sprintf("*%d\r\n", len(items)))

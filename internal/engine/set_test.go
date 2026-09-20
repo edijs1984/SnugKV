@@ -163,8 +163,9 @@ func TestSetWrongTypeAndOptimizerExclusion(t *testing.T) {
 	if policy, ok := s.Policy("native"); !ok || policy != "set-native" {
 		t.Fatalf("policy=%q ok=%v", policy, ok)
 	}
-	if stats := s.Memory(); stats.MetaBytes != 32 {
-		// Only the ordinary string should own generic optimizer metadata.
-		t.Fatalf("meta bytes=%d want 32", stats.MetaBytes)
+	if stats := s.Memory(); stats.MetaBytes != 0 {
+		// Sparse optimizer metadata is allocated only after a profitable
+		// rewrite, so this untouched ordinary string should own none.
+		t.Fatalf("meta bytes=%d want 0", stats.MetaBytes)
 	}
 }

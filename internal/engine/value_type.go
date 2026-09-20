@@ -68,58 +68,58 @@ func (t ValueType) String() string {
 // Important rule: classification must NEVER change Redis-visible bytes.
 // The codec layer remains responsible for lossless physical encoding.
 func classifyValue(value []byte) ValueType {
-	// Canonical signed integer.
-	//
-	// strconv.FormatInt equality deliberately rejects:
-	//   00123
-	//   +123
-	//   -0
-	//   00
-	//
-	// because converting those to integer semantics could lose the
-	// original representation.
-	if len(value) > 0 {
-		if n, err := strconv.ParseInt(string(value), 10, 64); err == nil {
-			if strconv.FormatInt(n, 10) == string(value) {
+	// Canonical BOOL. Check this before numeric parsing so the common textual
+	// booleans avoid three failed strconv parses.
+	if len(value) == 4 &&
+		value[0] == 't' &&
+		value[1] == 'r' &&
+		value[2] == 'u' &&
+		value[3] == 'e' {
+		return TypeBool
+	}
+	if len(value) == 5 &&
+		value[0] == 'f' &&
+		value[1] == 'a' &&
+		value[2] == 'l' &&
+		value[3] == 's' &&
+		value[4] == 'e' {
+		return TypeBool
+	}
+
+	// Numeric canonical forms can only begin with a digit or '-'. Reject the
+	// overwhelmingly common ordinary-string case before allocating a string or
+	// invoking strconv. A leading '+' can never be canonical because the
+	// formatter used below never emits it.
+	numericCandidate := len(value) > 0 &&
+		((value[0] >= '0' && value[0] <= '9') || value[0] == '-')
+
+	if numericCandidate {
+		text := string(value)
+
+		// Canonical signed integer.
+		if n, err := strconv.ParseInt(text, 10, 64); err == nil {
+			if strconv.FormatInt(n, 10) == text {
 				return TypeInt64
 			}
 		}
-	}
 
-	// Canonical UINT64 values above MaxInt64.
-	//
-	// Values <= MaxInt64 are intentionally classified as INT64 first.
-	if len(value) > 0 {
-		if n, err := strconv.ParseUint(string(value), 10, 64); err == nil {
-			if strconv.FormatUint(n, 10) == string(value) &&
-				n > uint64(^uint64(0)>>1) {
-				return TypeUint64
+		// Canonical UINT64 values above MaxInt64.
+		if value[0] != '-' {
+			if n, err := strconv.ParseUint(text, 10, 64); err == nil {
+				if strconv.FormatUint(n, 10) == text &&
+					n > uint64(^uint64(0)>>1) {
+					return TypeUint64
+				}
 			}
 		}
-	}
 
-	// Canonical FLOAT64.
-	//
-	// Only infer FLOAT64 when IEEE-754 -> text reconstruction produces the
-	// exact same bytes. This deliberately leaves alternate representations
-	// such as "1.00" and "1e3" as STRING.
-	if len(value) > 0 {
-		text := string(value)
-
+		// Canonical FLOAT64.
 		if n, err := strconv.ParseFloat(text, 64); err == nil &&
 			!math.IsNaN(n) &&
 			!math.IsInf(n, 0) &&
 			strconv.FormatFloat(n, 'g', -1, 64) == text {
 			return TypeFloat64
 		}
-	}
-
-	// Canonical BOOL.
-	//
-	// Only exact lowercase Redis-visible representations are inferred.
-	// Case variants remain STRING so classification never normalizes bytes.
-	if string(value) == "true" || string(value) == "false" {
-		return TypeBool
 	}
 
 	// Redis strings are binary-safe. Invalid UTF-8 is therefore treated

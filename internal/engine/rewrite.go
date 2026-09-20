@@ -10,14 +10,15 @@ import (
 )
 
 type Candidate struct {
-	Key          string
-	Version      uint64
-	Value        []byte
-	EncodedBytes int
-	LastRewrite  time.Time
-	LastWrite    time.Time
-	Heat         string
-	expiresAt    stamp
+	Key                     string
+	Version                 uint64
+	Value                   []byte
+	EncodedBytes            int
+	AdditionalMetadataBytes int
+	LastRewrite             time.Time
+	LastWrite               time.Time
+	Heat                    string
+	expiresAt               stamp
 }
 
 // OptimizationEligible performs the cheap read-only eligibility check before
@@ -92,7 +93,11 @@ func (s *Store) MarkOptimizationAttempt(
 		return false
 	}
 
-	meta = e.ensureMeta()
+	if meta == nil {
+		// Keep metadata sparse. A successful Rewrite will allocate and account
+		// metadata as part of the published replacement.
+		return true
+	}
 	meta.lastOptimize = activityStampOf(now)
 	sh.set(key, e)
 
@@ -100,6 +105,14 @@ func (s *Store) MarkOptimizationAttempt(
 }
 
 func (s *Store) Candidate(key string, maxBytes int) (Candidate, bool) {
+	return s.CandidateInto(key, maxBytes, nil)
+}
+
+// CandidateInto snapshots a candidate into caller-owned scratch when possible.
+// The returned Value remains valid until the caller reuses or mutates dst.
+// Candidate remains the ownership-preserving convenience wrapper for callers
+// that do not provide scratch.
+func (s *Store) CandidateInto(key string, maxBytes int, dst []byte) (Candidate, bool) {
 	sh := s.shardFor(key)
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
@@ -109,19 +122,23 @@ func (s *Store) Candidate(key string, maxBytes int) (Candidate, bool) {
 	}
 	meta := e.entryMeta
 	var lastRewrite, lastWrite time.Time
+	additionalMetadataBytes := 0
 	if meta != nil {
 		lastRewrite = meta.lastRewrite.Time()
 		lastWrite = meta.lastWrite.Time()
+	} else {
+		additionalMetadataBytes = int(entryMetaBytes)
 	}
 	return Candidate{
-		Key:          key,
-		Version:      e.ref.Generation(),
-		Value:        s.decode(sh, e),
-		EncodedBytes: len(sh.encoded(e)),
-		LastRewrite:  lastRewrite,
-		LastWrite:    lastWrite,
-		Heat:         heat(meta, s.now()),
-		expiresAt:    sh.expirationAt(key, e),
+		Key:                     key,
+		Version:                 e.ref.Generation(),
+		Value:                   s.decodeInto(sh, e, dst),
+		EncodedBytes:            len(sh.encoded(e)),
+		AdditionalMetadataBytes: additionalMetadataBytes,
+		LastRewrite:             lastRewrite,
+		LastWrite:               lastWrite,
+		Heat:                    heat(meta, s.now()),
+		expiresAt:               sh.expirationAt(key, e),
 	}, true
 }
 func heat(meta *entryMeta, now time.Time) string {
@@ -187,6 +204,20 @@ func (s *Store) ensureShapeStore(sh *shard) *jsonshape.Store {
 	defer sh.mu.Unlock()
 
 	return s.ensureShapeStoreLocked(sh)
+}
+
+// ShouldQueueOptimization performs the cheapest possible write-time gate.
+// Specialized scalar codecs already run synchronously in makeEntry. Background
+// work is only useful for JSON shape sharing or general compression, whose
+// minimum input size is 256 bytes.
+func (s *Store) ShouldQueueOptimization(value []byte) bool {
+	if !s.encoding {
+		return false
+	}
+	if s.shapeEncoding && structuredJSONCandidate(value) {
+		return true
+	}
+	return s.compression && len(value) >= 256
 }
 
 func structuredJSONCandidate(src []byte) bool {
@@ -260,7 +291,13 @@ func (s *Store) JSONShapeWarmupPending(candidate Candidate, window time.Duration
 }
 
 func (s *Store) EncodeCandidate(candidate Candidate) codec.Record {
-	best := s.codecs.Encode(candidate.Value)
+	// Candidate owns an immutable snapshot already. Values longer than 36 bytes
+	// cannot use a synchronous scalar codec, so borrow that snapshot as the raw
+	// fallback instead of cloning it again.
+	best := codec.Record{ID: codec.Raw, RawLength: len(candidate.Value), Data: candidate.Value}
+	if len(candidate.Value) <= 36 {
+		best = s.codecs.Encode(candidate.Value)
+	}
 	sh := s.shardFor(candidate.Key)
 	if structuredJSONCandidate(candidate.Value) {
 		shapes := s.ensureShapeStore(sh)
@@ -278,7 +315,7 @@ func (s *Store) EncodeCandidate(candidate Candidate) codec.Record {
 		}
 	}
 	if s.compression && candidate.Heat != "hot" && candidate.Heat != "write-heavy" {
-		compressed := s.codecs.EncodeGeneral(candidate.Value, candidate.Heat == "cold")
+		compressed := s.codecs.EncodeGeneralBorrowed(candidate.Value, candidate.Heat == "cold")
 		if len(compressed.Data) < len(best.Data) {
 			best = compressed
 		}
@@ -462,7 +499,11 @@ func (s *Store) Rewrite(candidate Candidate, record codec.Record) bool {
 	meta := prepared.ensureMeta()
 
 	prepared.codecID = record.ID
-	meta.schema = record.Schema
+	if record.Schema != nil {
+		meta.schemaID = record.Schema.ID
+	} else {
+		meta.schemaID = 0
+	}
 	prepared.rawLength = uint32(record.RawLength)
 	meta.lastRewrite = activityStampOf(s.now())
 

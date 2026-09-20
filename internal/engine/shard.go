@@ -67,7 +67,24 @@ func (sh *shard) entryCapacityFor(additional int) int {
 }
 
 func (sh *shard) get(key string) (entry, bool) {
-	id, ok := sh.data.Get(key)
+	return sh.getHashed(key, index.Hash(key))
+}
+
+func (sh *shard) getHashed(key string, hash uint64) (entry, bool) {
+	id, ok := sh.data.GetHashed(key, hash)
+	if !ok {
+		return entry{}, false
+	}
+
+	if int(id) >= len(sh.entries) {
+		panic("invalid entry id")
+	}
+
+	return sh.entries[id], true
+}
+
+func (sh *shard) getHashedBytes(key []byte, hash uint64) (entry, bool) {
+	id, ok := sh.data.GetHashedBytes(key, hash)
 	if !ok {
 		return entry{}, false
 	}
@@ -84,28 +101,42 @@ func (sh *shard) set(key string, e entry) {
 		sh.entries[id] = e
 		return
 	}
+	sh.insertEntry(key, index.Hash(key), e, false)
+}
 
+func (sh *shard) setKnownHashed(key string, hash uint64, e entry, exists bool) {
+	if exists {
+		id, ok := sh.data.GetHashed(key, hash)
+		if !ok {
+			panic("known shard entry is missing")
+		}
+		sh.entries[id] = e
+		return
+	}
+	sh.insertEntry(key, hash, e, true)
+}
+
+func (sh *shard) insertEntry(key string, hash uint64, e entry, hashKnown bool) {
 	var id uint32
-
 	if n := len(sh.freeIDs); n > 0 {
 		id = sh.freeIDs[n-1]
 		sh.freeIDs = sh.freeIDs[:n-1]
 		sh.entries[id] = e
 	} else {
 		id = uint32(len(sh.entries))
-
 		if len(sh.entries) == cap(sh.entries) {
 			next := sh.entryCapacityFor(1)
-
 			entries := make([]entry, len(sh.entries), next)
 			copy(entries, sh.entries)
 			sh.entries = entries
 		}
-
 		sh.entries = append(sh.entries, e)
 	}
-
-	sh.data.Set(key, id)
+	if hashKnown {
+		sh.data.SetKnownHashed(key, id, hash, false)
+	} else {
+		sh.data.Set(key, id)
+	}
 }
 
 func (sh *shard) delete(key string) bool {
@@ -141,12 +172,9 @@ func (sh *shard) all() func(func(string, entry) bool) {
 }
 
 func (s *Store) shardFor(key string) *shard {
-	h := uint64(14695981039346656037)
+	return s.shardForHash(index.Hash(key))
+}
 
-	for i := 0; i < len(key); i++ {
-		h ^= uint64(key[i])
-		h *= 1099511628211
-	}
-
-	return &s.shards[h&uint64(len(s.shards)-1)]
+func (s *Store) shardForHash(hash uint64) *shard {
+	return &s.shards[(hash>>32)&uint64(len(s.shards)-1)]
 }

@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"io"
 	"log"
@@ -22,6 +23,9 @@ type TCPServer struct {
 	adminOnly, ownsOptimizer bool
 	inputBytes, outputBytes  uint64
 	nextClientID             uint64
+	trackingClients          uint64
+	optimizerMaintainTicks   uint64
+	optimizerDroppedSeen     uint64
 	listener                 net.Listener
 	server                   *Server
 	config                   config.Config
@@ -220,10 +224,15 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 	// Pub/Sub delivery can write from a publisher's goroutine while this
 	// connection goroutine is blocked reading the next subscriber command.
 	// Serialize complete responses so partial socket writes cannot interleave.
-	writer := &serializedResponseWriter{
-		server: s,
-		conn:   conn,
-	}
+	writer := newSerializedResponseWriter(s, conn)
+	var getScratch []byte
+	var getKeyScratch []byte
+	var setKeyScratch []byte
+	var setValueScratch []byte
+	const maxRetainedGetScratch = 64 << 10
+	const maxRetainedGetKeyScratch = 64 << 10
+	const maxRetainedSetKeyScratch = 64 << 10
+	const maxRetainedSetValueScratch = 64 << 10
 
 	clientID := atomic.AddUint64(
 		&s.nextClientID,
@@ -242,7 +251,13 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 	clientSession.mu.Unlock()
 
 	s.registerClient(clientSession)
-	defer s.unregisterClient(clientSession.id)
+	defer func() {
+		if clientSession.trackingIsEnabled() {
+			atomic.AddUint64(&s.trackingClients, ^uint64(0))
+		}
+		s.unregisterClient(clientSession.id)
+	}()
+	defer writer.flush()
 	defer clientSession.closeScriptDebugRuntime()
 
 	pubSession := newPubSubSession(
@@ -283,21 +298,78 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			)
 		}
 
-		return writer.write(response)
+		return writer.writeBuffered(response)
 	}
 
-	decoder, _ := resp.NewDecoder(bufio.NewReader(conn), s.config.Limits())
+	reader := bufio.NewReaderSize(conn, 256<<10)
+	decoder, _ := resp.NewDecoder(reader, s.config.Limits())
 	for {
-		if pubSession.active() {
-			// Pub/Sub subscriptions are long-lived. Message delivery is outbound,
-			// so an ordinary request read timeout must not kill an idle subscriber.
-			if err := conn.SetReadDeadline(time.Time{}); err != nil {
+		// If no more request bytes are already buffered, flushing here avoids
+		// waiting for the next client command while still allowing an existing
+		// pipeline to accumulate responses into one socket write.
+		if reader.Buffered() == 0 {
+			if err := writer.flush(); err != nil {
 				return
 			}
-		} else if err := conn.SetReadDeadline(time.Now().Add(time.Duration(s.config.ReadTimeoutMS) * time.Millisecond)); err != nil {
+		}
+		if reader.Buffered() == 0 {
+			if pubSession.active() {
+				// Pub/Sub subscriptions are long-lived. Message delivery is outbound,
+				// so an ordinary request read timeout must not kill an idle subscriber.
+				if err := conn.SetReadDeadline(time.Time{}); err != nil {
+					return
+				}
+			} else if err := conn.SetReadDeadline(time.Now().Add(time.Duration(s.config.ReadTimeoutMS) * time.Millisecond)); err != nil {
+				return
+			}
+		}
+		var borrowedGET [2][]byte
+		var borrowedSET [3][]byte
+		var msg [][]byte
+		borrowedKey, borrowed, borrowErr := decoder.ReadBufferedGET(getKeyScratch)
+		if borrowErr != nil {
 			return
 		}
-		msg, err := decoder.ReadCommand()
+		if borrowed {
+			borrowedGET[0] = []byte("GET")
+			borrowedGET[1] = borrowedKey
+			msg = borrowedGET[:]
+			if cap(borrowedKey) <= maxRetainedGetKeyScratch {
+				getKeyScratch = borrowedKey[:0]
+			} else {
+				getKeyScratch = nil
+			}
+		}
+
+		borrowedSet := false
+		if !borrowed && !txSession.multi {
+			setKey, setValue, ok, setErr := decoder.ReadBufferedSET(setKeyScratch, setValueScratch)
+			if setErr != nil {
+				return
+			}
+			if ok {
+				borrowedSET[0] = []byte("SET")
+				borrowedSET[1] = setKey
+				borrowedSET[2] = setValue
+				msg = borrowedSET[:]
+				borrowedSet = true
+				if cap(setKey) <= maxRetainedSetKeyScratch {
+					setKeyScratch = setKey[:0]
+				} else {
+					setKeyScratch = nil
+				}
+				if cap(setValue) <= maxRetainedSetValueScratch {
+					setValueScratch = setValue[:0]
+				} else {
+					setValueScratch = nil
+				}
+			}
+		}
+
+		var err error
+		if !borrowed && !borrowedSet {
+			msg, err = decoder.ReadCommand()
+		}
 		if err != nil {
 			if err == io.EOF {
 				return
@@ -309,9 +381,9 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			_ = writer.write([]byte("-ERR invalid RESP\r\n"))
 			return
 		}
-		clientSession.touch(msg)
+		requestNow := clientSession.touch(msg)
 
-		if len(msg) > 0 &&
+		if !borrowed && len(msg) > 0 &&
 			strings.EqualFold(string(msg[0]), "HELLO") {
 			response, helloErr :=
 				s.executeHelloConnectionCommand(
@@ -331,7 +403,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			continue
 		}
 
-		if len(msg) > 0 && strings.EqualFold(string(msg[0]), "AUTH") {
+		if !borrowed && len(msg) > 0 && strings.EqualFold(string(msg[0]), "AUTH") {
 			response, authErr := s.server.executeAUTH(authSession, msg)
 
 			if authErr != nil {
@@ -366,12 +438,13 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			continue
 		}
 
-		if handled, debugResponse, debugErr :=
-			s.executeScriptDebugCommand(
-				clientSession,
-				authSession,
-				msg,
-			); handled {
+		if !borrowed {
+			if handled, debugResponse, debugErr :=
+				s.executeScriptDebugCommand(
+					clientSession,
+					authSession,
+					msg,
+				); handled {
 			if errors.Is(debugErr, errScriptDebugCloseAfterReply) {
 				if writer.write(debugResponse) != nil {
 					return
@@ -381,10 +454,11 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			if debugErr != nil {
 				debugResponse = errorResponse(debugErr)
 			}
-			if writer.write(debugResponse) != nil {
-				return
+				if writer.write(debugResponse) != nil {
+					return
+				}
+				continue
 			}
-			continue
 		}
 
 		if authErr := s.server.authorizeConnectionCommand(authSession, msg); authErr != nil {
@@ -443,6 +517,66 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			continue
 		}
 
+		// ReadBufferedGET has already validated the complete command as exactly
+		// GET with two bulk arguments. On the ordinary data listener, run the
+		// authorized GET path before generic ACL/admin command classification.
+		// Authorization above is unchanged; RESP2 Pub/Sub and MULTI semantics
+		// are still checked before the read. Admin listeners keep the generic
+		// gate below because GET is intentionally unavailable there.
+		if borrowed && !s.adminOnly {
+			if clientSession.protocolVersion() == 2 && pubSession.active() {
+				if handled, quit, pubSubErr := s.server.executePubSubConnectionCommand(pubSession, msg); handled {
+					if pubSubErr != nil {
+						if writeProtocol(msg, errorResponse(pubSubErr)) != nil {
+							return
+						}
+					}
+					if quit {
+						return
+					}
+					continue
+				}
+			}
+
+			// A buffered GET cannot itself be a transaction-control command.
+			// Only consult the transaction dispatcher when this connection is
+			// already inside MULTI, where GET must be queued.
+			if txSession.multi {
+				if handled, txResponse, txErr := s.server.executeTransactionConnectionCommand(txSession, msg); handled {
+					if txErr != nil {
+						txResponse = errorResponse(txErr)
+					}
+					if writeProtocol(msg, txResponse) != nil {
+						return
+					}
+					continue
+				}
+			}
+
+			if value, found, handled, fastErr := s.server.executeAuthorizedConcurrentKnownGetIntoAt(msg[1], getScratch, requestNow); handled {
+				if fastErr != nil {
+					if writeProtocol(msg, errorResponse(fastErr)) != nil {
+						return
+					}
+					continue
+				}
+				if found {
+					if writer.writeBulkBuffered(value) != nil {
+						return
+					}
+					if cap(value) <= maxRetainedGetScratch {
+						getScratch = value[:0]
+					} else {
+						getScratch = nil
+					}
+				} else if writeProtocol(msg, nullBulk()) != nil {
+					return
+				}
+				s.trackCommandRead(clientSession, msg)
+				continue
+			}
+		}
+
 		if len(msg) > 0 && strings.EqualFold(string(msg[0]), "ACL") {
 			response, aclErr := s.server.executeACL(authSession, msg)
 
@@ -476,6 +610,58 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				if writer.write([]byte("-ERR administrative commands require loopback access\r\n")) != nil {
 					return
 				}
+				continue
+			}
+		}
+
+		if len(msg) == 2 && bytes.EqualFold(msg[0], []byte("GET")) {
+			// Preserve RESP2 subscribed-mode semantics before ordinary GET
+			// execution. RESP3 subscribers may issue normal commands.
+			if clientSession.protocolVersion() == 2 && pubSession.active() {
+				if handled, quit, pubSubErr := s.server.executePubSubConnectionCommand(pubSession, msg); handled {
+					if pubSubErr != nil {
+						if writeProtocol(msg, errorResponse(pubSubErr)) != nil {
+							return
+						}
+					}
+					if quit {
+						return
+					}
+					continue
+				}
+			}
+
+			// MULTI must queue GET instead of executing it immediately.
+			if handled, txResponse, txErr := s.server.executeTransactionConnectionCommand(txSession, msg); handled {
+				if txErr != nil {
+					txResponse = errorResponse(txErr)
+				}
+				if writeProtocol(msg, txResponse) != nil {
+					return
+				}
+				continue
+			}
+
+			if value, found, handled, fastErr := s.server.executeAuthorizedConcurrentKnownGetIntoAt(msg[1], getScratch, requestNow); handled {
+				if fastErr != nil {
+					if writeProtocol(msg, errorResponse(fastErr)) != nil {
+						return
+					}
+					continue
+				}
+				if found {
+					if writer.writeBulkBuffered(value) != nil {
+						return
+					}
+					if cap(value) <= maxRetainedGetScratch {
+						getScratch = value[:0]
+					} else {
+						getScratch = nil
+					}
+				} else if writeProtocol(msg, nullBulk()) != nil {
+					return
+				}
+				s.trackCommandRead(clientSession, msg)
 				continue
 			}
 		}
@@ -606,6 +792,54 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			}
 		}
 
+		if handled, fastErr := s.server.executeAuthorizedConcurrentRawGet(
+			msg,
+			writer.writeBulkBuffered,
+		); handled {
+			if fastErr != nil {
+				return
+			}
+			s.trackCommandRead(clientSession, msg)
+			continue
+		}
+
+		if value, found, handled, fastErr := s.server.executeAuthorizedConcurrentGetInto(msg, getScratch); handled {
+			if fastErr != nil {
+				if writeProtocol(msg, errorResponse(fastErr)) != nil {
+					return
+				}
+				continue
+			}
+			if found {
+				if writer.writeBulkBuffered(value) != nil {
+					return
+				}
+				if cap(value) <= maxRetainedGetScratch {
+					getScratch = value[:0]
+				} else {
+					getScratch = nil
+				}
+			} else if writeProtocol(msg, nullBulk()) != nil {
+				return
+			}
+			s.trackCommandRead(clientSession, msg)
+			continue
+		}
+
+		if result, handled, fastErr := s.server.executeAuthorizedConcurrentSet(msg); handled {
+			if fastErr != nil {
+				result = errorResponse(fastErr)
+			}
+			commandSucceeded := fastErr == nil
+			if writeProtocol(msg, result) != nil {
+				return
+			}
+			if commandSucceeded {
+				s.invalidateTrackingKeys(clientSession, msg)
+			}
+			continue
+		}
+
 		var result []byte
 		if isBlockingListCommand(msg) || isBlockingZSetCommand(msg) || isBlockingStreamCommand(msg) {
 			disconnected, stopWatch := watchConnectionDisconnect(peer)
@@ -700,7 +934,25 @@ func writeWithTimeout(conn net.Conn, response []byte, timeout time.Duration) err
 }
 
 func (s *TCPServer) OptimizeSample() {
-	if s.server.optimizer != nil {
+	if s.server.optimizer == nil {
+		return
+	}
+
+	stats := s.server.optimizer.Stats()
+
+	// Fresh queue drops are the signal for aggressive recovery sampling.
+	// Sample a large bounded burst only when drops have actually increased.
+	if stats.Dropped > s.optimizerDroppedSeen {
+		s.optimizerDroppedSeen = stats.Dropped
+		s.server.optimizer.Sample(4096)
+		return
+	}
+
+	// When direct write-time enqueue is keeping up, a large 100ms sampling burst
+	// just rechecks already-optimized keys. Keep a small periodic discovery pass
+	// for uncommon mutation paths that do not enqueue directly.
+	s.optimizerMaintainTicks++
+	if s.optimizerMaintainTicks%100 == 0 {
 		s.server.optimizer.Sample(256)
 	}
 }

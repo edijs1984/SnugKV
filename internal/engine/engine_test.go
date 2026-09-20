@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"testing"
 	"time"
 )
@@ -51,5 +52,118 @@ func TestIncrBasic(t *testing.T) {
 	}
 	if got != 8 {
 		t.Fatalf("Incr result mismatch: got %d want %d", got, 8)
+	}
+}
+
+
+func TestGetStringIntoPersistsActivityThroughSharedMetadata(t *testing.T) {
+	store := New()
+	store.encoding = true
+	now := time.Unix(1_700_000_000, 0)
+	store.now = func() time.Time { return now }
+
+	if err := store.Set("hot", []byte("value"), 0); err != nil {
+		t.Fatal(err)
+	}
+
+	sh := store.shardFor("hot")
+	sh.mu.Lock()
+	e, ok := sh.get("hot")
+	if !ok {
+		sh.mu.Unlock()
+		t.Fatal("missing setup key")
+	}
+	e.entryMeta = &entryMeta{}
+	sh.set("hot", e)
+	sh.mu.Unlock()
+
+	value, found, wrongType := store.GetStringInto("hot", nil)
+	if !found || wrongType || string(value) != "value" {
+		t.Fatalf("GetStringInto value=%q found=%t wrongType=%t", value, found, wrongType)
+	}
+
+	sh.mu.RLock()
+	got, ok := sh.get("hot")
+	sh.mu.RUnlock()
+	if !ok || got.entryMeta == nil {
+		t.Fatal("metadata missing after GET")
+	}
+	if got.entryMeta.reads != 1 {
+		t.Fatalf("reads=%d want 1", got.entryMeta.reads)
+	}
+	if got.entryMeta.lastAccess.IsZero() {
+		t.Fatal("last access was not persisted")
+	}
+}
+
+func TestGetStringBytesIntoBinaryKeyAndExpiry(t *testing.T) {
+	store := New()
+	store.encoding = true
+	now := time.Unix(1_700_000_000, 0)
+	store.now = func() time.Time { return now }
+
+	key := "binary:\x00key"
+	if err := store.Set(key, []byte("value"), 0); err != nil {
+		t.Fatal(err)
+	}
+	value, found, wrongType := store.GetStringBytesInto([]byte(key), nil)
+	if !found || wrongType || string(value) != "value" {
+		t.Fatalf("persistent byte GET value=%q found=%t wrongType=%t", value, found, wrongType)
+	}
+
+	if err := store.SetWithTTL("expiring", []byte("ttl"), time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if value, found, wrongType := store.GetStringBytesInto([]byte("expiring"), nil); !found || wrongType || string(value) != "ttl" {
+		t.Fatalf("live expiring byte GET value=%q found=%t wrongType=%t", value, found, wrongType)
+	}
+
+	now = now.Add(time.Second)
+	if value, found, wrongType := store.GetStringBytesInto([]byte("expiring"), nil); found || wrongType || value != nil {
+		t.Fatalf("expired byte GET value=%q found=%t wrongType=%t", value, found, wrongType)
+	}
+}
+
+func TestGetStringRejectsStream(t *testing.T) {
+	store := New()
+	if _, _, err := store.StreamAdd(
+		"events",
+		"1-0",
+		[]StreamField{{Field: []byte("field"), Value: []byte("value")}},
+		StreamAddOptions{},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, found, wrongType := store.GetString("events"); found || !wrongType {
+		t.Fatalf("GetString stream found=%t wrongType=%t", found, wrongType)
+	}
+}
+
+
+func TestSetPlainOwnsBorrowedRawInput(t *testing.T) {
+	store, err := NewWithOptions(Options{Shards: 1, Encoding: true, Compression: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	value := bytes.Repeat([]byte("x"), 256)
+	want := bytes.Clone(value)
+	if err := store.SetPlain("k", value); err != nil {
+		t.Fatal(err)
+	}
+
+	// Mutating the caller buffer after SET must not affect stored data even
+	// though makeEntry borrows it transiently before Arena.Alloc takes ownership.
+	for i := range value {
+		value[i] = 'y'
+	}
+
+	got, ok := store.Get("k")
+	if !ok {
+		t.Fatal("missing key")
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatal("stored value aliases caller buffer")
 	}
 }

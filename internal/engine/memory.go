@@ -3,6 +3,7 @@ package engine
 import (
 	"bytes"
 	"errors"
+	"snugkv/internal/arena"
 	"snugkv/internal/codec"
 	"snugkv/internal/codec/jsonshape"
 	"sync"
@@ -21,9 +22,10 @@ const (
 )
 
 func (s *Store) exceedsMemoryLimitLocked(next uint64, admission memoryAdmission) bool {
+	max := s.memory.max.Load()
 	return admission == enforceMemoryLimit &&
-		s.memory.max > 0 &&
-		next > s.memory.max
+		max > 0 &&
+		next > max
 }
 
 // Reservations track owned engine allocations, not total process RSS.
@@ -84,8 +86,9 @@ func (s *Store) Layout() LayoutStats {
 }
 
 type accounting struct {
-	mu                                                                               sync.Mutex
-	used, index, entries, max, arenas, arenaPayload, arenaLiveBlocks, schemas, metas uint64
+	mu                                                                         sync.Mutex
+	used, index, entries, arenas, arenaPayload, arenaLiveBlocks, schemas, metas uint64
+	max                                                                        atomic.Uint64
 }
 
 func (s *Store) Memory() MemoryStats {
@@ -93,7 +96,7 @@ func (s *Store) Memory() MemoryStats {
 	defer s.memory.mu.Unlock()
 	return MemoryStats{
 		AccountedBytes:      s.memory.used,
-		MaxBytes:            s.memory.max,
+		MaxBytes:            s.memory.max.Load(),
 		IndexReservedBytes:  s.memory.index,
 		EntryBytes:          s.memory.entries,
 		ArenaBytes:          s.memory.arenas,
@@ -130,17 +133,23 @@ func (sh *shard) entryGrowthBytes(additional int) uint64 {
 }
 
 func (s *Store) makeEntry(value []byte) preparedEntry {
-	var rec codec.Record
-	if s.encoding {
-		rec = s.codecs.Encode(value)
-	} else {
-		rec = codec.Record{
-			ID:        codec.Raw,
-			RawLength: len(value),
-			Data:      append([]byte(nil), value...),
+	// preparedEntry is transient: publishRecordKnown copies data into the
+	// shard arena before the caller can reuse the request buffer. For values
+	// longer than 36 bytes no synchronous scalar codec can apply, so borrowing
+	// the input here avoids cloning the raw payload only to copy it again into
+	// the arena. The same borrowing is safe when encoding is disabled.
+	if !s.encoding || len(value) > 36 {
+		return preparedEntry{
+			entry: entry{
+				codecID:   codec.Raw,
+				valueType: classifyValue(value),
+				rawLength: uint32(len(value)),
+			},
+			data: value,
 		}
 	}
 
+	rec := s.codecs.Encode(value)
 	return preparedEntry{
 		entry: entry{
 			codecID:   rec.ID,
@@ -179,7 +188,7 @@ func (s *Store) makeEntryForShard(sh *shard, value []byte) preparedEntry {
 				if err == nil && bytes.Equal(decoded, value) {
 					return preparedEntry{
 						entry: entry{
-							entryMeta: &entryMeta{schema: schema},
+							entryMeta: &entryMeta{schemaID: schema.ID},
 							codecID:   5, // JSON-shape physical codec
 							valueType: classifyValue(value),
 							rawLength: uint32(len(value)),
@@ -194,6 +203,30 @@ func (s *Store) makeEntryForShard(sh *shard, value []byte) preparedEntry {
 	return s.makeEntry(value)
 }
 
+func (s *Store) decodeInto(sh *shard, e entry, dst []byte) []byte {
+	encoded := sh.encoded(e)
+	if e.valueType == TypeHash && isShapedHash(encoded) {
+		return s.decode(sh, e)
+	}
+
+	var schema *jsonshape.Schema
+	if e.entryMeta != nil && e.entryMeta.schemaID != 0 {
+		if shapes := s.loadShapeStore(); shapes != nil {
+			schema = shapes.ByID(e.entryMeta.schemaID)
+		}
+	}
+	out, err := s.codecs.DecodeInto(codec.Record{
+		ID:        e.codecID,
+		RawLength: int(e.rawLength),
+		Data:      encoded,
+		Schema:    schema,
+	}, int(e.rawLength), dst)
+	if err != nil {
+		panic(err)
+	}
+	return out
+}
+
 func (s *Store) decode(sh *shard, e entry) []byte {
 	encoded := sh.encoded(e)
 	if e.valueType == TypeHash && isShapedHash(encoded) {
@@ -205,8 +238,10 @@ func (s *Store) decode(sh *shard, e entry) []byte {
 	}
 
 	var schema *jsonshape.Schema
-	if e.entryMeta != nil {
-		schema = e.entryMeta.schema
+	if e.entryMeta != nil && e.entryMeta.schemaID != 0 {
+		if shapes := s.loadShapeStore(); shapes != nil {
+			schema = shapes.ByID(e.entryMeta.schemaID)
+		}
 	}
 	out, err := s.codecs.Decode(codec.Record{
 		ID:        e.codecID,
@@ -235,19 +270,42 @@ func (s *Store) publishRecord(
 	admission memoryAdmission,
 ) error {
 	old, exists := sh.get(key)
+	return s.publishRecordKnown(sh, key, e, admission, old, exists)
+}
 
-	if s.shouldTrackActivity(e.entry) && e.entryMeta == nil {
-		e.entryMeta = &entryMeta{}
-	}
-	if s.shouldTrackActivity(e.entry) {
-		meta := e.ensureMeta()
-		if exists {
-			meta.revision = nextEntryRevision(old)
-		} else {
-			meta.revision = 1
-		}
-	}
+func (s *Store) publishRecordKnown(
+	sh *shard,
+	key string,
+	e preparedEntry,
+	admission memoryAdmission,
+	old entry,
+	exists bool,
+) error {
+	return s.publishRecordKnownWithHash(sh, key, 0, false, e, admission, old, exists)
+}
 
+func (s *Store) publishRecordKnownHashed(
+	sh *shard,
+	key string,
+	hash uint64,
+	e preparedEntry,
+	admission memoryAdmission,
+	old entry,
+	exists bool,
+) error {
+	return s.publishRecordKnownWithHash(sh, key, hash, true, e, admission, old, exists)
+}
+
+func (s *Store) publishRecordKnownWithHash(
+	sh *shard,
+	key string,
+	hash uint64,
+	hashKnown bool,
+	e preparedEntry,
+	admission memoryAdmission,
+	old entry,
+	exists bool,
+) error {
 	var oldCost uint64
 	if exists {
 		oldCost = entryCharge(key, old)
@@ -259,19 +317,38 @@ func (s *Store) publishRecord(
 
 	extraIndex := uint64(0)
 	extraEntries := uint64(0)
-
 	if !exists {
 		extraIndex = sh.data.GrowthBytes(1)
 		extraEntries = sh.entryGrowthBytes(1)
 	}
 
-	s.memory.mu.Lock()
-	defer s.memory.mu.Unlock()
-
+	// Arena planning is shard-local and the caller already holds sh.mu. Keep
+	// this work out of the global accounting critical section so independent
+	// shards do not serialize while simulating allocation growth.
 	extraArena := sh.arena.GrowthFor([]int{len(e.data)})
 	if exists {
 		extraArena += sh.arena.FreeGrowth(old.ref)
 	}
+	newBlockBytes := arena.AllocationBytesForLength(len(e.data))
+	oldBlockBytes := uint64(0)
+	if exists {
+		oldBlockBytes = sh.arena.AllocationBytes(old.ref)
+	}
+
+	var newSchema *jsonshape.Schema
+	if e.entryMeta != nil && e.entryMeta.schemaID != 0 {
+		if sh.shapes != nil {
+			newSchema = sh.shapes.ByID(e.entryMeta.schemaID)
+		}
+		if newSchema == nil {
+			return errors.New("ERR schema handle is invalid")
+		}
+	}
+
+	// Reserve the accounting delta atomically with maxmemory admission, but do
+	// not hold the global accounting mutex across the physical shard publish.
+	s.memory.mu.Lock()
+
 	next := s.memory.used -
 		oldCost -
 		oldMetaCost +
@@ -281,12 +358,9 @@ func (s *Store) publishRecord(
 		extraEntries +
 		extraArena
 
-	var newSchema *jsonshape.Schema
-	if e.entryMeta != nil {
-		newSchema = e.entryMeta.schema
-	}
 	if newSchema != nil {
 		if sh.shapes == nil || !sh.shapes.RetainRecord(newSchema, e.data) {
+			s.memory.mu.Unlock()
 			return errors.New("ERR schema admission changed")
 		}
 	}
@@ -295,11 +369,17 @@ func (s *Store) publishRecord(
 		if newSchema != nil {
 			sh.shapes.ReleaseRecord(newSchema, e.data)
 		}
+		s.memory.mu.Unlock()
 		return ErrOOM
 	}
 
-	if exists && old.entryMeta != nil && old.entryMeta.schema != nil {
-		sh.shapes.ReleaseRecord(old.entryMeta.schema, sh.encoded(old))
+	if exists && old.entryMeta != nil && old.entryMeta.schemaID != 0 {
+		oldSchema := sh.shapes.ByID(old.entryMeta.schemaID)
+		if oldSchema == nil {
+			s.memory.mu.Unlock()
+			return errors.New("ERR stored schema handle is invalid")
+		}
+		sh.shapes.ReleaseRecord(oldSchema, sh.encoded(old))
 	}
 
 	s.memory.used = next
@@ -311,12 +391,16 @@ func (s *Store) publishRecord(
 
 	if exists {
 		s.memory.arenaPayload -= uint64(len(sh.encoded(old)))
+		s.memory.arenaLiveBlocks -= oldBlockBytes
 	}
 
 	s.memory.arenaPayload += uint64(len(e.data))
+	s.memory.arenaLiveBlocks += newBlockBytes
 
-	if s.shouldTrackActivity(e.entry) {
-		meta := e.ensureMeta()
+	s.memory.mu.Unlock()
+
+	if s.shouldTrackActivity(e.entry) && e.entryMeta != nil {
+		meta := e.entryMeta
 		if meta.lastWrite.IsZero() {
 			now := s.now()
 			meta.lastWrite = activityStampOf(now)
@@ -335,19 +419,14 @@ func (s *Store) publishRecord(
 
 	e.ref = sh.arena.Alloc(e.data)
 
-	newBlockBytes := sh.arena.AllocationBytes(e.ref)
-
-	if exists {
-		oldBlockBytes := sh.arena.AllocationBytes(old.ref)
-		s.memory.arenaLiveBlocks -= oldBlockBytes
-	}
-
-	s.memory.arenaLiveBlocks += newBlockBytes
-
 	// The queue owns the expiration timestamp. The hot entry stores only this
 	// one-byte presence bit so persistent reads never need a map lookup.
 	e.hasExpiry = !e.expiresAt.IsZero()
-	sh.set(key, e.entry)
+	if hashKnown {
+		sh.setKnownHashed(key, hash, e.entry, exists)
+	} else {
+		sh.set(key, e.entry)
+	}
 
 	if exists {
 		sh.arena.Free(old.ref)
@@ -365,8 +444,13 @@ func (s *Store) remove(sh *shard, key string) {
 		}
 		freeGrowth := sh.arena.FreeGrowth(e.ref)
 		s.memory.mu.Lock()
-		if e.entryMeta != nil && e.entryMeta.schema != nil {
-			sh.shapes.ReleaseRecord(e.entryMeta.schema, sh.encoded(e))
+		if e.entryMeta != nil && e.entryMeta.schemaID != 0 {
+			schema := sh.shapes.ByID(e.entryMeta.schemaID)
+			if schema == nil {
+				s.memory.mu.Unlock()
+				panic("stored schema handle is invalid")
+			}
+			sh.shapes.ReleaseRecord(schema, sh.encoded(e))
 		}
 		cost := entryCharge(key, e)
 		metaCost := metadataCharge(e)
@@ -416,10 +500,7 @@ func (s *Store) MemoryUsage(key string) (uint64, bool) {
 // MaxMemory returns the current runtime memory limit in accounted bytes.
 // Zero means unlimited.
 func (s *Store) MaxMemory() uint64 {
-	s.memory.mu.Lock()
-	defer s.memory.mu.Unlock()
-
-	return s.memory.max
+	return s.memory.max.Load()
 }
 
 // SetMaxMemory changes the runtime memory admission limit.
@@ -428,7 +509,5 @@ func (s *Store) MaxMemory() uint64 {
 // existing data remains resident, while subsequent memory-growing writes are
 // subject to the configured eviction/OOM policy.
 func (s *Store) SetMaxMemory(max uint64) {
-	s.memory.mu.Lock()
-	s.memory.max = max
-	s.memory.mu.Unlock()
+	s.memory.max.Store(max)
 }

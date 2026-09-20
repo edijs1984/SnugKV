@@ -80,6 +80,13 @@ func (r *Registry) Name(id ID) string {
 func (r *Registry) Encode(src []byte) Record {
 	best := Record{ID: Raw, RawLength: len(src), Data: bytes.Clone(src)}
 
+	// No synchronous scalar codec can represent a canonical value longer
+	// than a UUID (36 bytes). Larger values are handled by background
+	// compression/shape optimization instead of paying scalar parse costs.
+	if len(src) > 36 {
+		return best
+	}
+
 	// JSON objects and arrays cannot be represented by the cheap scalar
 	// codecs below. Avoid feeding them through integer/float/UUID/timestamp
 	// parsers just to reject them. JSON-shape and compression are evaluated
@@ -104,6 +111,51 @@ func (r *Registry) Encode(src []byte) Record {
 	}
 	return best
 }
+type decodeIntoCodec interface {
+	DecodeInto([]byte, int, []byte) ([]byte, error)
+}
+
+func (r *Registry) DecodeInto(rec Record, max int, dst []byte) ([]byte, error) {
+	if rec.RawLength < 0 || rec.RawLength > max {
+		return nil, errors.New("decoded length exceeds limit")
+	}
+
+	// Keep the hottest decode paths free of map lookup and interface assertion
+	// overhead. These codecs are stateless; direct dispatch is equivalent to
+	// retrieving the registered implementation.
+	var (
+		out []byte
+		err error
+	)
+	switch rec.ID {
+	case Raw:
+		out, err = (rawCodec{}).DecodeInto(rec.Data, rec.RawLength, dst)
+	case LZ4:
+		out, err = (lz4Codec{}).DecodeInto(rec.Data, rec.RawLength, dst)
+	case Zstandard:
+		out, err = (zstdCodec{}).DecodeInto(rec.Data, rec.RawLength, dst)
+	case 5:
+		return r.Decode(rec, max)
+	default:
+		c, ok := r.codecs[rec.ID]
+		if !ok {
+			return nil, errors.New("unknown codec ID")
+		}
+		if into, ok := c.(decodeIntoCodec); ok {
+			out, err = into.DecodeInto(rec.Data, rec.RawLength, dst)
+		} else {
+			return r.Decode(rec, max)
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(out) != rec.RawLength {
+		return nil, errors.New("decoded length mismatch")
+	}
+	return out, nil
+}
+
 func (r *Registry) Decode(rec Record, max int) ([]byte, error) {
 	if rec.RawLength < 0 || rec.RawLength > max {
 		return nil, errors.New("decoded length exceeds limit")
@@ -139,6 +191,18 @@ func (rawCodec) Decode(src []byte, n int) ([]byte, error) {
 		return nil, errors.New("invalid raw length")
 	}
 	return bytes.Clone(src), nil
+}
+func (rawCodec) DecodeInto(src []byte, n int, dst []byte) ([]byte, error) {
+	if len(src) != n {
+		return nil, errors.New("invalid raw length")
+	}
+	if cap(dst) < n {
+		dst = make([]byte, n)
+	} else {
+		dst = dst[:n]
+	}
+	copy(dst, src)
+	return dst, nil
 }
 
 type integerCodec struct{}

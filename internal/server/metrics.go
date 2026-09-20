@@ -23,6 +23,7 @@ func (s *TCPServer) Metrics(addr string) (*http.Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	atomic.StoreUint32(&s.server.metricsEnabled, 1)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "GET" {

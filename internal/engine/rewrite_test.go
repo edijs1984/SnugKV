@@ -277,3 +277,31 @@ func TestLazyShapeStoreRespectsMaxMemory(t *testing.T) {
 		)
 	}
 }
+
+
+func TestCandidateIntoReusesScratch(t *testing.T) {
+	s, err := NewWithOptions(Options{Shards: 1, Encoding: true, Compression: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	value := []byte("abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+	if err := s.Set("k", value, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	scratch := make([]byte, 0, 256)
+	candidate, ok := s.CandidateInto("k", 1024, scratch)
+	if !ok {
+		t.Fatal("missing candidate")
+	}
+	if string(candidate.Value) != string(value) {
+		t.Fatalf("candidate=%q want=%q", candidate.Value, value)
+	}
+	if cap(candidate.Value) != cap(scratch) {
+		t.Fatalf("candidate capacity=%d want scratch capacity=%d", cap(candidate.Value), cap(scratch))
+	}
+	if len(candidate.Value) > 0 && &candidate.Value[0] != &scratch[:cap(scratch)][0] {
+		t.Fatal("CandidateInto did not reuse supplied scratch")
+	}
+}

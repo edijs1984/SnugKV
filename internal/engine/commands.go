@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 	"math/bits"
+	"snugkv/internal/index"
 	"sort"
 	"strconv"
 	"time"
@@ -25,6 +26,43 @@ func (s *Store) SetConditional(
 ) (bool, error) {
 	applied, _, _, err := s.SetWithOptions(key, value, options)
 	return applied, err
+}
+
+// SetPlain implements the plain Redis SET key value form without option
+// parsing overhead. It preserves ordinary overwrite, expiry removal, memory
+// accounting, optimizer metadata and JSON-shape observation semantics.
+func (s *Store) SetPlain(key string, value []byte) error {
+	if len(value) > 32<<20 {
+		return errors.New("ERR value exceeds 32 MiB limit")
+	}
+
+	hash := index.Hash(key)
+	sh := s.shardForHash(hash)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	old, exists := sh.getHashed(key, hash)
+	if exists && old.hasExpiry && sh.expired(key, old, s.now()) {
+		s.remove(sh, key)
+		old = entry{}
+		exists = false
+	}
+
+	e := s.makeEntryForShard(sh, value)
+	if err := s.publishRecordKnownHashed(
+		sh,
+		key,
+		hash,
+		e,
+		enforceMemoryLimit,
+		old,
+		exists,
+	); err != nil {
+		return err
+	}
+
+	s.observeJSONShapeLocked(sh, value)
+	return nil
 }
 
 func (s *Store) SetWithOptions(
@@ -223,8 +261,12 @@ func (s *Store) MSet(keys []string, values [][]byte) error {
 		e := replacements[k]
 		sh := s.shardFor(k)
 		old, exists := sh.get(k)
-		if exists && old.entryMeta != nil && old.entryMeta.schema != nil {
-			sh.shapes.ReleaseRecord(old.entryMeta.schema, sh.encoded(old))
+		if exists && old.entryMeta != nil && old.entryMeta.schemaID != 0 {
+			schema := sh.shapes.ByID(old.entryMeta.schemaID)
+			if schema == nil {
+				panic("stored schema handle is invalid")
+			}
+			sh.shapes.ReleaseRecord(schema, sh.encoded(old))
 		}
 		if s.shouldTrackActivity(e.entry) {
 			meta := e.ensureMeta()

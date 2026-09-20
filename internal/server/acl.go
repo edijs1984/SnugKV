@@ -58,7 +58,6 @@ func NewACL() *ACL {
 		ChannelPatterns: []string{"*"},
 		SanitizePayload: true,
 	}
-
 	return a
 }
 

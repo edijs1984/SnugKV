@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -32,11 +33,11 @@ type clientSession struct {
 	libName string
 	libVer  string
 
-	protocol int
+	protocol atomic.Int32
 
 	createdAt time.Time
-	lastSeen  time.Time
-	lastCmd   string
+	lastSeen  atomic.Int64
+	lastCmd   atomic.Pointer[string]
 
 	blocked     bool
 	unblockCh   chan struct{}
@@ -49,6 +50,11 @@ type clientSession struct {
 	scriptDebugRuntime *scriptDebugRuntime
 }
 
+var (
+	clientCommandGET = "get"
+	clientCommandSET = "set"
+)
+
 func newClientSession(
 	id uint64,
 	conn net.Conn,
@@ -57,51 +63,61 @@ func newClientSession(
 ) *clientSession {
 	now := time.Now()
 
-	return &clientSession{
+	client := &clientSession{
 		id:         id,
 		conn:       conn,
 		remoteAddr: remoteAddr,
 		localAddr:  localAddr,
-		protocol:   2,
 		createdAt:  now,
-		lastSeen:   now,
 	}
+	client.protocol.Store(2)
+	client.lastSeen.Store(now.UnixNano())
+	return client
 }
 
-func (c *clientSession) touch(args [][]byte) {
+func (c *clientSession) touch(args [][]byte) time.Time {
+	now := time.Now()
 	if c == nil {
-		return
+		return now
 	}
 
-	cmd := ""
+	var cmd *string
 	if len(args) > 0 {
-		cmd = strings.ToLower(string(args[0]))
-		if len(args) > 1 && strings.EqualFold(string(args[0]), "CLIENT") {
-			cmd += "|" + strings.ToLower(string(args[1]))
+		raw := args[0]
+		if len(raw) == 3 &&
+			raw[0]|32 == 103 &&
+			raw[1]|32 == 101 &&
+			raw[2]|32 == 116 {
+			cmd = &clientCommandGET
+		} else if len(raw) == 3 &&
+			raw[0]|32 == 115 &&
+			raw[1]|32 == 101 &&
+			raw[2]|32 == 116 {
+			cmd = &clientCommandSET
+		} else {
+			value := strings.ToLower(string(raw))
+			if len(args) > 1 && strings.EqualFold(string(raw), "CLIENT") {
+				value += "|" + strings.ToLower(string(args[1]))
+			}
+			cmd = &value
 		}
 	}
 
-	c.mu.Lock()
-	c.lastSeen = time.Now()
-	c.lastCmd = cmd
-	c.mu.Unlock()
+	c.lastSeen.Store(now.UnixNano())
+	c.lastCmd.Store(cmd)
+	return now
 }
 
 func (c *clientSession) setProtocol(protocol int) {
-	c.mu.Lock()
-	c.protocol = protocol
-	c.mu.Unlock()
+	c.protocol.Store(int32(protocol))
 }
 
 func (c *clientSession) protocolVersion() int {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if c.protocol == 0 {
+	protocol := c.protocol.Load()
+	if protocol == 0 {
 		return 2
 	}
-
-	return c.protocol
+	return int(protocol)
 }
 
 func (c *clientSession) setName(name string) {
@@ -187,6 +203,12 @@ type clientSnapshot struct {
 }
 
 func (c *clientSession) snapshot() clientSnapshot {
+	lastSeen := time.Unix(0, c.lastSeen.Load())
+	lastCmd := ""
+	if value := c.lastCmd.Load(); value != nil {
+		lastCmd = *value
+	}
+
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -197,10 +219,10 @@ func (c *clientSession) snapshot() clientSnapshot {
 		name:       c.name,
 		libName:    c.libName,
 		libVer:     c.libVer,
-		protocol:   c.protocol,
+		protocol:   int(c.protocol.Load()),
 		createdAt:  c.createdAt,
-		lastSeen:   c.lastSeen,
-		lastCmd:    c.lastCmd,
+		lastSeen:   lastSeen,
+		lastCmd:    lastCmd,
 		blocked:    c.blocked,
 	}
 }

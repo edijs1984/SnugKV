@@ -1,5 +1,100 @@
 # Benchmark results
 
+## Redis 8.2 comparison — 1M repetitive scalar keys, 2026-09-20
+
+Black-box RESP2/TCP measurements on Linux amd64, Go 1.27.1, 4 logical CPUs,
+1,000,000 keys, 256-byte deliberately repetitive values, 4 GET workers, and GET
+pipeline depth 256. Redis and SnugKV were preloaded with the same logical
+dataset. These are development measurements; repeated clean runs are required
+before making public performance claims.
+
+### Memory after load
+
+| Server/config | Reported memory | Bytes/key |
+|---|---:|---:|
+| Redis 8.2 | 393,260,912 B | 392.39 B/key load delta |
+| SnugKV raw | 362,314,176 B | 362.27 B/key load delta |
+| SnugKV optimized | ~162,638,528 B settled | ~162.6 B/key accounted |
+
+For this synthetic highly-compressible workload, optimized SnugKV used about
+58.6% less reported/accounted memory than Redis while preserving all 1,000,000
+logical 256-byte values. This percentage is workload-specific and must not be
+generalized to incompressible data.
+
+### Pipelined GET
+
+| Server/config | GET ops/s | p50 | p95 | p99 |
+|---|---:|---:|---:|---:|
+| Redis 8.2 clean reference | 429,664 | 9.38 us | 12.70 us | 18.61 us |
+| SnugKV raw reference | 526,951 | 6.93 us | 11.73 us | 17.41 us |
+| SnugKV optimized, before response-copy fix | 404,451 | 8.43 us | 18.07 us | 27.83 us |
+| SnugKV optimized, after response-copy fix | 430,233 | 8.05 us | 15.69 us | 25.28 us |
+| SnugKV optimized, reusable decode scratch | 455,538 | 7.79 us | 13.49 us | 20.29 us |
+| SnugKV optimized, GET dispatch bypass | 506,322 | 7.21 us | 12.34 us | 19.15 us |
+| SnugKV optimized, redundant activity write removed | 522,399 | 7.00 us | 11.98 us | 18.61 us |
+| SnugKV optimized, byte-key GET + buffered RESP length parsing | 547,522 avg / 553,991 best | 6.69 us best | 10.82 us best | 15.43 us best |
+| SnugKV optimized, direct hot-codec DecodeInto dispatch | 554,543 avg / 564,404 best | 6.54 us best | 10.69 us best | 14.82 us best |
+| SnugKV optimized, reusable buffered GET decode | 599,559 avg / 612,393 best | 5.95 us best | 9.88 us best | 14.30 us best |
+
+The GET percentile samples for pipelined runs are amortized per-operation batch
+times, not independent request latencies. The later optimized path combines
+caller-owned decode scratch, direct bulk framing, a known-GET dispatch path after
+authorization, and pointer-only activity metadata updates.
+
+Across three consecutive clean SnugKV runs after byte-key lookup and buffered RESP
+length parsing, throughput averaged 547,522 GET/s (best 553,991). After direct
+hot-codec DecodeInto dispatch, three consecutive runs averaged 554,543 GET/s,
+with a best observed run of 564,404 GET/s. Reusing a per-connection key scratch
+for complete already-buffered GET frames raised the next three-run average to
+599,559 GET/s, with a best observed run of 612,393 GET/s. Three Redis 8.2
+runs in the same comparison window averaged 435,561 GET/s. On this exact
+synthetic workload, SnugKV averaged about 25.7% higher GET throughput while
+retaining the optimized memory footprint. This is not a universal Redis performance claim:
+machine load materially affected earlier runs, and value compressibility strongly
+affects the optimized path.
+
+Reproduce with `cmd/rediswirebench`.
+
+## Redis 8.2 comparison — random 256-byte SET/load, 2026-09-20
+
+Black-box RESP2/TCP measurements on the same Linux amd64 / Go 1.27.1 development
+machine with 4 logical CPUs, pipeline depth 256, 8 concurrent load workers, and
+256-byte pseudo-random values. The load harness uses unique key ranges per worker.
+Percentile samples are amortized per-operation batch times, not independent request
+latencies.
+
+For 1,000,000 keys:
+
+| Server/config | SET/load throughput | Reported/accounted delta | Bytes/key |
+|---|---:|---:|---:|
+| Redis 8.2 reference | ~318,145 ops/s | ~392,388,584 B | ~392.39 |
+| SnugKV optimized, five-run median | 315,256 ops/s | 362,268,608 B | 362.27 |
+| SnugKV optimized, best of five | 318,331 ops/s | 362,268,608 B | 362.27 |
+
+The five SnugKV runs were 287,303; 265,795; 315,256; 318,331; and 316,328
+ops/s. On this exact workload the median was about 0.9% below the recorded Redis
+8-worker reference while SnugKV's engine-accounted load delta was about 7.7%
+lower per key. This is a development comparison, not a universal throughput or
+RSS claim.
+
+For sustained 5,000,000-key SnugKV loads on the same configuration, three
+consecutive runs measured 299,270; 303,496; and 283,798 ops/s, for a median of
+299,270 ops/s and a mean of about 295,521 ops/s. The measured load delta was
+1,763,407,552 bytes, or 352.68 bytes/key. No Redis 5M result is recorded here,
+so this figure is not presented as a Redis comparison.
+
+The optimized SET path reached this point through allocation and hot-path work
+rather than disabling memory features: plain SET borrows transient request bytes
+until arena ownership, complete pipelined SET frames use reusable connection
+scratch, optimizer candidates reuse per-worker scratch and borrowed raw fallbacks,
+known key hashes are carried into indexed publication, and background optimization
+yields more aggressively under sustained queue pressure. In profiling of the
+random workload, temporary allocation traffic fell from roughly 1.38 GB to about
+467 MB for the 1M load profile; the remaining major allocations were predominantly
+persistent arena/index/entry growth.
+
+Reproduce with `cmd/rediswirebench`.
+
 This page records engineering measurements used to guide SnugKV storage decisions.
 They are workload-specific measurements, not universal performance claims.
 

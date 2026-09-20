@@ -253,6 +253,14 @@ SnugKV's measured engine-accounted memory versus Redis `used_memory` delta was:
 - ZSET structured members after score delta + prefix coding: about 17.8% lower at 8 members, 34.1% at 16, 45.5% at 32, and 51.2% at 64.
 - HASH shared schemas: about 13.2% lower at 8 fields, 22.8% at 16, 21.8% at 32, and 22.1% at 64.
 
+A Redis-wire random-value load comparison on the same 4-logical-CPU development
+machine measured a final five-run SnugKV median of about 315k SET/s at 1M keys,
+8 workers, pipeline depth 256, and 256-byte random values, versus about 318k SET/s
+for the recorded Redis 8.2 reference. SnugKV's engine-accounted load delta was
+362.27 B/key versus about 392.39 B/key for Redis on that exact workload. These
+numbers are workload- and machine-specific engineering measurements; see the
+benchmark page for individual runs, sustained 5M results, and methodology.
+
 Tiny containers can still lose to Redis because fixed per-key/index/arena overhead
 remains significant even after the sparse-memory work. The benchmark page records
 the exact workloads and caveats; these figures are engineering measurements, not
