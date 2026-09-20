@@ -27,6 +27,20 @@ func activityStampOf(t time.Time) activityStamp {
 
 func (s activityStamp) IsZero() bool { return s == 0 }
 
+func (s activityStamp) IsOlderThan(t time.Time, d time.Duration) bool {
+	if s == 0 {
+		return true
+	}
+	return t.Unix()-int64(s) > int64(d/time.Second)
+}
+
+func (s activityStamp) IsWithin(t time.Time, d time.Duration) bool {
+	if s == 0 {
+		return false
+	}
+	return t.Unix()-int64(s) < int64(d/time.Second)
+}
+
 func (s activityStamp) Time() time.Time {
 	if s == 0 {
 		return time.Time{}
