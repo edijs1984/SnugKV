@@ -61,6 +61,7 @@ func (session *pubSubSession) subscribe(values [][]byte, pattern bool) error {
 		}
 		response = append(response, pubSubConfirmation(kind, value, false, session.subscriptionCountLocked())...)
 	}
+	session.refreshActiveLocked()
 	return session.send(response)
 }
 
@@ -86,6 +87,7 @@ func (session *pubSubSession) subscribeShard(values [][]byte) error {
 		}
 		response = append(response, pubSubConfirmation("ssubscribe", value, false, session.shardSubscriptionCountLocked())...)
 	}
+	session.refreshActiveLocked()
 	return session.send(response)
 }
 
@@ -107,6 +109,7 @@ func (session *pubSubSession) unsubscribe(values [][]byte, pattern bool) error {
 	}
 
 	if len(values) == 0 && len(owned) == 0 {
+		session.refreshActiveLocked()
 		return session.send(pubSubConfirmation(kind, nil, true, session.subscriptionCountLocked()))
 	}
 	if len(values) == 0 {
@@ -130,6 +133,7 @@ func (session *pubSubSession) unsubscribe(values [][]byte, pattern bool) error {
 		}
 		response = append(response, pubSubConfirmation(kind, value, false, session.subscriptionCountLocked())...)
 	}
+	session.refreshActiveLocked()
 	return session.send(response)
 }
 
@@ -142,6 +146,7 @@ func (session *pubSubSession) unsubscribeShard(values [][]byte) error {
 	}
 
 	if len(values) == 0 && len(session.shardChannels) == 0 {
+		session.refreshActiveLocked()
 		return session.send(pubSubConfirmation("sunsubscribe", nil, true, session.shardSubscriptionCountLocked()))
 	}
 	if len(values) == 0 {
@@ -165,6 +170,7 @@ func (session *pubSubSession) unsubscribeShard(values [][]byte) error {
 		}
 		response = append(response, pubSubConfirmation("sunsubscribe", value, false, session.shardSubscriptionCountLocked())...)
 	}
+	session.refreshActiveLocked()
 	return session.send(response)
 }
 
@@ -194,6 +200,7 @@ func (session *pubSubSession) clearLocked() {
 	session.channels = make(map[string]struct{})
 	session.patterns = make(map[string]struct{})
 	session.shardChannels = make(map[string]struct{})
+	session.refreshActiveLocked()
 }
 
 func (session *pubSubSession) reset() error {
