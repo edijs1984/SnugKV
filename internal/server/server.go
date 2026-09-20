@@ -775,9 +775,9 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		}
 
 		if applied {
-			// Newly written values are the highest-priority optimization candidates.
-			// Shape admission is trained inside the engine write path.
-			if s.optimizer != nil {
+			// Only queue values that can benefit from background work.
+			// Cheap scalar codecs already run synchronously in the engine.
+			if s.optimizer != nil && s.store.ShouldQueueOptimization(args[2]) {
 				s.optimizer.Queue(key)
 			}
 		}
