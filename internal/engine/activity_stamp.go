@@ -31,14 +31,26 @@ func (s activityStamp) IsOlderThan(t time.Time, d time.Duration) bool {
 	if s == 0 {
 		return true
 	}
-	return t.UnixNano()-int64(s)*int64(time.Second) > int64(d)
+	seconds := int64(d / time.Second)
+	remainder := d % time.Second
+	deltaSeconds := t.Unix() - int64(s)
+	if deltaSeconds != seconds {
+		return deltaSeconds > seconds
+	}
+	return time.Duration(t.Nanosecond()) > remainder
 }
 
 func (s activityStamp) IsWithin(t time.Time, d time.Duration) bool {
 	if s == 0 {
 		return false
 	}
-	return t.UnixNano()-int64(s)*int64(time.Second) < int64(d)
+	seconds := int64(d / time.Second)
+	remainder := d % time.Second
+	deltaSeconds := t.Unix() - int64(s)
+	if deltaSeconds != seconds {
+		return deltaSeconds < seconds
+	}
+	return time.Duration(t.Nanosecond()) < remainder
 }
 
 func (s activityStamp) Time() time.Time {
