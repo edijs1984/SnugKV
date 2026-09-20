@@ -33,6 +33,28 @@ func TestDecimalKeyHashesDoNotClusterLowBuckets(t *testing.T) {
 	}
 }
 
+func TestByteLookupMatchesStringLookup(t *testing.T) {
+	table := New[uint32]()
+	keys := []string{"alpha", "binary:\x00key", "", "longer:key:1234567890"}
+
+	for i, key := range keys {
+		table.Set(key, uint32(i+1))
+		bytesKey := []byte(key)
+		if got, want := HashBytes(bytesKey), Hash(key); got != want {
+			t.Fatalf("HashBytes(%q)=%d want %d", key, got, want)
+		}
+		got, ok := table.GetHashedBytes(bytesKey, HashBytes(bytesKey))
+		if !ok || got != uint32(i+1) {
+			t.Fatalf("byte lookup %q got=%d ok=%t", key, got, ok)
+		}
+	}
+
+	missing := []byte("missing")
+	if _, ok := table.GetHashedBytes(missing, HashBytes(missing)); ok {
+		t.Fatal("missing byte key found")
+	}
+}
+
 func TestPackedSlotIs16Bytes(t *testing.T) {
 	table := New[uint32]()
 	if got := table.EntryBytes(); got != 16 {
