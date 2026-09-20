@@ -133,17 +133,23 @@ func (sh *shard) entryGrowthBytes(additional int) uint64 {
 }
 
 func (s *Store) makeEntry(value []byte) preparedEntry {
-	var rec codec.Record
-	if s.encoding {
-		rec = s.codecs.Encode(value)
-	} else {
-		rec = codec.Record{
-			ID:        codec.Raw,
-			RawLength: len(value),
-			Data:      append([]byte(nil), value...),
+	// preparedEntry is transient: publishRecordKnown copies data into the
+	// shard arena before the caller can reuse the request buffer. For values
+	// longer than 36 bytes no synchronous scalar codec can apply, so borrowing
+	// the input here avoids cloning the raw payload only to copy it again into
+	// the arena. The same borrowing is safe when encoding is disabled.
+	if !s.encoding || len(value) > 36 {
+		return preparedEntry{
+			entry: entry{
+				codecID:   codec.Raw,
+				valueType: classifyValue(value),
+				rawLength: uint32(len(value)),
+			},
+			data: value,
 		}
 	}
 
+	rec := s.codecs.Encode(value)
 	return preparedEntry{
 		entry: entry{
 			codecID:   rec.ID,
