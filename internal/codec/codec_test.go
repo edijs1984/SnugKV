@@ -188,6 +188,24 @@ func TestGeneralCompressionConcurrent(t *testing.T) {
 	}
 }
 
+func TestDecodeIntoReusesRawBuffer(t *testing.T) {
+	r := NewRegistry()
+	value := []byte("raw decode into")
+	rec := Record{ID: Raw, RawLength: len(value), Data: value}
+	scratch := make([]byte, 0, len(value))
+
+	out, err := r.DecodeInto(rec, len(value), scratch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(out, value) {
+		t.Fatalf("round trip mismatch: got %q want %q", out, value)
+	}
+	if len(out) > 0 && &out[0] != &scratch[:cap(scratch)][0] {
+		t.Fatal("raw DecodeInto did not reuse provided buffer")
+	}
+}
+
 func TestDecodeIntoReusesCompressionBuffer(t *testing.T) {
 	r := NewRegistry()
 	value := bytes.Repeat([]byte("decode-into-reuse-"), 128)
