@@ -122,3 +122,54 @@ func TestAuthorizedConcurrentGetFastPathFallbacks(t *testing.T) {
 		}
 	})
 }
+
+
+func TestAuthorizedConcurrentRawGetFastPath(t *testing.T) {
+	store := engine.New()
+	s := New(store)
+
+	if err := store.Set("key", []byte("value"), 0); err != nil {
+		t.Fatal(err)
+	}
+
+	var payload []byte
+	handled, err := s.executeAuthorizedConcurrentRawGet(
+		[][]byte{[]byte("GET"), []byte("key")},
+		func(value []byte) error {
+			payload = append(payload, value...)
+			return nil
+		},
+	)
+	if err != nil || !handled {
+		t.Fatalf("handled=%t err=%v", handled, err)
+	}
+	if string(payload) != "value" {
+		t.Fatalf("payload=%q", payload)
+	}
+}
+
+func TestAuthorizedConcurrentRawGetFallsBackWhenEncodingEnabled(t *testing.T) {
+	store, err := engine.NewWithOptions(engine.Options{
+		Shards:   256,
+		Encoding: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New(store)
+
+	if err := store.Set("key", []byte("value"), 0); err != nil {
+		t.Fatal(err)
+	}
+
+	handled, err := s.executeAuthorizedConcurrentRawGet(
+		[][]byte{[]byte("GET"), []byte("key")},
+		func([]byte) error {
+			t.Fatal("encoded store unexpectedly used raw visitor")
+			return nil
+		},
+	)
+	if err != nil || handled {
+		t.Fatalf("handled=%t err=%v", handled, err)
+	}
+}

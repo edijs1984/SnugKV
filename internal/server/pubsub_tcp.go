@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -50,6 +51,33 @@ func (w *serializedResponseWriter) writeBuffered(response []byte) error {
 		}
 	}
 	_, err := w.buf.Write(response)
+	return err
+}
+
+func (w *serializedResponseWriter) writeBulkBuffered(payload []byte) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	// RESP bulk header fits in this stack buffer for every supported value size.
+	var header [32]byte
+	header[0] = 36
+	framed := strconv.AppendInt(header[:1], int64(len(payload)), 10)
+	framed = append(framed, 13, 10)
+
+	total := len(framed) + len(payload) + 2
+	if total > w.buf.Available() {
+		if err := w.conn.SetWriteDeadline(time.Now().Add(time.Duration(w.server.config.WriteTimeoutMS) * time.Millisecond)); err != nil {
+			return err
+		}
+	}
+
+	if _, err := w.buf.Write(framed); err != nil {
+		return err
+	}
+	if _, err := w.buf.Write(payload); err != nil {
+		return err
+	}
+	_, err := w.buf.Write([]byte{13, 10})
 	return err
 }
 

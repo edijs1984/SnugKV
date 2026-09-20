@@ -193,6 +193,28 @@ func (s *Store) Get(key string) ([]byte, bool) {
 	return s.decode(sh, e), true
 }
 
+// VisitRawString exposes an immutable raw string only for stores with encoding
+// disabled. The visitor runs while the owning shard is read-locked, so the arena
+// bytes stay valid without cloning. Missing, expired, encoded and native
+// container values return handled=false and use the ordinary GET path.
+func (s *Store) VisitRawString(key string, visit func([]byte) error) (handled bool, err error) {
+	if s.encoding {
+		return false, nil
+	}
+
+	hash := index.Hash(key)
+	sh := s.shardForHash(hash)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
+
+	e, ok := sh.getHashed(key, hash)
+	if !ok || sh.expired(key, e, s.now()) || isNativeContainerType(e.valueType) || e.codecID != codec.Raw {
+		return false, nil
+	}
+
+	return true, visit(sh.encoded(e))
+}
+
 // GetString performs the Redis string GET type check and value lookup under one
 // shard lock. wrongType is true only for native container values that GET must
 // reject; missing/expired keys return found=false.

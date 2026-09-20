@@ -85,6 +85,36 @@ func (s *Server) executeWithCancelSession(
 	return s.executeDurableForSession(args, session)
 }
 
+// executeAuthorizedConcurrentRawGet keeps the raw value in the engine arena and
+// lets the TCP layer frame it directly into its existing connection buffer.
+// It is intentionally limited to encoding-disabled stores; encoded values keep
+// the ordinary GET path and its activity/codec semantics.
+func (s *Server) executeAuthorizedConcurrentRawGet(
+	args [][]byte,
+	writeBulk func([]byte) error,
+) (handled bool, err error) {
+	if len(args) != 2 ||
+		!bytes.EqualFold(args[0], []byte("GET")) ||
+		s.journal != nil ||
+		atomic.LoadUint32(&s.metricsEnabled) != 0 {
+		return false, nil
+	}
+
+	s.durableMu.RLock()
+	if s.hasWatchSessionsLocked() {
+		s.durableMu.RUnlock()
+		return false, nil
+	}
+
+	handled, err = s.store.VisitRawString(string(args[1]), func(value []byte) error {
+		atomic.AddUint64(&s.commands, 1)
+		return writeBulk(value)
+	})
+	s.durableMu.RUnlock()
+
+	return handled, err
+}
+
 // executeAuthorizedConcurrentGet serves a previously ACL-authorized plain GET
 // without passing through the generic function/blocking/pressure dispatch stack.
 // It is only used when the same concurrent-scalar conditions as the ordinary
