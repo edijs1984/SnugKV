@@ -55,6 +55,46 @@ affects the optimized path.
 
 Reproduce with `cmd/rediswirebench`.
 
+## Redis 8.2 comparison — random 256-byte SET/load, 2026-09-20
+
+Black-box RESP2/TCP measurements on the same Linux amd64 / Go 1.27.1 development
+machine with 4 logical CPUs, pipeline depth 256, 8 concurrent load workers, and
+256-byte pseudo-random values. The load harness uses unique key ranges per worker.
+Percentile samples are amortized per-operation batch times, not independent request
+latencies.
+
+For 1,000,000 keys:
+
+| Server/config | SET/load throughput | Reported/accounted delta | Bytes/key |
+|---|---:|---:|---:|
+| Redis 8.2 reference | ~318,145 ops/s | ~392,388,584 B | ~392.39 |
+| SnugKV optimized, five-run median | 315,256 ops/s | 362,268,608 B | 362.27 |
+| SnugKV optimized, best of five | 318,331 ops/s | 362,268,608 B | 362.27 |
+
+The five SnugKV runs were 287,303; 265,795; 315,256; 318,331; and 316,328
+ops/s. On this exact workload the median was about 0.9% below the recorded Redis
+8-worker reference while SnugKV's engine-accounted load delta was about 7.7%
+lower per key. This is a development comparison, not a universal throughput or
+RSS claim.
+
+For sustained 5,000,000-key SnugKV loads on the same configuration, three
+consecutive runs measured 299,270; 303,496; and 283,798 ops/s, for a median of
+299,270 ops/s and a mean of about 295,521 ops/s. The measured load delta was
+1,763,407,552 bytes, or 352.68 bytes/key. No Redis 5M result is recorded here,
+so this figure is not presented as a Redis comparison.
+
+The optimized SET path reached this point through allocation and hot-path work
+rather than disabling memory features: plain SET borrows transient request bytes
+until arena ownership, complete pipelined SET frames use reusable connection
+scratch, optimizer candidates reuse per-worker scratch and borrowed raw fallbacks,
+known key hashes are carried into indexed publication, and background optimization
+yields more aggressively under sustained queue pressure. In profiling of the
+random workload, temporary allocation traffic fell from roughly 1.38 GB to about
+467 MB for the 1M load profile; the remaining major allocations were predominantly
+persistent arena/index/entry growth.
+
+Reproduce with `cmd/rediswirebench`.
+
 This page records engineering measurements used to guide SnugKV storage decisions.
 They are workload-specific measurements, not universal performance claims.
 
