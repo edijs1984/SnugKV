@@ -116,8 +116,12 @@ var commandTable = map[string]commandInfo{
 	"JSON.SET":  {4, 5, 1, 1, 1, true},
 	"JSON.GET":  {2, 3, 1, 1, 1, false},
 	"JSON.TYPE": {2, 3, 1, 1, 1, false},
-	"JSON.DEL":  {2, 3, 1, 1, 1, true},
-	"MEMORY":    {2, 5, 0, 0, 0, false},
+	"JSON.DEL":       {2, 3, 1, 1, 1, true},
+	"JSON.NUMINCRBY": {4, 4, 1, 1, 1, true},
+	"JSON.STRLEN":    {2, 3, 1, 1, 1, false},
+	"JSON.ARRLEN":    {2, 3, 1, 1, 1, false},
+	"JSON.OBJLEN":    {2, 3, 1, 1, 1, false},
+	"MEMORY":         {2, 5, 0, 0, 0, false},
 }
 
 func (s *Server) execute(args [][]byte) ([]byte, error) {
@@ -188,6 +192,47 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		}
 
 		return integer(deleted), nil
+
+	case "JSON.NUMINCRBY":
+		increment, err := strconv.ParseFloat(string(args[3]), 64)
+		if err != nil || math.IsNaN(increment) || math.IsInf(increment, 0) {
+			return nil, errors.New("ERR value is not a valid number")
+		}
+
+		value, found, err := s.store.JSONNumIncrBy(key, string(args[2]), increment)
+		if err != nil {
+			return nil, err
+		}
+		return optionalBulk(value, found), nil
+
+	case "JSON.STRLEN", "JSON.ARRLEN", "JSON.OBJLEN":
+		path := "$"
+		if len(args) == 3 {
+			path = string(args[2])
+		}
+
+		var (
+			length int64
+			found  bool
+			err    error
+		)
+
+		switch cmd {
+		case "JSON.STRLEN":
+			length, found, err = s.store.JSONStrLen(key, path)
+		case "JSON.ARRLEN":
+			length, found, err = s.store.JSONArrLen(key, path)
+		default:
+			length, found, err = s.store.JSONObjLen(key, path)
+		}
+
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nullBulk(), nil
+		}
+		return integer(length), nil
 
 	case "JSON.TYPE":
 		path := "$"
