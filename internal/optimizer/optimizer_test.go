@@ -69,6 +69,12 @@ func TestBackgroundCompression(t *testing.T) {
 			if !ok || !bytes.Equal(got, value) {
 				t.Fatal("background rewrite changed bytes")
 			}
+			if meta := store.Memory().MetaBytes; meta != 0 {
+				t.Fatalf("compressed scalar retained %d metadata bytes, want 0", meta)
+			}
+			if _, eligible := store.OptimizationEligible("k", 0, 0); eligible {
+				t.Fatal("compressed scalar remained optimizer-eligible")
+			}
 			return
 		}
 		time.Sleep(time.Millisecond)
