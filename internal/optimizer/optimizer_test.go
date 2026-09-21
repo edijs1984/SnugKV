@@ -8,6 +8,24 @@ import (
 	"time"
 )
 
+func TestOptimizerProfiles(t *testing.T) {
+	dedicated := ForMode("dedicated")
+	sidecar := ForMode("sidecar")
+
+	if dedicated.Workers < sidecar.Workers {
+		t.Fatalf("dedicated workers=%d sidecar=%d", dedicated.Workers, sidecar.Workers)
+	}
+	if dedicated.CPUPercent <= sidecar.CPUPercent {
+		t.Fatalf("dedicated cpu=%d sidecar=%d", dedicated.CPUPercent, sidecar.CPUPercent)
+	}
+	if dedicated.MaxBytesPerSecond <= sidecar.MaxBytesPerSecond {
+		t.Fatalf("dedicated bandwidth=%d sidecar=%d", dedicated.MaxBytesPerSecond, sidecar.MaxBytesPerSecond)
+	}
+	if Default() != dedicated {
+		t.Fatal("default optimizer profile is not dedicated")
+	}
+}
+
 func TestBudgetsAndCancellation(t *testing.T) {
 	s := engine.New()
 	c := Default()
