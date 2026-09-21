@@ -4,6 +4,7 @@ package optimizer
 import (
 	"context"
 	"errors"
+	"snugkv/internal/codec"
 	"snugkv/internal/engine"
 	"sync"
 	"sync/atomic"
@@ -262,7 +263,11 @@ func (o *Optimizer) worker() {
 			// A key that does not yet own optimizer metadata must also earn back
 			// that allocation. Otherwise enabling optimization can increase the
 			// total footprint even when the encoded payload is smaller.
-			requiredSaving := 16 + candidate.AdditionalMetadataBytes
+			additionalMetadataBytes := candidate.AdditionalMetadataBytes
+			if record.Schema == nil && (record.ID == codec.LZ4 || record.ID == codec.Zstandard) {
+				additionalMetadataBytes = 0
+			}
+			requiredSaving := 16 + additionalMetadataBytes
 			if saving < requiredSaving || saving*8 < candidate.EncodedBytes {
 				atomic.AddUint64(&o.skipped, 1)
 				o.release(rawBytes)
