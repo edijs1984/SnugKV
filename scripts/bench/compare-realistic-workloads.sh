@@ -163,21 +163,33 @@ echo "  ttl_ops:   $TTL_OPS"
 echo "  settle_ms: $SETTLE_MS"
 echo "  output:    $ROOT_OUT"
 
-# The outer server loop is deliberate: only ONE database server remains resident
-# while it is being measured. This avoids CPU/RAM interference from idle peers.
-for server in $SERVERS; do
+# Strict isolation model:
+#   for each profile/run:
+#     kill all benchmark servers
+#     start Redis -> run -> kill
+#     start Snug raw -> run -> kill
+#     start Snug optimized -> run -> kill
+#
+# Only the servers selected in $SERVERS are executed, but every selected server
+# gets a completely fresh process/container. No database process is left resident
+# while another database is benchmarked.
+for spec in "${profiles[@]}"; do
+  profile="${spec%%:*}"
+  bytes="${spec##*:}"
+
   echo
   echo "################################################################"
-  echo "SERVER: $server (isolated)"
+  echo "PROFILE: $profile value_bytes=$bytes"
   echo "################################################################"
 
-  BUILD_IMAGE=0 bash scripts/bench/start-one-server.sh "$server"
+  for run in $(seq 1 "$RUNS"); do
+    for server in $SERVERS; do
+      echo
+      echo "---- fresh $server | profile=$profile | run $run/$RUNS ----"
 
-  for spec in "${profiles[@]}"; do
-    profile="${spec%%:*}"
-    bytes="${spec##*:}"
+      # start-one-server.sh begins by removing all Redis/Snug benchmark containers.
+      BUILD_IMAGE=0 bash scripts/bench/start-one-server.sh "$server"
 
-    for run in $(seq 1 "$RUNS"); do
       # LOAD must precede reads/mutations. If LOAD is omitted explicitly,
       # preload once so GET/mixed/ttl still have a dataset.
       if [[ " $WORKLOADS " != *" load "* ]]; then
@@ -187,11 +199,14 @@ for server in $SERVERS; do
       for workload in $WORKLOADS; do
         run_workload "$server" "$profile" "$bytes" "$workload" "$run"
       done
+
+      docker rm -f "$(container_name "$server")" >/dev/null 2>&1 || true
     done
   done
-
-  docker rm -f "$(container_name "$server")" >/dev/null 2>&1 || true
 done
+
+# Leave the machine clean even if the selected server list changes later.
+docker rm -f "$REDIS_CONTAINER" "$SNUG_RAW_CONTAINER" "$SNUG_OPT_CONTAINER" >/dev/null 2>&1 || true
 
 python3 - "$ROOT_OUT" <<'PY'
 import json, pathlib, statistics, sys
