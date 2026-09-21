@@ -666,9 +666,9 @@ func waitForMemoryConvergence(addr string, maxWait, poll time.Duration, keys, va
 		samples         int
 		startUsed       uint64
 		startLiveBlocks uint64
-		startRewritten      uint64
-		lastOptimizerAction uint64
-		lastOptimizerChange = start
+		startRewritten    uint64
+		lastRewritten     uint64
+		lastRewriteChange = start
 	)
 
 	for {
@@ -697,16 +697,12 @@ func waitForMemoryConvergence(addr string, maxWait, poll time.Duration, keys, va
 		if snug != nil {
 			rewritten := snug["optimizer_rewritten"]
 			liveBlocks := snug["arena_live_block_bytes"]
-			optimizerAction := snug["optimizer_queued"] +
-				snug["optimizer_rewritten"] +
-				snug["optimizer_skipped"] +
-				snug["optimizer_stale"]
-			if lastOptimizerAction == 0 {
-				lastOptimizerAction = optimizerAction
-				lastOptimizerChange = now
-			} else if optimizerAction != lastOptimizerAction {
-				lastOptimizerAction = optimizerAction
-				lastOptimizerChange = now
+			if lastRewritten == 0 {
+				lastRewritten = rewritten
+				lastRewriteChange = now
+			} else if rewritten != lastRewritten {
+				lastRewritten = rewritten
+				lastRewriteChange = now
 			}
 			progress.OptimizerRewritten = rewritten
 			progress.OptimizerQueue = int(snug["optimizer_queue_depth"])
@@ -778,9 +774,14 @@ func waitForMemoryConvergence(addr string, maxWait, poll time.Duration, keys, va
 
 		optimizerComplete := false
 		if snug != nil {
+			// Recovery sampling may keep generating duplicate/skipped attempts
+			// indefinitely. Those are not useful work. Consider optimization
+			// complete once successful rewrites have stopped, the work queue is
+			// drained, and memory itself has remained stable through a full
+			// compaction interval.
 			optimizerComplete =
 				snug["optimizer_queue_depth"] == 0 &&
-				now.Sub(lastOptimizerChange) >= stableFor
+				now.Sub(lastRewriteChange) >= stableFor
 		}
 
 		if optimizerComplete && now.Sub(lastChange) >= stableFor {
