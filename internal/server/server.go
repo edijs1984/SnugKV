@@ -196,16 +196,28 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			path = string(args[2])
 		}
 
-		jsonType, found, err := s.store.JSONType(key, path)
+		types, keyExists, err := s.store.JSONTypes(key, path)
 		if err != nil {
 			return nil, err
 		}
 
-		if !found {
+		if !keyExists {
 			return nullBulk(), nil
 		}
 
-		return formatBulkString([]byte(jsonType)), nil
+		if strings.HasPrefix(path, "$") {
+			items := make([][]byte, len(types))
+			for i := range types {
+				items[i] = formatBulkString([]byte(types[i]))
+			}
+			return array(items...), nil
+		}
+
+		if len(types) == 0 {
+			return nullBulk(), nil
+		}
+
+		return formatBulkString([]byte(types[0])), nil
 	case "JSON.SET":
 		path := string(args[2])
 
