@@ -234,7 +234,7 @@ func setPreparedEntry(packed []byte) preparedEntry {
 		}
 	}
 	return preparedEntry{
-		entry: entry{valueType: TypeSet, rawLength: uint32(len(packed))},
+		entry: entry{entryData: entryData{valueType: TypeSet, rawLength: uint32(len(packed))}},
 		data:  stored,
 	}
 }
