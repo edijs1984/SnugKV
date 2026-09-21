@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 	"time"
+	"unsafe"
 )
 
 func auditMemory(t *testing.T, s *Store) {
@@ -29,7 +30,8 @@ func auditMemory(t *testing.T, s *Store) {
 		// until the shard is compacted/reset.
 		entries += uint64(cap(sh.entries)) * entryStructBytes
 		if sh.metas != nil {
-			entries += uint64(cap(*sh.metas)) * entryMetaSlotBytes
+			entries += uint64(unsafe.Sizeof(entryMetaSidecar{})) +
+				uint64(cap(sh.metas.slots))*entryMetaSlotBytes
 		}
 
 		for k, e := range sh.all() {
@@ -245,7 +247,7 @@ func TestEncodedCounterUsesInlineStorage(t *testing.T) {
 	arenaBytes = sh.arena.TotalMemoryBytes()
 	metaSlots := 0
 	if sh.metas != nil {
-		metaSlots = cap(*sh.metas)
+		metaSlots = cap(sh.metas.slots)
 	}
 	sh.mu.RUnlock()
 	if !entry.ref.IsInline() || arenaBytes != 0 {
