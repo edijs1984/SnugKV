@@ -51,8 +51,10 @@ func NewRegistry() *Registry {
 		timestampCodec{},
 		float64Codec{},
 		boolCodec{},
+		repeatByteCodec{},
 		lz4Codec{},
 		zstdCodec{},
+		periodicCodec{},
 	} {
 		if err := r.Register(c); err != nil {
 			panic(err)
@@ -96,7 +98,7 @@ func (r *Registry) Encode(src []byte) Record {
 	}
 
 	for _, c := range r.order {
-		if c.ID() == Raw || c.ID() == 5 || c.ID() >= 9 {
+		if c.ID() == Raw || c.ID() == 5 || c.ID() >= RepeatByte {
 			continue
 		}
 		data, ok := c.Encode(src)
@@ -130,10 +132,14 @@ func (r *Registry) DecodeInto(rec Record, max int, dst []byte) ([]byte, error) {
 	switch rec.ID {
 	case Raw:
 		out, err = (rawCodec{}).DecodeInto(rec.Data, rec.RawLength, dst)
+	case RepeatByte:
+		out, err = (repeatByteCodec{}).DecodeInto(rec.Data, rec.RawLength, dst)
 	case LZ4:
 		out, err = (lz4Codec{}).DecodeInto(rec.Data, rec.RawLength, dst)
 	case Zstandard:
 		out, err = (zstdCodec{}).DecodeInto(rec.Data, rec.RawLength, dst)
+	case Periodic:
+		out, err = (periodicCodec{}).DecodeInto(rec.Data, rec.RawLength, dst)
 	case 5:
 		return r.Decode(rec, max)
 	default:
