@@ -65,6 +65,7 @@ func TestShapeSharingAndReclamation(t *testing.T) {
 		key := fmt.Sprint(i)
 		value := []byte(fmt.Sprintf(`{"country":"LV","status":"active","plan":"free","user":%d,"long_repeated_property_name":true}`, i))
 		s.Set(key, value, 0)
+		s.ObserveJSONShape(key, value)
 		candidate, _ := s.Candidate(key, 4096)
 		record := s.EncodeCandidate(candidate)
 		s.Rewrite(candidate, record)
@@ -204,12 +205,23 @@ func TestShapeStoreAllocatesLazily(t *testing.T) {
 	}
 
 	sh := s.shardFor(key)
+	if sh.shapes != nil {
+		t.Fatal("foreground JSON SET eagerly created shape store")
+	}
+
+	afterJSONSet := s.Memory()
+	if afterJSONSet.SchemaBytes != 0 {
+		t.Fatalf("foreground JSON SET charged %d schema bytes", afterJSONSet.SchemaBytes)
+	}
+
+	// Background optimizer observation creates the shared shape store.
+	s.ObserveJSONShape(key, value)
+
 	if sh.shapes == nil {
-		t.Fatal("JSON write did not create shape store")
+		t.Fatal("background JSON observation did not create shape store")
 	}
 
 	afterJSON := s.Memory()
-
 	if afterJSON.SchemaBytes != shapeStoreBaseBytes {
 		t.Fatalf(
 			"schema bytes = %d, want %d",
@@ -218,17 +230,16 @@ func TestShapeStoreAllocatesLazily(t *testing.T) {
 		)
 	}
 
-	// Additional JSON writes on the same shard must reuse the existing store
-	// instead of charging the base cost again.
+	// Additional observations on the same shard reuse the existing store.
 	if err := s.Set("json-key-2", value, 0); err != nil {
 		t.Fatal(err)
 	}
+	s.ObserveJSONShape("json-key-2", value)
 
 	afterSecond := s.Memory()
-
 	if afterSecond.SchemaBytes != shapeStoreBaseBytes {
 		t.Fatalf(
-			"second JSON write charged schema base twice: got %d want %d",
+			"second JSON observation charged schema base twice: got %d want %d",
 			afterSecond.SchemaBytes,
 			shapeStoreBaseBytes,
 		)
