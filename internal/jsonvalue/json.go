@@ -3,6 +3,7 @@ package jsonvalue
 import (
 	"encoding/json"
 	"errors"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -213,6 +214,16 @@ func unquoteMember(raw string) (string, error) {
 	return out.String(), nil
 }
 
+
+func sortedObjectKeys(object map[string]any) []string {
+	keys := make([]string, 0, len(object))
+	for key := range object {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 func normalizeIndex(index, length int) (int, bool) {
 	if index < 0 {
 		index += length
@@ -263,8 +274,8 @@ func applyQueryToken(value any, token pathToken, out *[]any) {
 		case []any:
 			*out = append(*out, container...)
 		case map[string]any:
-			for _, child := range container {
-				*out = append(*out, child)
+			for _, key := range sortedObjectKeys(container) {
+				*out = append(*out, container[key])
 			}
 		}
 
@@ -282,8 +293,8 @@ func collectRecursiveMember(value any, name string, out *[]any) {
 		if child, exists := container[name]; exists {
 			*out = append(*out, child)
 		}
-		for _, child := range container {
-			collectRecursiveMember(child, name, out)
+		for _, key := range sortedObjectKeys(container) {
+			collectRecursiveMember(container[key], name, out)
 		}
 	case []any:
 		for _, child := range container {
@@ -295,7 +306,8 @@ func collectRecursiveMember(value any, name string, out *[]any) {
 func collectRecursiveWildcard(value any, out *[]any) {
 	switch container := value.(type) {
 	case map[string]any:
-		for _, child := range container {
+		for _, key := range sortedObjectKeys(container) {
+			child := container[key]
 			*out = append(*out, child)
 			collectRecursiveWildcard(child, out)
 		}
