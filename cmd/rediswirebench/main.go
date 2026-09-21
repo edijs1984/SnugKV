@@ -89,6 +89,10 @@ func main() {
 		control.Close()
 		fatalf("INFO memory before: %v", err)
 	}
+	var optimizerRewrittenBefore uint64
+	if snug, statsErr := control.snugStats(); statsErr == nil {
+		optimizerRewrittenBefore = snug["optimizer_rewritten"]
+	}
 	control.Close()
 
 	var elapsed time.Duration
@@ -131,6 +135,7 @@ func main() {
 			time.Duration(*convergePollMS)*time.Millisecond,
 			*keys,
 			*valueBytes,
+			optimizerRewrittenBefore,
 		)
 		if err != nil {
 			fatalf("memory convergence: %v", err)
@@ -648,7 +653,7 @@ func (c *client) snugStats() (map[string]uint64, error) {
 	return parseSnugStats(payload), nil
 }
 
-func waitForMemoryConvergence(addr string, maxWait, poll time.Duration, keys, valueBytes int) (uint64, bool, int64, int, error) {
+func waitForMemoryConvergence(addr string, maxWait, poll time.Duration, keys, valueBytes int, startRewritten uint64) (uint64, bool, int64, int, error) {
 	start := time.Now()
 	var deadline time.Time
 	if maxWait > 0 {
@@ -713,7 +718,6 @@ func waitForMemoryConvergence(addr string, maxWait, poll time.Duration, keys, va
 			if startUsed == 0 {
 				startUsed = used
 				startLiveBlocks = liveBlocks
-				startRewritten = rewritten
 			}
 
 			rewrittenSinceStart := uint64(0)
