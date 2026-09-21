@@ -16,17 +16,19 @@ func TestKnownJSONShapeWritesDirectly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Current per-shard admission threshold is four.
-	// These writes train and admit the shape.
+	// Simulate background optimizer observations until the shape is admitted.
 	for i := 0; i < 4; i++ {
 		value := []byte(fmt.Sprintf(
 			`{"country":"LV","status":"active","plan":"free","user":%d,"long_repeated_property_name":true,"metadata":{"requestId":"abcdef0123456789","source":"nestjs"}}`,
 			i,
 		))
 
-		if err := s.Set(fmt.Sprintf("warm:%d", i), value, 0); err != nil {
+		key := fmt.Sprintf("warm:%d", i)
+		if err := s.Set(key, value, 0); err != nil {
 			t.Fatal(err)
 		}
+		// Background optimizer observation trains shared JSON shapes.
+		s.ObserveJSONShape(key, value)
 	}
 
 	value := []byte(
