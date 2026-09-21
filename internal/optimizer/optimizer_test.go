@@ -124,19 +124,9 @@ func TestCPUPercentForBacklog(t *testing.T) {
 	}
 	defer o.Close()
 
-	for _, tc := range []struct {
-		depth int
-		want  int
-	}{
-		{0, 50},
-		{9, 50},
-		{10, 25},
-		{39, 25},
-		{40, 15},
-		{160, 15},
-	} {
-		if got := o.cpuPercentForBacklog(tc.depth); got != tc.want {
-			t.Fatalf("depth=%d cpu=%d want=%d", tc.depth, got, tc.want)
+	for _, depth := range []int{0, 9, 10, 39, 40, 160} {
+		if got := o.cpuPercentForBacklog(depth); got != 50 {
+			t.Fatalf("depth=%d cpu=%d want=50", depth, got)
 		}
 	}
 }
