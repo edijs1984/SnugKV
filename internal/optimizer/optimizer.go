@@ -265,7 +265,8 @@ func (o *Optimizer) worker() {
 			// total footprint even when the encoded payload is smaller.
 			additionalMetadataBytes := candidate.AdditionalMetadataBytes
 			if record.Schema == nil &&
-				(record.ID == codec.LZ4 || record.ID == codec.Zstandard) &&
+				(record.ID == codec.RepeatByte || record.ID == codec.Periodic ||
+					record.ID == codec.LZ4 || record.ID == codec.Zstandard) &&
 				!candidate.RequiresOptimizationMetadata() {
 				additionalMetadataBytes = 0
 			}
