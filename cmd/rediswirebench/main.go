@@ -90,8 +90,10 @@ func main() {
 		fatalf("INFO memory before: %v", err)
 	}
 	var optimizerRewrittenBefore uint64
+	var optimizerQueuedBefore uint64
 	if snug, statsErr := control.snugStats(); statsErr == nil {
 		optimizerRewrittenBefore = snug["optimizer_rewritten"]
+		optimizerQueuedBefore = snug["optimizer_queued"]
 	}
 	control.Close()
 
@@ -136,6 +138,7 @@ func main() {
 			*keys,
 			*valueBytes,
 			optimizerRewrittenBefore,
+			optimizerQueuedBefore,
 		)
 		if err != nil {
 			fatalf("memory convergence: %v", err)
@@ -653,7 +656,7 @@ func (c *client) snugStats() (map[string]uint64, error) {
 	return parseSnugStats(payload), nil
 }
 
-func waitForMemoryConvergence(addr string, maxWait, poll time.Duration, keys, valueBytes int, startRewritten uint64) (uint64, bool, int64, int, error) {
+func waitForMemoryConvergence(addr string, maxWait, poll time.Duration, keys, valueBytes int, startRewritten, startQueued uint64) (uint64, bool, int64, int, error) {
 	start := time.Now()
 	var deadline time.Time
 	if maxWait > 0 {
@@ -671,8 +674,9 @@ func waitForMemoryConvergence(addr string, maxWait, poll time.Duration, keys, va
 		samples         int
 		startUsed         uint64
 		startLiveBlocks   uint64
-		lastRewritten     uint64
-		lastRewriteChange = start
+		lastRewritten            uint64
+		lastRewrittenInitialized bool
+		lastRewriteChange        = start
 	)
 
 	for {
@@ -701,8 +705,9 @@ func waitForMemoryConvergence(addr string, maxWait, poll time.Duration, keys, va
 		if snug != nil {
 			rewritten := snug["optimizer_rewritten"]
 			liveBlocks := snug["arena_live_block_bytes"]
-			if lastRewritten == 0 {
+			if !lastRewrittenInitialized {
 				lastRewritten = rewritten
+				lastRewrittenInitialized = true
 				lastRewriteChange = now
 			} else if rewritten != lastRewritten {
 				lastRewritten = rewritten
@@ -724,6 +729,17 @@ func waitForMemoryConvergence(addr string, maxWait, poll time.Duration, keys, va
 				rewrittenSinceStart = rewritten - startRewritten
 			}
 			progress.OptimizerRewrittenRun = rewrittenSinceStart
+
+			// Scalar codecs such as integer/UUID run synchronously during SET.
+			// If the workload did not enqueue any optimizer work and the queue is
+			// empty, the post-workload representation is already final. Do not
+			// wait for the background convergence/compaction window.
+			if snug["optimizer_queued"] == startQueued &&
+				rewritten == startRewritten &&
+				snug["optimizer_queue_depth"] == 0 {
+				emitConvergenceProgress(progress)
+				return used, true, now.Sub(start).Milliseconds(), samples, nil
+			}
 
 			// After the first meaningful sample, estimate the final steady-state
 			// footprint from observed live-block savings per rewrite. Exclude
