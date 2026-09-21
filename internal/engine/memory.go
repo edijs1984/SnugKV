@@ -28,8 +28,9 @@ func (s *Store) exceedsMemoryLimitLocked(next uint64, admission memoryAdmission)
 }
 
 // Reservations track owned engine allocations, not total process RSS.
-var entryStructBytes = uint64(unsafe.Sizeof(entry{}))
+var entryStructBytes = uint64(unsafe.Sizeof(entryData{}))
 var entryMetaBytes = uint64(unsafe.Sizeof(entryMeta{}))
+var entryMetaSlotBytes = uint64(unsafe.Sizeof((*entryMeta)(nil)))
 
 type Options struct {
 	Shards        int
@@ -151,22 +152,22 @@ func (s *Store) makeEntry(value []byte) preparedEntry {
 	// the arena. The same borrowing is safe when encoding is disabled.
 	if !s.encoding || len(value) > 36 {
 		return preparedEntry{
-			entry: entry{
+			entry: entry{entryData: entryData{
 				codecID:   codec.Raw,
 				valueType: classifyValue(value),
 				rawLength: uint32(len(value)),
-			},
+			}},
 			data: value,
 		}
 	}
 
 	rec := s.codecs.Encode(value)
 	return preparedEntry{
-		entry: entry{
+		entry: entry{entryData: entryData{
 			codecID:   rec.ID,
 			valueType: classifyValue(value),
 			rawLength: uint32(rec.RawLength),
-		},
+		}},
 		data: rec.Data,
 	}
 }
@@ -298,10 +299,13 @@ func (s *Store) publishRecordKnownWithHash(
 
 	extraIndex := uint64(0)
 	extraEntries := uint64(0)
+	additionalEntries := 0
 	if !exists {
+		additionalEntries = 1
 		extraIndex = sh.data.GrowthBytes(1)
 		extraEntries = sh.entryGrowthBytes(1)
 	}
+	extraMetaSlots := sh.metaSlotGrowthBytes(additionalEntries, e.entryMeta != nil)
 
 	// Tiny encoded scalars fit directly in arena.Ref, so they need no arena
 	// block and do not contribute arena payload/live-block accounting.
@@ -343,6 +347,7 @@ func (s *Store) publishRecordKnownWithHash(
 		newMetaCost +
 		extraIndex +
 		extraEntries +
+		extraMetaSlots +
 		extraArena
 
 	if newSchema != nil {
@@ -371,7 +376,7 @@ func (s *Store) publishRecordKnownWithHash(
 
 	s.memory.used = next
 	s.memory.entries =
-		s.memory.entries - oldCost + newCost + extraEntries
+		s.memory.entries - oldCost + newCost + extraEntries + extraMetaSlots
 	s.memory.metas = s.memory.metas - oldMetaCost + newMetaCost
 	s.memory.index += extraIndex
 	s.memory.arenas += extraArena
@@ -493,6 +498,9 @@ func (s *Store) MemoryUsage(key string) (uint64, bool) {
 	// Per-key usage assigns one entry struct to this key. Global Memory()
 	// additionally accounts for spare reserved entry capacity.
 	entryBytes := entryStructBytes + uint64(len(key)) + metadataCharge(e)
+	if sh.metas != nil {
+		entryBytes += entryMetaSlotBytes
+	}
 	arenaBytes := sh.arena.AllocationBytes(e.ref)
 
 	return entryBytes + arenaBytes, true
