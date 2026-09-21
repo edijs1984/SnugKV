@@ -215,10 +215,10 @@ func (s *Store) hashEntry(pairs []HashPair, packed []byte) preparedEntry {
 		}
 	}
 	return preparedEntry{
-		entry: entry{
+		entry: entry{entryData: entryData{
 			valueType: TypeHash,
 			rawLength: uint32(len(packed)),
-		},
+		}},
 		data: append([]byte(nil), stored...),
 	}
 }
