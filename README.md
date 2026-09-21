@@ -238,12 +238,15 @@ charges, and bounded schema/dictionary state. It is not process RSS. Network
 buffers, stacks, persistence buffers, Go runtime state, and optimizer scratch can
 add additional RSS.
 
-The sparse 1,000-key / 256-shard benchmark has been reduced from the original
-527,768 accounted bytes to 179,224 bytes: a 348,544-byte reduction, or 66.04%.
-The current layout in that benchmark uses 16-byte index slots, 32-byte common
-entries, 192 bytes of static shard structure, and 24-byte arena segment
-descriptors. This result is workload-specific and does not imply equivalent RSS
-reduction.
+The shared storage layout now uses 16-byte open-addressed index slots and
+24-byte stored entries. Optional activity/schema metadata is kept in a lazy
+per-shard sidecar, so metadata-free scalar workloads do not pay an 8-byte nil
+metadata pointer per entry. Tiny encoded scalars can also live directly inside
+the existing 16-byte arena reference, avoiding arena allocation entirely.
+Compaction can reclaim dense entry-array over-capacity after load or churn.
+Earlier sparse-layout work reduced the 1,000-key / 256-shard benchmark by more
+than 60%; exact current figures remain workload-specific and are tracked in the
+benchmark documentation rather than treated as RSS claims.
 
 On the recorded 100,000-key datatype benchmarks with 16-byte members/elements,
 SnugKV's measured engine-accounted memory versus Redis `used_memory` delta was:
@@ -260,6 +263,14 @@ for the recorded Redis 8.2 reference. SnugKV's engine-accounted load delta was
 362.27 B/key versus about 392.39 B/key for Redis on that exact workload. These
 numbers are workload- and machine-specific engineering measurements; see the
 benchmark page for individual runs, sustained 5M results, and methodology.
+
+For a 1,000,000-key canonical 10-byte counter workload on the same development
+machine, the latest optimized layout measured 77.13 B/key immediately after the
+load/convergence pass and 72.61 B/key after explicit entry compaction, versus
+72.39 B/key for the recorded Redis reference. The same SnugKV run measured about
+402k SET/s and 736k GET/s. These are development snapshots, not universal product
+claims; repeated isolated runs and the benchmark methodology remain the basis for
+any published comparison.
 
 Tiny containers can still lose to Redis because fixed per-key/index/arena overhead
 remains significant even after the sparse-memory work. The benchmark page records
