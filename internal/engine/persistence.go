@@ -237,8 +237,10 @@ func (s *Store) resetForRecovery() {
 		s.memory.mu.Lock()
 		arenaBytes := sh.arena.MemoryBytes()
 		indexBytes := sh.data.CapacityBytes()
-		entryBytes := uint64(cap(sh.entries))*entryStructBytes +
-			uint64(cap(sh.metas))*entryMetaSlotBytes
+		entryBytes := uint64(cap(sh.entries)) * entryStructBytes
+		if sh.metas != nil {
+			entryBytes += uint64(cap(*sh.metas)) * entryMetaSlotBytes
+		}
 
 		s.memory.used -= arenaBytes + indexBytes + entryBytes
 		s.memory.arenas -= arenaBytes
