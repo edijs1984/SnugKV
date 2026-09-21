@@ -64,7 +64,8 @@ func TestBackgroundCompression(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		name, _, _, _ := store.Encoding("k")
-		if name == "lz4" || name == "zstd" {
+		switch name {
+		case "repeat-byte", "periodic", "lz4", "zstd":
 			got, ok := store.Get("k")
 			if !ok || !bytes.Equal(got, value) {
 				t.Fatal("background rewrite changed bytes")
