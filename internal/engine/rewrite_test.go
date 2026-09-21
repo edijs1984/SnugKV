@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"fmt"
 	"snugkv/internal/codec"
 	"testing"
@@ -303,5 +304,24 @@ func TestCandidateIntoReusesScratch(t *testing.T) {
 	}
 	if len(candidate.Value) > 0 && &candidate.Value[0] != &scratch[:cap(scratch)][0] {
 		t.Fatal("CandidateInto did not reuse supplied scratch")
+	}
+}
+
+
+func TestOptimizationClassForValue(t *testing.T) {
+	s, err := NewWithOptions(Options{Shards: 1, Encoding: true, Compression: true, ShapeEncoding: true})
+	if err != nil { t.Fatal(err) }
+	tests := []struct { name string; value []byte; want OptimizationClass }{
+		{"counter", []byte("1000000042"), OptimizationNone},
+		{"uuid", []byte("123e4567-e89b-12d3-a456-426614174000"), OptimizationNone},
+		{"json", []byte("{\"user\":1,\"active\":true,\"roles\":[\"admin\"]}"), OptimizationJSON},
+		{"text", bytes.Repeat([]byte("hello-world-"), 32), OptimizationCompress},
+		{"gzip", append([]byte{0x1f, 0x8b}, bytes.Repeat([]byte{0x42}, 300)...), OptimizationNone},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := s.OptimizationClassForValue(tt.value); got != tt.want { t.Fatalf("class=%v want=%v", got, tt.want) }
+			if got := s.ShouldQueueOptimization(tt.value); got != (tt.want != OptimizationNone) { t.Fatalf("queue=%v class=%v", got, tt.want) }
+		})
 	}
 }
