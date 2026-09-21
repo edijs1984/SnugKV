@@ -669,9 +669,8 @@ func waitForMemoryConvergence(addr string, maxWait, poll time.Duration, keys, va
 		haveAnchor      bool
 		lastChange      = start
 		samples         int
-		startUsed       uint64
-		startLiveBlocks uint64
-		startRewritten    uint64
+		startUsed         uint64
+		startLiveBlocks   uint64
 		lastRewritten     uint64
 		lastRewriteChange = start
 	)
