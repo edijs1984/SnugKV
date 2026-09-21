@@ -135,3 +135,70 @@ func TestJSONStrAppendRequiresJSONString(t *testing.T) {
 		t.Fatalf("invalid append mutated value: %q", got)
 	}
 }
+
+
+func TestJSONArrayPopInsertIndexAndClear(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "JSON.SET", "doc", "$", `{"arr":[1,2,3],"obj":{"a":1},"num":7,"name":"x"}`)
+
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"JSON.ARRINDEX", "doc", "$.arr", "2"}, ":1\r\n"},
+		{[]string{"JSON.ARRINDEX", "doc", "$.arr", "9"}, ":-1\r\n"},
+		{[]string{"JSON.ARRINDEX", "doc", "$.arr", "3", "0", "1"}, ":-1\r\n"},
+		{[]string{"JSON.ARRINSERT", "doc", "$.arr", "1", "9", "8"}, ":5\r\n"},
+		{[]string{"JSON.GET", "doc", "$.arr"}, "$11\r\n[1,9,8,2,3]\r\n"},
+		{[]string{"JSON.ARRPOP", "doc", "$.arr"}, "$1\r\n3\r\n"},
+		{[]string{"JSON.ARRPOP", "doc", "$.arr", "1"}, "$1\r\n9\r\n"},
+		{[]string{"JSON.GET", "doc", "$.arr"}, "$7\r\n[1,8,2]\r\n"},
+		{[]string{"JSON.CLEAR", "doc", "$.arr"}, ":1\r\n"},
+		{[]string{"JSON.GET", "doc", "$.arr"}, "$2\r\n[]\r\n"},
+		{[]string{"JSON.CLEAR", "doc", "$.obj"}, ":1\r\n"},
+		{[]string{"JSON.GET", "doc", "$.obj"}, "$2\r\n{}\r\n"},
+		{[]string{"JSON.CLEAR", "doc", "$.num"}, ":1\r\n"},
+		{[]string{"JSON.GET", "doc", "$.num"}, "$1\r\n0\r\n"},
+		{[]string{"JSON.CLEAR", "doc", "$.name"}, ":0\r\n"},
+	} {
+		if got := execute(t, s, tc.args...); got != tc.want {
+			t.Fatalf("%q got %q want %q", tc.args, got, tc.want)
+		}
+	}
+}
+
+func TestJSONArrayMutationPreservesTTL(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "JSON.SET", "doc", "$", `{"arr":[1,2],"obj":{"a":1},"num":2}`)
+	execute(t, s, "PEXPIRE", "doc", "60000")
+
+	execute(t, s, "JSON.ARRINSERT", "doc", "$.arr", "1", "9")
+	execute(t, s, "JSON.ARRPOP", "doc", "$.arr", "0")
+	execute(t, s, "JSON.CLEAR", "doc", "$.obj")
+
+	if got := execute(t, s, "PTTL", "doc"); strings.HasPrefix(got, ":-") {
+		t.Fatalf("JSON array/clear mutation lost TTL: %q", got)
+	}
+}
+
+func TestJSONArrayInsertOutOfBoundsDoesNotMutate(t *testing.T) {
+	s := New(engine.New())
+	execute(t, s, "JSON.SET", "doc", "$", `{"arr":[1,2]}`)
+
+	_, err := s.Execute([][]byte{
+		[]byte("JSON.ARRINSERT"),
+		[]byte("doc"),
+		[]byte("$.arr"),
+		[]byte("99"),
+		[]byte("3"),
+	})
+	if err == nil {
+		t.Fatal("expected out-of-bounds error")
+	}
+
+	if got := execute(t, s, "JSON.GET", "doc", "$.arr"); got != "$5\r\n[1,2]\r\n" {
+		t.Fatalf("out-of-bounds insert mutated value: %q", got)
+	}
+}
