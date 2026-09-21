@@ -18,26 +18,45 @@ type Config struct {
 	MinAttemptInterval                                                  time.Duration
 }
 
-func Default() Config {
-	workers := runtime.NumCPU()
-	if workers < 1 {
-		workers = 1
+func Default() Config { return ForMode("dedicated") }
+
+func ForMode(mode string) Config {
+	cpus := runtime.NumCPU()
+	if cpus < 1 {
+		cpus = 1
 	}
-	if workers > 64 {
-		workers = 64
+	if cpus > 64 {
+		cpus = 64
 	}
 
-	// SnugKV is designed as a dedicated database process. Background
-	// representation work therefore uses the host aggressively while leaving a
-	// small amount of scheduler headroom for foreground RESP handling.
-	return Config{
-		Workers:            workers,
-		QueueDepth:         65536,
-		MaxScratchBytes:    256 << 20,
-		MaxBytesPerSecond:  512 << 20,
-		CPUPercent:         90,
-		MinRewriteInterval: 5 * time.Minute,
-		MinAttemptInterval: 30 * time.Second,
+	switch mode {
+	case "sidecar":
+		workers := cpus / 2
+		if workers < 1 {
+			workers = 1
+		}
+		return Config{
+			Workers:            workers,
+			QueueDepth:         32768,
+			MaxScratchBytes:    128 << 20,
+			MaxBytesPerSecond:  64 << 20,
+			CPUPercent:         35,
+			MinRewriteInterval: 5 * time.Minute,
+			MinAttemptInterval: 30 * time.Second,
+		}
+	default:
+		// Dedicated mode assumes SnugKV is the primary workload on the host.
+		// Use available cores aggressively while retaining modest scheduler
+		// headroom for foreground RESP handling.
+		return Config{
+			Workers:            cpus,
+			QueueDepth:         65536,
+			MaxScratchBytes:    256 << 20,
+			MaxBytesPerSecond:  512 << 20,
+			CPUPercent:         90,
+			MinRewriteInterval: 5 * time.Minute,
+			MinAttemptInterval: 30 * time.Second,
+		}
 	}
 }
 
