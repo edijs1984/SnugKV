@@ -259,6 +259,7 @@ matrix:
 |---|---:|---|
 | `session-json` | 384 B | authenticated user/session/cache state with repeated field names |
 | `api-json` | 768 B | cached API response/object with repeated schema |
+| `cache-json` | 1024 B | typical cached GET request + nested response JSON with repeated application schema |
 | `counter` | 10 B | canonical integer counters |
 | `uuid` | 36 B | UUID identifiers stored as scalar values |
 | `text` | 256 B | human/application text with recurring vocabulary |
@@ -285,6 +286,20 @@ PIPELINE=256 \
 RUNS=1 \
 bash scripts/bench/compare-realistic-workloads.sh
 ```
+
+For routine engineering work, prefer one profile at a time. The wrapper rebuilds
+the current SnugKV image, runs Redis -> Snug raw -> Snug optimized sequentially
+in fresh containers, and updates `benchmarks/REALISTIC_RESULTS.md` with the
+latest retained result for that profile:
+
+```sh
+bash scripts/bench/bench-one.sh cache-json
+bash scripts/bench/bench-one.sh uuid
+bash scripts/bench/bench-one.sh counter
+```
+
+The default dataset is 1,000,000 keys. Override `KEYS`, `GET_OPS`, `WORKERS`,
+`PIPELINE`, or `RUNS` when a targeted diagnostic requires it.
 
 For deeper diagnostics, opt in explicitly:
 
