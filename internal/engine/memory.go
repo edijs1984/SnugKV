@@ -120,6 +120,18 @@ func metadataCharge(e entry) uint64 {
 	return entryMetaBytes
 }
 
+func shouldInlinePrepared(e preparedEntry) bool {
+	if e.entryMeta != nil || len(e.data) == 0 || len(e.data) > 8 {
+		return false
+	}
+	switch e.codecID {
+	case codec.Integer, codec.UnsignedInteger, codec.Float64, codec.Timestamp:
+		return true
+	default:
+		return false
+	}
+}
+
 func (sh *shard) entryGrowthBytes(additional int) uint64 {
 	next := sh.entryCapacityFor(additional)
 	current := cap(sh.entries)
@@ -171,7 +183,8 @@ func (s *Store) makeEntryForShard(_ *shard, value []byte) preparedEntry {
 }
 
 func (s *Store) decodeInto(sh *shard, e entry, dst []byte) []byte {
-	encoded := sh.encoded(e)
+	var inline [8]byte
+	encoded := sh.encodedInto(e, inline[:0])
 	if e.valueType == TypeHash && isShapedHash(encoded) {
 		return s.decode(sh, e)
 	}
@@ -195,7 +208,8 @@ func (s *Store) decodeInto(sh *shard, e entry, dst []byte) []byte {
 }
 
 func (s *Store) decode(sh *shard, e entry) []byte {
-	encoded := sh.encoded(e)
+	var inline [8]byte
+	encoded := sh.encodedInto(e, inline[:0])
 	if e.valueType == TypeHash && isShapedHash(encoded) {
 		out, err := s.decodeShapedHash(encoded, int(e.rawLength))
 		if err != nil {
@@ -289,14 +303,20 @@ func (s *Store) publishRecordKnownWithHash(
 		extraEntries = sh.entryGrowthBytes(1)
 	}
 
-	// Arena planning is shard-local and the caller already holds sh.mu. Keep
-	// this work out of the global accounting critical section so independent
-	// shards do not serialize while simulating allocation growth.
-	extraArena := sh.arena.GrowthFor([]int{len(e.data)})
+	// Tiny encoded scalars fit directly in arena.Ref, so they need no arena
+	// block and do not contribute arena payload/live-block accounting.
+	inlineNew := shouldInlinePrepared(e)
+	extraArena := uint64(0)
+	if !inlineNew {
+		extraArena = sh.arena.GrowthFor([]int{len(e.data)})
+	}
 	if exists {
 		extraArena += sh.arena.FreeGrowth(old.ref)
 	}
-	newBlockBytes := arena.AllocationBytesForLength(len(e.data))
+	newBlockBytes := uint64(0)
+	if !inlineNew {
+		newBlockBytes = arena.AllocationBytesForLength(len(e.data))
+	}
 	oldBlockBytes := uint64(0)
 	if exists {
 		oldBlockBytes = sh.arena.AllocationBytes(old.ref)
@@ -357,11 +377,15 @@ func (s *Store) publishRecordKnownWithHash(
 	s.memory.arenas += extraArena
 
 	if exists {
-		s.memory.arenaPayload -= uint64(len(sh.encoded(old)))
+		if !old.ref.IsInline() {
+			s.memory.arenaPayload -= uint64(len(sh.encoded(old)))
+		}
 		s.memory.arenaLiveBlocks -= oldBlockBytes
 	}
 
-	s.memory.arenaPayload += uint64(len(e.data))
+	if !inlineNew {
+		s.memory.arenaPayload += uint64(len(e.data))
+	}
 	s.memory.arenaLiveBlocks += newBlockBytes
 
 	s.memory.mu.Unlock()
@@ -384,7 +408,15 @@ func (s *Store) publishRecordKnownWithHash(
 		}
 	}
 
-	e.ref = sh.arena.Alloc(e.data)
+	if inlineNew {
+		ref, ok := sh.arena.AllocInline(e.data)
+		if !ok {
+			panic("inline scalar admission invariant")
+		}
+		e.ref = ref
+	} else {
+		e.ref = sh.arena.Alloc(e.data)
+	}
 
 	// The queue owns the expiration timestamp. The hot entry stores only this
 	// one-byte presence bit so persistent reads never need a map lookup.
@@ -426,7 +458,9 @@ func (s *Store) remove(sh *shard, key string) {
 		s.memory.entries -= cost
 		s.memory.metas -= metaCost
 		s.memory.arenas += freeGrowth
-		s.memory.arenaPayload -= uint64(len(sh.encoded(e)))
+		if !e.ref.IsInline() {
+			s.memory.arenaPayload -= uint64(len(sh.encoded(e)))
+		}
 		s.memory.arenaLiveBlocks -= sh.arena.AllocationBytes(e.ref)
 		s.memory.mu.Unlock()
 		sh.delete(key)
