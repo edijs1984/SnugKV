@@ -287,19 +287,23 @@ RUNS=1 \
 bash scripts/bench/compare-realistic-workloads.sh
 ```
 
-For routine engineering work, prefer one profile at a time. The wrapper rebuilds
-the current SnugKV image, runs Redis -> Snug raw -> Snug optimized sequentially
-in fresh containers, and updates `benchmarks/REALISTIC_RESULTS.md` with the
-latest retained result for that profile:
+For routine engineering work and public reproducibility, prefer one profile at a
+time against an already-running Redis-compatible server. The benchmark client does
+not start, stop, kill, inspect, or configure server processes or containers.
 
 ```sh
-bash scripts/bench/bench-one.sh cache-json
-bash scripts/bench/bench-one.sh uuid
-bash scripts/bench/bench-one.sh counter
+bash scripts/bench/bench-one.sh uuid -p 6390
+bash scripts/bench/bench-one.sh counter -p 6383 -s snug-opt
+bash scripts/bench/bench-one.sh cache-json -p 6379 -s redis
 ```
 
-The default dataset is 1,000,000 keys. Override `KEYS`, `GET_OPS`, `WORKERS`,
-`PIPELINE`, or `RUNS` when a targeted diagnostic requires it.
+The default dataset is 1,000,000 keys and 2,000,000 pipelined GETs. The script
+builds only the local `rediswirebench` client, connects to the supplied host/port,
+runs `FLUSHDB`, LOAD, then GET, and saves machine-readable JSON output. Start the
+target Redis or SnugKV process yourself before running the benchmark.
+
+Useful options include `-h/--host`, `-s/--server`, `-k/--keys`,
+`-g/--get-ops`, `-w/--workers`, `-P/--pipeline`, and `--settle-ms`.
 
 For deeper diagnostics, opt in explicitly:
 
