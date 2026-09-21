@@ -141,7 +141,7 @@ func (r *Registry) DecodeInto(rec Record, max int, dst []byte) ([]byte, error) {
 	case Periodic:
 		out, err = (periodicCodec{}).DecodeInto(rec.Data, rec.RawLength, dst)
 	case 5:
-		return r.Decode(rec, max)
+		out, err = jsonshape.DecodeInto(rec.Schema, rec.Data, rec.RawLength, dst)
 	default:
 		c, ok := r.codecs[rec.ID]
 		if !ok {
