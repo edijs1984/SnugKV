@@ -125,6 +125,10 @@ var commandTable = map[string]commandInfo{
 	"JSON.STRAPPEND": {3, 4, 1, 1, 1, true},
 	"JSON.OBJKEYS":   {2, 3, 1, 1, 1, false},
 	"JSON.TOGGLE":    {3, 3, 1, 1, 1, true},
+	"JSON.ARRPOP":    {2, 4, 1, 1, 1, true},
+	"JSON.ARRINSERT": {5, 0, 1, 1, 1, true},
+	"JSON.ARRINDEX":  {4, 6, 1, 1, 1, false},
+	"JSON.CLEAR":     {2, 3, 1, 1, 1, true},
 	"MEMORY":         {2, 5, 0, 0, 0, false},
 }
 
@@ -312,6 +316,96 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			return nullBulk(), nil
 		}
 		return boolean(value), nil
+
+	case "JSON.ARRPOP":
+		path := "$"
+		index := -1
+
+		if len(args) >= 3 {
+			path = string(args[2])
+		}
+		if len(args) == 4 {
+			parsed, err := strconv.Atoi(string(args[3]))
+			if err != nil {
+				return nil, errors.New("ERR value is not an integer or out of range")
+			}
+			index = parsed
+		}
+
+		value, found, err := s.store.JSONArrPop(key, path, index)
+		if err != nil {
+			return nil, err
+		}
+		if !found || value == nil {
+			return nullBulk(), nil
+		}
+		return formatBulkString(value), nil
+
+	case "JSON.ARRINSERT":
+		index, err := strconv.Atoi(string(args[3]))
+		if err != nil {
+			return nil, errors.New("ERR value is not an integer or out of range")
+		}
+
+		length, found, err := s.store.JSONArrInsert(
+			key,
+			string(args[2]),
+			index,
+			args[4:],
+		)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nullBulk(), nil
+		}
+		return integer(length), nil
+
+	case "JSON.ARRINDEX":
+		var start *int
+		var stop *int
+
+		if len(args) >= 5 {
+			v, err := strconv.Atoi(string(args[4]))
+			if err != nil {
+				return nil, errors.New("ERR value is not an integer or out of range")
+			}
+			start = &v
+		}
+		if len(args) == 6 {
+			v, err := strconv.Atoi(string(args[5]))
+			if err != nil {
+				return nil, errors.New("ERR value is not an integer or out of range")
+			}
+			stop = &v
+		}
+
+		index, found, err := s.store.JSONArrIndex(
+			key,
+			string(args[2]),
+			args[3],
+			start,
+			stop,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nullBulk(), nil
+		}
+		return integer(index), nil
+
+	case "JSON.CLEAR":
+		path := "$"
+		if len(args) == 3 {
+			path = string(args[2])
+		}
+
+		cleared, err := s.store.JSONClear(key, path)
+		if err != nil {
+			return nil, err
+		}
+		return integer(cleared), nil
 	case "JSON.SET":
 		path := string(args[2])
 
