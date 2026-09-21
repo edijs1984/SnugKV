@@ -128,16 +128,24 @@ func (s *Store) JSONGet(key, path string) ([]byte, bool, error) {
 		return nil, false, errors.New("WRONGTYPE value is not valid JSON")
 	}
 
-	value, found, err := jsonvalue.Get(root, path)
+	values, err := jsonvalue.GetAll(root, path)
 	if err != nil {
 		return nil, false, err
 	}
 
-	if !found {
+	if jsonvalue.IsJSONPath(path) {
+		encoded, err := jsonvalue.Encode(values)
+		if err != nil {
+			return nil, false, err
+		}
+		return encoded, true, nil
+	}
+
+	if len(values) == 0 {
 		return nil, false, nil
 	}
 
-	encoded, err := jsonvalue.Encode(value)
+	encoded, err := jsonvalue.Encode(values[0])
 	if err != nil {
 		return nil, false, err
 	}
@@ -145,7 +153,7 @@ func (s *Store) JSONGet(key, path string) ([]byte, bool, error) {
 	return encoded, true, nil
 }
 
-func (s *Store) JSONType(key, path string) (string, bool, error) {
+func (s *Store) JSONTypes(key, path string) ([]string, bool, error) {
 	sh := s.shardFor(key)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
@@ -155,33 +163,42 @@ func (s *Store) JSONType(key, path string) (string, bool, error) {
 	e, exists := sh.get(key)
 
 	if !exists {
-		return "", false, nil
+		return nil, false, nil
 	}
 
 	if sh.expired(key, e, now) {
 		s.remove(sh, key)
-		return "", false, nil
+		return nil, false, nil
 	}
 
 	if e.valueType != TypeJSON {
-		return "", false, errors.New("WRONGTYPE Operation against a key holding the wrong kind of value")
+		return nil, false, errors.New("WRONGTYPE Operation against a key holding the wrong kind of value")
 	}
 
 	root, err := jsonvalue.Parse(s.decode(sh, e))
 	if err != nil {
-		return "", false, errors.New("WRONGTYPE value is not valid JSON")
+		return nil, false, errors.New("WRONGTYPE value is not valid JSON")
 	}
 
-	value, found, err := jsonvalue.Get(root, path)
+	values, err := jsonvalue.GetAll(root, path)
 	if err != nil {
-		return "", false, err
+		return nil, false, err
 	}
 
-	if !found {
-		return "", false, nil
+	types := make([]string, len(values))
+	for i := range values {
+		types[i] = jsonvalue.TypeOf(values[i])
 	}
 
-	return jsonvalue.TypeOf(value), true, nil
+	return types, true, nil
+}
+
+func (s *Store) JSONType(key, path string) (string, bool, error) {
+	types, exists, err := s.JSONTypes(key, path)
+	if err != nil || !exists || len(types) == 0 {
+		return "", exists && len(types) > 0, err
+	}
+	return types[0], true, nil
 }
 
 func (s *Store) JSONDel(key, path string) (int64, error) {
