@@ -264,7 +264,9 @@ func (o *Optimizer) worker() {
 			// that allocation. Otherwise enabling optimization can increase the
 			// total footprint even when the encoded payload is smaller.
 			additionalMetadataBytes := candidate.AdditionalMetadataBytes
-			if record.Schema == nil && (record.ID == codec.LZ4 || record.ID == codec.Zstandard) {
+			if record.Schema == nil &&
+				(record.ID == codec.LZ4 || record.ID == codec.Zstandard) &&
+				!candidate.RequiresOptimizationMetadata() {
 				additionalMetadataBytes = 0
 			}
 			requiredSaving := 16 + additionalMetadataBytes
