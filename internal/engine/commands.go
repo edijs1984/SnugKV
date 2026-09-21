@@ -29,8 +29,8 @@ func (s *Store) SetConditional(
 }
 
 // SetPlain implements the plain Redis SET key value form without option
-// parsing overhead. It preserves ordinary overwrite, expiry removal, memory
-// accounting, optimizer metadata and JSON-shape observation semantics.
+// parsing overhead. JSON-shape learning is deliberately deferred to the
+// background optimizer so foreground SET never parses JSON schemas.
 func (s *Store) SetPlain(key string, value []byte) error {
 	if len(value) > 32<<20 {
 		return errors.New("ERR value exceeds 32 MiB limit")
@@ -61,7 +61,6 @@ func (s *Store) SetPlain(key string, value []byte) error {
 		return err
 	}
 
-	s.observeJSONShapeLocked(sh, value)
 	return nil
 }
 
@@ -125,9 +124,7 @@ func (s *Store) SetWithOptions(
 		return false, nil, false, err
 	}
 
-	// Real engine writes train JSON shape admission while the shard
-	// lock is already held.
-	s.observeJSONShapeLocked(sh, value)
+	// JSON-shape admission is trained asynchronously by the optimizer.
 
 	// Absolute expiration in the past means SET succeeds but
 	// the resulting key is immediately expired.
