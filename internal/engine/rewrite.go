@@ -49,7 +49,8 @@ func (s *Store) OptimizationEligible(
 	// compression rewrites metadata-free avoids a permanent 24-byte sidecar
 	// per compressed key. A subsequent foreground write publishes a fresh
 	// representation and may enqueue the key again.
-	if (e.codecID == codec.LZ4 || e.codecID == codec.Zstandard) && e.entryMeta == nil {
+	if (e.codecID == codec.RepeatByte || e.codecID == codec.Periodic ||
+		e.codecID == codec.LZ4 || e.codecID == codec.Zstandard) && e.entryMeta == nil {
 		return 0, false
 	}
 
@@ -90,7 +91,8 @@ func (s *Store) MarkOptimizationAttempt(
 		return false
 	}
 
-	if (e.codecID == codec.LZ4 || e.codecID == codec.Zstandard) && e.entryMeta == nil {
+	if (e.codecID == codec.RepeatByte || e.codecID == codec.Periodic ||
+		e.codecID == codec.LZ4 || e.codecID == codec.Zstandard) && e.entryMeta == nil {
 		return false
 	}
 
