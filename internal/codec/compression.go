@@ -349,9 +349,7 @@ func (r *Registry) EncodeGeneralBorrowed(src []byte, cold bool) Record {
 		return Record{ID: RepeatByte, RawLength: len(src), Data: data}
 	}
 
-	var periodicData []byte
 	if data, ok := (periodicCodec{}).Encode(src); ok {
-		periodicData = data
 		best = Record{ID: Periodic, RawLength: len(src), Data: data}
 
 		// A <=32-byte exact period on a >=256-byte value already saves at
@@ -377,6 +375,5 @@ func (r *Registry) EncodeGeneralBorrowed(src []byte, cold bool) Record {
 		}
 	}
 
-	_ = periodicData // documents ownership: best owns periodicData when selected.
 	return best
 }
