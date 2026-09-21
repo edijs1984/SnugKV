@@ -61,6 +61,7 @@ type LayoutStats struct {
 
 func (s *Store) Layout() LayoutStats {
 	var entryCapacity uint64
+	var entryStorageBytes uint64
 	var indexSlotBytes uint64
 
 	for i := range s.shards {
@@ -68,6 +69,8 @@ func (s *Store) Layout() LayoutStats {
 		sh.mu.RLock()
 
 		entryCapacity += uint64(cap(sh.entries))
+		entryStorageBytes += uint64(cap(sh.entries))*entryStructBytes +
+			uint64(cap(sh.metas))*entryMetaSlotBytes
 
 		if indexSlotBytes == 0 {
 			indexSlotBytes = sh.data.EntryBytes()
@@ -81,7 +84,7 @@ func (s *Store) Layout() LayoutStats {
 		EntryMetaStructBytes: entryMetaBytes,
 		IndexSlotBytes:       indexSlotBytes,
 		EntryCapacity:        entryCapacity,
-		EntryStorageBytes:    entryCapacity * entryStructBytes,
+		EntryStorageBytes:    entryStorageBytes,
 	}
 }
 
