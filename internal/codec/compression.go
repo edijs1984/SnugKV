@@ -341,7 +341,27 @@ func (r *Registry) EncodeGeneralBorrowed(src []byte, cold bool) Record {
 	if len(src) < 256 || AlreadyCompressed(src) {
 		return best
 	}
-	candidates := []ID{RepeatByte, Periodic, LZ4}
+
+	// Extremely cheap exact representations go first. Their encoders already
+	// prove the representation by comparing the source bytes, so do not pay for
+	// a generic compressor or a verification decode after a decisive win.
+	if data, ok := (repeatByteCodec{}).Encode(src); ok {
+		return Record{ID: RepeatByte, RawLength: len(src), Data: data}
+	}
+
+	var periodicData []byte
+	if data, ok := (periodicCodec{}).Encode(src); ok {
+		periodicData = data
+		best = Record{ID: Periodic, RawLength: len(src), Data: data}
+
+		// A <=32-byte exact period on a >=256-byte value already saves at
+		// least 87.5%. Avoid LZ4/Zstd work for a marginal or impossible win.
+		if len(data) <= 32 {
+			return best
+		}
+	}
+
+	candidates := []ID{LZ4}
 	if cold {
 		candidates = append(candidates, Zstandard)
 	}
@@ -356,5 +376,7 @@ func (r *Registry) EncodeGeneralBorrowed(src []byte, cold bool) Record {
 			best = Record{ID: id, RawLength: len(src), Data: data}
 		}
 	}
+
+	_ = periodicData // documents ownership: best owns periodicData when selected.
 	return best
 }
