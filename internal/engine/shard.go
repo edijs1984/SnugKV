@@ -8,6 +8,10 @@ import (
 	"unsafe"
 )
 
+type entryMetaSidecar struct {
+	slots []*entryMeta
+}
+
 type shard struct {
 	sampleOffset int
 	arena        arena.Arena
@@ -15,7 +19,7 @@ type shard struct {
 
 	data    index.Table[uint32]
 	entries []entryData
-	metas   *[]*entryMeta
+	metas   *entryMetaSidecar
 	freeIDs []uint32
 
 	expiration expirationQueue
@@ -74,7 +78,7 @@ func (sh *shard) entryView(id uint32) entry {
 	}
 	var meta *entryMeta
 	if sh.metas != nil {
-		meta = (*sh.metas)[id]
+		meta = sh.metas.slots[id]
 	}
 	return entry{entryData: sh.entries[id], entryMeta: meta}
 }
@@ -83,18 +87,19 @@ func (sh *shard) ensureMetaSlots() {
 	if sh.metas != nil {
 		return
 	}
-	metas := make([]*entryMeta, len(sh.entries), cap(sh.entries))
-	sh.metas = &metas
+	sh.metas = &entryMetaSidecar{
+		slots: make([]*entryMeta, len(sh.entries), cap(sh.entries)),
+	}
 }
 
 func (sh *shard) growMetaSlots(capacity int) {
-	if sh.metas == nil || capacity <= cap(*sh.metas) {
+	if sh.metas == nil || capacity <= cap(sh.metas.slots) {
 		return
 	}
-	current := *sh.metas
+	current := sh.metas.slots
 	next := make([]*entryMeta, len(current), capacity)
 	copy(next, current)
-	sh.metas = &next
+	sh.metas.slots = next
 }
 
 func (sh *shard) setMeta(id uint32, meta *entryMeta) {
@@ -102,7 +107,7 @@ func (sh *shard) setMeta(id uint32, meta *entryMeta) {
 		sh.ensureMetaSlots()
 	}
 	if sh.metas != nil {
-		(*sh.metas)[id] = meta
+		sh.metas.slots[id] = meta
 	}
 }
 
@@ -112,12 +117,13 @@ func (sh *shard) metaSlotGrowthBytes(additional int, needMeta bool) uint64 {
 		if !needMeta {
 			return 0
 		}
-		return uint64(nextEntryCap) * uint64(unsafe.Sizeof((*entryMeta)(nil)))
+		return uint64(unsafe.Sizeof(entryMetaSidecar{})) +
+			uint64(nextEntryCap)*uint64(unsafe.Sizeof((*entryMeta)(nil)))
 	}
-	if nextEntryCap <= cap(*sh.metas) {
+	if nextEntryCap <= cap(sh.metas.slots) {
 		return 0
 	}
-	return uint64(nextEntryCap-cap(*sh.metas)) * uint64(unsafe.Sizeof((*entryMeta)(nil)))
+	return uint64(nextEntryCap-cap(sh.metas.slots)) * uint64(unsafe.Sizeof((*entryMeta)(nil)))
 }
 
 func (sh *shard) get(key string) (entry, bool) {
@@ -182,8 +188,7 @@ func (sh *shard) insertEntry(key string, hash uint64, e entry, hashKnown bool) {
 		}
 		sh.entries = append(sh.entries, e.entryData)
 		if sh.metas != nil {
-			metas := append(*sh.metas, nil)
-			sh.metas = &metas
+				sh.metas.slots = append(sh.metas.slots, nil)
 		}
 		sh.setMeta(id, e.entryMeta)
 	}
@@ -208,7 +213,7 @@ func (sh *shard) delete(key string) bool {
 
 	sh.entries[id] = entryData{}
 	if sh.metas != nil {
-		(*sh.metas)[id] = nil
+		sh.metas.slots[id] = nil
 	}
 	sh.freeIDs = append(sh.freeIDs, id)
 
