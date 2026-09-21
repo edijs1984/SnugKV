@@ -125,16 +125,25 @@ func (o *Optimizer) reserve(n int) bool {
 	return true
 }
 func (o *Optimizer) release(n int) { o.mu.Lock(); o.scratch -= (16 << 20) + n*64; o.mu.Unlock() }
+func shouldCompactArena(arenaBytes, liveBytes uint64, queueDepth int) bool {
+	if arenaBytes == 0 || arenaBytes <= liveBytes {
+		return false
+	}
+
+	dead := arenaBytes - liveBytes
+
+	if queueDepth == 0 {
+		return dead >= 1<<20 && dead*4 >= arenaBytes
+	}
+
+	return dead >= 8<<20 && dead*5 >= arenaBytes*2
+}
+
 func (o *Optimizer) maintenance() {
 	defer o.wg.Done()
 
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
-
-	const (
-		minDeadBytesIdle    uint64 = 1 << 20
-		minDeadBytesBacklog uint64 = 8 << 20
-	)
 
 	for {
 		select {
@@ -143,27 +152,8 @@ func (o *Optimizer) maintenance() {
 
 		case <-ticker.C:
 			m := o.store.Memory()
-			if m.ArenaBytes == 0 || m.ArenaBytes <= m.ArenaLiveBlockBytes {
+			if !shouldCompactArena(m.ArenaBytes, m.ArenaLiveBlockBytes, len(o.queue)) {
 				continue
-			}
-
-			dead := m.ArenaBytes - m.ArenaLiveBlockBytes
-			depth := len(o.queue)
-
-			if depth == 0 {
-				// At idle, reclaim moderately fragmented arenas.
-				if dead < minDeadBytesIdle || dead*4 < m.ArenaBytes {
-					continue
-				}
-			} else {
-				// During optimizer catch-up, compact only when fragmentation is
-				// severe enough to justify competing for memory bandwidth.
-				// Requiring >= 8 MiB dead and >= 40% dead avoids churn while
-				// preventing a long-lived queue from pinning the original raw
-				// arena footprint indefinitely.
-				if dead < minDeadBytesBacklog || dead*5 < m.ArenaBytes*2 {
-					continue
-				}
 			}
 
 			o.store.Compact(uint64(o.config.MaxScratchBytes))
