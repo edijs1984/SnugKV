@@ -9,8 +9,10 @@ import (
 )
 
 const (
-	LZ4       ID = 9
-	Zstandard ID = 10
+	RepeatByte ID = 8
+	LZ4        ID = 9
+	Zstandard  ID = 10
+	Periodic   ID = 11
 )
 
 const (
@@ -52,6 +54,108 @@ var zstdDecoderPool = sync.Pool{
 		}
 		return decoder
 	},
+}
+
+type repeatByteCodec struct{}
+
+func (repeatByteCodec) ID() ID       { return RepeatByte }
+func (repeatByteCodec) Name() string { return "repeat-byte" }
+func (repeatByteCodec) Encode(src []byte) ([]byte, bool) {
+	if len(src) < 16 {
+		return nil, false
+	}
+	first := src[0]
+	for _, b := range src[1:] {
+		if b != first {
+			return nil, false
+		}
+	}
+	return []byte{first}, true
+}
+func (repeatByteCodec) Decode(src []byte, n int) ([]byte, error) {
+	if len(src) != 1 || n < 0 {
+		return nil, errors.New("invalid repeat-byte record")
+	}
+	out := make([]byte, n)
+	for i := range out {
+		out[i] = src[0]
+	}
+	return out, nil
+}
+func (repeatByteCodec) DecodeInto(src []byte, n int, dst []byte) ([]byte, error) {
+	if len(src) != 1 || n < 0 {
+		return nil, errors.New("invalid repeat-byte record")
+	}
+	if cap(dst) < n {
+		dst = make([]byte, n)
+	} else {
+		dst = dst[:n]
+	}
+	for i := range dst {
+		dst[i] = src[0]
+	}
+	return dst, nil
+}
+
+type periodicCodec struct{}
+
+func (periodicCodec) ID() ID       { return Periodic }
+func (periodicCodec) Name() string { return "periodic" }
+func (periodicCodec) Encode(src []byte) ([]byte, bool) {
+	if len(src) < 32 {
+		return nil, false
+	}
+
+	maxPeriod := 64
+	if len(src)/2 < maxPeriod {
+		maxPeriod = len(src) / 2
+	}
+
+	// Search short exact periods only. Random/incompressible values reject
+	// quickly because src[p] normally differs from src[0]; repetitive values
+	// pay one full verification for their actual period.
+	for period := 2; period <= maxPeriod; period++ {
+		if src[period] != src[0] {
+			continue
+		}
+		match := true
+		for i := period; i < len(src); i++ {
+			if src[i] != src[i%period] {
+				match = false
+				break
+			}
+		}
+		if match {
+			out := make([]byte, period)
+			copy(out, src[:period])
+			return out, true
+		}
+	}
+	return nil, false
+}
+func (periodicCodec) Decode(src []byte, n int) ([]byte, error) {
+	if len(src) < 2 || len(src) > 64 || n < len(src) {
+		return nil, errors.New("invalid periodic record")
+	}
+	out := make([]byte, n)
+	for i := range out {
+		out[i] = src[i%len(src)]
+	}
+	return out, nil
+}
+func (periodicCodec) DecodeInto(src []byte, n int, dst []byte) ([]byte, error) {
+	if len(src) < 2 || len(src) > 64 || n < len(src) {
+		return nil, errors.New("invalid periodic record")
+	}
+	if cap(dst) < n {
+		dst = make([]byte, n)
+	} else {
+		dst = dst[:n]
+	}
+	for i := range dst {
+		dst[i] = src[i%len(src)]
+	}
+	return dst, nil
 }
 
 type lz4Codec struct{}
@@ -193,7 +297,7 @@ func (r *Registry) CompressionCandidates(src []byte) []CompressionCandidate {
 
 	out := make([]CompressionCandidate, 0, 2)
 
-	for _, id := range []ID{LZ4, Zstandard} {
+	for _, id := range []ID{RepeatByte, Periodic, LZ4, Zstandard} {
 		c := r.codecs[id]
 		if c == nil {
 			continue
@@ -237,7 +341,7 @@ func (r *Registry) EncodeGeneralBorrowed(src []byte, cold bool) Record {
 	if len(src) < 256 || AlreadyCompressed(src) {
 		return best
 	}
-	candidates := []ID{LZ4}
+	candidates := []ID{RepeatByte, Periodic, LZ4}
 	if cold {
 		candidates = append(candidates, Zstandard)
 	}
