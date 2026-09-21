@@ -243,16 +243,11 @@ func (o *Optimizer) worker() {
 				candidateScratch = nil
 			}
 
-			// Give recently-written structured JSON a very short opportunity
-			// to learn its shared schema before falling back to LZ4.
-			//
-			// Crucially, this happens before MarkOptimizationAttempt, so the
-			// normal 30-second attempt cooldown does not block the retry.
-			if o.store.JSONShapeWarmupPending(candidate, 3*time.Second) {
-				o.release(rawBytes)
-				o.retrySoon(key)
-				atomic.AddUint64(&o.skipped, 1)
-				continue
+			// JSON-shape learning belongs off the foreground SET path. Observe the
+			// dequeued value once here; once the admission threshold is reached,
+			// EncodeCandidate below can immediately select the shared shape.
+			if o.store.OptimizationClassForValue(candidate.Value) == engine.OptimizationJSON {
+				o.store.ObserveJSONShape(candidate.Key, candidate.Value)
 			}
 
 			// The optimizer requires at least 16 bytes of absolute savings.
