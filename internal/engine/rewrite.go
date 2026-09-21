@@ -541,8 +541,8 @@ func (s *Store) SampleKeys(limit int) []string {
 		sh := &s.shards[(start+n)%len(s.shards)]
 		sh.mu.Lock()
 		n := limit - len(out)
-		if n > 4 {
-			n = 4
+		if n > 16 {
+			n = 16
 		}
 		keys, next := sh.data.Sample(sh.sampleOffset, 64, n)
 		sh.sampleOffset = next
