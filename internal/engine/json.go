@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 	"sort"
+	"reflect"
 	"snugkv/internal/jsonvalue"
 )
 
@@ -544,4 +545,228 @@ func (s *Store) publishJSONMutationLocked(sh *shard, key string, previous entry,
 	updated.valueType = TypeJSON
 	updated.expiresAt = sh.expirationAt(key, previous)
 	return s.publish(sh, key, updated)
+}
+
+
+func (s *Store) JSONArrPop(key, path string, index int) ([]byte, bool, error) {
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	now := s.now()
+	e, exists := sh.get(key)
+	if !exists {
+		return nil, false, nil
+	}
+	if sh.expired(key, e, now) {
+		s.remove(sh, key)
+		return nil, false, nil
+	}
+	if e.valueType != TypeJSON {
+		return nil, false, errors.New("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+
+	root, err := jsonvalue.Parse(s.decode(sh, e))
+	if err != nil {
+		return nil, false, errors.New("WRONGTYPE value is not valid JSON")
+	}
+	current, found, err := jsonvalue.Get(root, path)
+	if err != nil || !found {
+		return nil, found, err
+	}
+	arr, ok := current.([]any)
+	if !ok {
+		return nil, false, nil
+	}
+	if len(arr) == 0 {
+		return nil, true, nil
+	}
+
+	if index < 0 {
+		index = len(arr) + index
+	}
+	if index < 0 {
+		index = 0
+	}
+	if index >= len(arr) {
+		index = len(arr) - 1
+	}
+
+	popped := arr[index]
+	arr = append(arr[:index], arr[index+1:]...)
+
+	updatedRoot, err := jsonvalue.Set(root, path, arr)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := s.publishJSONMutationLocked(sh, key, e, updatedRoot); err != nil {
+		return nil, false, err
+	}
+
+	encoded, err := jsonvalue.Encode(popped)
+	if err != nil {
+		return nil, false, err
+	}
+	return encoded, true, nil
+}
+
+func (s *Store) JSONArrInsert(key, path string, index int, rawValues [][]byte) (int64, bool, error) {
+	values := make([]any, 0, len(rawValues))
+	for _, raw := range rawValues {
+		value, err := jsonvalue.Parse(raw)
+		if err != nil {
+			return 0, false, err
+		}
+		values = append(values, value)
+	}
+
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	now := s.now()
+	e, exists := sh.get(key)
+	if !exists {
+		return 0, false, nil
+	}
+	if sh.expired(key, e, now) {
+		s.remove(sh, key)
+		return 0, false, nil
+	}
+	if e.valueType != TypeJSON {
+		return 0, false, errors.New("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+
+	root, err := jsonvalue.Parse(s.decode(sh, e))
+	if err != nil {
+		return 0, false, errors.New("WRONGTYPE value is not valid JSON")
+	}
+	current, found, err := jsonvalue.Get(root, path)
+	if err != nil || !found {
+		return 0, found, err
+	}
+	arr, ok := current.([]any)
+	if !ok {
+		return 0, false, nil
+	}
+
+	if index < 0 {
+		index = len(arr) + index
+		if index < 0 {
+			index = 0
+		}
+	}
+	if index > len(arr) {
+		return 0, false, errors.New("ERR index out of bounds")
+	}
+
+	out := make([]any, 0, len(arr)+len(values))
+	out = append(out, arr[:index]...)
+	out = append(out, values...)
+	out = append(out, arr[index:]...)
+
+	updatedRoot, err := jsonvalue.Set(root, path, out)
+	if err != nil {
+		return 0, false, err
+	}
+	if err := s.publishJSONMutationLocked(sh, key, e, updatedRoot); err != nil {
+		return 0, false, err
+	}
+	return int64(len(out)), true, nil
+}
+
+func (s *Store) JSONArrIndex(key, path string, rawScalar []byte, start, stop *int) (int64, bool, error) {
+	target, err := jsonvalue.Parse(rawScalar)
+	if err != nil {
+		return 0, false, err
+	}
+
+	value, found, err := s.jsonValueAtPath(key, path)
+	if err != nil || !found {
+		return 0, found, err
+	}
+	arr, ok := value.([]any)
+	if !ok {
+		return 0, false, nil
+	}
+
+	from := 0
+	to := len(arr) - 1
+	if start != nil {
+		from = *start
+		if from < 0 {
+			from = len(arr) + from
+		}
+	}
+	if stop != nil {
+		to = *stop
+		if to < 0 {
+			to = len(arr) + to
+		}
+	}
+	if from < 0 {
+		from = 0
+	}
+	if to >= len(arr) {
+		to = len(arr) - 1
+	}
+	if from > to || from >= len(arr) {
+		return -1, true, nil
+	}
+
+	for i := from; i <= to; i++ {
+		if reflect.DeepEqual(arr[i], target) {
+			return int64(i), true, nil
+		}
+	}
+	return -1, true, nil
+}
+
+func (s *Store) JSONClear(key, path string) (int64, error) {
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	now := s.now()
+	e, exists := sh.get(key)
+	if !exists {
+		return 0, nil
+	}
+	if sh.expired(key, e, now) {
+		s.remove(sh, key)
+		return 0, nil
+	}
+	if e.valueType != TypeJSON {
+		return 0, errors.New("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+
+	root, err := jsonvalue.Parse(s.decode(sh, e))
+	if err != nil {
+		return 0, errors.New("WRONGTYPE value is not valid JSON")
+	}
+	current, found, err := jsonvalue.Get(root, path)
+	if err != nil || !found {
+		return 0, err
+	}
+
+	var replacement any
+	switch current.(type) {
+	case []any:
+		replacement = []any{}
+	case map[string]any:
+		replacement = map[string]any{}
+	case float64:
+		replacement = float64(0)
+	default:
+		return 0, nil
+	}
+
+	updatedRoot, err := jsonvalue.Set(root, path, replacement)
+	if err != nil {
+		return 0, err
+	}
+	if err := s.publishJSONMutationLocked(sh, key, e, updatedRoot); err != nil {
+		return 0, err
+	}
+	return 1, nil
 }
