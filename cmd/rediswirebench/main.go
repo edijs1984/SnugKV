@@ -38,7 +38,9 @@ func main() {
 	valueShape := flag.String("value-shape", "repetitive", "value shape: random, repetitive, json, session-json, api-json, cache-json, counter, uuid, text, or compressed")
 	pipeline := flag.Int("pipeline", 256, "pipeline depth for load/get")
 	seed := flag.Int64("seed", 1, "deterministic seed")
-	settleMS := flag.Int("settle-ms", 0, "milliseconds to wait after workload before post-workload memory snapshot")
+	settleMS := flag.Int("settle-ms", 0, "milliseconds to wait after workload before final memory snapshot")
+	convergeMS := flag.Int("converge-ms", 0, "maximum milliseconds to wait for memory convergence after settle; 0 disables")
+	convergePollMS := flag.Int("converge-poll-ms", 1000, "memory convergence polling interval in milliseconds")
 	reset := flag.Bool("reset", false, "FLUSHDB before workload")
 	cleanup := flag.Bool("cleanup", false, "FLUSHDB after workload")
 	flag.Parse()
@@ -68,8 +70,8 @@ func main() {
 	if *valueShape == "compressed" && *valueBytes < 16 {
 		fatalf("compressed value-shape requires value-bytes >= 16")
 	}
-	if *settleMS < 0 {
-		fatalf("settle-ms must be non-negative")
+	if *settleMS < 0 || *convergeMS < 0 || *convergePollMS < 100 {
+		fatalf("settle-ms/converge-ms must be non-negative and converge-poll-ms >= 100")
 	}
 
 	control, err := dial(*addr)
@@ -103,16 +105,44 @@ func main() {
 		elapsed, samples, errs = runConcurrent(*addr, *workload, *keys, *ops, *workers, *valueBytes, *valueShape, *seed)
 	}
 
+	control, err = dial(*addr)
+	if err != nil { fatalf("reconnect after workload: %v", err) }
+
+	postWorkload, err := control.usedMemory()
+	if err != nil {
+		control.Close()
+		fatalf("INFO memory post-workload: %v", err)
+	}
+	control.Close()
+
 	if *settleMS > 0 {
 		time.Sleep(time.Duration(*settleMS) * time.Millisecond)
 	}
 
-	control, err = dial(*addr)
-	if err != nil { fatalf("reconnect after workload: %v", err) }
-	defer control.Close()
+	after := postWorkload
+	converged := false
+	convergenceMS := int64(0)
+	convergenceSamples := 0
+	if *convergeMS > 0 {
+		after, converged, convergenceMS, convergenceSamples, err = waitForMemoryConvergence(
+			*addr,
+			time.Duration(*convergeMS)*time.Millisecond,
+			time.Duration(*convergePollMS)*time.Millisecond,
+		)
+		if err != nil {
+			fatalf("memory convergence: %v", err)
+		}
+	} else {
+		control, err = dial(*addr)
+		if err != nil { fatalf("reconnect after settle: %v", err) }
+		after, err = control.usedMemory()
+		control.Close()
+		if err != nil { fatalf("INFO memory after: %v", err) }
+	}
 
-	after, err := control.usedMemory()
-	if err != nil { fatalf("INFO memory after: %v", err) }
+	control, err = dial(*addr)
+	if err != nil { fatalf("reconnect for DBSIZE: %v", err) }
+	defer control.Close()
 	dbsize, err := control.dbsize()
 	if err != nil { fatalf("DBSIZE: %v", err) }
 
@@ -120,10 +150,16 @@ func main() {
 	measuredOps := *ops
 	if *workload == "load" { measuredOps = *keys }
 
+	postDelta := uint64(0)
+	if postWorkload >= before { postDelta = postWorkload - before }
 	delta := uint64(0)
 	if after >= before { delta = after - before }
+	postBytesPerKey := float64(0)
 	bytesPerKey := float64(0)
-	if *workload == "load" { bytesPerKey = float64(delta)/float64(*keys) }
+	if *workload == "load" {
+		postBytesPerKey = float64(postDelta)/float64(*keys)
+		bytesPerKey = float64(delta)/float64(*keys)
+	}
 
 	out := map[string]any{
 		"server": *server,
@@ -137,6 +173,11 @@ func main() {
 		"pipeline": *pipeline,
 		"seed": *seed,
 		"settle_ms": *settleMS,
+		"converge_ms": *convergeMS,
+		"convergence_poll_ms": *convergePollMS,
+		"converged": converged,
+		"convergence_elapsed_ms": convergenceMS,
+		"convergence_samples": convergenceSamples,
 		"duration_ns": elapsed.Nanoseconds(),
 		"ops_per_second": float64(measuredOps)/elapsed.Seconds(),
 		"p50_ns": pct(samples,50),
@@ -144,6 +185,9 @@ func main() {
 		"p99_ns": pct(samples,99),
 		"max_ns": pct(samples,100),
 		"used_memory_before": before,
+		"used_memory_post_workload": postWorkload,
+		"used_memory_post_workload_delta": postDelta,
+		"bytes_per_key_post_workload": postBytesPerKey,
 		"used_memory_after": after,
 		"used_memory_delta": delta,
 		"bytes_per_key_delta": bytesPerKey,
@@ -549,6 +593,57 @@ func(c *client)readBulk()([]byte,error){
 	if _,err:=io.ReadFull(c.r,payload);err!=nil{return nil,err}
 	if !bytes.Equal(payload[n:],[]byte("\r\n")){return nil,errors.New("invalid bulk terminator")}
 	return payload[:n],nil
+}
+
+func waitForMemoryConvergence(addr string, maxWait, poll time.Duration) (uint64, bool, int64, int, error) {
+	start := time.Now()
+	deadline := start.Add(maxWait)
+
+	// Compaction maintenance runs on a ten-second cadence. Require memory to
+	// remain effectively unchanged for at least 12 seconds so we do not report
+	// a transient optimizer plateau just before a compaction pass.
+	stableFor := 12 * time.Second
+	var (
+		best       uint64 = ^uint64(0)
+		lastChange = start
+		samples    int
+	)
+
+	for {
+		c, err := dial(addr)
+		if err != nil {
+			return 0, false, time.Since(start).Milliseconds(), samples, err
+		}
+		used, err := c.usedMemory()
+		c.Close()
+		if err != nil {
+			return 0, false, time.Since(start).Milliseconds(), samples, err
+		}
+		samples++
+
+		// Treat a reduction of at least 0.1% or 256 KiB as meaningful. Tiny
+		// fluctuations from diagnostics/network activity must not keep the
+		// convergence timer alive forever.
+		threshold := best / 1000
+		if threshold < 256<<10 {
+			threshold = 256 << 10
+		}
+		if best == ^uint64(0) || used+threshold < best {
+			best = used
+			lastChange = time.Now()
+		} else if used < best {
+			best = used
+		}
+
+		now := time.Now()
+		if now.Sub(lastChange) >= stableFor {
+			return used, true, now.Sub(start).Milliseconds(), samples, nil
+		}
+		if !now.Before(deadline) {
+			return used, false, now.Sub(start).Milliseconds(), samples, nil
+		}
+		time.Sleep(poll)
+	}
 }
 
 func measurementNote(workload string, pipeline int) string {
