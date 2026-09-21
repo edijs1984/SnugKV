@@ -241,9 +241,16 @@ func TestEncodedCounterUsesInlineStorage(t *testing.T) {
 	sh.mu.RLock()
 	entry, _ = sh.get(key)
 	arenaBytes = sh.arena.TotalMemoryBytes()
+	metaSlots := cap(sh.metas)
 	sh.mu.RUnlock()
 	if !entry.ref.IsInline() || arenaBytes != 0 {
 		t.Fatalf("increment lost inline storage: inline=%v arena=%d", entry.ref.IsInline(), arenaBytes)
+	}
+	if metaSlots != 0 {
+		t.Fatalf("metadata-free counter allocated %d metadata slots", metaSlots)
+	}
+	if entryStructBytes != 24 {
+		t.Fatalf("stored entry size=%d want=24", entryStructBytes)
 	}
 
 	auditMemory(t, s)
