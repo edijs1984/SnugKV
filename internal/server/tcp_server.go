@@ -26,6 +26,7 @@ type TCPServer struct {
 	trackingClients          uint64
 	optimizerMaintainTicks   uint64
 	optimizerDroppedSeen     uint64
+	optimizerRecoveryBudget  uint64
 	listener                 net.Listener
 	server                   *Server
 	config                   config.Config
@@ -940,17 +941,42 @@ func (s *TCPServer) OptimizeSample() {
 
 	stats := s.server.optimizer.Stats()
 
-	// Fresh queue drops are the signal for aggressive recovery sampling.
-	// Sample a large bounded burst only when drops have actually increased.
+	// A saturated direct-write queue means some keys were never considered by
+	// the optimizer. Enter deterministic catch-up mode and keep sampling after
+	// the foreground write burst ends instead of issuing only one recovery
+	// burst. Two dataset-sized passes tolerate duplicates and shard skew while
+	// remaining bounded.
 	if stats.Dropped > s.optimizerDroppedSeen {
 		s.optimizerDroppedSeen = stats.Dropped
-		s.server.optimizer.Sample(4096)
+
+		keys := s.server.store.Stats().Keys
+		target := uint64(keys) * 2
+		if target < 4096 {
+			target = 4096
+		}
+		if target > s.optimizerRecoveryBudget {
+			s.optimizerRecoveryBudget = target
+		}
+	}
+
+	if s.optimizerRecoveryBudget > 0 {
+		// Feed recovery work only when at least half of the queue is free. This
+		// lets workers drain foreground-enqueued work and avoids creating a
+		// second queue-saturation storm.
+		available := stats.QueueCapacity - stats.QueueDepth
+		if available >= stats.QueueCapacity/2 {
+			batch := 4096
+			if uint64(batch) > s.optimizerRecoveryBudget {
+				batch = int(s.optimizerRecoveryBudget)
+			}
+			s.server.optimizer.Sample(batch)
+			s.optimizerRecoveryBudget -= uint64(batch)
+		}
 		return
 	}
 
-	// When direct write-time enqueue is keeping up, a large 100ms sampling burst
-	// just rechecks already-optimized keys. Keep a small periodic discovery pass
-	// for uncommon mutation paths that do not enqueue directly.
+	// No drop recovery is pending. Keep a small periodic discovery pass for
+	// uncommon mutation paths that do not enqueue directly.
 	s.optimizerMaintainTicks++
 	if s.optimizerMaintainTicks%100 == 0 {
 		s.server.optimizer.Sample(256)
