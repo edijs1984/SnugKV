@@ -120,7 +120,7 @@ func (periodicCodec) Encode(src []byte) ([]byte, bool) {
 		}
 		match := true
 		for i := period; i < len(src); i++ {
-			if src[i] != src[i%period] {
+			if src[i] != src[i-period] {
 				match = false
 				break
 			}
@@ -133,14 +133,22 @@ func (periodicCodec) Encode(src []byte) ([]byte, bool) {
 	}
 	return nil, false
 }
+func expandPeriodic(dst, pattern []byte) {
+	if len(dst) == 0 {
+		return
+	}
+	copied := copy(dst, pattern)
+	for copied < len(dst) {
+		copied += copy(dst[copied:], dst[:copied])
+	}
+}
+
 func (periodicCodec) Decode(src []byte, n int) ([]byte, error) {
 	if len(src) < 2 || len(src) > 64 || n < len(src) {
 		return nil, errors.New("invalid periodic record")
 	}
 	out := make([]byte, n)
-	for i := range out {
-		out[i] = src[i%len(src)]
-	}
+	expandPeriodic(out, src)
 	return out, nil
 }
 func (periodicCodec) DecodeInto(src []byte, n int, dst []byte) ([]byte, error) {
@@ -152,9 +160,7 @@ func (periodicCodec) DecodeInto(src []byte, n int, dst []byte) ([]byte, error) {
 	} else {
 		dst = dst[:n]
 	}
-	for i := range dst {
-		dst[i] = src[i%len(src)]
-	}
+	expandPeriodic(dst, src)
 	return dst, nil
 }
 
