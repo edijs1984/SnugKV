@@ -22,7 +22,7 @@ Options:
   -g, --get-ops N          GET operations (default: 2000000)
   -w, --workers N          Concurrent workers (default: 8)
   -P, --pipeline N         Pipeline depth (default: 256)
-      --settle-ms N        Wait after LOAD before convergence check (default: 10000)
+      --settle-ms N        Wait after LOAD before convergence check (default: 0)
       --converge-ms N      Max convergence wait; snug-opt defaults to -1 (until complete), others 0
       --seed N             Deterministic seed (default: 1)
   -o, --output DIR         Output directory
@@ -59,7 +59,7 @@ KEYS="1000000"
 GET_OPS="2000000"
 WORKERS="8"
 PIPELINE="256"
-SETTLE_MS="10000"
+SETTLE_MS="0"
 CONVERGE_MS=""
 SEED="1"
 BUILD=1
