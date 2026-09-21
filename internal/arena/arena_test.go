@@ -189,3 +189,39 @@ func TestLargeAllocations(t *testing.T) {
 		})
 	}
 }
+
+
+func TestInlineRefStoresTinyPayloadWithoutArenaGrowth(t *testing.T) {
+	var a Arena
+	before := a.TotalMemoryBytes()
+
+	ref, ok := a.AllocInline([]byte{1, 2, 3, 4, 5})
+	if !ok {
+		t.Fatal("inline allocation rejected")
+	}
+	if !ref.IsInline() {
+		t.Fatal("inline reference not marked inline")
+	}
+	if got := a.TotalMemoryBytes(); got != before {
+		t.Fatalf("inline allocation grew arena: before=%d after=%d", before, got)
+	}
+	if got := a.AllocationBytes(ref); got != 0 {
+		t.Fatalf("inline allocation bytes=%d want=0", got)
+	}
+	if got := a.FreeGrowth(ref); got != 0 {
+		t.Fatalf("inline free growth=%d want=0", got)
+	}
+
+	var scratch [8]byte
+	got, ok := ref.InlineInto(scratch[:0])
+	if !ok || !bytes.Equal(got, []byte{1, 2, 3, 4, 5}) {
+		t.Fatalf("inline round trip=%v ok=%v", got, ok)
+	}
+
+	firstGeneration := ref.Generation()
+	a.Free(ref)
+	next, ok := a.AllocInline([]byte{9})
+	if !ok || next.Generation() == firstGeneration {
+		t.Fatal("inline generation did not advance")
+	}
+}
