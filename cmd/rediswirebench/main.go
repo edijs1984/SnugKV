@@ -39,7 +39,7 @@ func main() {
 	pipeline := flag.Int("pipeline", 256, "pipeline depth for load/get")
 	seed := flag.Int64("seed", 1, "deterministic seed")
 	settleMS := flag.Int("settle-ms", 0, "milliseconds to wait after workload before final memory snapshot")
-	convergeMS := flag.Int("converge-ms", 0, "maximum milliseconds to wait for memory convergence after settle; 0 disables")
+	convergeMS := flag.Int("converge-ms", 0, "maximum milliseconds to wait for memory convergence after settle; 0 disables, -1 waits until complete")
 	convergePollMS := flag.Int("converge-poll-ms", 1000, "memory convergence polling interval in milliseconds")
 	reset := flag.Bool("reset", false, "FLUSHDB before workload")
 	cleanup := flag.Bool("cleanup", false, "FLUSHDB after workload")
@@ -70,8 +70,8 @@ func main() {
 	if *valueShape == "compressed" && *valueBytes < 16 {
 		fatalf("compressed value-shape requires value-bytes >= 16")
 	}
-	if *settleMS < 0 || *convergeMS < 0 || *convergePollMS < 100 {
-		fatalf("settle-ms/converge-ms must be non-negative and converge-poll-ms >= 100")
+	if *settleMS < 0 || *convergeMS < -1 || *convergePollMS < 100 {
+		fatalf("settle-ms must be non-negative, converge-ms >= -1, and converge-poll-ms >= 100")
 	}
 
 	control, err := dial(*addr)
@@ -124,10 +124,13 @@ func main() {
 	convergenceMS := int64(0)
 	convergenceSamples := 0
 	if *convergeMS > 0 {
+		maxWait := time.Duration(*convergeMS) * time.Millisecond
 		after, converged, convergenceMS, convergenceSamples, err = waitForMemoryConvergence(
 			*addr,
-			time.Duration(*convergeMS)*time.Millisecond,
+			maxWait,
 			time.Duration(*convergePollMS)*time.Millisecond,
+			*keys,
+			*valueBytes,
 		)
 		if err != nil {
 			fatalf("memory convergence: %v", err)
@@ -596,12 +599,15 @@ func(c *client)readBulk()([]byte,error){
 }
 
 type convergenceProgress struct {
-	ElapsedMS          int64  `json:"elapsed_ms"`
-	UsedMemory         uint64 `json:"used_memory"`
-	OptimizerRewritten uint64 `json:"optimizer_rewritten,omitempty"`
-	OptimizerQueue     int    `json:"optimizer_queue_depth,omitempty"`
-	ArenaBytes         uint64 `json:"arena_bytes,omitempty"`
-	ArenaPayloadBytes  uint64 `json:"arena_payload_bytes,omitempty"`
+	ElapsedMS             int64   `json:"elapsed_ms"`
+	UsedMemory            uint64  `json:"used_memory"`
+	OptimizerRewritten    uint64  `json:"optimizer_rewritten,omitempty"`
+	OptimizerQueue        int     `json:"optimizer_queue_depth,omitempty"`
+	ArenaBytes            uint64  `json:"arena_bytes,omitempty"`
+	ArenaPayloadBytes     uint64  `json:"arena_payload_bytes,omitempty"`
+	ArenaLiveBlockBytes   uint64  `json:"arena_live_block_bytes,omitempty"`
+	EstimatedFinalMemory  uint64  `json:"estimated_final_memory,omitempty"`
+	EstimatedFinalBytesKey float64 `json:"estimated_final_bytes_per_key,omitempty"`
 }
 
 func emitConvergenceProgress(p convergenceProgress) {
@@ -641,19 +647,25 @@ func (c *client) snugStats() (map[string]uint64, error) {
 	return parseSnugStats(payload), nil
 }
 
-func waitForMemoryConvergence(addr string, maxWait, poll time.Duration) (uint64, bool, int64, int, error) {
+func waitForMemoryConvergence(addr string, maxWait, poll time.Duration, keys, valueBytes int) (uint64, bool, int64, int, error) {
 	start := time.Now()
-	deadline := start.Add(maxWait)
+	var deadline time.Time
+	if maxWait > 0 {
+		deadline = start.Add(maxWait)
+	}
 
 	// Compaction maintenance runs on a ten-second cadence. Require memory to
 	// remain effectively unchanged for at least 12 seconds so we do not report
 	// a transient optimizer plateau just before a compaction pass.
 	stableFor := 12 * time.Second
 	var (
-		anchor     uint64
-		haveAnchor bool
-		lastChange = start
-		samples    int
+		anchor          uint64
+		haveAnchor      bool
+		lastChange      = start
+		samples         int
+		startUsed       uint64
+		startLiveBlocks uint64
+		startRewritten  uint64
 	)
 
 	for {
@@ -680,10 +692,36 @@ func waitForMemoryConvergence(addr string, maxWait, poll time.Duration) (uint64,
 			UsedMemory: used,
 		}
 		if snug != nil {
-			progress.OptimizerRewritten = snug["optimizer_rewritten"]
+			rewritten := snug["optimizer_rewritten"]
+			liveBlocks := snug["arena_live_block_bytes"]
+			progress.OptimizerRewritten = rewritten
 			progress.OptimizerQueue = int(snug["optimizer_queue_depth"])
 			progress.ArenaBytes = snug["arena_bytes"]
 			progress.ArenaPayloadBytes = snug["arena_payload_bytes"]
+			progress.ArenaLiveBlockBytes = liveBlocks
+
+			if startUsed == 0 {
+				startUsed = used
+				startLiveBlocks = liveBlocks
+				startRewritten = rewritten
+			}
+
+			rewrittenSinceStart := rewritten - startRewritten
+			if keys > 0 && rewrittenSinceStart >= 1000 && startLiveBlocks > liveBlocks {
+				savedLive := startLiveBlocks - liveBlocks
+				savedPerRewrite := float64(savedLive) / float64(rewrittenSinceStart)
+				remaining := float64(keys) - float64(rewritten)
+				if remaining < 0 {
+					remaining = 0
+				}
+				estimatedAdditionalSavings := uint64(savedPerRewrite * remaining)
+				estimated := used
+				if estimatedAdditionalSavings < estimated {
+					estimated -= estimatedAdditionalSavings
+				}
+				progress.EstimatedFinalMemory = estimated
+				progress.EstimatedFinalBytesKey = float64(estimated) / float64(keys)
+			}
 		}
 		emitConvergenceProgress(progress)
 		if !haveAnchor {
@@ -711,10 +749,16 @@ func waitForMemoryConvergence(addr string, maxWait, poll time.Duration) (uint64,
 			}
 		}
 
-		if now.Sub(lastChange) >= stableFor {
+		optimizerComplete := false
+		if snug != nil && keys > 0 {
+			optimizerComplete = snug["optimizer_rewritten"] >= uint64(keys) &&
+				snug["optimizer_queue_depth"] == 0
+		}
+
+		if optimizerComplete && now.Sub(lastChange) >= stableFor {
 			return used, true, now.Sub(start).Milliseconds(), samples, nil
 		}
-		if !now.Before(deadline) {
+		if maxWait > 0 && !now.Before(deadline) {
 			return used, false, now.Sub(start).Milliseconds(), samples, nil
 		}
 		time.Sleep(poll)
