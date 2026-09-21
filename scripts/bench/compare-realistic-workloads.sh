@@ -28,6 +28,7 @@ SERVERS="${SERVERS:-redis snug-raw snug-opt}"
 WORKLOADS="${WORKLOADS:-load get}"
 ROOT_OUT="${ROOT_OUT:-benchmark-results/realistic-$(date +%Y%m%d-%H%M%S)}"
 BUILD_IMAGE="${BUILD_IMAGE:-1}"
+PROFILE="${PROFILE:-}"
 
 REDIS_ADDR="${REDIS_ADDR:-127.0.0.1:6390}"
 SNUG_RAW_ADDR="${SNUG_RAW_ADDR:-127.0.0.1:6382}"
@@ -40,6 +41,7 @@ SNUG_OPT_CONTAINER="${SNUG_OPT_CONTAINER:-snug-bench-snugkv-opt}"
 profiles=(
   "session-json:384"
   "api-json:768"
+  "cache-json:1024"
   "counter:10"
   "uuid:36"
   "text:256"
@@ -47,6 +49,22 @@ profiles=(
   "compressed:256"
   "random:256"
 )
+
+if [[ -n "$PROFILE" ]]; then
+  selected=""
+  for spec in "${profiles[@]}"; do
+    if [[ "${spec%%:*}" == "$PROFILE" ]]; then
+      selected="$spec"
+      break
+    fi
+  done
+  if [[ -z "$selected" ]]; then
+    echo "unknown PROFILE: $PROFILE" >&2
+    echo "available: ${profiles[*]}" >&2
+    exit 2
+  fi
+  profiles=("$selected")
+fi
 
 mkdir -p "$ROOT_OUT"
 go build -o /tmp/rediswirebench ./cmd/rediswirebench
@@ -166,6 +184,7 @@ echo "Realistic benchmark"
 echo "  servers:   $SERVERS"
 echo "  workloads: $WORKLOADS"
 echo "  profiles:  ${#profiles[@]}"
+[[ -n "$PROFILE" ]] && echo "  profile:   $PROFILE"
 echo "  runs:      $RUNS"
 echo "  keys:      $KEYS"
 echo "  get_ops:   $GET_OPS"
