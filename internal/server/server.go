@@ -116,8 +116,12 @@ var commandTable = map[string]commandInfo{
 	"JSON.SET":  {4, 5, 1, 1, 1, true},
 	"JSON.GET":  {2, 3, 1, 1, 1, false},
 	"JSON.TYPE": {2, 3, 1, 1, 1, false},
-	"JSON.DEL":  {2, 3, 1, 1, 1, true},
-	"MEMORY":    {2, 5, 0, 0, 0, false},
+	"JSON.DEL":     {2, 3, 1, 1, 1, true},
+	"JSON.STRLEN":  {2, 3, 1, 1, 1, false},
+	"JSON.OBJLEN":  {2, 3, 1, 1, 1, false},
+	"JSON.OBJKEYS": {2, 3, 1, 1, 1, false},
+	"JSON.ARRLEN":  {2, 3, 1, 1, 1, false},
+	"MEMORY":       {2, 5, 0, 0, 0, false},
 }
 
 func (s *Server) execute(args [][]byte) ([]byte, error) {
@@ -259,6 +263,85 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		}
 
 		return optionalBulk(value, found), nil
+
+	case "JSON.STRLEN", "JSON.OBJLEN", "JSON.ARRLEN":
+		path := "$"
+		if len(args) == 3 {
+			path = string(args[2])
+		}
+
+		var results []engine.JSONLengthResult
+		var keyExists bool
+		var err error
+		switch cmd {
+		case "JSON.STRLEN":
+			results, keyExists, err = s.store.JSONStrLen(key, path)
+		case "JSON.OBJLEN":
+			results, keyExists, err = s.store.JSONObjLen(key, path)
+		default:
+			results, keyExists, err = s.store.JSONArrLen(key, path)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if !keyExists {
+			return nullBulk(), nil
+		}
+
+		if strings.HasPrefix(path, "$") {
+			items := make([][]byte, len(results))
+			for i, result := range results {
+				if result.Valid {
+					items[i] = integer(result.Value)
+				} else {
+					items[i] = nullBulk()
+				}
+			}
+			return array(items...), nil
+		}
+
+		if len(results) == 0 || !results[0].Valid {
+			return nullBulk(), nil
+		}
+		return integer(results[0].Value), nil
+
+	case "JSON.OBJKEYS":
+		path := "$"
+		if len(args) == 3 {
+			path = string(args[2])
+		}
+
+		results, keyExists, err := s.store.JSONObjKeys(key, path)
+		if err != nil {
+			return nil, err
+		}
+		if !keyExists {
+			return nullBulk(), nil
+		}
+
+		formatKeys := func(result engine.JSONKeysResult) []byte {
+			if !result.Valid {
+				return nullBulk()
+			}
+			items := make([][]byte, len(result.Values))
+			for i := range result.Values {
+				items[i] = formatBulkString([]byte(result.Values[i]))
+			}
+			return array(items...)
+		}
+
+		if strings.HasPrefix(path, "$") {
+			items := make([][]byte, len(results))
+			for i := range results {
+				items[i] = formatKeys(results[i])
+			}
+			return array(items...), nil
+		}
+
+		if len(results) == 0 {
+			return nullBulk(), nil
+		}
+		return formatKeys(results[0]), nil
 
 	case "APPEND":
 		length, err := s.store.Append(key, args[2])
