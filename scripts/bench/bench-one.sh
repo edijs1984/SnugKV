@@ -62,6 +62,7 @@ SETTLE_MS="10000"
 SEED="1"
 BUILD=1
 ROOT_OUT=""
+GO_BIN="${SNUGKV_GO_BIN:-go}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -118,7 +119,7 @@ fi
 mkdir -p "$ROOT_OUT"
 
 if [[ "$BUILD" == "1" ]]; then
-  go build -o /tmp/rediswirebench ./cmd/rediswirebench
+  "$GO_BIN" build -o /tmp/rediswirebench ./cmd/rediswirebench
 elif [[ ! -x /tmp/rediswirebench ]]; then
   echo "error: /tmp/rediswirebench does not exist; remove --no-build" >&2
   exit 2
