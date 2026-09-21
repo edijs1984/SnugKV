@@ -20,6 +20,7 @@ type Config struct {
 	MetricsAddr       string `json:"metrics_listen"`
 	Compression       bool   `json:"compression"`
 	JSONShape         bool   `json:"json_shape"`
+	OptimizerMode     string `json:"optimizer_mode"`
 	AOFPath           string `json:"aof_path"`
 	SnapshotPath      string `json:"snapshot_path"`
 	ACLFile           string `json:"acl_file"`
@@ -39,7 +40,7 @@ type Config struct {
 }
 
 func Default() Config {
-	return Config{AdminAddr: "127.0.0.1:6381", EvictionPolicy: "noeviction", Fsync: "everysec", ListenAddr: "127.0.0.1:6380", Shards: 256, MaxConnections: 10000, ReadTimeoutMS: 30000, WriteTimeoutMS: 30000, MaxRequestBytes: 64 << 20, MaxBulkBytes: 32 << 20, MaxArguments: 1024, CleanupIntervalMS: 100}
+	return Config{AdminAddr: "127.0.0.1:6381", EvictionPolicy: "noeviction", Fsync: "everysec", OptimizerMode: "dedicated", ListenAddr: "127.0.0.1:6380", Shards: 256, MaxConnections: 10000, ReadTimeoutMS: 30000, WriteTimeoutMS: 30000, MaxRequestBytes: 64 << 20, MaxBulkBytes: 32 << 20, MaxArguments: 1024, CleanupIntervalMS: 100}
 }
 func (c Config) Limits() resp.Limits {
 	return resp.Limits{MaxRequestBytes: c.MaxRequestBytes, MaxBulkBytes: c.MaxBulkBytes, MaxArguments: c.MaxArguments}
@@ -56,6 +57,9 @@ func (c Config) Validate() error {
 	}
 	if c.EvictionPolicy != "noeviction" && c.EvictionPolicy != "allkeys-lru" && c.EvictionPolicy != "volatile-lru" {
 		return errors.New("invalid eviction policy")
+	}
+	if c.OptimizerMode != "dedicated" && c.OptimizerMode != "sidecar" {
+		return errors.New("optimizer_mode must be dedicated or sidecar")
 	}
 	if c.AOFPath != "" && c.SnapshotPath != "" {
 		a, err := filepath.Abs(c.AOFPath)
@@ -160,7 +164,7 @@ func (c *Config) ApplyEnv() error {
 		}
 		c.JSONShape = b
 	}
-	for name, dst := range map[string]*string{"AOF_PATH": &c.AOFPath, "SNAPSHOT_PATH": &c.SnapshotPath, "ACL_FILE": &c.ACLFile, "FSYNC": &c.Fsync, "EVICTION_POLICY": &c.EvictionPolicy, "METRICS_LISTEN": &c.MetricsAddr, "ADMIN_LISTEN": &c.AdminAddr} {
+	for name, dst := range map[string]*string{"AOF_PATH": &c.AOFPath, "SNAPSHOT_PATH": &c.SnapshotPath, "ACL_FILE": &c.ACLFile, "FSYNC": &c.Fsync, "EVICTION_POLICY": &c.EvictionPolicy, "METRICS_LISTEN": &c.MetricsAddr, "ADMIN_LISTEN": &c.AdminAddr, "OPTIMIZER_MODE": &c.OptimizerMode} {
 		if v, ok := os.LookupEnv("SNUGKV_" + name); ok {
 			*dst = v
 		}
