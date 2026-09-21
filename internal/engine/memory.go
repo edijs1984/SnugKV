@@ -69,8 +69,10 @@ func (s *Store) Layout() LayoutStats {
 		sh.mu.RLock()
 
 		entryCapacity += uint64(cap(sh.entries))
-		entryStorageBytes += uint64(cap(sh.entries))*entryStructBytes +
-			uint64(cap(sh.metas))*entryMetaSlotBytes
+		entryStorageBytes += uint64(cap(sh.entries)) * entryStructBytes
+		if sh.metas != nil {
+			entryStorageBytes += uint64(cap(*sh.metas)) * entryMetaSlotBytes
+		}
 
 		if indexSlotBytes == 0 {
 			indexSlotBytes = sh.data.EntryBytes()
