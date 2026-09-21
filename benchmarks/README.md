@@ -324,6 +324,48 @@ workloads, not measurements of a specific production application. For product
 claims, pair them with traces or distributions from an actual deployment when
 available.
 
+### Realistic-workload development snapshot — 2026-09-21
+
+The following values are engineering snapshots from the current 4-logical-CPU
+development machine. They are useful for regression tracking, but are not
+universal Redis/SnugKV claims and should not replace fresh isolated multi-run
+measurements for publication.
+
+| Profile | Server | Best SET/s | Best GET/s | Lowest B/key |
+|---|---|---:|---:|---:|
+| counter · 10 B | Redis | 408,054 | 626,618 | 72.39 |
+| counter · 10 B | SnugKV raw | 508,849 | 872,047 | 112.15 |
+| counter · 10 B | SnugKV opt, pre-entry-compaction result | 402,402 | 735,830 | 77.13 |
+| session JSON · 384 B | Redis | 285,118 | 434,121 | 520.39 |
+| session JSON · 384 B | SnugKV raw | 383,040 | 782,087 | 544.37 |
+| session JSON · 384 B | SnugKV opt | 255,277 | 563,998 | 272.89 |
+| API JSON · 768 B | Redis | 221,241 | 371,244 | 968.39 |
+| API JSON · 768 B | SnugKV raw | 296,125 | 663,780 | 909.90 |
+| API JSON · 768 B | SnugKV opt | 188,607 | 491,242 | 273.00 |
+| cache JSON · 1024 B | Redis | 192,063 | 339,800 | 1352.39 |
+| cache JSON · 1024 B | SnugKV raw | 241,822 | 604,901 | 1245.78 |
+| cache JSON · 1024 B | SnugKV opt | 156,941 | 434,474 | 568.37 |
+
+For the counter profile, the current compacted engine state is smaller than the
+77.13 B/key load result shown above. An explicit `SNUG.COMPACT` on the same
+1,000,000-key dataset reduced accounted bytes from 77,181,376 to 72,605,632,
+or 72.61 B/key. The compacted accounting was:
+
+- index reservation: 33,605,632 bytes;
+- entry/key storage: 39,000,000 bytes;
+- metadata: 0 bytes;
+- arena reservation/payload/live blocks: 0 bytes.
+
+The corresponding recorded Redis reference was 72.39 B/key. The normal benchmark
+convergence path did not yet trigger this final dense-entry compaction
+automatically, so 72.61 B/key must be described as an explicit-compaction result,
+not as the default post-load benchmark result.
+
+The counter memory progression during this tuning phase was 103.86 B/key before
+inline tiny scalars and compact stored entries, 86.66 B/key after inline scalar
+storage, 77.13 B/key after the 24-byte stored-entry layout, and 72.61 B/key after
+dense entry-capacity compaction.
+
 ## Benchmark discipline
 
 For public performance claims, rerun Redis from a fresh dedicated instance or
