@@ -190,3 +190,60 @@ func TestMemoryUsage(t *testing.T) {
 
 	t.Logf("MEMORY USAGE hello = %d bytes", usage)
 }
+
+
+func TestEncodedCounterUsesInlineStorage(t *testing.T) {
+	s, err := NewWithOptions(Options{Shards: 1, Encoding: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const key = "counter"
+	const value = "1000000000"
+	if err := s.Set(key, []byte(value), 0); err != nil {
+		t.Fatal(err)
+	}
+
+	sh := s.shardFor(key)
+	sh.mu.RLock()
+	entry, ok := sh.get(key)
+	arenaBytes := sh.arena.TotalMemoryBytes()
+	sh.mu.RUnlock()
+	if !ok {
+		t.Fatal("counter missing")
+	}
+	if !entry.ref.IsInline() {
+		t.Fatal("encoded counter was not stored inline")
+	}
+	if arenaBytes != 0 {
+		t.Fatalf("inline counter reserved %d arena bytes, want 0", arenaBytes)
+	}
+
+	name, logical, encoded, ok := s.Encoding(key)
+	if !ok || name != "integer" || logical != len(value) || encoded >= logical {
+		t.Fatalf("encoding=%s logical=%d encoded=%d ok=%v", name, logical, encoded, ok)
+	}
+
+	got, ok := s.Get(key)
+	if !ok || string(got) != value {
+		t.Fatalf("round trip=%q ok=%v", got, ok)
+	}
+
+	if _, err := s.Incr(key); err != nil {
+		t.Fatal(err)
+	}
+	got, ok = s.Get(key)
+	if !ok || string(got) != "1000000001" {
+		t.Fatalf("incremented round trip=%q ok=%v", got, ok)
+	}
+
+	sh.mu.RLock()
+	entry, _ = sh.get(key)
+	arenaBytes = sh.arena.TotalMemoryBytes()
+	sh.mu.RUnlock()
+	if !entry.ref.IsInline() || arenaBytes != 0 {
+		t.Fatalf("increment lost inline storage: inline=%v arena=%d", entry.ref.IsInline(), arenaBytes)
+	}
+
+	auditMemory(t, s)
+}
