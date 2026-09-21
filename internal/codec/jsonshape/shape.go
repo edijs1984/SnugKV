@@ -347,24 +347,32 @@ func EncodeSlots(slots [][]byte) []byte {
 	}
 	return out
 }
-func Decode(schema *Schema, data []byte, max int) ([]byte, error) {
+func DecodeInto(schema *Schema, data []byte, max int, dst []byte) ([]byte, error) {
 	if schema == nil || max < 0 {
 		return nil, errors.New("missing schema or invalid bound")
 	}
+	if cap(dst) < max {
+		dst = make([]byte, 0, max)
+	} else {
+		dst = dst[:0]
+	}
+	out := dst
 
-	out := make([]byte, 0, max)
+	appendChecked := func(value []byte) bool {
+		if len(value) > max-len(out) {
+			return false
+		}
+		out = append(out, value...)
+		return true
+	}
 
 	for i, literal := range schema.Literal {
-		if len(literal) > max-len(out) {
+		if !appendChecked(literal) {
 			return nil, errors.New("shape output exceeds limit")
 		}
-
-		out = append(out, literal...)
-
 		if i == len(schema.Literal)-1 {
 			break
 		}
-
 		if len(data) == 0 {
 			return nil, errors.New("missing shape slot")
 		}
@@ -372,40 +380,36 @@ func Decode(schema *Schema, data []byte, max int) ([]byte, error) {
 		tag := data[0]
 		data = data[1:]
 
-		var slot []byte
-
 		switch tag {
 		case slotRaw:
 			n, used := binary.Uvarint(data)
 			if used <= 0 {
 				return nil, errors.New("invalid raw shape slot")
 			}
-
 			data = data[used:]
-
 			if n > uint64(len(data)) {
 				return nil, errors.New("truncated raw slot")
 			}
-
-			slot = data[:int(n)]
+			if !appendChecked(data[:int(n)]) {
+				return nil, errors.New("shape output exceeds limit")
+			}
 			data = data[int(n):]
 
 		case slotDictionary:
 			if schema.dictionary == nil {
 				return nil, errors.New("missing dictionary")
 			}
-
 			id, used := binary.Uvarint(data)
 			if used <= 0 {
 				return nil, errors.New("invalid dictionary slot")
 			}
-
 			data = data[used:]
-
-			var ok bool
-			slot, ok = schema.dictionary.LookupView(id)
+			slot, ok := schema.dictionary.LookupView(id)
 			if !ok {
 				return nil, errors.New("missing dictionary entry")
+			}
+			if !appendChecked(slot) {
+				return nil, errors.New("shape output exceeds limit")
 			}
 
 		case slotInt:
@@ -413,33 +417,36 @@ func Decode(schema *Schema, data []byte, max int) ([]byte, error) {
 			if used <= 0 {
 				return nil, errors.New("invalid integer slot")
 			}
-
 			data = data[used:]
-			slot = []byte(strconv.FormatInt(value, 10))
+			var number [20]byte
+			formatted := strconv.AppendInt(number[:0], value, 10)
+			if !appendChecked(formatted) {
+				return nil, errors.New("shape output exceeds limit")
+			}
 
 		case slotTrue:
-			slot = []byte("true")
-
+			if !appendChecked([]byte("true")) {
+				return nil, errors.New("shape output exceeds limit")
+			}
 		case slotFalse:
-			slot = []byte("false")
-
+			if !appendChecked([]byte("false")) {
+				return nil, errors.New("shape output exceeds limit")
+			}
 		case slotNull:
-			slot = []byte("null")
-
+			if !appendChecked([]byte("null")) {
+				return nil, errors.New("shape output exceeds limit")
+			}
 		default:
 			return nil, errors.New("invalid slot tag")
 		}
-
-		if len(slot) > max-len(out) {
-			return nil, errors.New("shape output exceeds limit")
-		}
-
-		out = append(out, slot...)
 	}
 
 	if len(data) != 0 {
 		return nil, errors.New("trailing shape data")
 	}
-
 	return out, nil
+}
+
+func Decode(schema *Schema, data []byte, max int) ([]byte, error) {
+	return DecodeInto(schema, data, max, nil)
 }
