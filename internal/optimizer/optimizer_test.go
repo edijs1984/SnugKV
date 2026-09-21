@@ -150,3 +150,34 @@ func TestCPUPercentForBacklogNeverRaisesConfiguredBudget(t *testing.T) {
 		t.Fatalf("cpu=%d want=10", got)
 	}
 }
+
+
+func TestShouldCompactArenaPolicy(t *testing.T) {
+	const arena = uint64(100 << 20)
+
+	tests := []struct {
+		name       string
+		live       uint64
+		queueDepth int
+		want       bool
+	}{
+		{"empty arena", 0, 0, false},
+		{"idle below 25 percent dead", 80 << 20, 0, false},
+		{"idle at 25 percent dead", 75 << 20, 0, true},
+		{"backlog below 40 percent dead", 70 << 20, 1, false},
+		{"backlog at 40 percent dead", 60 << 20, 1, true},
+		{"backlog tiny dead bytes", (9 << 20) - 1, 1, false},
+	}
+
+	if shouldCompactArena(0, 0, 0) {
+		t.Fatal("zero arena should never compact")
+	}
+
+	for _, tc := range tests[1:] {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldCompactArena(arena, tc.live, tc.queueDepth); got != tc.want {
+				t.Fatalf("compact=%v want=%v arena=%d live=%d queue=%d", got, tc.want, arena, tc.live, tc.queueDepth)
+			}
+		})
+	}
+}
