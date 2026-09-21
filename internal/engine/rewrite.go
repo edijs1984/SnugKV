@@ -21,6 +21,10 @@ type Candidate struct {
 	expiresAt               stamp
 }
 
+func (c Candidate) RequiresOptimizationMetadata() bool {
+	return structuredJSONCandidate(c.Value)
+}
+
 // OptimizationEligible performs the cheap read-only eligibility check before
 // the optimizer reserves scratch/bandwidth resources. Native container values
 // have their own packed representations and are intentionally excluded from
@@ -45,7 +49,7 @@ func (s *Store) OptimizationEligible(
 	// compression rewrites metadata-free avoids a permanent 24-byte sidecar
 	// per compressed key. A subsequent foreground write publishes a fresh
 	// representation and may enqueue the key again.
-	if e.codecID == codec.LZ4 || e.codecID == codec.Zstandard {
+	if (e.codecID == codec.LZ4 || e.codecID == codec.Zstandard) && e.entryMeta == nil {
 		return 0, false
 	}
 
@@ -86,7 +90,7 @@ func (s *Store) MarkOptimizationAttempt(
 		return false
 	}
 
-	if e.codecID == codec.LZ4 || e.codecID == codec.Zstandard {
+	if (e.codecID == codec.LZ4 || e.codecID == codec.Zstandard) && e.entryMeta == nil {
 		return false
 	}
 
@@ -529,14 +533,17 @@ func (s *Store) Rewrite(candidate Candidate, record codec.Record) bool {
 	prepared.entryMeta = cloneEntryMeta(e.entryMeta)
 	prepared.codecID = record.ID
 
-	// JSON-shape records need a schema handle, so they retain the metadata
-	// sidecar. Plain compression does not: the codec ID already identifies the
-	// physical representation and terminal compressed records are skipped by
-	// normal optimizer eligibility checks. Avoiding ensureMeta here saves 24
-	// bytes for every compressed scalar key.
-	if record.Schema != nil {
+	// JSON values retain optimizer metadata because an early compression
+	// rewrite may later be replaced by an admitted shared JSON shape. Plain
+	// non-JSON compression is terminal for the normal optimizer pass, so it
+	// does not need the 24-byte sidecar.
+	if record.Schema != nil || candidate.RequiresOptimizationMetadata() {
 		meta := prepared.ensureMeta()
-		meta.schemaID = record.Schema.ID
+		if record.Schema != nil {
+			meta.schemaID = record.Schema.ID
+		} else {
+			meta.schemaID = 0
+		}
 		meta.lastRewrite = activityStampOf(s.now())
 	} else if prepared.entryMeta != nil {
 		prepared.entryMeta.schemaID = 0
