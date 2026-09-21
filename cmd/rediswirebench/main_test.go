@@ -14,6 +14,7 @@ func TestRealisticBenchmarkValueProfiles(t *testing.T) {
 	}{
 		{"session-json", 384},
 		{"api-json", 768},
+		{"cache-json", 1024},
 		{"text", 256},
 		{"compressed", 256},
 	} {
@@ -31,6 +32,7 @@ func TestRealisticJSONProfilesAreValid(t *testing.T) {
 	}{
 		{"session-json", 384},
 		{"api-json", 768},
+		{"cache-json", 1024},
 	} {
 		got := benchmarkValue(tc.shape, tc.size, 42, 1)
 		if !json.Valid(got) {
