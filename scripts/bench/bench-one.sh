@@ -23,7 +23,7 @@ Options:
   -w, --workers N          Concurrent workers (default: 8)
   -P, --pipeline N         Pipeline depth (default: 256)
       --settle-ms N        Wait after LOAD before convergence check (default: 10000)
-      --converge-ms N      Max convergence wait; snug-opt defaults to 120000, others 0
+      --converge-ms N      Max convergence wait; snug-opt defaults to -1 (until complete), others 0
       --seed N             Deterministic seed (default: 1)
   -o, --output DIR         Output directory
       --no-build           Reuse /tmp/rediswirebench instead of rebuilding it
@@ -118,7 +118,7 @@ esac
 
 if [[ -z "$CONVERGE_MS" ]]; then
   if [[ "$SERVER" == "snug-opt" ]]; then
-    CONVERGE_MS="120000"
+    CONVERGE_MS="-1"
   else
     CONVERGE_MS="0"
   fi
@@ -210,7 +210,7 @@ print(f"bytes/key final:{load['bytes_per_key_delta']:.2f}")
 print(f"memory hot:    {load.get('used_memory_post_workload_delta', load['used_memory_delta']):,} B")
 print(f"memory final:  {load['used_memory_delta']:,} B")
 if load.get('converge_ms', 0):
-    state = "yes" if load.get('converged') else "timeout"
+    state = "yes" if load.get('converged') else "no"
     print(f"converged:     {state} in {load.get('convergence_elapsed_ms', 0):,} ms")
 PY
 
