@@ -1,6 +1,9 @@
 package engine
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestJSONPathGetTypeAndInspectors(t *testing.T) {
 	s := New()
@@ -57,11 +60,11 @@ func TestJSONArraySetAndDeletePreserveTTL(t *testing.T) {
 	if _, err := s.JSONSet("doc", "$", []byte(`{"items":[1,2,3]}`), false, false); err != nil {
 		t.Fatal(err)
 	}
-	if !s.Expire("doc", 60000) {
+	if !s.Expire("doc", time.Minute) {
 		t.Fatal("expire failed")
 	}
 
-	before := s.PTTL("doc")
+	before := s.TTL("doc", true)
 	if before <= 0 {
 		t.Fatalf("unexpected TTL %d", before)
 	}
@@ -77,7 +80,7 @@ func TestJSONArraySetAndDeletePreserveTTL(t *testing.T) {
 	if err != nil || !found || string(got) != "[[1,9]]" {
 		t.Fatalf("JSONGet items=%s found=%v err=%v", got, found, err)
 	}
-	if ttl := s.PTTL("doc"); ttl <= 0 {
+	if ttl := s.TTL("doc", true); ttl <= 0 {
 		t.Fatalf("TTL lost: %d", ttl)
 	}
 }
