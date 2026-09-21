@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"bytes"
 	"errors"
 	"snugkv/internal/arena"
 	"snugkv/internal/codec"
@@ -160,46 +159,14 @@ func (s *Store) makeEntry(value []byte) preparedEntry {
 	}
 }
 
-// makeEntryForShard uses an already-admitted JSON shape immediately.
+// makeEntryForShard keeps foreground writes cheap.
 //
-// The caller must hold sh.mu. This avoids the normal codec/compression path
-// when the shard already knows a strongly beneficial JSON representation.
-func (s *Store) makeEntryForShard(sh *shard, value []byte) preparedEntry {
-	if s.encoding &&
-		s.shapeEncoding &&
-		sh.shapes != nil &&
-		structuredJSONCandidate(value) {
-
-		schema, slots, ok := sh.shapes.Lookup(value)
-		if ok {
-			data := sh.shapes.EncodeSlots(slots)
-
-			// Only take the direct path when JSON-shape is substantially
-			// smaller than the logical value. This prevents a known but
-			// weak shape from bypassing a potentially better compression
-			// representation.
-			if len(data)+16 < len(value)*3/4 {
-				decoded, err := jsonshape.Decode(
-					schema,
-					data,
-					len(value),
-				)
-
-				if err == nil && bytes.Equal(decoded, value) {
-					return preparedEntry{
-						entry: entry{
-							entryMeta: &entryMeta{schemaID: schema.ID},
-							codecID:   5, // JSON-shape physical codec
-							valueType: classifyValue(value),
-							rawLength: uint32(len(value)),
-						},
-						data: data,
-					}
-				}
-			}
-		}
-	}
-
+// JSON-shape parsing, slot encoding, compression selection, and verification are
+// intentionally background optimizer work. Performing those steps here after a
+// schema becomes admitted makes SET latency depend on representation complexity
+// and holds the shard lock during JSON parsing. Publish the normal synchronous
+// scalar/raw representation and let the optimizer rewrite it asynchronously.
+func (s *Store) makeEntryForShard(_ *shard, value []byte) preparedEntry {
 	return s.makeEntry(value)
 }
 
