@@ -41,6 +41,14 @@ func (s *Store) OptimizationEligible(
 		return 0, false
 	}
 
+	// LZ4/Zstd records are terminal for the normal background pass. Keeping
+	// compression rewrites metadata-free avoids a permanent 24-byte sidecar
+	// per compressed key. A subsequent foreground write publishes a fresh
+	// representation and may enqueue the key again.
+	if e.codecID == codec.LZ4 || e.codecID == codec.Zstandard {
+		return 0, false
+	}
+
 	meta := e.entryMeta
 	if heat(meta, now) == "write-heavy" {
 		return 0, false
@@ -75,6 +83,10 @@ func (s *Store) MarkOptimizationAttempt(
 	now := s.now()
 	e, ok := sh.get(key)
 	if !ok || sh.expired(key, e, now) || isNativeContainerType(e.valueType) {
+		return false
+	}
+
+	if e.codecID == codec.LZ4 || e.codecID == codec.Zstandard {
 		return false
 	}
 
@@ -515,16 +527,23 @@ func (s *Store) Rewrite(candidate Candidate, record codec.Record) bool {
 		data:      bytes.Clone(record.Data),
 	}
 	prepared.entryMeta = cloneEntryMeta(e.entryMeta)
-	meta := prepared.ensureMeta()
-
 	prepared.codecID = record.ID
+
+	// JSON-shape records need a schema handle, so they retain the metadata
+	// sidecar. Plain compression does not: the codec ID already identifies the
+	// physical representation and terminal compressed records are skipped by
+	// normal optimizer eligibility checks. Avoiding ensureMeta here saves 24
+	// bytes for every compressed scalar key.
 	if record.Schema != nil {
+		meta := prepared.ensureMeta()
 		meta.schemaID = record.Schema.ID
-	} else {
-		meta.schemaID = 0
+		meta.lastRewrite = activityStampOf(s.now())
+	} else if prepared.entryMeta != nil {
+		prepared.entryMeta.schemaID = 0
+		prepared.entryMeta.lastRewrite = activityStampOf(s.now())
 	}
+
 	prepared.rawLength = uint32(record.RawLength)
-	meta.lastRewrite = activityStampOf(s.now())
 
 	return s.publish(sh, candidate.Key, prepared) == nil
 }
