@@ -134,7 +134,7 @@ func ListenWithJournal(c config.Config, store *engine.Store, journal Journal) (*
 	}
 
 	if c.Encoding {
-		opt, err := optimizer.New(store, optimizer.Default())
+		opt, err := optimizer.New(store, optimizer.ForMode(c.OptimizerMode))
 		if err != nil {
 			ln.Close()
 			return nil, err
