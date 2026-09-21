@@ -666,7 +666,9 @@ func waitForMemoryConvergence(addr string, maxWait, poll time.Duration, keys, va
 		samples         int
 		startUsed       uint64
 		startLiveBlocks uint64
-		startRewritten  uint64
+		startRewritten      uint64
+		lastOptimizerAction uint64
+		lastOptimizerChange = start
 	)
 
 	for {
@@ -695,6 +697,17 @@ func waitForMemoryConvergence(addr string, maxWait, poll time.Duration, keys, va
 		if snug != nil {
 			rewritten := snug["optimizer_rewritten"]
 			liveBlocks := snug["arena_live_block_bytes"]
+			optimizerAction := snug["optimizer_queued"] +
+				snug["optimizer_rewritten"] +
+				snug["optimizer_skipped"] +
+				snug["optimizer_stale"]
+			if lastOptimizerAction == 0 {
+				lastOptimizerAction = optimizerAction
+				lastOptimizerChange = now
+			} else if optimizerAction != lastOptimizerAction {
+				lastOptimizerAction = optimizerAction
+				lastOptimizerChange = now
+			}
 			progress.OptimizerRewritten = rewritten
 			progress.OptimizerQueue = int(snug["optimizer_queue_depth"])
 			progress.ArenaBytes = snug["arena_bytes"]
@@ -764,14 +777,10 @@ func waitForMemoryConvergence(addr string, maxWait, poll time.Duration, keys, va
 		}
 
 		optimizerComplete := false
-		if snug != nil && keys > 0 {
-			rewritten := snug["optimizer_rewritten"]
-			rewrittenRun := uint64(0)
-			if rewritten >= startRewritten {
-				rewrittenRun = rewritten - startRewritten
-			}
-			optimizerComplete = rewrittenRun >= uint64(keys) &&
-				snug["optimizer_queue_depth"] == 0
+		if snug != nil {
+			optimizerComplete =
+				snug["optimizer_queue_depth"] == 0 &&
+				now.Sub(lastOptimizerChange) >= stableFor
 		}
 
 		if optimizerComplete && now.Sub(lastChange) >= stableFor {
