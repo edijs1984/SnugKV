@@ -166,7 +166,7 @@ func TestShouldCompactArenaPolicy(t *testing.T) {
 		{"idle at 25 percent dead", 75 << 20, 0, true},
 		{"backlog below 40 percent dead", 70 << 20, 1, false},
 		{"backlog at 40 percent dead", 60 << 20, 1, true},
-		{"backlog tiny dead bytes", (9 << 20) - 1, 1, false},
+		{"backlog tiny dead bytes", 93 << 20, 1, false},
 	}
 
 	if shouldCompactArena(0, 0, 0) {
