@@ -4,6 +4,7 @@ package optimizer
 import (
 	"context"
 	"errors"
+	"runtime"
 	"snugkv/internal/codec"
 	"snugkv/internal/engine"
 	"sync"
@@ -18,12 +19,23 @@ type Config struct {
 }
 
 func Default() Config {
+	workers := runtime.NumCPU()
+	if workers < 1 {
+		workers = 1
+	}
+	if workers > 64 {
+		workers = 64
+	}
+
+	// SnugKV is designed as a dedicated database process. Background
+	// representation work therefore uses the host aggressively while leaving a
+	// small amount of scheduler headroom for foreground RESP handling.
 	return Config{
-		Workers:            2,
+		Workers:            workers,
 		QueueDepth:         65536,
-		MaxScratchBytes:    128 << 20,
-		MaxBytesPerSecond:  64 << 20,
-		CPUPercent:         50,
+		MaxScratchBytes:    256 << 20,
+		MaxBytesPerSecond:  512 << 20,
+		CPUPercent:         90,
 		MinRewriteInterval: 5 * time.Minute,
 		MinAttemptInterval: 30 * time.Second,
 	}
@@ -178,28 +190,17 @@ func (o *Optimizer) retrySoon(key string) {
 
 func (o *Optimizer) cpuPercentForBacklog(depth int) int {
 	cpu := o.config.CPUPercent
-	capacity := cap(o.queue)
-	if capacity <= 0 || depth <= 0 {
+	if depth <= 0 {
 		return cpu
 	}
 
-	// Heavy backlog: prioritize foreground command execution. With the default
-	// two workers on a four-core machine, 15% per worker keeps compression
-	// progress moving without consuming a large fraction of available CPU.
-	if depth*4 >= capacity {
-		if cpu > 15 {
-			return 15
-		}
+	// A deep queue means the dedicated database host has useful work waiting.
+	// Do not throttle harder merely because backlog exists: that turns the
+	// recovery queue into a self-inflicted bottleneck. Keep only the configured
+	// scheduler headroom for foreground commands.
+	if cpu < 50 {
 		return cpu
 	}
-
-	// Moderate backlog: start yielding before the queue becomes saturated.
-	if depth*16 >= capacity {
-		if cpu > 25 {
-			return 25
-		}
-	}
-
 	return cpu
 }
 
