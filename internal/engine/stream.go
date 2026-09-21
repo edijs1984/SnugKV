@@ -230,7 +230,7 @@ func decodePackedStream(data []byte) (packedStream, error) {
 
 func streamPreparedEntry(packed []byte) preparedEntry {
 	return preparedEntry{
-		entry: entry{valueType: TypeStream, rawLength: uint32(len(packed))},
+		entry: entry{entryData: entryData{valueType: TypeStream, rawLength: uint32(len(packed))}},
 		data:  append([]byte(nil), packed...),
 	}
 }
