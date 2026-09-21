@@ -206,18 +206,37 @@ func (s *Store) ensureShapeStore(sh *shard) *jsonshape.Store {
 	return s.ensureShapeStoreLocked(sh)
 }
 
-// ShouldQueueOptimization performs the cheapest possible write-time gate.
-// Specialized scalar codecs already run synchronously in makeEntry. Background
-// work is only useful for JSON shape sharing or general compression, whose
-// minimum input size is 256 bytes.
-func (s *Store) ShouldQueueOptimization(value []byte) bool {
+type OptimizationClass uint8
+
+const (
+	OptimizationNone OptimizationClass = iota
+	OptimizationJSON
+	OptimizationCompress
+)
+
+// OptimizationClassForValue performs the cheapest possible write-time
+// classification. Specialized scalar codecs (integer/UUID/timestamp/float/bool)
+// already run synchronously in makeEntry, so they never need background work.
+// Native containers bypass this path entirely.
+func (s *Store) OptimizationClassForValue(value []byte) OptimizationClass {
 	if !s.encoding {
-		return false
+		return OptimizationNone
 	}
+
 	if s.shapeEncoding && structuredJSONCandidate(value) {
-		return true
+		return OptimizationJSON
 	}
-	return s.compression && len(value) >= 256
+
+	if s.compression && len(value) >= 256 && !codec.AlreadyCompressed(value) {
+		return OptimizationCompress
+	}
+
+	return OptimizationNone
+}
+
+// ShouldQueueOptimization is the write-time admission gate used by SET paths.
+func (s *Store) ShouldQueueOptimization(value []byte) bool {
+	return s.OptimizationClassForValue(value) != OptimizationNone
 }
 
 func structuredJSONCandidate(src []byte) bool {
