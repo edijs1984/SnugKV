@@ -35,7 +35,7 @@ func main() {
 	ops := flag.Int("ops", 1000000, "operations for get/mixed/ttl")
 	workers := flag.Int("workers", runtime.NumCPU(), "concurrent workers")
 	valueBytes := flag.Int("value-bytes", 64, "value bytes")
-	valueShape := flag.String("value-shape", "repetitive", "value shape: random, repetitive, json, session-json, api-json, counter, uuid, text, or compressed")
+	valueShape := flag.String("value-shape", "repetitive", "value shape: random, repetitive, json, session-json, api-json, cache-json, counter, uuid, text, or compressed")
 	pipeline := flag.Int("pipeline", 256, "pipeline depth for load/get")
 	seed := flag.Int64("seed", 1, "deterministic seed")
 	settleMS := flag.Int("settle-ms", 0, "milliseconds to wait after workload before post-workload memory snapshot")
@@ -52,11 +52,11 @@ func main() {
 		fatalf("workload must be load, get, get-seq, mixed, or ttl")
 	}
 	switch *valueShape {
-	case "random", "repetitive", "json", "session-json", "api-json", "counter", "uuid", "text", "compressed":
+	case "random", "repetitive", "json", "session-json", "api-json", "cache-json", "counter", "uuid", "text", "compressed":
 	default:
 		fatalf("unsupported value-shape %q", *valueShape)
 	}
-	if (*valueShape == "json" || *valueShape == "session-json" || *valueShape == "api-json") && *valueBytes < 64 {
+	if (*valueShape == "json" || *valueShape == "session-json" || *valueShape == "api-json" || *valueShape == "cache-json") && *valueBytes < 64 {
 		fatalf("%s value-shape requires value-bytes >= 64", *valueShape)
 	}
 	if *valueShape == "counter" && *valueBytes != 10 {
@@ -370,6 +370,16 @@ func benchmarkValue(shape string, size, keyIndex int, seed int64) []byte {
 			fmt.Sprintf("{\"id\":%d,\"status\":\"ok\",\"page\":%d,\"cached\":true,\"items\":[{\"sku\":\"SKU-%06d\",\"qty\":1}],\"payload\":\"", keyIndex, keyIndex%100, keyIndex%1000000),
 			"\"}",
 			keyIndex+31,
+		)
+
+	case "cache-json":
+		// Typical application cache entry: request identity + cached response
+		// metadata + nested response data. Field names repeat across entries while
+		// IDs, paths, etags and payload content vary per key.
+		return paddedJSON(size,
+			fmt.Sprintf("{\"cache_key\":\"GET:/api/v1/users/%d\",\"request\":{\"method\":\"GET\",\"path\":\"/api/v1/users/%d\",\"query\":{\"include\":\"profile,settings\"},\"tenant_id\":%d,\"locale\":\"en\"},\"response\":{\"status\":200,\"content_type\":\"application/json\",\"etag\":\"%08x\",\"data\":{\"user\":{\"id\":%d,\"plan\":\"pro\",\"active\":true},\"permissions\":[\"read\",\"write\"],\"payload\":\"", keyIndex, keyIndex, keyIndex%10000, uint32(uint64(seed)^uint64(keyIndex)*2654435761), keyIndex),
+			"\"}},\"cached_at\":\"2026-09-21T08:00:00Z\",\"ttl\":300}",
+			keyIndex+53,
 		)
 
 	case "counter":
