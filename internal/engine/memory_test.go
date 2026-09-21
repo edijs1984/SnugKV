@@ -2,8 +2,10 @@ package engine
 
 import (
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
+	"unsafe"
 )
 
 func auditMemory(t *testing.T, s *Store) {
@@ -28,6 +30,10 @@ func auditMemory(t *testing.T, s *Store) {
 		// live key bytes. Deleted/free entry slots remain allocated
 		// until the shard is compacted/reset.
 		entries += uint64(cap(sh.entries)) * entryStructBytes
+		if sh.metas != nil {
+			entries += uint64(unsafe.Sizeof(entryMetaSidecar{})) +
+				uint64(cap(sh.metas.slots))*entryMetaSlotBytes
+		}
 
 		for k, e := range sh.all() {
 			entries += entryCharge(k, e)
@@ -171,6 +177,69 @@ func TestCompactionPreservesLiveBytesAndTTL(t *testing.T) {
 	auditMemory(t, s)
 }
 
+
+func TestCompactionShrinksDenseEntryCapacity(t *testing.T) {
+	s, err := NewWithOptions(Options{Shards: 1, Encoding: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 1000; i++ {
+		key := fmt.Sprintf("bench:%09d", i)
+		value := []byte(strconv.Itoa(1000000000 + i))
+		if err := s.Set(key, value, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	sh := &s.shards[0]
+	sh.mu.RLock()
+	beforeLen := len(sh.entries)
+	beforeCap := cap(sh.entries)
+	hadMeta := sh.metas != nil
+	sh.mu.RUnlock()
+
+	if beforeCap <= beforeLen {
+		t.Fatalf("expected spare capacity: len=%d cap=%d", beforeLen, beforeCap)
+	}
+	if hadMeta {
+		t.Fatal("counter workload allocated metadata sidecar")
+	}
+
+	before := s.Memory()
+	if s.Compact(16<<20) != 1 {
+		t.Fatal("compaction skipped")
+	}
+	after := s.Memory()
+
+	sh.mu.RLock()
+	afterLen := len(sh.entries)
+	afterCap := cap(sh.entries)
+	hasMeta := sh.metas != nil
+	sh.mu.RUnlock()
+
+	if afterLen != beforeLen || afterCap != afterLen {
+		t.Fatalf("entry compaction len/cap before=%d/%d after=%d/%d",
+			beforeLen, beforeCap, afterLen, afterCap)
+	}
+	if hasMeta {
+		t.Fatal("compaction allocated metadata sidecar")
+	}
+
+	wantSaved := uint64(beforeCap-afterCap) * entryStructBytes
+	if got := before.EntryBytes - after.EntryBytes; got != wantSaved {
+		t.Fatalf("entry bytes saved=%d want=%d", got, wantSaved)
+	}
+
+	for _, i := range []int{0, 499, 999} {
+		key := fmt.Sprintf("bench:%09d", i)
+		value, ok := s.Get(key)
+		if !ok || string(value) != strconv.Itoa(1000000000+i) {
+			t.Fatalf("compaction changed %s", key)
+		}
+	}
+	auditMemory(t, s)
+}
+
 func TestMemoryUsage(t *testing.T) {
 	s := New()
 
@@ -189,4 +258,71 @@ func TestMemoryUsage(t *testing.T) {
 	}
 
 	t.Logf("MEMORY USAGE hello = %d bytes", usage)
+}
+
+
+func TestEncodedCounterUsesInlineStorage(t *testing.T) {
+	s, err := NewWithOptions(Options{Shards: 1, Encoding: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const key = "counter"
+	const value = "1000000000"
+	if err := s.Set(key, []byte(value), 0); err != nil {
+		t.Fatal(err)
+	}
+
+	sh := s.shardFor(key)
+	sh.mu.RLock()
+	entry, ok := sh.get(key)
+	arenaBytes := sh.arena.TotalMemoryBytes()
+	sh.mu.RUnlock()
+	if !ok {
+		t.Fatal("counter missing")
+	}
+	if !entry.ref.IsInline() {
+		t.Fatal("encoded counter was not stored inline")
+	}
+	if arenaBytes != 0 {
+		t.Fatalf("inline counter reserved %d arena bytes, want 0", arenaBytes)
+	}
+
+	name, logical, encoded, ok := s.Encoding(key)
+	if !ok || name != "integer" || logical != len(value) || encoded >= logical {
+		t.Fatalf("encoding=%s logical=%d encoded=%d ok=%v", name, logical, encoded, ok)
+	}
+
+	got, ok := s.Get(key)
+	if !ok || string(got) != value {
+		t.Fatalf("round trip=%q ok=%v", got, ok)
+	}
+
+	if _, err := s.Incr(key); err != nil {
+		t.Fatal(err)
+	}
+	got, ok = s.Get(key)
+	if !ok || string(got) != "1000000001" {
+		t.Fatalf("incremented round trip=%q ok=%v", got, ok)
+	}
+
+	sh.mu.RLock()
+	entry, _ = sh.get(key)
+	arenaBytes = sh.arena.TotalMemoryBytes()
+	metaSlots := 0
+	if sh.metas != nil {
+		metaSlots = cap(sh.metas.slots)
+	}
+	sh.mu.RUnlock()
+	if !entry.ref.IsInline() || arenaBytes != 0 {
+		t.Fatalf("increment lost inline storage: inline=%v arena=%d", entry.ref.IsInline(), arenaBytes)
+	}
+	if metaSlots != 0 {
+		t.Fatalf("metadata-free counter allocated %d metadata slots", metaSlots)
+	}
+	if entryStructBytes != 24 {
+		t.Fatalf("stored entry size=%d want=24", entryStructBytes)
+	}
+
+	auditMemory(t, s)
 }

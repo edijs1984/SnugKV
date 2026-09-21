@@ -779,6 +779,7 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			// Only queue values that can benefit from background work.
 			// Cheap scalar codecs already run synchronously in the engine.
 			if s.optimizer != nil && s.store.ShouldQueueOptimization(args[2]) {
+				s.optimizer.NoteForegroundWrite()
 				s.optimizer.Queue(key)
 			}
 		}

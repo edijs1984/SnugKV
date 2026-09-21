@@ -16,13 +16,21 @@ type entryMeta struct {
 	reads, writes                                    uint8
 }
 
-type entry struct {
-	ref arena.Ref
-	*entryMeta
+type entryData struct {
+	ref       arena.Ref
 	rawLength uint32
 	codecID   codec.ID
 	valueType ValueType
 	hasExpiry bool
+}
+
+// entry is a transient view over compact stored entry data plus optional
+// metadata. Shards store entryData densely and keep metadata pointers in a
+// lazily allocated sidecar, so metadata-free workloads do not pay 8 bytes per
+// entry for a nil pointer.
+type entry struct {
+	entryData
+	*entryMeta
 }
 
 type preparedEntry struct {
@@ -59,8 +67,18 @@ func (sh *shard) encoded(e entry) []byte {
 	if err != nil {
 		panic(err)
 	}
-
 	return value
+}
+
+func (sh *shard) encodedInto(e entry, dst []byte) []byte {
+	if e.ref.IsInline() {
+		value, ok := e.ref.InlineInto(dst)
+		if !ok {
+			panic("invalid inline reference")
+		}
+		return value
+	}
+	return sh.encoded(e)
 }
 
 func (sh *shard) expirationAt(key string, e entry) stamp {

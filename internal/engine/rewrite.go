@@ -21,6 +21,10 @@ type Candidate struct {
 	expiresAt               stamp
 }
 
+func (c Candidate) RequiresOptimizationMetadata() bool {
+	return structuredJSONCandidate(c.Value)
+}
+
 // OptimizationEligible performs the cheap read-only eligibility check before
 // the optimizer reserves scratch/bandwidth resources. Native container values
 // have their own packed representations and are intentionally excluded from
@@ -38,6 +42,15 @@ func (s *Store) OptimizationEligible(
 	now := s.now()
 	e, ok := sh.get(key)
 	if !ok || sh.expired(key, e, now) || isNativeContainerType(e.valueType) {
+		return 0, false
+	}
+
+	// LZ4/Zstd records are terminal for the normal background pass. Keeping
+	// compression rewrites metadata-free avoids a permanent 24-byte sidecar
+	// per compressed key. A subsequent foreground write publishes a fresh
+	// representation and may enqueue the key again.
+	if (e.codecID == codec.RepeatByte || e.codecID == codec.Periodic ||
+		e.codecID == codec.LZ4 || e.codecID == codec.Zstandard) && e.entryMeta == nil {
 		return 0, false
 	}
 
@@ -75,6 +88,11 @@ func (s *Store) MarkOptimizationAttempt(
 	now := s.now()
 	e, ok := sh.get(key)
 	if !ok || sh.expired(key, e, now) || isNativeContainerType(e.valueType) {
+		return false
+	}
+
+	if (e.codecID == codec.RepeatByte || e.codecID == codec.Periodic ||
+		e.codecID == codec.LZ4 || e.codecID == codec.Zstandard) && e.entryMeta == nil {
 		return false
 	}
 
@@ -206,18 +224,37 @@ func (s *Store) ensureShapeStore(sh *shard) *jsonshape.Store {
 	return s.ensureShapeStoreLocked(sh)
 }
 
-// ShouldQueueOptimization performs the cheapest possible write-time gate.
-// Specialized scalar codecs already run synchronously in makeEntry. Background
-// work is only useful for JSON shape sharing or general compression, whose
-// minimum input size is 256 bytes.
-func (s *Store) ShouldQueueOptimization(value []byte) bool {
+type OptimizationClass uint8
+
+const (
+	OptimizationNone OptimizationClass = iota
+	OptimizationJSON
+	OptimizationCompress
+)
+
+// OptimizationClassForValue performs the cheapest possible write-time
+// classification. Specialized scalar codecs (integer/UUID/timestamp/float/bool)
+// already run synchronously in makeEntry, so they never need background work.
+// Native containers bypass this path entirely.
+func (s *Store) OptimizationClassForValue(value []byte) OptimizationClass {
 	if !s.encoding {
-		return false
+		return OptimizationNone
 	}
+
 	if s.shapeEncoding && structuredJSONCandidate(value) {
-		return true
+		return OptimizationJSON
 	}
-	return s.compression && len(value) >= 256
+
+	if s.compression && len(value) >= 256 && !codec.AlreadyCompressed(value) {
+		return OptimizationCompress
+	}
+
+	return OptimizationNone
+}
+
+// ShouldQueueOptimization is the write-time admission gate used by SET paths.
+func (s *Store) ShouldQueueOptimization(value []byte) bool {
+	return s.OptimizationClassForValue(value) != OptimizationNone
 }
 
 func structuredJSONCandidate(src []byte) bool {
@@ -496,16 +533,26 @@ func (s *Store) Rewrite(candidate Candidate, record codec.Record) bool {
 		data:      bytes.Clone(record.Data),
 	}
 	prepared.entryMeta = cloneEntryMeta(e.entryMeta)
-	meta := prepared.ensureMeta()
-
 	prepared.codecID = record.ID
-	if record.Schema != nil {
-		meta.schemaID = record.Schema.ID
-	} else {
-		meta.schemaID = 0
+
+	// JSON values retain optimizer metadata because an early compression
+	// rewrite may later be replaced by an admitted shared JSON shape. Plain
+	// non-JSON compression is terminal for the normal optimizer pass, so it
+	// does not need the 24-byte sidecar.
+	if record.Schema != nil || candidate.RequiresOptimizationMetadata() {
+		meta := prepared.ensureMeta()
+		if record.Schema != nil {
+			meta.schemaID = record.Schema.ID
+		} else {
+			meta.schemaID = 0
+		}
+		meta.lastRewrite = activityStampOf(s.now())
+	} else if prepared.entryMeta != nil {
+		prepared.entryMeta.schemaID = 0
+		prepared.entryMeta.lastRewrite = activityStampOf(s.now())
 	}
+
 	prepared.rawLength = uint32(record.RawLength)
-	meta.lastRewrite = activityStampOf(s.now())
 
 	return s.publish(sh, candidate.Key, prepared) == nil
 }
@@ -522,8 +569,8 @@ func (s *Store) SampleKeys(limit int) []string {
 		sh := &s.shards[(start+n)%len(s.shards)]
 		sh.mu.Lock()
 		n := limit - len(out)
-		if n > 4 {
-			n = 4
+		if n > 16 {
+			n = 16
 		}
 		keys, next := sh.data.Sample(sh.sampleOffset, 64, n)
 		sh.sampleOffset = next

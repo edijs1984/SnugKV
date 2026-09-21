@@ -7,22 +7,29 @@ are excluded from the generic scalar optimizer.
 
 ## Common entry and index layout
 
-The current common `entry` is 40 bytes on the supported amd64 build. Optional
-activity/schema metadata lives in a sidecar and is normally absent for native
-containers. The open-addressed key index stores `string key`, a compact value
-handle, and slot state; `slot[uint32]` is 24 bytes. Index capacity grows in powers
-of two and keeps live load at or below 80%.
+The stored hot-path `entryData` is 24 bytes on the supported amd64 build.
+It contains the 16-byte arena reference plus logical length, codec/type tags, and
+expiry state. Optional activity/schema metadata is not embedded in every entry:
+each shard allocates a metadata sidecar lazily only when a stored value actually
+needs one. Metadata-free workloads therefore pay no per-entry nil metadata
+pointer.
 
-Values are stored in generation-checked segmented byte arenas. Arena allocation
-uses small exact/tight size classes plus geometric classes for larger values.
-Current segments are 8 KiB. Entry/index/arena reservations are explicitly charged
-to engine memory accounting.
+The open-addressed key index uses 16-byte `slot[uint32]` records. Each slot keeps
+an 8-byte key-data pointer plus packed state, fingerprint, key length, and uint32
+entry ID. Index capacity remains power-of-two and uses the existing bounded
+load-factor policy.
 
-Because index and entry reservations are shared by every datatype, tiny values can
-be dominated by fixed per-key overhead. The 100k-key native-container benchmarks
-currently show roughly 31.5 B/key of index reservation and 54–55 B/key of
-entry/key accounting before payload. Sparse datasets can pay more because active
-shards reserve initial entry/arena capacity.
+Values are normally stored in generation-checked segmented byte arenas. Arena
+allocation uses small exact/tight size classes plus geometric classes for larger
+values, with 8 KiB segments. Tiny encoded integer/unsigned/float/timestamp payloads
+of up to 8 bytes can instead be stored inline in the existing `arena.Ref`; this
+preserves generation/version semantics while eliminating arena payload and block
+reservation for those values. Dense entry-array over-capacity can be reclaimed by
+compaction without changing entry IDs.
+
+Entry/index/arena reservations, lazy metadata-sidecar storage, and live key bytes
+are explicitly charged to engine memory accounting. Sparse datasets can still pay
+more because active shards reserve initial index/entry capacity.
 
 ## Scalar codecs
 
@@ -33,12 +40,16 @@ Codec IDs currently include:
 
 - `0`: raw;
 - `1`: canonical signed integer;
+- `2`: canonical unsigned integer;
 - `3`: lowercase hyphenated UUID;
 - `4`: UTC second-precision timestamp;
 - `5`: exact JSON-shape representation;
-- `6`: reserved for standalone dictionary values; dictionary IDs are currently nested in JSON-shape slots;
+- `6`: canonical float;
+- `7`: boolean;
+- `8`: repeated-byte encoding;
 - `9`: LZ4;
-- `10`: Zstandard.
+- `10`: Zstandard;
+- `11`: periodic/repeating-pattern encoding.
 
 Unknown codec IDs fail decoding. Decoder output is length-bounded and every
 selected candidate is reconstructed and compared before publication.

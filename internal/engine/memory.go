@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"bytes"
 	"errors"
 	"snugkv/internal/arena"
 	"snugkv/internal/codec"
@@ -29,8 +28,9 @@ func (s *Store) exceedsMemoryLimitLocked(next uint64, admission memoryAdmission)
 }
 
 // Reservations track owned engine allocations, not total process RSS.
-var entryStructBytes = uint64(unsafe.Sizeof(entry{}))
+var entryStructBytes = uint64(unsafe.Sizeof(entryData{}))
 var entryMetaBytes = uint64(unsafe.Sizeof(entryMeta{}))
+var entryMetaSlotBytes = uint64(unsafe.Sizeof((*entryMeta)(nil)))
 
 type Options struct {
 	Shards        int
@@ -61,6 +61,7 @@ type LayoutStats struct {
 
 func (s *Store) Layout() LayoutStats {
 	var entryCapacity uint64
+	var entryStorageBytes uint64
 	var indexSlotBytes uint64
 
 	for i := range s.shards {
@@ -68,6 +69,11 @@ func (s *Store) Layout() LayoutStats {
 		sh.mu.RLock()
 
 		entryCapacity += uint64(cap(sh.entries))
+		entryStorageBytes += uint64(cap(sh.entries)) * entryStructBytes
+		if sh.metas != nil {
+			entryStorageBytes += uint64(unsafe.Sizeof(entryMetaSidecar{})) +
+				uint64(cap(sh.metas.slots))*entryMetaSlotBytes
+		}
 
 		if indexSlotBytes == 0 {
 			indexSlotBytes = sh.data.EntryBytes()
@@ -81,7 +87,7 @@ func (s *Store) Layout() LayoutStats {
 		EntryMetaStructBytes: entryMetaBytes,
 		IndexSlotBytes:       indexSlotBytes,
 		EntryCapacity:        entryCapacity,
-		EntryStorageBytes:    entryCapacity * entryStructBytes,
+		EntryStorageBytes:    entryStorageBytes,
 	}
 }
 
@@ -121,6 +127,18 @@ func metadataCharge(e entry) uint64 {
 	return entryMetaBytes
 }
 
+func shouldInlinePrepared(e preparedEntry) bool {
+	if e.entryMeta != nil || len(e.data) == 0 || len(e.data) > 8 {
+		return false
+	}
+	switch e.codecID {
+	case codec.Integer, codec.UnsignedInteger, codec.Float64, codec.Timestamp:
+		return true
+	default:
+		return false
+	}
+}
+
 func (sh *shard) entryGrowthBytes(additional int) uint64 {
 	next := sh.entryCapacityFor(additional)
 	current := cap(sh.entries)
@@ -140,71 +158,40 @@ func (s *Store) makeEntry(value []byte) preparedEntry {
 	// the arena. The same borrowing is safe when encoding is disabled.
 	if !s.encoding || len(value) > 36 {
 		return preparedEntry{
-			entry: entry{
+			entry: entry{entryData: entryData{
 				codecID:   codec.Raw,
 				valueType: classifyValue(value),
 				rawLength: uint32(len(value)),
-			},
+			}},
 			data: value,
 		}
 	}
 
 	rec := s.codecs.Encode(value)
 	return preparedEntry{
-		entry: entry{
+		entry: entry{entryData: entryData{
 			codecID:   rec.ID,
 			valueType: classifyValue(value),
 			rawLength: uint32(rec.RawLength),
-		},
+		}},
 		data: rec.Data,
 	}
 }
 
-// makeEntryForShard uses an already-admitted JSON shape immediately.
+// makeEntryForShard keeps foreground writes cheap.
 //
-// The caller must hold sh.mu. This avoids the normal codec/compression path
-// when the shard already knows a strongly beneficial JSON representation.
-func (s *Store) makeEntryForShard(sh *shard, value []byte) preparedEntry {
-	if s.encoding &&
-		s.shapeEncoding &&
-		sh.shapes != nil &&
-		structuredJSONCandidate(value) {
-
-		schema, slots, ok := sh.shapes.Lookup(value)
-		if ok {
-			data := sh.shapes.EncodeSlots(slots)
-
-			// Only take the direct path when JSON-shape is substantially
-			// smaller than the logical value. This prevents a known but
-			// weak shape from bypassing a potentially better compression
-			// representation.
-			if len(data)+16 < len(value)*3/4 {
-				decoded, err := jsonshape.Decode(
-					schema,
-					data,
-					len(value),
-				)
-
-				if err == nil && bytes.Equal(decoded, value) {
-					return preparedEntry{
-						entry: entry{
-							entryMeta: &entryMeta{schemaID: schema.ID},
-							codecID:   5, // JSON-shape physical codec
-							valueType: classifyValue(value),
-							rawLength: uint32(len(value)),
-						},
-						data: data,
-					}
-				}
-			}
-		}
-	}
-
+// JSON-shape parsing, slot encoding, compression selection, and verification are
+// intentionally background optimizer work. Performing those steps here after a
+// schema becomes admitted makes SET latency depend on representation complexity
+// and holds the shard lock during JSON parsing. Publish the normal synchronous
+// scalar/raw representation and let the optimizer rewrite it asynchronously.
+func (s *Store) makeEntryForShard(_ *shard, value []byte) preparedEntry {
 	return s.makeEntry(value)
 }
 
 func (s *Store) decodeInto(sh *shard, e entry, dst []byte) []byte {
-	encoded := sh.encoded(e)
+	var inline [8]byte
+	encoded := sh.encodedInto(e, inline[:0])
 	if e.valueType == TypeHash && isShapedHash(encoded) {
 		return s.decode(sh, e)
 	}
@@ -228,7 +215,8 @@ func (s *Store) decodeInto(sh *shard, e entry, dst []byte) []byte {
 }
 
 func (s *Store) decode(sh *shard, e entry) []byte {
-	encoded := sh.encoded(e)
+	var inline [8]byte
+	encoded := sh.encodedInto(e, inline[:0])
 	if e.valueType == TypeHash && isShapedHash(encoded) {
 		out, err := s.decodeShapedHash(encoded, int(e.rawLength))
 		if err != nil {
@@ -317,19 +305,28 @@ func (s *Store) publishRecordKnownWithHash(
 
 	extraIndex := uint64(0)
 	extraEntries := uint64(0)
+	additionalEntries := 0
 	if !exists {
+		additionalEntries = 1
 		extraIndex = sh.data.GrowthBytes(1)
 		extraEntries = sh.entryGrowthBytes(1)
 	}
+	extraMetaSlots := sh.metaSlotGrowthBytes(additionalEntries, e.entryMeta != nil)
 
-	// Arena planning is shard-local and the caller already holds sh.mu. Keep
-	// this work out of the global accounting critical section so independent
-	// shards do not serialize while simulating allocation growth.
-	extraArena := sh.arena.GrowthFor([]int{len(e.data)})
+	// Tiny encoded scalars fit directly in arena.Ref, so they need no arena
+	// block and do not contribute arena payload/live-block accounting.
+	inlineNew := shouldInlinePrepared(e)
+	extraArena := uint64(0)
+	if !inlineNew {
+		extraArena = sh.arena.GrowthFor([]int{len(e.data)})
+	}
 	if exists {
 		extraArena += sh.arena.FreeGrowth(old.ref)
 	}
-	newBlockBytes := arena.AllocationBytesForLength(len(e.data))
+	newBlockBytes := uint64(0)
+	if !inlineNew {
+		newBlockBytes = arena.AllocationBytesForLength(len(e.data))
+	}
 	oldBlockBytes := uint64(0)
 	if exists {
 		oldBlockBytes = sh.arena.AllocationBytes(old.ref)
@@ -356,6 +353,7 @@ func (s *Store) publishRecordKnownWithHash(
 		newMetaCost +
 		extraIndex +
 		extraEntries +
+		extraMetaSlots +
 		extraArena
 
 	if newSchema != nil {
@@ -384,17 +382,21 @@ func (s *Store) publishRecordKnownWithHash(
 
 	s.memory.used = next
 	s.memory.entries =
-		s.memory.entries - oldCost + newCost + extraEntries
+		s.memory.entries - oldCost + newCost + extraEntries + extraMetaSlots
 	s.memory.metas = s.memory.metas - oldMetaCost + newMetaCost
 	s.memory.index += extraIndex
 	s.memory.arenas += extraArena
 
 	if exists {
-		s.memory.arenaPayload -= uint64(len(sh.encoded(old)))
+		if !old.ref.IsInline() {
+			s.memory.arenaPayload -= uint64(len(sh.encoded(old)))
+		}
 		s.memory.arenaLiveBlocks -= oldBlockBytes
 	}
 
-	s.memory.arenaPayload += uint64(len(e.data))
+	if !inlineNew {
+		s.memory.arenaPayload += uint64(len(e.data))
+	}
 	s.memory.arenaLiveBlocks += newBlockBytes
 
 	s.memory.mu.Unlock()
@@ -417,7 +419,15 @@ func (s *Store) publishRecordKnownWithHash(
 		}
 	}
 
-	e.ref = sh.arena.Alloc(e.data)
+	if inlineNew {
+		ref, ok := sh.arena.AllocInline(e.data)
+		if !ok {
+			panic("inline scalar admission invariant")
+		}
+		e.ref = ref
+	} else {
+		e.ref = sh.arena.Alloc(e.data)
+	}
 
 	// The queue owns the expiration timestamp. The hot entry stores only this
 	// one-byte presence bit so persistent reads never need a map lookup.
@@ -459,7 +469,9 @@ func (s *Store) remove(sh *shard, key string) {
 		s.memory.entries -= cost
 		s.memory.metas -= metaCost
 		s.memory.arenas += freeGrowth
-		s.memory.arenaPayload -= uint64(len(sh.encoded(e)))
+		if !e.ref.IsInline() {
+			s.memory.arenaPayload -= uint64(len(sh.encoded(e)))
+		}
 		s.memory.arenaLiveBlocks -= sh.arena.AllocationBytes(e.ref)
 		s.memory.mu.Unlock()
 		sh.delete(key)
@@ -492,6 +504,9 @@ func (s *Store) MemoryUsage(key string) (uint64, bool) {
 	// Per-key usage assigns one entry struct to this key. Global Memory()
 	// additionally accounts for spare reserved entry capacity.
 	entryBytes := entryStructBytes + uint64(len(key)) + metadataCharge(e)
+	if sh.metas != nil {
+		entryBytes += entryMetaSlotBytes
+	}
 	arenaBytes := sh.arena.AllocationBytes(e.ref)
 
 	return entryBytes + arenaBytes, true

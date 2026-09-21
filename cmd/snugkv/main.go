@@ -56,6 +56,7 @@ func main() {
 	flag.StringVar(&cfg.Fsync, "fsync", cfg.Fsync, "always, everysec, or no")
 	flag.BoolVar(&cfg.JSONShape, "json-shape", cfg.JSONShape, "enable background exact JSON template sharing")
 	flag.BoolVar(&cfg.Compression, "compression", cfg.Compression, "enable background LZ4/Zstandard")
+	flag.StringVar(&cfg.OptimizerMode, "optimizer-mode", cfg.OptimizerMode, "optimizer mode: dedicated or sidecar")
 	flag.StringVar(&cfg.MetricsAddr, "metrics-listen", cfg.MetricsAddr, "separate loopback metrics address (optional)")
 	flag.StringVar(&cfg.EvictionPolicy, "eviction-policy", cfg.EvictionPolicy, "noeviction, allkeys-lru, or volatile-lru")
 	flag.StringVar(&cfg.AdminAddr, "admin-listen", cfg.AdminAddr, "separate loopback RESP admin address")

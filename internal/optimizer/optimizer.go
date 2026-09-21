@@ -4,6 +4,8 @@ package optimizer
 import (
 	"context"
 	"errors"
+	"runtime"
+	"snugkv/internal/codec"
 	"snugkv/internal/engine"
 	"sync"
 	"sync/atomic"
@@ -16,15 +18,45 @@ type Config struct {
 	MinAttemptInterval                                                  time.Duration
 }
 
-func Default() Config {
-	return Config{
-		Workers:            2,
-		QueueDepth:         65536,
-		MaxScratchBytes:    128 << 20,
-		MaxBytesPerSecond:  64 << 20,
-		CPUPercent:         50,
-		MinRewriteInterval: 5 * time.Minute,
-		MinAttemptInterval: 30 * time.Second,
+func Default() Config { return ForMode("dedicated") }
+
+func ForMode(mode string) Config {
+	cpus := runtime.NumCPU()
+	if cpus < 1 {
+		cpus = 1
+	}
+	if cpus > 64 {
+		cpus = 64
+	}
+
+	switch mode {
+	case "sidecar":
+		workers := cpus / 2
+		if workers < 1 {
+			workers = 1
+		}
+		return Config{
+			Workers:            workers,
+			QueueDepth:         32768,
+			MaxScratchBytes:    128 << 20,
+			MaxBytesPerSecond:  64 << 20,
+			CPUPercent:         35,
+			MinRewriteInterval: 5 * time.Minute,
+			MinAttemptInterval: 30 * time.Second,
+		}
+	default:
+		// Dedicated mode assumes SnugKV is the primary workload on the host.
+		// Use available cores aggressively while retaining modest scheduler
+		// headroom for foreground RESP handling.
+		return Config{
+			Workers:            cpus,
+			QueueDepth:         65536,
+			MaxScratchBytes:    256 << 20,
+			MaxBytesPerSecond:  512 << 20,
+			CPUPercent:         90,
+			MinRewriteInterval: 5 * time.Minute,
+			MinAttemptInterval: 30 * time.Second,
+		}
 	}
 }
 
@@ -43,6 +75,7 @@ type Optimizer struct {
 	scratch, bytes                             int
 	window                                     time.Time
 	queued, rewritten, skipped, stale, dropped uint64
+	lastForegroundWrite                      int64
 }
 
 func New(store *engine.Store, c Config) (*Optimizer, error) {
@@ -62,6 +95,35 @@ func New(store *engine.Store, c Config) (*Optimizer, error) {
 	return o, nil
 }
 func (o *Optimizer) Close() { o.cancel(); o.wg.Wait() }
+
+func (o *Optimizer) NoteForegroundWrite() {
+	atomic.StoreInt64(&o.lastForegroundWrite, time.Now().UnixNano())
+}
+
+func (o *Optimizer) waitForForegroundQuiet() bool {
+	const quietWindow = 2 * time.Millisecond
+	const maxDeferral = 50 * time.Millisecond
+	deadline := time.Now().Add(maxDeferral)
+
+	for {
+		last := atomic.LoadInt64(&o.lastForegroundWrite)
+		if last == 0 || time.Since(time.Unix(0, last)) >= quietWindow {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return true
+		}
+
+		timer := time.NewTimer(quietWindow)
+		select {
+		case <-o.ctx.Done():
+			timer.Stop()
+			return false
+		case <-timer.C:
+		}
+	}
+}
+
 func (o *Optimizer) Queue(key string) bool {
 	select {
 	case <-o.ctx.Done():
@@ -125,13 +187,25 @@ func (o *Optimizer) reserve(n int) bool {
 	return true
 }
 func (o *Optimizer) release(n int) { o.mu.Lock(); o.scratch -= (16 << 20) + n*64; o.mu.Unlock() }
+func shouldCompactArena(arenaBytes, liveBytes uint64, queueDepth int) bool {
+	if arenaBytes == 0 || arenaBytes <= liveBytes {
+		return false
+	}
+
+	dead := arenaBytes - liveBytes
+
+	if queueDepth == 0 {
+		return dead >= 1<<20 && dead*4 >= arenaBytes
+	}
+
+	return dead >= 8<<20 && dead*5 >= arenaBytes*2
+}
+
 func (o *Optimizer) maintenance() {
 	defer o.wg.Done()
 
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
-
-	const minDeadBytes uint64 = 1 << 20
 
 	for {
 		select {
@@ -139,23 +213,8 @@ func (o *Optimizer) maintenance() {
 			return
 
 		case <-ticker.C:
-			// During initial catch-up, prioritize representation rewrites.
-			// Compaction copies arena data and competes for CPU/memory bandwidth.
-			if len(o.queue) != 0 {
-				continue
-			}
-
 			m := o.store.Memory()
-
-			if m.ArenaBytes == 0 || m.ArenaBytes <= m.ArenaLiveBlockBytes {
-				continue
-			}
-
-			dead := m.ArenaBytes - m.ArenaLiveBlockBytes
-
-			// Compact only when at least 1 MiB is dead and
-			// dead storage is at least 25% of the arena.
-			if dead < minDeadBytes || dead*4 < m.ArenaBytes {
+			if !shouldCompactArena(m.ArenaBytes, m.ArenaLiveBlockBytes, len(o.queue)) {
 				continue
 			}
 
@@ -180,28 +239,17 @@ func (o *Optimizer) retrySoon(key string) {
 
 func (o *Optimizer) cpuPercentForBacklog(depth int) int {
 	cpu := o.config.CPUPercent
-	capacity := cap(o.queue)
-	if capacity <= 0 || depth <= 0 {
+	if depth <= 0 {
 		return cpu
 	}
 
-	// Heavy backlog: prioritize foreground command execution. With the default
-	// two workers on a four-core machine, 15% per worker keeps compression
-	// progress moving without consuming a large fraction of available CPU.
-	if depth*4 >= capacity {
-		if cpu > 15 {
-			return 15
-		}
+	// A deep queue means the dedicated database host has useful work waiting.
+	// Do not throttle harder merely because backlog exists: that turns the
+	// recovery queue into a self-inflicted bottleneck. Keep only the configured
+	// scheduler headroom for foreground commands.
+	if cpu < 50 {
 		return cpu
 	}
-
-	// Moderate backlog: start yielding before the queue becomes saturated.
-	if depth*16 >= capacity {
-		if cpu > 25 {
-			return 25
-		}
-	}
-
 	return cpu
 }
 
@@ -215,6 +263,15 @@ func (o *Optimizer) worker() {
 			return
 		case key := <-o.queue:
 			start := time.Now()
+
+			// Foreground writes own the machine. During an active write burst,
+			// defer expensive representation work briefly instead of competing
+			// for the same cores and shard locks. Continuous workloads still
+			// make bounded progress after maxDeferral; burst workloads switch
+			// to full-speed catch-up almost immediately after writes stop.
+			if !o.waitForForegroundQuiet() {
+				return
+			}
 
 			rawBytes, eligible := o.store.OptimizationEligible(
 				key,
@@ -243,16 +300,11 @@ func (o *Optimizer) worker() {
 				candidateScratch = nil
 			}
 
-			// Give recently-written structured JSON a very short opportunity
-			// to learn its shared schema before falling back to LZ4.
-			//
-			// Crucially, this happens before MarkOptimizationAttempt, so the
-			// normal 30-second attempt cooldown does not block the retry.
-			if o.store.JSONShapeWarmupPending(candidate, 3*time.Second) {
-				o.release(rawBytes)
-				o.retrySoon(key)
-				atomic.AddUint64(&o.skipped, 1)
-				continue
+			// JSON-shape learning belongs off the foreground SET path. Observe the
+			// dequeued value once here; once the admission threshold is reached,
+			// EncodeCandidate below can immediately select the shared shape.
+			if o.store.OptimizationClassForValue(candidate.Value) == engine.OptimizationJSON {
+				o.store.ObserveJSONShape(candidate.Key, candidate.Value)
 			}
 
 			// The optimizer requires at least 16 bytes of absolute savings.
@@ -270,7 +322,14 @@ func (o *Optimizer) worker() {
 			// A key that does not yet own optimizer metadata must also earn back
 			// that allocation. Otherwise enabling optimization can increase the
 			// total footprint even when the encoded payload is smaller.
-			requiredSaving := 16 + candidate.AdditionalMetadataBytes
+			additionalMetadataBytes := candidate.AdditionalMetadataBytes
+			if record.Schema == nil &&
+				(record.ID == codec.RepeatByte || record.ID == codec.Periodic ||
+					record.ID == codec.LZ4 || record.ID == codec.Zstandard) &&
+				!candidate.RequiresOptimizationMetadata() {
+				additionalMetadataBytes = 0
+			}
+			requiredSaving := 16 + additionalMetadataBytes
 			if saving < requiredSaving || saving*8 < candidate.EncodedBytes {
 				atomic.AddUint64(&o.skipped, 1)
 				o.release(rawBytes)

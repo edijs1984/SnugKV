@@ -6,6 +6,7 @@ import (
 	"snugkv/internal/index"
 	"snugkv/internal/persistence"
 	"sort"
+	"unsafe"
 )
 
 // Export returns logical records under a consistent all-shard snapshot.
@@ -157,9 +158,10 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 		ordered = append(ordered, key)
 	}
 	sort.Strings(ordered)
-	var before, after, beforeMeta, afterMeta, extra, extraEntries, extraArena uint64
+	var before, after, beforeMeta, afterMeta, extra, extraEntries, extraMetaSlots, extraArena uint64
 	allocations := make(map[*shard][]int)
 	growth := make(map[*shard]int)
+	metaNeeds := make(map[*shard]bool)
 	for key := range deletions {
 		sh := s.shardFor(key)
 		if old, ok := sh.get(key); ok {
@@ -180,8 +182,12 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 		after += entryCharge(key, e)
 		if s.shouldTrackActivity(e.entry) {
 			afterMeta += entryMetaBytes
+			metaNeeds[sh] = true
 		} else {
 			afterMeta += metadataCharge(e.entry)
+			if e.entryMeta != nil {
+				metaNeeds[sh] = true
+			}
 		}
 		allocations[sh] = append(allocations[sh], len(e.data))
 	}
@@ -189,11 +195,14 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 		extra += sh.data.GrowthBytes(n)
 		extraEntries += sh.entryGrowthBytes(n)
 	}
+	for sh := range allocations {
+		extraMetaSlots += sh.metaSlotGrowthBytes(growth[sh], metaNeeds[sh])
+	}
 	for sh, lengths := range allocations {
 		extraArena += sh.arena.GrowthFor(lengths)
 	}
 	s.memory.mu.Lock()
-	next := s.memory.used - before - beforeMeta + after + afterMeta + extra + extraEntries + extraArena
+	next := s.memory.used - before - beforeMeta + after + afterMeta + extra + extraEntries + extraMetaSlots + extraArena
 	if max := s.memory.max.Load(); !force && max > 0 && next > max {
 		s.memory.mu.Unlock()
 		return ErrOOM
@@ -230,6 +239,10 @@ func (s *Store) resetForRecovery() {
 		arenaBytes := sh.arena.MemoryBytes()
 		indexBytes := sh.data.CapacityBytes()
 		entryBytes := uint64(cap(sh.entries)) * entryStructBytes
+		if sh.metas != nil {
+			entryBytes += uint64(unsafe.Sizeof(entryMetaSidecar{})) +
+				uint64(cap(sh.metas.slots))*entryMetaSlotBytes
+		}
 
 		s.memory.used -= arenaBytes + indexBytes + entryBytes
 		s.memory.arenas -= arenaBytes
@@ -239,6 +252,7 @@ func (s *Store) resetForRecovery() {
 		sh.arena = arena.Arena{}
 		sh.data = *index.New[uint32]()
 		sh.entries = nil
+		sh.metas = nil
 		sh.freeIDs = nil
 		sh.expiration = expirationQueue{}
 	}

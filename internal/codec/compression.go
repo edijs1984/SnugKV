@@ -9,8 +9,10 @@ import (
 )
 
 const (
-	LZ4       ID = 9
-	Zstandard ID = 10
+	RepeatByte ID = 8
+	LZ4        ID = 9
+	Zstandard  ID = 10
+	Periodic   ID = 11
 )
 
 const (
@@ -52,6 +54,114 @@ var zstdDecoderPool = sync.Pool{
 		}
 		return decoder
 	},
+}
+
+type repeatByteCodec struct{}
+
+func (repeatByteCodec) ID() ID       { return RepeatByte }
+func (repeatByteCodec) Name() string { return "repeat-byte" }
+func (repeatByteCodec) Encode(src []byte) ([]byte, bool) {
+	if len(src) < 16 {
+		return nil, false
+	}
+	first := src[0]
+	for _, b := range src[1:] {
+		if b != first {
+			return nil, false
+		}
+	}
+	return []byte{first}, true
+}
+func (repeatByteCodec) Decode(src []byte, n int) ([]byte, error) {
+	if len(src) != 1 || n < 0 {
+		return nil, errors.New("invalid repeat-byte record")
+	}
+	out := make([]byte, n)
+	for i := range out {
+		out[i] = src[0]
+	}
+	return out, nil
+}
+func (repeatByteCodec) DecodeInto(src []byte, n int, dst []byte) ([]byte, error) {
+	if len(src) != 1 || n < 0 {
+		return nil, errors.New("invalid repeat-byte record")
+	}
+	if cap(dst) < n {
+		dst = make([]byte, n)
+	} else {
+		dst = dst[:n]
+	}
+	for i := range dst {
+		dst[i] = src[0]
+	}
+	return dst, nil
+}
+
+type periodicCodec struct{}
+
+func (periodicCodec) ID() ID       { return Periodic }
+func (periodicCodec) Name() string { return "periodic" }
+func (periodicCodec) Encode(src []byte) ([]byte, bool) {
+	if len(src) < 32 {
+		return nil, false
+	}
+
+	maxPeriod := 64
+	if len(src)/2 < maxPeriod {
+		maxPeriod = len(src) / 2
+	}
+
+	// Search short exact periods only. Random/incompressible values reject
+	// quickly because src[p] normally differs from src[0]; repetitive values
+	// pay one full verification for their actual period.
+	for period := 2; period <= maxPeriod; period++ {
+		if src[period] != src[0] {
+			continue
+		}
+		match := true
+		for i := period; i < len(src); i++ {
+			if src[i] != src[i-period] {
+				match = false
+				break
+			}
+		}
+		if match {
+			out := make([]byte, period)
+			copy(out, src[:period])
+			return out, true
+		}
+	}
+	return nil, false
+}
+func expandPeriodic(dst, pattern []byte) {
+	if len(dst) == 0 {
+		return
+	}
+	copied := copy(dst, pattern)
+	for copied < len(dst) {
+		copied += copy(dst[copied:], dst[:copied])
+	}
+}
+
+func (periodicCodec) Decode(src []byte, n int) ([]byte, error) {
+	if len(src) < 2 || len(src) > 64 || n < len(src) {
+		return nil, errors.New("invalid periodic record")
+	}
+	out := make([]byte, n)
+	expandPeriodic(out, src)
+	return out, nil
+}
+func (periodicCodec) DecodeInto(src []byte, n int, dst []byte) ([]byte, error) {
+	if len(src) < 2 || len(src) > 64 || n < len(src) {
+		return nil, errors.New("invalid periodic record")
+	}
+	if cap(dst) < n {
+		dst = make([]byte, n)
+	} else {
+		dst = dst[:n]
+	}
+	expandPeriodic(dst, src)
+	return dst, nil
 }
 
 type lz4Codec struct{}
@@ -167,7 +277,7 @@ func (zstdCodec) DecodeInto(src []byte, n int, dst []byte) ([]byte, error) {
 	}
 	return out, nil
 }
-func alreadyCompressed(src []byte) bool {
+func AlreadyCompressed(src []byte) bool {
 	for _, sig := range [][]byte{{0x1f, 0x8b}, {0x89, 'P', 'N', 'G'}, {0xff, 0xd8, 0xff}, {0x28, 0xb5, 0x2f, 0xfd}, {0x04, 0x22, 0x4d, 0x18}, {'P', 'K', 3, 4}} {
 		if bytes.HasPrefix(src, sig) {
 			return true
@@ -187,13 +297,13 @@ type CompressionCandidate struct {
 // diagnostics. It does not decide policy; the engine reports whether a codec
 // is eligible for the key's current heat class.
 func (r *Registry) CompressionCandidates(src []byte) []CompressionCandidate {
-	if len(src) < 256 || alreadyCompressed(src) {
+	if len(src) < 256 || AlreadyCompressed(src) {
 		return nil
 	}
 
 	out := make([]CompressionCandidate, 0, 2)
 
-	for _, id := range []ID{LZ4, Zstandard} {
+	for _, id := range []ID{RepeatByte, Periodic, LZ4, Zstandard} {
 		c := r.codecs[id]
 		if c == nil {
 			continue
@@ -234,9 +344,27 @@ func (r *Registry) EncodeGeneral(src []byte, cold bool) Record {
 // the returned record. Successful compressed records own their Data.
 func (r *Registry) EncodeGeneralBorrowed(src []byte, cold bool) Record {
 	best := Record{ID: Raw, RawLength: len(src), Data: src}
-	if len(src) < 256 || alreadyCompressed(src) {
+	if len(src) < 256 || AlreadyCompressed(src) {
 		return best
 	}
+
+	// Extremely cheap exact representations go first. Their encoders already
+	// prove the representation by comparing the source bytes, so do not pay for
+	// a generic compressor or a verification decode after a decisive win.
+	if data, ok := (repeatByteCodec{}).Encode(src); ok {
+		return Record{ID: RepeatByte, RawLength: len(src), Data: data}
+	}
+
+	if data, ok := (periodicCodec{}).Encode(src); ok {
+		best = Record{ID: Periodic, RawLength: len(src), Data: data}
+
+		// A <=32-byte exact period on a >=256-byte value already saves at
+		// least 87.5%. Avoid LZ4/Zstd work for a marginal or impossible win.
+		if len(data) <= 32 {
+			return best
+		}
+	}
+
 	candidates := []ID{LZ4}
 	if cold {
 		candidates = append(candidates, Zstandard)
@@ -252,5 +380,6 @@ func (r *Registry) EncodeGeneralBorrowed(src []byte, cold bool) Record {
 			best = Record{ID: id, RawLength: len(src), Data: data}
 		}
 	}
+
 	return best
 }

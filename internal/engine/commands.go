@@ -29,8 +29,8 @@ func (s *Store) SetConditional(
 }
 
 // SetPlain implements the plain Redis SET key value form without option
-// parsing overhead. It preserves ordinary overwrite, expiry removal, memory
-// accounting, optimizer metadata and JSON-shape observation semantics.
+// parsing overhead. JSON-shape learning is deliberately deferred to the
+// background optimizer so foreground SET never parses JSON schemas.
 func (s *Store) SetPlain(key string, value []byte) error {
 	if len(value) > 32<<20 {
 		return errors.New("ERR value exceeds 32 MiB limit")
@@ -61,7 +61,6 @@ func (s *Store) SetPlain(key string, value []byte) error {
 		return err
 	}
 
-	s.observeJSONShapeLocked(sh, value)
 	return nil
 }
 
@@ -125,9 +124,7 @@ func (s *Store) SetWithOptions(
 		return false, nil, false, err
 	}
 
-	// Real engine writes train JSON shape admission while the shard
-	// lock is already held.
-	s.observeJSONShapeLocked(sh, value)
+	// JSON-shape admission is trained asynchronously by the optimizer.
 
 	// Absolute expiration in the past means SET succeeds but
 	// the resulting key is immediately expired.
@@ -195,13 +192,14 @@ func (s *Store) MSet(keys []string, values [][]byte) error {
 		ordered = append(ordered, key)
 	}
 	sort.Strings(ordered)
-	var before, after, extra, extraEntries, extraArena uint64
+	var before, after, extra, extraEntries, extraMetaSlots, extraArena uint64
 	var oldPayload, oldLiveBlocks uint64
 	var oldMetaBytes, newMetaBytes uint64
 	var newPayload uint64
 
 	allocations := make(map[*shard][]int)
 	growth := make(map[*shard]int)
+	metaNeeds := make(map[*shard]bool)
 
 	for _, k := range ordered {
 		e := replacements[k]
@@ -218,6 +216,9 @@ func (s *Store) MSet(keys []string, values [][]byte) error {
 
 		after += entryCharge(k, e)
 		newMetaBytes += metadataCharge(e.entry)
+		if e.entryMeta != nil {
+			metaNeeds[sh] = true
+		}
 		newPayload += uint64(len(e.data))
 		allocations[sh] = append(allocations[sh], len(e.data))
 	}
@@ -225,18 +226,21 @@ func (s *Store) MSet(keys []string, values [][]byte) error {
 		extra += sh.data.GrowthBytes(n)
 		extraEntries += sh.entryGrowthBytes(n)
 	}
+	for sh := range allocations {
+		extraMetaSlots += sh.metaSlotGrowthBytes(growth[sh], metaNeeds[sh])
+	}
 	for sh, lengths := range allocations {
 		extraArena += sh.arena.GrowthFor(lengths)
 	}
 	s.memory.mu.Lock()
 	defer s.memory.mu.Unlock()
-	next := s.memory.used - before - oldMetaBytes + after + newMetaBytes + extra + extraEntries + extraArena
+	next := s.memory.used - before - oldMetaBytes + after + newMetaBytes + extra + extraEntries + extraMetaSlots + extraArena
 	if s.exceedsMemoryLimitLocked(next, enforceMemoryLimit) {
 		return ErrOOM
 	}
 	s.memory.used = next
 	s.memory.entries =
-		s.memory.entries - before + after + extraEntries
+		s.memory.entries - before + after + extraEntries + extraMetaSlots
 	s.memory.metas = s.memory.metas - oldMetaBytes + newMetaBytes
 	s.memory.index += extra
 	s.memory.arenas += extraArena
@@ -347,11 +351,13 @@ func (s *Store) MSetNX(keys []string, values [][]byte) (bool, error) {
 	var metaBytes uint64
 	var extraIndex uint64
 	var extraEntries uint64
+	var extraMetaSlots uint64
 	var extraArena uint64
 	var newPayload uint64
 
 	growth := make(map[*shard]int)
 	allocations := make(map[*shard][]int)
+	metaNeeds := make(map[*shard]bool)
 
 	for _, key := range ordered {
 		e := replacements[key]
@@ -359,6 +365,9 @@ func (s *Store) MSetNX(keys []string, values [][]byte) (bool, error) {
 
 		entryBytes += entryCharge(key, e)
 		metaBytes += metadataCharge(e.entry)
+		if e.entryMeta != nil {
+			metaNeeds[sh] = true
+		}
 		newPayload += uint64(len(e.data))
 
 		growth[sh]++
@@ -368,6 +377,9 @@ func (s *Store) MSetNX(keys []string, values [][]byte) (bool, error) {
 	for sh, n := range growth {
 		extraIndex += sh.data.GrowthBytes(n)
 		extraEntries += sh.entryGrowthBytes(n)
+	}
+	for sh := range allocations {
+		extraMetaSlots += sh.metaSlotGrowthBytes(growth[sh], metaNeeds[sh])
 	}
 
 	for sh, lengths := range allocations {
@@ -382,6 +394,7 @@ func (s *Store) MSetNX(keys []string, values [][]byte) (bool, error) {
 		metaBytes +
 		extraIndex +
 		extraEntries +
+		extraMetaSlots +
 		extraArena
 
 	if s.exceedsMemoryLimitLocked(next, enforceMemoryLimit) {
@@ -389,7 +402,7 @@ func (s *Store) MSetNX(keys []string, values [][]byte) (bool, error) {
 	}
 
 	s.memory.used = next
-	s.memory.entries += entryBytes + extraEntries
+	s.memory.entries += entryBytes + extraEntries + extraMetaSlots
 	s.memory.metas += metaBytes
 	s.memory.index += extraIndex
 	s.memory.arenas += extraArena

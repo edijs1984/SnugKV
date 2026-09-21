@@ -247,6 +247,125 @@ At around 1,000 keys, sparse-shard effects are much larger because active shards
 reserve entry capacity and arena segments. Small-dataset measurements should not
 be extrapolated from the 100k-key matrices.
 
+## Realistic application workload matrix
+
+The random 256-byte scalar case remains useful as an incompressible worst-case
+control, but it is not intended to represent typical application data by itself.
+`scripts/bench/compare-realistic-workloads.sh` runs the same Redis/SnugKV
+black-box load, GET, mixed 90/10, and TTL harness across a deterministic profile
+matrix:
+
+| Profile | Size | Intended analogue |
+|---|---:|---|
+| `session-json` | 384 B | authenticated user/session/cache state with repeated field names |
+| `api-json` | 768 B | cached API response/object with repeated schema |
+| `cache-json` | 1024 B | typical cached GET request + nested response JSON with repeated application schema |
+| `counter` | 10 B | canonical integer counters |
+| `uuid` | 36 B | UUID identifiers stored as scalar values |
+| `text` | 256 B | human/application text with recurring vocabulary |
+| `repetitive` | 256 B | highly compressible control |
+| `compressed` | 256 B | deterministic high-entropy binary with a gzip signature |
+| `random` | 256 B | deterministic incompressible worst-case control |
+
+The JSON profiles are valid fixed-size JSON documents, the counter and UUID
+profiles use canonical encodings that exercise SnugKV's scalar codecs, and the
+compressed profile intentionally carries an already-compressed signature so the
+optimizer can exercise its recompression-avoidance path.
+
+The default realistic comparison is intentionally lightweight and isolated: it
+runs one database server at a time, compares Redis with optimized SnugKV, performs
+one run per profile, and measures LOAD + pipelined GET. This avoids keeping three
+large database processes resident together and avoids making expensive sequential
+mixed/TTL tests part of every routine comparison.
+
+```sh
+KEYS=1000000 \
+GET_OPS=2000000 \
+WORKERS=8 \
+PIPELINE=256 \
+RUNS=1 \
+bash scripts/bench/compare-realistic-workloads.sh
+```
+
+For routine engineering work and public reproducibility, prefer one profile at a
+time against an already-running Redis-compatible server. The benchmark client does
+not start, stop, kill, inspect, or configure server processes or containers.
+
+```sh
+bash scripts/bench/bench-one.sh uuid -p 6390
+bash scripts/bench/bench-one.sh counter -p 6383 -s snug-opt
+bash scripts/bench/bench-one.sh cache-json -p 6379 -s redis
+```
+
+The default dataset is 1,000,000 keys and 2,000,000 pipelined GETs. The script
+builds only the local `rediswirebench` client, connects to the supplied host/port,
+runs `FLUSHDB`, LOAD, then GET, and saves machine-readable JSON output. Start the
+target Redis or SnugKV process yourself before running the benchmark.
+
+Useful options include `-h/--host`, `-s/--server`, `-k/--keys`,
+`-g/--get-ops`, `-w/--workers`, `-P/--pipeline`, and `--settle-ms`.
+
+For deeper diagnostics, opt in explicitly:
+
+```sh
+SERVERS="redis snug-opt snug-raw" \
+WORKLOADS="load get mixed ttl" \
+RUNS=3 \
+MIXED_OPS=1000000 \
+TTL_OPS=1000000 \
+bash scripts/bench/compare-realistic-workloads.sh
+```
+
+Only one selected server remains resident during its measurements. The default
+post-load optimizer settle is a fixed 10 seconds rather than an open-ended
+stability wait. Each profile writes raw JSON measurements and the suite writes a
+combined `matrix-summary.json`. Treat these profiles as representative synthetic
+workloads, not measurements of a specific production application. For product
+claims, pair them with traces or distributions from an actual deployment when
+available.
+
+### Realistic-workload development snapshot — 2026-09-21
+
+The following values are engineering snapshots from the current 4-logical-CPU
+development machine. They are useful for regression tracking, but are not
+universal Redis/SnugKV claims and should not replace fresh isolated multi-run
+measurements for publication.
+
+| Profile | Server | Best SET/s | Best GET/s | Lowest B/key |
+|---|---|---:|---:|---:|
+| counter · 10 B | Redis | 408,054 | 626,618 | 72.39 |
+| counter · 10 B | SnugKV raw | 508,849 | 872,047 | 112.15 |
+| counter · 10 B | SnugKV opt, pre-entry-compaction result | 402,402 | 735,830 | 77.13 |
+| session JSON · 384 B | Redis | 285,118 | 434,121 | 520.39 |
+| session JSON · 384 B | SnugKV raw | 383,040 | 782,087 | 544.37 |
+| session JSON · 384 B | SnugKV opt | 255,277 | 563,998 | 272.89 |
+| API JSON · 768 B | Redis | 221,241 | 371,244 | 968.39 |
+| API JSON · 768 B | SnugKV raw | 296,125 | 663,780 | 909.90 |
+| API JSON · 768 B | SnugKV opt | 188,607 | 491,242 | 273.00 |
+| cache JSON · 1024 B | Redis | 192,063 | 339,800 | 1352.39 |
+| cache JSON · 1024 B | SnugKV raw | 241,822 | 604,901 | 1245.78 |
+| cache JSON · 1024 B | SnugKV opt | 156,941 | 434,474 | 568.37 |
+
+For the counter profile, the current compacted engine state is smaller than the
+77.13 B/key load result shown above. An explicit `SNUG.COMPACT` on the same
+1,000,000-key dataset reduced accounted bytes from 77,181,376 to 72,605,632,
+or 72.61 B/key. The compacted accounting was:
+
+- index reservation: 33,605,632 bytes;
+- entry/key storage: 39,000,000 bytes;
+- metadata: 0 bytes;
+- arena reservation/payload/live blocks: 0 bytes.
+
+The corresponding recorded Redis reference was 72.39 B/key. The normal benchmark
+convergence path did not yet trigger this final dense-entry compaction
+automatically, so 72.61 B/key must be described as an explicit-compaction result,
+not as the default post-load benchmark result.
+
+The counter memory progression during this tuning phase was 103.86 B/key before
+inline tiny scalars and compact stored entries, 86.66 B/key after inline scalar
+storage, 77.13 B/key after the 24-byte stored-entry layout, and 72.61 B/key after
+dense entry-capacity compaction.
+
 ## Benchmark discipline
 
 For public performance claims, rerun Redis from a fresh dedicated instance or

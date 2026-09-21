@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"fmt"
 	"snugkv/internal/codec"
 	"testing"
@@ -64,6 +65,7 @@ func TestShapeSharingAndReclamation(t *testing.T) {
 		key := fmt.Sprint(i)
 		value := []byte(fmt.Sprintf(`{"country":"LV","status":"active","plan":"free","user":%d,"long_repeated_property_name":true}`, i))
 		s.Set(key, value, 0)
+		s.ObserveJSONShape(key, value)
 		candidate, _ := s.Candidate(key, 4096)
 		record := s.EncodeCandidate(candidate)
 		s.Rewrite(candidate, record)
@@ -203,12 +205,23 @@ func TestShapeStoreAllocatesLazily(t *testing.T) {
 	}
 
 	sh := s.shardFor(key)
+	if sh.shapes != nil {
+		t.Fatal("foreground JSON SET eagerly created shape store")
+	}
+
+	afterJSONSet := s.Memory()
+	if afterJSONSet.SchemaBytes != 0 {
+		t.Fatalf("foreground JSON SET charged %d schema bytes", afterJSONSet.SchemaBytes)
+	}
+
+	// Background optimizer observation creates the shared shape store.
+	s.ObserveJSONShape(key, value)
+
 	if sh.shapes == nil {
-		t.Fatal("JSON write did not create shape store")
+		t.Fatal("background JSON observation did not create shape store")
 	}
 
 	afterJSON := s.Memory()
-
 	if afterJSON.SchemaBytes != shapeStoreBaseBytes {
 		t.Fatalf(
 			"schema bytes = %d, want %d",
@@ -217,17 +230,16 @@ func TestShapeStoreAllocatesLazily(t *testing.T) {
 		)
 	}
 
-	// Additional JSON writes on the same shard must reuse the existing store
-	// instead of charging the base cost again.
+	// Additional observations on the same shard reuse the existing store.
 	if err := s.Set("json-key-2", value, 0); err != nil {
 		t.Fatal(err)
 	}
+	s.ObserveJSONShape("json-key-2", value)
 
 	afterSecond := s.Memory()
-
 	if afterSecond.SchemaBytes != shapeStoreBaseBytes {
 		t.Fatalf(
-			"second JSON write charged schema base twice: got %d want %d",
+			"second JSON observation charged schema base twice: got %d want %d",
 			afterSecond.SchemaBytes,
 			shapeStoreBaseBytes,
 		)
@@ -303,5 +315,24 @@ func TestCandidateIntoReusesScratch(t *testing.T) {
 	}
 	if len(candidate.Value) > 0 && &candidate.Value[0] != &scratch[:cap(scratch)][0] {
 		t.Fatal("CandidateInto did not reuse supplied scratch")
+	}
+}
+
+
+func TestOptimizationClassForValue(t *testing.T) {
+	s, err := NewWithOptions(Options{Shards: 1, Encoding: true, Compression: true, ShapeEncoding: true})
+	if err != nil { t.Fatal(err) }
+	tests := []struct { name string; value []byte; want OptimizationClass }{
+		{"counter", []byte("1000000042"), OptimizationNone},
+		{"uuid", []byte("123e4567-e89b-12d3-a456-426614174000"), OptimizationNone},
+		{"json", []byte("{\"user\":1,\"active\":true,\"roles\":[\"admin\"]}"), OptimizationJSON},
+		{"text", bytes.Repeat([]byte("hello-world-"), 32), OptimizationCompress},
+		{"gzip", append([]byte{0x1f, 0x8b}, bytes.Repeat([]byte{0x42}, 300)...), OptimizationNone},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := s.OptimizationClassForValue(tt.value); got != tt.want { t.Fatalf("class=%v want=%v", got, tt.want) }
+			if got := s.ShouldQueueOptimization(tt.value); got != (tt.want != OptimizationNone) { t.Fatalf("queue=%v class=%v", got, tt.want) }
+		})
 	}
 }

@@ -81,6 +81,20 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Changed
 
+- Reworked scalar memory layout for tiny values: encoded integer/unsigned/float/
+  timestamp payloads up to 8 bytes can live inline in the existing arena reference,
+  avoiding arena allocation while preserving generation/version checks.
+- Reduced stored entry records from 32 bytes to 24 bytes by moving optional
+  activity/schema metadata to a lazy per-shard sidecar; metadata-free workloads
+  allocate no metadata slot array.
+- Extended compaction to reclaim dense entry-array over-capacity. On the recorded
+  1M-key 10-byte counter development dataset, explicit compaction reduced
+  engine-accounted memory from 77.13 B/key to 72.61 B/key, near the 72.39 B/key
+  Redis reference for that exact run.
+- Removed foreground JSON-shape parsing/encoding from SET; shape learning and
+  representation rewrites stay in the background optimizer so SET latency does
+  not scale with JSON representation complexity.
+
 - Optimized the Redis-wire plain SET/load path: concurrent benchmark load workers,
   reusable buffered SET parsing, transient raw-clone removal, reusable optimizer
   candidate scratch, borrowed optimizer raw fallbacks, known-hash indexed

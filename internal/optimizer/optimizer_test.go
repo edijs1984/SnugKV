@@ -8,6 +8,24 @@ import (
 	"time"
 )
 
+func TestOptimizerProfiles(t *testing.T) {
+	dedicated := ForMode("dedicated")
+	sidecar := ForMode("sidecar")
+
+	if dedicated.Workers < sidecar.Workers {
+		t.Fatalf("dedicated workers=%d sidecar=%d", dedicated.Workers, sidecar.Workers)
+	}
+	if dedicated.CPUPercent <= sidecar.CPUPercent {
+		t.Fatalf("dedicated cpu=%d sidecar=%d", dedicated.CPUPercent, sidecar.CPUPercent)
+	}
+	if dedicated.MaxBytesPerSecond <= sidecar.MaxBytesPerSecond {
+		t.Fatalf("dedicated bandwidth=%d sidecar=%d", dedicated.MaxBytesPerSecond, sidecar.MaxBytesPerSecond)
+	}
+	if Default() != dedicated {
+		t.Fatal("default optimizer profile is not dedicated")
+	}
+}
+
 func TestBudgetsAndCancellation(t *testing.T) {
 	s := engine.New()
 	c := Default()
@@ -64,10 +82,17 @@ func TestBackgroundCompression(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		name, _, _, _ := store.Encoding("k")
-		if name == "lz4" || name == "zstd" {
+		switch name {
+		case "repeat-byte", "periodic", "lz4", "zstd":
 			got, ok := store.Get("k")
 			if !ok || !bytes.Equal(got, value) {
 				t.Fatal("background rewrite changed bytes")
+			}
+			if meta := store.Memory().MetaBytes; meta != 0 {
+				t.Fatalf("compressed scalar retained %d metadata bytes, want 0", meta)
+			}
+			if _, eligible := store.OptimizationEligible("k", 0, 0); eligible {
+				t.Fatal("compressed scalar remained optimizer-eligible")
 			}
 			return
 		}
@@ -117,19 +142,9 @@ func TestCPUPercentForBacklog(t *testing.T) {
 	}
 	defer o.Close()
 
-	for _, tc := range []struct {
-		depth int
-		want  int
-	}{
-		{0, 50},
-		{9, 50},
-		{10, 25},
-		{39, 25},
-		{40, 15},
-		{160, 15},
-	} {
-		if got := o.cpuPercentForBacklog(tc.depth); got != tc.want {
-			t.Fatalf("depth=%d cpu=%d want=%d", tc.depth, got, tc.want)
+	for _, depth := range []int{0, 9, 10, 39, 40, 160} {
+		if got := o.cpuPercentForBacklog(depth); got != 50 {
+			t.Fatalf("depth=%d cpu=%d want=50", depth, got)
 		}
 	}
 }
@@ -148,5 +163,36 @@ func TestCPUPercentForBacklogNeverRaisesConfiguredBudget(t *testing.T) {
 
 	if got := o.cpuPercentForBacklog(160); got != 10 {
 		t.Fatalf("cpu=%d want=10", got)
+	}
+}
+
+
+func TestShouldCompactArenaPolicy(t *testing.T) {
+	const arena = uint64(100 << 20)
+
+	tests := []struct {
+		name       string
+		live       uint64
+		queueDepth int
+		want       bool
+	}{
+		{"empty arena", 0, 0, false},
+		{"idle below 25 percent dead", 80 << 20, 0, false},
+		{"idle at 25 percent dead", 75 << 20, 0, true},
+		{"backlog below 40 percent dead", 70 << 20, 1, false},
+		{"backlog at 40 percent dead", 60 << 20, 1, true},
+		{"backlog tiny dead bytes", 93 << 20, 1, false},
+	}
+
+	if shouldCompactArena(0, 0, 0) {
+		t.Fatal("zero arena should never compact")
+	}
+
+	for _, tc := range tests[1:] {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldCompactArena(arena, tc.live, tc.queueDepth); got != tc.want {
+				t.Fatalf("compact=%v want=%v arena=%d live=%d queue=%d", got, tc.want, arena, tc.live, tc.queueDepth)
+			}
+		})
 	}
 }

@@ -194,7 +194,7 @@ func (s *Server) executePressureMode(args [][]byte, journalEvictions bool) ([]by
 		if err != nil {
 			return nil, err
 		}
-		if applied && s.optimizer != nil {
+		if applied && s.optimizer != nil && s.store.ShouldQueueOptimization(args[2]) {
 			s.optimizer.Queue(key)
 		}
 		return []byte("+OK\r\n"), nil

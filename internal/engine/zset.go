@@ -372,7 +372,7 @@ func zsetEncodingName(data []byte) string {
 }
 
 func zsetPreparedEntry(packed []byte) preparedEntry {
-	return preparedEntry{entry: entry{valueType: TypeZSet, rawLength: uint32(len(packed))}, data: append([]byte(nil), packed...)}
+	return preparedEntry{entry: entry{entryData: entryData{valueType: TypeZSet, rawLength: uint32(len(packed))}}, data: append([]byte(nil), packed...)}
 }
 
 func (s *Store) zsetItemsFromEntry(sh *shard, e entry) ([]ZSetItem, error) {

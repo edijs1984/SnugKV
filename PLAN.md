@@ -324,15 +324,29 @@ Details: `docs/ACL-COMPATIBILITY.md`.
 The large sparse fixed-overhead wins are complete; further memory work must justify
 its complexity with measurements.
 
-- [ ] Re-evaluate remaining index/entry/arena slack using representative workloads rather than structural size alone.
+- [x] Re-evaluate remaining index/entry/arena slack using representative workloads rather than structural size alone.
 - [ ] Fresh dedicated Redis baselines for public comparison claims.
-- [ ] Multi-run variance rather than single-run latency snapshots.
-- [ ] Million-record datasets on dedicated hardware.
+- [x] Multi-run benchmark support and repeated-run engineering comparisons; public claims still require clean dedicated reruns.
+- [x] Million-record local development datasets; repeat on dedicated hardware before public claims.
 - [ ] Retain evidence from a 24-hour mixed workload soak.
 - [ ] Expand third-party client compatibility tests.
 - [ ] Benchmark large GEO sets before adding permanent geospatial indexing.
 - [ ] Benchmark script compile/execute overhead and cache-hit behavior before pooling Lua states or compiled chunks.
 - [ ] Benchmark SORT with large external BY/GET pattern sets and STORE under memory pressure.
+
+### P3.5 — next product capability work
+
+Performance/memory tuning is intentionally paused after the realistic-workload
+milestone. Resume only for measured regressions or after the next capability work
+lands.
+
+- [ ] Expand first-class JSON operations beyond the current SET/GET/TYPE/DEL core.
+- [ ] Add JSONPath support with explicit compatibility tests and persistence coverage.
+- [ ] Add secondary-index/search design after the JSON model is stable.
+- [ ] Add probabilistic/time-series structures only after the JSON/search storage
+  boundaries are settled.
+- [ ] Return to optimizer convergence so dense-entry compaction is reached
+  automatically without an explicit `SNUG.COMPACT`.
 
 ### P4 — distributed features (outside current single-node target)
 

@@ -87,7 +87,7 @@ func decodePackedList(data []byte) ([][]byte, error) {
 }
 
 func listPreparedEntry(packed []byte) preparedEntry {
-	return preparedEntry{entry: entry{valueType: TypeList, rawLength: uint32(len(packed))}, data: append([]byte(nil), packed...)}
+	return preparedEntry{entry: entry{entryData: entryData{valueType: TypeList, rawLength: uint32(len(packed))}}, data: append([]byte(nil), packed...)}
 }
 
 func (s *Store) listElementsFromEntry(sh *shard, e entry) ([][]byte, error) {

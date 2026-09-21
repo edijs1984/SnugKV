@@ -51,8 +51,10 @@ func NewRegistry() *Registry {
 		timestampCodec{},
 		float64Codec{},
 		boolCodec{},
+		repeatByteCodec{},
 		lz4Codec{},
 		zstdCodec{},
+		periodicCodec{},
 	} {
 		if err := r.Register(c); err != nil {
 			panic(err)
@@ -96,7 +98,7 @@ func (r *Registry) Encode(src []byte) Record {
 	}
 
 	for _, c := range r.order {
-		if c.ID() == Raw || c.ID() == 5 || c.ID() >= 9 {
+		if c.ID() == Raw || c.ID() == 5 || c.ID() >= RepeatByte {
 			continue
 		}
 		data, ok := c.Encode(src)
@@ -130,12 +132,16 @@ func (r *Registry) DecodeInto(rec Record, max int, dst []byte) ([]byte, error) {
 	switch rec.ID {
 	case Raw:
 		out, err = (rawCodec{}).DecodeInto(rec.Data, rec.RawLength, dst)
+	case RepeatByte:
+		out, err = (repeatByteCodec{}).DecodeInto(rec.Data, rec.RawLength, dst)
 	case LZ4:
 		out, err = (lz4Codec{}).DecodeInto(rec.Data, rec.RawLength, dst)
 	case Zstandard:
 		out, err = (zstdCodec{}).DecodeInto(rec.Data, rec.RawLength, dst)
+	case Periodic:
+		out, err = (periodicCodec{}).DecodeInto(rec.Data, rec.RawLength, dst)
 	case 5:
-		return r.Decode(rec, max)
+		out, err = jsonshape.DecodeInto(rec.Schema, rec.Data, rec.RawLength, dst)
 	default:
 		c, ok := r.codecs[rec.ID]
 		if !ok {
@@ -225,6 +231,13 @@ func (integerCodec) Decode(src []byte, _ int) ([]byte, error) {
 	}
 	return []byte(strconv.FormatInt(n, 10)), nil
 }
+func (integerCodec) DecodeInto(src []byte, _ int, dst []byte) ([]byte, error) {
+	n, size := binary.Varint(src)
+	if size <= 0 || size != len(src) {
+		return nil, errors.New("invalid integer")
+	}
+	return strconv.AppendInt(dst[:0], n, 10), nil
+}
 
 type unsignedIntegerCodec struct{}
 
@@ -284,6 +297,16 @@ func (unsignedIntegerCodec) Decode(
 	}
 
 	return []byte(strconv.FormatUint(n, 10)), nil
+}
+func (unsignedIntegerCodec) DecodeInto(src []byte, _ int, dst []byte) ([]byte, error) {
+	if len(src) != 8 {
+		return nil, errors.New("invalid unsigned integer")
+	}
+	n := binary.LittleEndian.Uint64(src)
+	if n <= uint64(^uint64(0)>>1) {
+		return nil, errors.New("invalid unsigned integer range")
+	}
+	return strconv.AppendUint(dst[:0], n, 10), nil
 }
 
 type float64Codec struct{}
@@ -356,6 +379,16 @@ func (float64Codec) Decode(src []byte, _ int) ([]byte, error) {
 	}
 
 	return []byte(strconv.FormatFloat(n, 'g', -1, 64)), nil
+}
+func (float64Codec) DecodeInto(src []byte, _ int, dst []byte) ([]byte, error) {
+	if len(src) != 8 {
+		return nil, errors.New("invalid float64")
+	}
+	n := math.Float64frombits(binary.LittleEndian.Uint64(src))
+	if math.IsNaN(n) || math.IsInf(n, 0) {
+		return nil, errors.New("invalid float64 value")
+	}
+	return strconv.AppendFloat(dst[:0], n, 'g', -1, 64), nil
 }
 
 type boolCodec struct{}
@@ -465,4 +498,14 @@ func (timestampCodec) Decode(src []byte, _ int) ([]byte, error) {
 		return nil, errors.New("timestamp out of range")
 	}
 	return []byte(t.Format(timestampLayout)), nil
+}
+func (timestampCodec) DecodeInto(src []byte, _ int, dst []byte) ([]byte, error) {
+	if len(src) != 8 {
+		return nil, errors.New("invalid timestamp")
+	}
+	t := time.Unix(int64(binary.LittleEndian.Uint64(src)), 0).UTC()
+	if t.Year() < 0 || t.Year() > 9999 {
+		return nil, errors.New("timestamp out of range")
+	}
+	return t.AppendFormat(dst[:0], timestampLayout), nil
 }

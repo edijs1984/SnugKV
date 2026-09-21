@@ -1,3 +1,32 @@
+## Realistic workload memory milestone — 2026-09-21
+
+- Added realistic fixed-shape benchmark profiles for session JSON (384 B), API JSON
+  (768 B), cached request/response JSON (1024 B), counters, UUIDs, text,
+  repetitive, already-compressed, and random controls.
+- Moved JSON shape discovery/encoding fully off the foreground SET path. On the
+  1024-byte cache JSON profile this raised optimized SET throughput from roughly
+  26k/s before the change to a recorded best around 157k/s while preserving the
+  568.37 B/key optimized footprint.
+- Added inline tiny-scalar storage by tagging the existing 16-byte arena reference;
+  canonical counters now require zero arena bytes, zero arena payload bytes, and
+  zero arena live-block bytes.
+- Split persistent entry storage from optional activity/schema metadata. Stored
+  entries are now 24 bytes on amd64, while metadata lives in a lazily allocated
+  per-shard sidecar.
+- Extended compaction to reclaim dense entry-array over-capacity. On the
+  1,000,000-key / 10-byte canonical counter development workload, accounted
+  memory moved from 103.86 B/key before the inline/entry work to 77.13 B/key
+  after normal load convergence, then 72.61 B/key after explicit compaction.
+  The recorded Redis reference for the same profile was 72.39 B/key.
+- The same optimized counter run measured about 402k SET/s and 736k GET/s versus
+  the recorded Redis reference around 408k SET/s and 627k GET/s. These are
+  development snapshots/best-run observations, not general performance claims.
+- The counter dataset after compaction accounted for 33.61 MB of index reservation,
+  39.00 MB of entry/key storage, and zero metadata/arena bytes.
+- Benchmark/performance tuning is paused here. A remaining cleanup item is to make
+  optimizer convergence trigger the same dense-entry compaction automatically;
+  explicit `SNUG.COMPACT` already reaches the compacted state.
+
 ## 1M Redis scalar benchmark / GET fast-path tuning
 
 - Added a black-box RESP2/TCP benchmark path for true pipelined GET; the previous

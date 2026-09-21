@@ -35,10 +35,12 @@ func main() {
 	ops := flag.Int("ops", 1000000, "operations for get/mixed/ttl")
 	workers := flag.Int("workers", runtime.NumCPU(), "concurrent workers")
 	valueBytes := flag.Int("value-bytes", 64, "value bytes")
-	valueShape := flag.String("value-shape", "repetitive", "value shape: random, repetitive, or json")
+	valueShape := flag.String("value-shape", "repetitive", "value shape: random, repetitive, json, session-json, api-json, cache-json, counter, uuid, text, or compressed")
 	pipeline := flag.Int("pipeline", 256, "pipeline depth for load/get")
 	seed := flag.Int64("seed", 1, "deterministic seed")
-	settleMS := flag.Int("settle-ms", 0, "milliseconds to wait after workload before post-workload memory snapshot")
+	settleMS := flag.Int("settle-ms", 0, "milliseconds to wait after workload before final memory snapshot")
+	convergeMS := flag.Int("converge-ms", 0, "maximum milliseconds to wait for memory convergence after settle; 0 disables, -1 waits until complete")
+	convergePollMS := flag.Int("converge-poll-ms", 1000, "memory convergence polling interval in milliseconds")
 	reset := flag.Bool("reset", false, "FLUSHDB before workload")
 	cleanup := flag.Bool("cleanup", false, "FLUSHDB after workload")
 	flag.Parse()
@@ -52,15 +54,24 @@ func main() {
 		fatalf("workload must be load, get, get-seq, mixed, or ttl")
 	}
 	switch *valueShape {
-	case "random", "repetitive", "json":
+	case "random", "repetitive", "json", "session-json", "api-json", "cache-json", "counter", "uuid", "text", "compressed":
 	default:
-		fatalf("value-shape must be random, repetitive, or json")
+		fatalf("unsupported value-shape %q", *valueShape)
 	}
-	if *valueShape == "json" && *valueBytes < 32 {
-		fatalf("json value-shape requires value-bytes >= 32")
+	if (*valueShape == "json" || *valueShape == "session-json" || *valueShape == "api-json" || *valueShape == "cache-json") && *valueBytes < 64 {
+		fatalf("%s value-shape requires value-bytes >= 64", *valueShape)
 	}
-	if *settleMS < 0 {
-		fatalf("settle-ms must be non-negative")
+	if *valueShape == "counter" && *valueBytes != 10 {
+		fatalf("counter value-shape requires value-bytes=10")
+	}
+	if *valueShape == "uuid" && *valueBytes != 36 {
+		fatalf("uuid value-shape requires value-bytes=36")
+	}
+	if *valueShape == "compressed" && *valueBytes < 16 {
+		fatalf("compressed value-shape requires value-bytes >= 16")
+	}
+	if *settleMS < 0 || *convergeMS < -1 || *convergePollMS < 100 {
+		fatalf("settle-ms must be non-negative, converge-ms >= -1, and converge-poll-ms >= 100")
 	}
 
 	control, err := dial(*addr)
@@ -78,6 +89,12 @@ func main() {
 		control.Close()
 		fatalf("INFO memory before: %v", err)
 	}
+	var optimizerRewrittenBefore uint64
+	var optimizerQueuedBefore uint64
+	if snug, statsErr := control.snugStats(); statsErr == nil {
+		optimizerRewrittenBefore = snug["optimizer_rewritten"]
+		optimizerQueuedBefore = snug["optimizer_queued"]
+	}
 	control.Close()
 
 	var elapsed time.Duration
@@ -94,16 +111,49 @@ func main() {
 		elapsed, samples, errs = runConcurrent(*addr, *workload, *keys, *ops, *workers, *valueBytes, *valueShape, *seed)
 	}
 
+	control, err = dial(*addr)
+	if err != nil { fatalf("reconnect after workload: %v", err) }
+
+	postWorkload, err := control.usedMemory()
+	if err != nil {
+		control.Close()
+		fatalf("INFO memory post-workload: %v", err)
+	}
+	control.Close()
+
 	if *settleMS > 0 {
 		time.Sleep(time.Duration(*settleMS) * time.Millisecond)
 	}
 
-	control, err = dial(*addr)
-	if err != nil { fatalf("reconnect after workload: %v", err) }
-	defer control.Close()
+	after := postWorkload
+	converged := false
+	convergenceMS := int64(0)
+	convergenceSamples := 0
+	if *convergeMS != 0 {
+		maxWait := time.Duration(*convergeMS) * time.Millisecond
+		after, converged, convergenceMS, convergenceSamples, err = waitForMemoryConvergence(
+			*addr,
+			maxWait,
+			time.Duration(*convergePollMS)*time.Millisecond,
+			*keys,
+			*valueBytes,
+			optimizerRewrittenBefore,
+			optimizerQueuedBefore,
+		)
+		if err != nil {
+			fatalf("memory convergence: %v", err)
+		}
+	} else {
+		control, err = dial(*addr)
+		if err != nil { fatalf("reconnect after settle: %v", err) }
+		after, err = control.usedMemory()
+		control.Close()
+		if err != nil { fatalf("INFO memory after: %v", err) }
+	}
 
-	after, err := control.usedMemory()
-	if err != nil { fatalf("INFO memory after: %v", err) }
+	control, err = dial(*addr)
+	if err != nil { fatalf("reconnect for DBSIZE: %v", err) }
+	defer control.Close()
 	dbsize, err := control.dbsize()
 	if err != nil { fatalf("DBSIZE: %v", err) }
 
@@ -111,10 +161,16 @@ func main() {
 	measuredOps := *ops
 	if *workload == "load" { measuredOps = *keys }
 
+	postDelta := uint64(0)
+	if postWorkload >= before { postDelta = postWorkload - before }
 	delta := uint64(0)
 	if after >= before { delta = after - before }
+	postBytesPerKey := float64(0)
 	bytesPerKey := float64(0)
-	if *workload == "load" { bytesPerKey = float64(delta)/float64(*keys) }
+	if *workload == "load" {
+		postBytesPerKey = float64(postDelta)/float64(*keys)
+		bytesPerKey = float64(delta)/float64(*keys)
+	}
 
 	out := map[string]any{
 		"server": *server,
@@ -128,6 +184,11 @@ func main() {
 		"pipeline": *pipeline,
 		"seed": *seed,
 		"settle_ms": *settleMS,
+		"converge_ms": *convergeMS,
+		"convergence_poll_ms": *convergePollMS,
+		"converged": converged,
+		"convergence_elapsed_ms": convergenceMS,
+		"convergence_samples": convergenceSamples,
 		"duration_ns": elapsed.Nanoseconds(),
 		"ops_per_second": float64(measuredOps)/elapsed.Seconds(),
 		"p50_ns": pct(samples,50),
@@ -135,6 +196,9 @@ func main() {
 		"p99_ns": pct(samples,99),
 		"max_ns": pct(samples,100),
 		"used_memory_before": before,
+		"used_memory_post_workload": postWorkload,
+		"used_memory_post_workload_delta": postDelta,
+		"bytes_per_key_post_workload": postBytesPerKey,
 		"used_memory_after": after,
 		"used_memory_delta": delta,
 		"bytes_per_key_delta": bytesPerKey,
@@ -343,19 +407,80 @@ func benchmarkValue(shape string, size, keyIndex int, seed int64) []byte {
 		return v
 
 	case "json":
-		prefix := []byte(fmt.Sprintf("{\"id\":%d,\"name\":\"user-%d\",\"message\":\"", keyIndex, keyIndex))
-		suffix := []byte("\"}")
-		if len(prefix)+len(suffix) > size {
-			v := append([]byte(nil), prefix...)
-			v = append(v, suffix...)
-			return v[:size]
-		}
+		return paddedJSON(size,
+			fmt.Sprintf("{\"id\":%d,\"name\":\"user-%d\",\"message\":\"", keyIndex, keyIndex),
+			"\"}",
+			keyIndex,
+		)
+
+	case "session-json":
+		return paddedJSON(size,
+			fmt.Sprintf("{\"user_id\":%d,\"role\":\"user\",\"authenticated\":true,\"expires_in\":3600,\"csrf\":\"%08x\",\"state\":\"", keyIndex, uint32(uint64(seed)^uint64(keyIndex)*2654435761)),
+			"\"}",
+			keyIndex+17,
+		)
+
+	case "api-json":
+		return paddedJSON(size,
+			fmt.Sprintf("{\"id\":%d,\"status\":\"ok\",\"page\":%d,\"cached\":true,\"items\":[{\"sku\":\"SKU-%06d\",\"qty\":1}],\"payload\":\"", keyIndex, keyIndex%100, keyIndex%1000000),
+			"\"}",
+			keyIndex+31,
+		)
+
+	case "cache-json":
+		// Typical application cache entry: request identity + cached response
+		// metadata + nested response data. Field names repeat across entries while
+		// IDs, paths, etags and payload content vary per key.
+		return paddedJSON(size,
+			fmt.Sprintf("{\"cache_key\":\"GET:/api/v1/users/%d\",\"request\":{\"method\":\"GET\",\"path\":\"/api/v1/users/%d\",\"query\":{\"include\":\"profile,settings\"},\"tenant_id\":%d,\"locale\":\"en\"},\"response\":{\"status\":200,\"content_type\":\"application/json\",\"etag\":\"%08x\",\"data\":{\"user\":{\"id\":%d,\"plan\":\"pro\",\"active\":true},\"permissions\":[\"read\",\"write\"],\"payload\":\"", keyIndex, keyIndex, keyIndex%10000, uint32(uint64(seed)^uint64(keyIndex)*2654435761), keyIndex),
+			"\"}},\"cached_at\":\"2026-09-21T08:00:00Z\",\"ttl\":300}",
+			keyIndex+53,
+		)
+
+	case "counter":
+		// Keep a canonical ten-byte integer so SnugKV's integer codec and Redis's
+		// normal string representation see a realistic counter workload.
+		return []byte(strconv.FormatInt(1_000_000_000+int64(keyIndex%1_000_000_000), 10))
+
+	case "uuid":
+		x := uint64(seed) ^ uint64(keyIndex+1)*0x9e3779b97f4a7c15
+		y := x ^ 0xd6e8feb86659fd93
+		return []byte(fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+			uint32(x>>32),
+			uint16(x>>16),
+			uint16(x),
+			uint16(y>>48),
+			y&0x0000ffffffffffff,
+		))
+
+	case "text":
+		prefix := []byte(fmt.Sprintf("user %d cached response: ", keyIndex))
 		v := make([]byte, 0, size)
 		v = append(v, prefix...)
-		for len(v)+len(suffix) < size {
-			v = append(v, byte('a'+(keyIndex+len(v))%23))
+		words := []byte("profile settings dashboard notifications preferences ")
+		for len(v) < size {
+			remain := size - len(v)
+			if remain >= len(words) {
+				v = append(v, words...)
+			} else {
+				v = append(v, words[:remain]...)
+			}
 		}
-		v = append(v, suffix...)
+		return v
+
+	case "compressed":
+		// Simulate an already-compressed/binary payload. The gzip signature lets
+		// SnugKV's compressed-data detector avoid futile recompression while the
+		// remaining bytes are deterministic high entropy.
+		v := make([]byte, size)
+		v[0], v[1] = 0x1f, 0x8b
+		x := uint64(seed) ^ uint64(keyIndex+1)*0x9e3779b97f4a7c15
+		for i := 2; i < len(v); i++ {
+			x ^= x << 13
+			x ^= x >> 7
+			x ^= x << 17
+			v[i] = byte(x)
+		}
 		return v
 
 	default:
@@ -367,6 +492,21 @@ func benchmarkValue(shape string, size, keyIndex int, seed int64) []byte {
 		return v
 	}
 }
+func paddedJSON(size int, prefix, suffix string, salt int) []byte {
+	p := []byte(prefix)
+	s := []byte(suffix)
+	if len(p)+len(s) > size {
+		panic("benchmark JSON template exceeds requested size")
+	}
+	v := make([]byte, 0, size)
+	v = append(v, p...)
+	for len(v)+len(s) < size {
+		v = append(v, byte('a'+(salt+len(v))%23))
+	}
+	v = append(v, s...)
+	return v
+}
+
 func key(i int) []byte { return []byte(fmt.Sprintf("bench:%09d",i)) }
 func b(s string) []byte { return []byte(s) }
 
@@ -464,6 +604,213 @@ func(c *client)readBulk()([]byte,error){
 	if _,err:=io.ReadFull(c.r,payload);err!=nil{return nil,err}
 	if !bytes.Equal(payload[n:],[]byte("\r\n")){return nil,errors.New("invalid bulk terminator")}
 	return payload[:n],nil
+}
+
+type convergenceProgress struct {
+	ElapsedMS             int64   `json:"elapsed_ms"`
+	UsedMemory            uint64  `json:"used_memory"`
+	OptimizerRewritten    uint64  `json:"optimizer_rewritten,omitempty"`
+	OptimizerRewrittenRun uint64  `json:"optimizer_rewritten_run,omitempty"`
+	OptimizerQueue        int     `json:"optimizer_queue_depth,omitempty"`
+	ArenaBytes            uint64  `json:"arena_bytes,omitempty"`
+	ArenaPayloadBytes     uint64  `json:"arena_payload_bytes,omitempty"`
+	ArenaLiveBlockBytes   uint64  `json:"arena_live_block_bytes,omitempty"`
+	EstimatedFinalMemory  uint64  `json:"estimated_final_memory,omitempty"`
+	EstimatedFinalBytesKey float64 `json:"estimated_final_bytes_per_key,omitempty"`
+}
+
+func emitConvergenceProgress(p convergenceProgress) {
+	data, err := json.Marshal(p)
+	if err != nil {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "BENCH_PROGRESS %s\n", data)
+}
+
+func parseSnugStats(payload []byte) map[string]uint64 {
+	out := make(map[string]uint64)
+	for _, line := range strings.Split(string(payload), "\n") {
+		name, value, ok := strings.Cut(strings.TrimSpace(line), ":")
+		if !ok {
+			continue
+		}
+		n, err := strconv.ParseUint(value, 10, 64)
+		if err == nil {
+			out[name] = n
+		}
+	}
+	return out
+}
+
+func (c *client) snugStats() (map[string]uint64, error) {
+	if err := c.write(b("SNUG.STATS")); err != nil {
+		return nil, err
+	}
+	if err := c.w.Flush(); err != nil {
+		return nil, err
+	}
+	payload, err := c.readBulk()
+	if err != nil {
+		return nil, err
+	}
+	return parseSnugStats(payload), nil
+}
+
+func waitForMemoryConvergence(addr string, maxWait, poll time.Duration, keys, valueBytes int, startRewritten, startQueued uint64) (uint64, bool, int64, int, error) {
+	start := time.Now()
+	var deadline time.Time
+	if maxWait > 0 {
+		deadline = start.Add(maxWait)
+	}
+
+	// Compaction maintenance runs on a ten-second cadence. Require memory to
+	// remain effectively unchanged for at least 12 seconds so we do not report
+	// a transient optimizer plateau just before a compaction pass.
+	stableFor := 12 * time.Second
+	var (
+		anchor          uint64
+		haveAnchor      bool
+		lastChange      = start
+		samples         int
+		startUsed         uint64
+		startLiveBlocks   uint64
+		lastRewritten            uint64
+		lastRewrittenInitialized bool
+		lastRewriteChange        = start
+	)
+
+	for {
+		c, err := dial(addr)
+		if err != nil {
+			return 0, false, time.Since(start).Milliseconds(), samples, err
+		}
+		used, err := c.usedMemory()
+		var snug map[string]uint64
+		if err == nil {
+			// Convergence is used by SnugKV optimized runs. Keep SNUG.STATS
+			// optional so rediswirebench remains usable against ordinary Redis.
+			snug, _ = c.snugStats()
+		}
+		c.Close()
+		if err != nil {
+			return 0, false, time.Since(start).Milliseconds(), samples, err
+		}
+		samples++
+
+		now := time.Now()
+		progress := convergenceProgress{
+			ElapsedMS:  now.Sub(start).Milliseconds(),
+			UsedMemory: used,
+		}
+		if snug != nil {
+			rewritten := snug["optimizer_rewritten"]
+			liveBlocks := snug["arena_live_block_bytes"]
+			if !lastRewrittenInitialized {
+				lastRewritten = rewritten
+				lastRewrittenInitialized = true
+				lastRewriteChange = now
+			} else if rewritten != lastRewritten {
+				lastRewritten = rewritten
+				lastRewriteChange = now
+			}
+			progress.OptimizerRewritten = rewritten
+			progress.OptimizerQueue = int(snug["optimizer_queue_depth"])
+			progress.ArenaBytes = snug["arena_bytes"]
+			progress.ArenaPayloadBytes = snug["arena_payload_bytes"]
+			progress.ArenaLiveBlockBytes = liveBlocks
+
+			if startUsed == 0 {
+				startUsed = used
+				startLiveBlocks = liveBlocks
+			}
+
+			rewrittenSinceStart := uint64(0)
+			if rewritten >= startRewritten {
+				rewrittenSinceStart = rewritten - startRewritten
+			}
+			progress.OptimizerRewrittenRun = rewrittenSinceStart
+
+			// Scalar codecs such as integer/UUID run synchronously during SET.
+			// If the workload did not enqueue any optimizer work and the queue is
+			// empty, the post-workload representation is already final. Do not
+			// wait for the background convergence/compaction window.
+			if snug["optimizer_queued"] == startQueued &&
+				rewritten == startRewritten &&
+				snug["optimizer_queue_depth"] == 0 {
+				emitConvergenceProgress(progress)
+				return used, true, now.Sub(start).Milliseconds(), samples, nil
+			}
+
+			// After the first meaningful sample, estimate the final steady-state
+			// footprint from observed live-block savings per rewrite. Exclude
+			// currently-dead arena reservation from the projection because the
+			// compactor will reclaim it later.
+			if keys > 0 && rewrittenSinceStart >= 1000 && startLiveBlocks > liveBlocks {
+				savedLive := startLiveBlocks - liveBlocks
+				savedPerRewrite := float64(savedLive) / float64(rewrittenSinceStart)
+				remaining := float64(keys) - float64(rewrittenSinceStart)
+				if remaining < 0 {
+					remaining = 0
+				}
+				projectedLive := float64(liveBlocks) - savedPerRewrite*remaining
+				if projectedLive < 0 {
+					projectedLive = 0
+				}
+				fixedBytes := uint64(0)
+				if used > snug["arena_bytes"] {
+					fixedBytes = used - snug["arena_bytes"]
+				}
+				estimated := fixedBytes + uint64(projectedLive)
+				progress.EstimatedFinalMemory = estimated
+				progress.EstimatedFinalBytesKey = float64(estimated) / float64(keys)
+			}
+		}
+		emitConvergenceProgress(progress)
+		if !haveAnchor {
+			anchor = used
+			haveAnchor = true
+			lastChange = now
+		} else {
+			// Treat cumulative movement of at least 0.1% or 256 KiB as
+			// meaningful. Comparing with a stable anchor means a sequence of
+			// individually small reductions still resets the convergence clock
+			// once their combined effect becomes material.
+			threshold := anchor / 1000
+			if threshold < 256<<10 {
+				threshold = 256 << 10
+			}
+			var movement uint64
+			if used >= anchor {
+				movement = used - anchor
+			} else {
+				movement = anchor - used
+			}
+			if movement >= threshold {
+				anchor = used
+				lastChange = now
+			}
+		}
+
+		optimizerComplete := false
+		if snug != nil {
+			// Recovery sampling may keep generating duplicate/skipped attempts
+			// indefinitely. Those are not useful work. Consider optimization
+			// complete once successful rewrites have stopped, the work queue is
+			// drained, and memory itself has remained stable through a full
+			// compaction interval.
+			optimizerComplete =
+				snug["optimizer_queue_depth"] == 0 &&
+				now.Sub(lastRewriteChange) >= stableFor
+		}
+
+		if optimizerComplete && now.Sub(lastChange) >= stableFor {
+			return used, true, now.Sub(start).Milliseconds(), samples, nil
+		}
+		if maxWait > 0 && !now.Before(deadline) {
+			return used, false, now.Sub(start).Milliseconds(), samples, nil
+		}
+		time.Sleep(poll)
+	}
 }
 
 func measurementNote(workload string, pipeline int) string {
