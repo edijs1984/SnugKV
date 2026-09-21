@@ -6,6 +6,7 @@ import (
 	"snugkv/internal/index"
 	"snugkv/internal/persistence"
 	"sort"
+	"unsafe"
 )
 
 // Export returns logical records under a consistent all-shard snapshot.
