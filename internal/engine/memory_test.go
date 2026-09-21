@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 	"unsafe"
@@ -173,6 +174,69 @@ func TestCompactionPreservesLiveBytesAndTTL(t *testing.T) {
 	auditMemory(t, s)
 	s.Delete("19")
 	s.Compact(16 << 20)
+	auditMemory(t, s)
+}
+
+
+func TestCompactionShrinksDenseEntryCapacity(t *testing.T) {
+	s, err := NewWithOptions(Options{Shards: 1, Encoding: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 1000; i++ {
+		key := fmt.Sprintf("bench:%09d", i)
+		value := []byte(strconv.Itoa(1000000000 + i))
+		if err := s.Set(key, value, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	sh := &s.shards[0]
+	sh.mu.RLock()
+	beforeLen := len(sh.entries)
+	beforeCap := cap(sh.entries)
+	hadMeta := sh.metas != nil
+	sh.mu.RUnlock()
+
+	if beforeCap <= beforeLen {
+		t.Fatalf("expected spare capacity: len=%d cap=%d", beforeLen, beforeCap)
+	}
+	if hadMeta {
+		t.Fatal("counter workload allocated metadata sidecar")
+	}
+
+	before := s.Memory()
+	if s.Compact(16<<20) != 1 {
+		t.Fatal("compaction skipped")
+	}
+	after := s.Memory()
+
+	sh.mu.RLock()
+	afterLen := len(sh.entries)
+	afterCap := cap(sh.entries)
+	hasMeta := sh.metas != nil
+	sh.mu.RUnlock()
+
+	if afterLen != beforeLen || afterCap != afterLen {
+		t.Fatalf("entry compaction len/cap before=%d/%d after=%d/%d",
+			beforeLen, beforeCap, afterLen, afterCap)
+	}
+	if hasMeta {
+		t.Fatal("compaction allocated metadata sidecar")
+	}
+
+	wantSaved := uint64(beforeCap-afterCap) * entryStructBytes
+	if got := before.EntryBytes - after.EntryBytes; got != wantSaved {
+		t.Fatalf("entry bytes saved=%d want=%d", got, wantSaved)
+	}
+
+	for _, i := range []int{0, 499, 999} {
+		key := fmt.Sprintf("bench:%09d", i)
+		value, ok := s.Get(key)
+		if !ok || string(value) != strconv.Itoa(1000000000+i) {
+			t.Fatalf("compaction changed %s", key)
+		}
+	}
 	auditMemory(t, s)
 }
 
