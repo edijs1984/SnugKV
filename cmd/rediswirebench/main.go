@@ -595,6 +595,52 @@ func(c *client)readBulk()([]byte,error){
 	return payload[:n],nil
 }
 
+type convergenceProgress struct {
+	ElapsedMS          int64  `json:"elapsed_ms"`
+	UsedMemory         uint64 `json:"used_memory"`
+	OptimizerRewritten uint64 `json:"optimizer_rewritten,omitempty"`
+	OptimizerQueue     int    `json:"optimizer_queue_depth,omitempty"`
+	ArenaBytes         uint64 `json:"arena_bytes,omitempty"`
+	ArenaPayloadBytes  uint64 `json:"arena_payload_bytes,omitempty"`
+}
+
+func emitConvergenceProgress(p convergenceProgress) {
+	data, err := json.Marshal(p)
+	if err != nil {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "BENCH_PROGRESS %s\n", data)
+}
+
+func parseSnugStats(payload []byte) map[string]uint64 {
+	out := make(map[string]uint64)
+	for _, line := range strings.Split(string(payload), "\n") {
+		name, value, ok := strings.Cut(strings.TrimSpace(line), ":")
+		if !ok {
+			continue
+		}
+		n, err := strconv.ParseUint(value, 10, 64)
+		if err == nil {
+			out[name] = n
+		}
+	}
+	return out
+}
+
+func (c *client) snugStats() (map[string]uint64, error) {
+	if err := c.write(b("SNUG.STATS")); err != nil {
+		return nil, err
+	}
+	if err := c.w.Flush(); err != nil {
+		return nil, err
+	}
+	payload, err := c.readBulk()
+	if err != nil {
+		return nil, err
+	}
+	return parseSnugStats(payload), nil
+}
+
 func waitForMemoryConvergence(addr string, maxWait, poll time.Duration) (uint64, bool, int64, int, error) {
 	start := time.Now()
 	deadline := start.Add(maxWait)
@@ -616,6 +662,12 @@ func waitForMemoryConvergence(addr string, maxWait, poll time.Duration) (uint64,
 			return 0, false, time.Since(start).Milliseconds(), samples, err
 		}
 		used, err := c.usedMemory()
+		var snug map[string]uint64
+		if err == nil {
+			// Convergence is used by SnugKV optimized runs. Keep SNUG.STATS
+			// optional so rediswirebench remains usable against ordinary Redis.
+			snug, _ = c.snugStats()
+		}
 		c.Close()
 		if err != nil {
 			return 0, false, time.Since(start).Milliseconds(), samples, err
@@ -623,6 +675,17 @@ func waitForMemoryConvergence(addr string, maxWait, poll time.Duration) (uint64,
 		samples++
 
 		now := time.Now()
+		progress := convergenceProgress{
+			ElapsedMS:  now.Sub(start).Milliseconds(),
+			UsedMemory: used,
+		}
+		if snug != nil {
+			progress.OptimizerRewritten = snug["optimizer_rewritten"]
+			progress.OptimizerQueue = int(snug["optimizer_queue_depth"])
+			progress.ArenaBytes = snug["arena_bytes"]
+			progress.ArenaPayloadBytes = snug["arena_payload_bytes"]
+		}
+		emitConvergenceProgress(progress)
 		if !haveAnchor {
 			anchor = used
 			haveAnchor = true
