@@ -27,6 +27,7 @@ SETTLE_MS="${SETTLE_MS:-10000}"
 SERVERS="${SERVERS:-redis snug-raw snug-opt}"
 WORKLOADS="${WORKLOADS:-load get}"
 ROOT_OUT="${ROOT_OUT:-benchmark-results/realistic-$(date +%Y%m%d-%H%M%S)}"
+BUILD_IMAGE="${BUILD_IMAGE:-1}"
 
 REDIS_ADDR="${REDIS_ADDR:-127.0.0.1:6390}"
 SNUG_RAW_ADDR="${SNUG_RAW_ADDR:-127.0.0.1:6382}"
@@ -49,6 +50,16 @@ profiles=(
 
 mkdir -p "$ROOT_OUT"
 go build -o /tmp/rediswirebench ./cmd/rediswirebench
+
+# Build SnugKV exactly once before any measurements so benchmark containers
+# always use the current checkout. Individual server starts then reuse this
+# fresh image to avoid rebuilding between isolated runs.
+if [[ "$BUILD_IMAGE" == "1" ]]; then
+  echo "Building fresh SnugKV benchmark image from current checkout..."
+  docker build -t "${SNUG_IMAGE:-snugkv-bench:local}" .
+else
+  echo "WARNING: BUILD_IMAGE=0; reusing existing SnugKV benchmark image"
+fi
 
 server_addr() {
   case "$1" in
@@ -162,6 +173,7 @@ echo "  mixed_ops: $MIXED_OPS"
 echo "  ttl_ops:   $TTL_OPS"
 echo "  settle_ms: $SETTLE_MS"
 echo "  output:    $ROOT_OUT"
+echo "  build_image: $BUILD_IMAGE"
 
 # Strict isolation model:
 #   for each profile/run:
