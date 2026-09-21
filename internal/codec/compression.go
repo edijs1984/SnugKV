@@ -167,7 +167,7 @@ func (zstdCodec) DecodeInto(src []byte, n int, dst []byte) ([]byte, error) {
 	}
 	return out, nil
 }
-func alreadyCompressed(src []byte) bool {
+func AlreadyCompressed(src []byte) bool {
 	for _, sig := range [][]byte{{0x1f, 0x8b}, {0x89, 'P', 'N', 'G'}, {0xff, 0xd8, 0xff}, {0x28, 0xb5, 0x2f, 0xfd}, {0x04, 0x22, 0x4d, 0x18}, {'P', 'K', 3, 4}} {
 		if bytes.HasPrefix(src, sig) {
 			return true
@@ -187,7 +187,7 @@ type CompressionCandidate struct {
 // diagnostics. It does not decide policy; the engine reports whether a codec
 // is eligible for the key's current heat class.
 func (r *Registry) CompressionCandidates(src []byte) []CompressionCandidate {
-	if len(src) < 256 || alreadyCompressed(src) {
+	if len(src) < 256 || AlreadyCompressed(src) {
 		return nil
 	}
 
@@ -234,7 +234,7 @@ func (r *Registry) EncodeGeneral(src []byte, cold bool) Record {
 // the returned record. Successful compressed records own their Data.
 func (r *Registry) EncodeGeneralBorrowed(src []byte, cold bool) Record {
 	best := Record{ID: Raw, RawLength: len(src), Data: src}
-	if len(src) < 256 || alreadyCompressed(src) {
+	if len(src) < 256 || AlreadyCompressed(src) {
 		return best
 	}
 	candidates := []ID{LZ4}
