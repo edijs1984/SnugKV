@@ -2,7 +2,7 @@ package engine
 
 import "testing"
 
-func TestWritesTrainJSONShapeAdmission(t *testing.T) {
+func TestBackgroundObservationTrainsJSONShapeAdmission(t *testing.T) {
 	store, err := NewWithOptions(Options{
 		Shards:        1,
 		Encoding:      true,
@@ -30,6 +30,7 @@ func TestWritesTrainJSONShapeAdmission(t *testing.T) {
 		if !applied {
 			t.Fatal("write was not applied")
 		}
+		store.ObserveJSONShape(key, value)
 	}
 
 	report, ok := store.CandidateDiagnostics("a")
@@ -47,7 +48,7 @@ func TestWritesTrainJSONShapeAdmission(t *testing.T) {
 	}
 
 	if !foundShape {
-		t.Fatal("real writes did not admit JSON shape")
+		t.Fatal("background observations did not admit JSON shape")
 	}
 
 	// Diagnostics are read-only: repeated calls should not be required
