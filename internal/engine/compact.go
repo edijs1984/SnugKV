@@ -25,14 +25,26 @@ func (s *Store) Compact(scratch uint64) int {
 		for key, e := range sh.all() {
 			items = append(items, pair{key, e})
 		}
+		storedLen := func(e entry) int {
+			if e.ref.IsInline() {
+				var buf [8]byte
+				value, ok := e.ref.InlineInto(buf[:0])
+				if !ok {
+					panic("invalid inline reference")
+				}
+				return len(value)
+			}
+			return len(sh.encoded(e))
+		}
 		sort.Slice(items, func(i, j int) bool {
-			return len(sh.encoded(items[i].value)) >
-				len(sh.encoded(items[j].value))
+			return storedLen(items[i].value) > storedLen(items[j].value)
 		})
 
-		lengths := make([]int, len(items))
+		lengths := make([]int, 0, len(items))
 		for j := range items {
-			lengths[j] = len(sh.encoded(items[j].value))
+			if !items[j].value.ref.IsInline() {
+				lengths = append(lengths, storedLen(items[j].value))
+			}
 		}
 
 		var fresh arena.Arena
@@ -47,9 +59,20 @@ func (s *Store) Compact(scratch uint64) int {
 
 		for j := range items {
 			e := items[j].value
-			value := sh.encoded(e)
-
-			e.ref = fresh.Alloc(value)
+			if e.ref.IsInline() {
+				var buf [8]byte
+				value, ok := e.ref.InlineInto(buf[:0])
+				if !ok {
+					panic("invalid inline reference")
+				}
+				ref, ok := fresh.AllocInline(value)
+				if !ok {
+					panic("inline compaction invariant")
+				}
+				e.ref = ref
+			} else {
+				e.ref = fresh.Alloc(sh.encoded(e))
+			}
 			items[j].value = e
 		}
 
