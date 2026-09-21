@@ -3,6 +3,7 @@ package engine
 import (
 	"errors"
 	"snugkv/internal/jsonvalue"
+	"sort"
 )
 
 func (s *Store) JSONSet(
@@ -256,4 +257,110 @@ func (s *Store) JSONDel(key, path string) (int64, error) {
 	}
 
 	return 1, nil
+}
+
+
+type JSONLengthResult struct {
+	Value int64
+	Valid bool
+}
+
+type JSONKeysResult struct {
+	Values []string
+	Valid  bool
+}
+
+func (s *Store) jsonValues(key, path string) ([]any, bool, error) {
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	e, exists := sh.get(key)
+	if !exists {
+		return nil, false, nil
+	}
+	if sh.expired(key, e, s.now()) {
+		s.remove(sh, key)
+		return nil, false, nil
+	}
+	if e.valueType != TypeJSON {
+		return nil, false, errors.New("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+
+	root, err := jsonvalue.Parse(s.decode(sh, e))
+	if err != nil {
+		return nil, false, errors.New("WRONGTYPE value is not valid JSON")
+	}
+	values, err := jsonvalue.GetAll(root, path)
+	if err != nil {
+		return nil, false, err
+	}
+	return values, true, nil
+}
+
+func (s *Store) JSONStrLen(key, path string) ([]JSONLengthResult, bool, error) {
+	values, exists, err := s.jsonValues(key, path)
+	if err != nil || !exists {
+		return nil, exists, err
+	}
+
+	out := make([]JSONLengthResult, len(values))
+	for i, value := range values {
+		if text, ok := value.(string); ok {
+			out[i] = JSONLengthResult{Value: int64(len([]rune(text))), Valid: true}
+		}
+	}
+	return out, true, nil
+}
+
+func (s *Store) JSONObjLen(key, path string) ([]JSONLengthResult, bool, error) {
+	values, exists, err := s.jsonValues(key, path)
+	if err != nil || !exists {
+		return nil, exists, err
+	}
+
+	out := make([]JSONLengthResult, len(values))
+	for i, value := range values {
+		if object, ok := value.(map[string]any); ok {
+			out[i] = JSONLengthResult{Value: int64(len(object)), Valid: true}
+		}
+	}
+	return out, true, nil
+}
+
+func (s *Store) JSONArrLen(key, path string) ([]JSONLengthResult, bool, error) {
+	values, exists, err := s.jsonValues(key, path)
+	if err != nil || !exists {
+		return nil, exists, err
+	}
+
+	out := make([]JSONLengthResult, len(values))
+	for i, value := range values {
+		if array, ok := value.([]any); ok {
+			out[i] = JSONLengthResult{Value: int64(len(array)), Valid: true}
+		}
+	}
+	return out, true, nil
+}
+
+func (s *Store) JSONObjKeys(key, path string) ([]JSONKeysResult, bool, error) {
+	values, exists, err := s.jsonValues(key, path)
+	if err != nil || !exists {
+		return nil, exists, err
+	}
+
+	out := make([]JSONKeysResult, len(values))
+	for i, value := range values {
+		object, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		keys := make([]string, 0, len(object))
+		for key := range object {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		out[i] = JSONKeysResult{Values: keys, Valid: true}
+	}
+	return out, true, nil
 }
