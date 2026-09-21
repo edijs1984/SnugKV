@@ -36,6 +36,7 @@ func TestJSONShapesAreGlobalAndUniqueAcrossShards(t *testing.T) {
 		if err := s.Set(key, value, 0); err != nil {
 			t.Fatal(err)
 		}
+		s.ObserveJSONShape(key, value)
 	}
 
 	if len(seenShards) < 2 {
@@ -88,6 +89,7 @@ func TestGlobalJSONShapeCatalogConcurrentSetAndFlush(t *testing.T) {
 					errCh <- fmt.Errorf("set %q: %w", key, err)
 					return
 				}
+				s.ObserveJSONShape(key, value)
 			}
 		}()
 	}
@@ -131,9 +133,11 @@ func TestGlobalJSONShapeCatalogConcurrentSetAndFlush(t *testing.T) {
 	// The global catalog must remain usable after being dropped and recreated.
 	value := values[0]
 	for i := 0; i < 200; i++ {
-		if err := s.Set(fmt.Sprintf("shape-rebuild-%d", i), value, 0); err != nil {
+		key := fmt.Sprintf("shape-rebuild-%d", i)
+		if err := s.Set(key, value, 0); err != nil {
 			t.Fatal(err)
 		}
+		s.ObserveJSONShape(key, value)
 	}
 
 	if _, total := s.JSONShapes(100); total != 1 {
