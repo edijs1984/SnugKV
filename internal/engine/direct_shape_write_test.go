@@ -73,5 +73,5 @@ func TestKnownJSONShapeDefersEncodingToBackground(t *testing.T) {
 			len(record.Data),
 			len(value),
 		)
-	)
+	}
 }
