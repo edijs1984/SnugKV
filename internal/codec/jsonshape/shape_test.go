@@ -49,3 +49,27 @@ func FuzzExactShape(f *testing.F) {
 		}
 	})
 }
+
+
+func TestDecodeIntoReusesDestination(t *testing.T) {
+	store := New(1<<20, 1)
+	value := []byte(`{"id":123456,"active":true,"name":"alice","missing":null}`)
+
+	schema, slots, ok := store.Candidate(value)
+	if !ok {
+		t.Fatal("shape not admitted")
+	}
+	data := store.EncodeSlots(slots)
+	dst := make([]byte, 0, len(value))
+
+	got, err := DecodeInto(schema, data, len(value), dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, value) {
+		t.Fatalf("round trip mismatch: got %q want %q", got, value)
+	}
+	if len(got) > 0 && &got[0] != &dst[:cap(dst)][0] {
+		t.Fatal("DecodeInto did not reuse destination buffer")
+	}
+}
