@@ -271,23 +271,39 @@ profiles use canonical encodings that exercise SnugKV's scalar codecs, and the
 compressed profile intentionally carries an already-compressed signature so the
 optimizer can exercise its recompression-avoidance path.
 
-Run the full matrix against the configured Redis, SnugKV raw, and SnugKV
-optimized servers:
+The default realistic comparison is intentionally lightweight and isolated: it
+runs one database server at a time, compares Redis with optimized SnugKV, performs
+one run per profile, and measures LOAD + pipelined GET. This avoids keeping three
+large database processes resident together and avoids making expensive sequential
+mixed/TTL tests part of every routine comparison.
 
 ```sh
 KEYS=1000000 \
-OPS=5000000 \
+GET_OPS=2000000 \
 WORKERS=8 \
 PIPELINE=256 \
-RUNS=3 \
+RUNS=1 \
 bash scripts/bench/compare-realistic-workloads.sh
 ```
 
-Each profile writes its raw JSON measurements plus a `summary.json`; the matrix
-script also writes a combined `matrix-summary.json`. Treat these profiles as
-representative synthetic workloads, not measurements of a specific production
-application. For product claims, pair them with traces or distributions from an
-actual deployment when available.
+For deeper diagnostics, opt in explicitly:
+
+```sh
+SERVERS="redis snug-opt snug-raw" \
+WORKLOADS="load get mixed ttl" \
+RUNS=3 \
+MIXED_OPS=1000000 \
+TTL_OPS=1000000 \
+bash scripts/bench/compare-realistic-workloads.sh
+```
+
+Only one selected server remains resident during its measurements. The default
+post-load optimizer settle is a fixed 10 seconds rather than an open-ended
+stability wait. Each profile writes raw JSON measurements and the suite writes a
+combined `matrix-summary.json`. Treat these profiles as representative synthetic
+workloads, not measurements of a specific production application. For product
+claims, pair them with traces or distributions from an actual deployment when
+available.
 
 ## Benchmark discipline
 
