@@ -5,7 +5,7 @@ set -euo pipefail
 #
 # Defaults are intentionally modest:
 # - one server process/container at a time;
-# - Redis vs optimized SnugKV only;
+# - Redis, raw SnugKV, and optimized SnugKV sequentially;
 # - one run per profile;
 # - LOAD + GET only;
 # - fixed post-load settle instead of waiting up to 120s for "stability".
@@ -24,7 +24,7 @@ WORKERS="${WORKERS:-8}"
 PIPELINE="${PIPELINE:-256}"
 RUNS="${RUNS:-1}"
 SETTLE_MS="${SETTLE_MS:-10000}"
-SERVERS="${SERVERS:-redis snug-opt}"
+SERVERS="${SERVERS:-redis snug-raw snug-opt}"
 WORKLOADS="${WORKLOADS:-load get}"
 ROOT_OUT="${ROOT_OUT:-benchmark-results/realistic-$(date +%Y%m%d-%H%M%S)}"
 
