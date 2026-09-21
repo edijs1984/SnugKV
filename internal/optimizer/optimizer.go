@@ -128,10 +128,13 @@ func (o *Optimizer) release(n int) { o.mu.Lock(); o.scratch -= (16 << 20) + n*64
 func (o *Optimizer) maintenance() {
 	defer o.wg.Done()
 
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
-	const minDeadBytes uint64 = 1 << 20
+	const (
+		minDeadBytesIdle    uint64 = 1 << 20
+		minDeadBytesBacklog uint64 = 8 << 20
+	)
 
 	for {
 		select {
@@ -139,24 +142,28 @@ func (o *Optimizer) maintenance() {
 			return
 
 		case <-ticker.C:
-			// During initial catch-up, prioritize representation rewrites.
-			// Compaction copies arena data and competes for CPU/memory bandwidth.
-			if len(o.queue) != 0 {
-				continue
-			}
-
 			m := o.store.Memory()
-
 			if m.ArenaBytes == 0 || m.ArenaBytes <= m.ArenaLiveBlockBytes {
 				continue
 			}
 
 			dead := m.ArenaBytes - m.ArenaLiveBlockBytes
+			depth := len(o.queue)
 
-			// Compact only when at least 1 MiB is dead and
-			// dead storage is at least 25% of the arena.
-			if dead < minDeadBytes || dead*4 < m.ArenaBytes {
-				continue
+			if depth == 0 {
+				// At idle, reclaim moderately fragmented arenas.
+				if dead < minDeadBytesIdle || dead*4 < m.ArenaBytes {
+					continue
+				}
+			} else {
+				// During optimizer catch-up, compact only when fragmentation is
+				// severe enough to justify competing for memory bandwidth.
+				// Requiring >= 8 MiB dead and >= 40% dead avoids churn while
+				// preventing a long-lived queue from pinning the original raw
+				// arena footprint indefinitely.
+				if dead < minDeadBytesBacklog || dead*5 < m.ArenaBytes*2 {
+					continue
+				}
 			}
 
 			o.store.Compact(uint64(o.config.MaxScratchBytes))
