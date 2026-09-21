@@ -3,9 +3,35 @@ package engine
 import (
 	"snugkv/internal/arena"
 	"sort"
+	"unsafe"
 )
 
-// Compact reclaims unused arena segments and index slots one shard at a time.
+func shardEntryStorageBytes(sh *shard) uint64 {
+	bytes := uint64(cap(sh.entries)) * entryStructBytes
+	if sh.metas != nil {
+		bytes += uint64(unsafe.Sizeof(entryMetaSidecar{})) +
+			uint64(cap(sh.metas.slots))*entryMetaSlotBytes
+	}
+	return bytes
+}
+
+func compactDenseEntryStorage(sh *shard) {
+	if len(sh.freeIDs) != 0 || cap(sh.entries) == len(sh.entries) {
+		return
+	}
+	entries := make([]entryData, len(sh.entries))
+	copy(entries, sh.entries)
+	sh.entries = entries
+
+	if sh.metas != nil {
+		slots := make([]*entryMeta, len(sh.entries))
+		copy(slots, sh.metas.slots)
+		sh.metas.slots = slots
+	}
+}
+
+// Compact reclaims unused arena segments, index slots, and dense entry
+// over-capacity one shard at a time.
 // It skips shards whose conservative transient-copy estimate exceeds scratch.
 func (s *Store) Compact(scratch uint64) int {
 	compacted := 0
@@ -13,7 +39,9 @@ func (s *Store) Compact(scratch uint64) int {
 		sh := &s.shards[i]
 		sh.mu.Lock()
 		oldArena, oldIndex := sh.arena.TotalMemoryBytes(), sh.data.CapacityBytes()
-		if oldArena+oldIndex == 0 || (oldArena+oldIndex)*3 > scratch {
+		oldEntries := shardEntryStorageBytes(sh)
+		if oldArena+oldIndex+oldEntries == 0 ||
+			(oldArena+oldIndex+oldEntries)*3 > scratch {
 			sh.mu.Unlock()
 			continue
 		}
@@ -82,10 +110,15 @@ func (s *Store) Compact(scratch uint64) int {
 			sh.set(item.key, item.value)
 		}
 		sh.data.Compact()
+		compactDenseEntryStorage(sh)
 		newArena, newIndex := sh.arena.TotalMemoryBytes(), sh.data.CapacityBytes()
-		s.memory.used = s.memory.used - oldArena - oldIndex + newArena + newIndex
+		newEntries := shardEntryStorageBytes(sh)
+		s.memory.used = s.memory.used -
+			oldArena - oldIndex - oldEntries +
+			newArena + newIndex + newEntries
 		s.memory.arenas = s.memory.arenas - oldArena + newArena
 		s.memory.index = s.memory.index - oldIndex + newIndex
+		s.memory.entries = s.memory.entries - oldEntries + newEntries
 		s.memory.mu.Unlock()
 		sh.mu.Unlock()
 		compacted++
