@@ -28,6 +28,7 @@ func auditMemory(t *testing.T, s *Store) {
 		// live key bytes. Deleted/free entry slots remain allocated
 		// until the shard is compacted/reset.
 		entries += uint64(cap(sh.entries)) * entryStructBytes
+		entries += uint64(cap(sh.metas)) * entryMetaSlotBytes
 
 		for k, e := range sh.all() {
 			entries += entryCharge(k, e)
