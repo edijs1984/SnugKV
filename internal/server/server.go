@@ -121,6 +121,10 @@ var commandTable = map[string]commandInfo{
 	"JSON.STRLEN":    {2, 3, 1, 1, 1, false},
 	"JSON.ARRLEN":    {2, 3, 1, 1, 1, false},
 	"JSON.OBJLEN":    {2, 3, 1, 1, 1, false},
+	"JSON.ARRAPPEND": {4, 0, 1, 1, 1, true},
+	"JSON.STRAPPEND": {3, 4, 1, 1, 1, true},
+	"JSON.OBJKEYS":   {2, 3, 1, 1, 1, false},
+	"JSON.TOGGLE":    {3, 3, 1, 1, 1, true},
 	"MEMORY":         {2, 5, 0, 0, 0, false},
 }
 
@@ -251,6 +255,63 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		}
 
 		return formatBulkString([]byte(jsonType)), nil
+
+	case "JSON.ARRAPPEND":
+		length, found, err := s.store.JSONArrAppend(key, string(args[2]), args[3:])
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nullBulk(), nil
+		}
+		return integer(length), nil
+
+	case "JSON.STRAPPEND":
+		path := "$"
+		valueIndex := 2
+		if len(args) == 4 {
+			path = string(args[2])
+			valueIndex = 3
+		}
+
+		length, found, err := s.store.JSONStrAppend(key, path, args[valueIndex])
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nullBulk(), nil
+		}
+		return integer(length), nil
+
+	case "JSON.OBJKEYS":
+		path := "$"
+		if len(args) == 3 {
+			path = string(args[2])
+		}
+
+		keys, found, err := s.store.JSONObjKeys(key, path)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nullBulk(), nil
+		}
+
+		items := make([][]byte, 0, len(keys))
+		for _, name := range keys {
+			items = append(items, formatBulkString([]byte(name)))
+		}
+		return array(items...), nil
+
+	case "JSON.TOGGLE":
+		value, found, err := s.store.JSONToggle(key, string(args[2]))
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nullBulk(), nil
+		}
+		return boolean(value), nil
 	case "JSON.SET":
 		path := string(args[2])
 
