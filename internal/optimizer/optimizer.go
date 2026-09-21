@@ -75,6 +75,7 @@ type Optimizer struct {
 	scratch, bytes                             int
 	window                                     time.Time
 	queued, rewritten, skipped, stale, dropped uint64
+	lastForegroundWrite                      int64
 }
 
 func New(store *engine.Store, c Config) (*Optimizer, error) {
@@ -94,6 +95,35 @@ func New(store *engine.Store, c Config) (*Optimizer, error) {
 	return o, nil
 }
 func (o *Optimizer) Close() { o.cancel(); o.wg.Wait() }
+
+func (o *Optimizer) NoteForegroundWrite() {
+	atomic.StoreInt64(&o.lastForegroundWrite, time.Now().UnixNano())
+}
+
+func (o *Optimizer) waitForForegroundQuiet() bool {
+	const quietWindow = 2 * time.Millisecond
+	const maxDeferral = 50 * time.Millisecond
+	deadline := time.Now().Add(maxDeferral)
+
+	for {
+		last := atomic.LoadInt64(&o.lastForegroundWrite)
+		if last == 0 || time.Since(time.Unix(0, last)) >= quietWindow {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return true
+		}
+
+		timer := time.NewTimer(quietWindow)
+		select {
+		case <-o.ctx.Done():
+			timer.Stop()
+			return false
+		case <-timer.C:
+		}
+	}
+}
+
 func (o *Optimizer) Queue(key string) bool {
 	select {
 	case <-o.ctx.Done():
@@ -233,6 +263,15 @@ func (o *Optimizer) worker() {
 			return
 		case key := <-o.queue:
 			start := time.Now()
+
+			// Foreground writes own the machine. During an active write burst,
+			// defer expensive representation work briefly instead of competing
+			// for the same cores and shard locks. Continuous workloads still
+			// make bounded progress after maxDeferral; burst workloads switch
+			// to full-speed catch-up almost immediately after writes stop.
+			if !o.waitForForegroundQuiet() {
+				return
+			}
 
 			rawBytes, eligible := o.store.OptimizationEligible(
 				key,
