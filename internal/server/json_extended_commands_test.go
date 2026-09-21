@@ -69,3 +69,69 @@ func TestJSONNumIncrByRejectsInvalidNumber(t *testing.T) {
 		t.Fatalf("invalid increment mutated value: %q", got)
 	}
 }
+
+
+func TestJSONAppendObjectKeysAndToggle(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "JSON.SET", "doc", "$", `{"name":"E","items":[1],"user":{"b":2,"a":1},"flag":true}`)
+
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"JSON.STRAPPEND", "doc", "$.name", `"dijs"`}, ":5\r\n"},
+		{[]string{"JSON.GET", "doc", "$.name"}, "$7\r\n\"Edijs\"\r\n"},
+		{[]string{"JSON.ARRAPPEND", "doc", "$.items", "2", `{"x":1}`}, ":3\r\n"},
+		{[]string{"JSON.GET", "doc", "$.items"}, "$13\r\n[1,2,{\"x\":1}]\r\n"},
+		{[]string{"JSON.OBJKEYS", "doc", "$.user"}, "*2\r\n$1\r\na\r\n$1\r\nb\r\n"},
+		{[]string{"JSON.TOGGLE", "doc", "$.flag"}, ":0\r\n"},
+		{[]string{"JSON.GET", "doc", "$.flag"}, "$5\r\nfalse\r\n"},
+		{[]string{"JSON.TOGGLE", "doc", "$.flag"}, ":1\r\n"},
+		{[]string{"JSON.GET", "doc", "$.flag"}, "$4\r\ntrue\r\n"},
+		{[]string{"JSON.ARRAPPEND", "doc", "$.name", "1"}, "$-1\r\n"},
+		{[]string{"JSON.STRAPPEND", "doc", "$.items", `"x"`}, "$-1\r\n"},
+		{[]string{"JSON.OBJKEYS", "doc", "$.items"}, "$-1\r\n"},
+		{[]string{"JSON.TOGGLE", "doc", "$.name"}, "$-1\r\n"},
+	} {
+		if got := execute(t, s, tc.args...); got != tc.want {
+			t.Fatalf("%q got %q want %q", tc.args, got, tc.want)
+		}
+	}
+}
+
+func TestJSONSecondBatchPreservesTTL(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "JSON.SET", "doc", "$", `{"name":"a","items":[],"flag":false}`)
+	execute(t, s, "PEXPIRE", "doc", "60000")
+
+	execute(t, s, "JSON.STRAPPEND", "doc", "$.name", `"b"`)
+	execute(t, s, "JSON.ARRAPPEND", "doc", "$.items", "1")
+	execute(t, s, "JSON.TOGGLE", "doc", "$.flag")
+
+	if got := execute(t, s, "PTTL", "doc"); strings.HasPrefix(got, ":-") {
+		t.Fatalf("JSON mutation lost TTL: %q", got)
+	}
+}
+
+func TestJSONStrAppendRequiresJSONString(t *testing.T) {
+	s := New(engine.New())
+	execute(t, s, "JSON.SET", "doc", "$", `{"name":"a"}`)
+
+	for _, value := range []string{"1", "true", "null", "{}"} {
+		_, err := s.Execute([][]byte{
+			[]byte("JSON.STRAPPEND"),
+			[]byte("doc"),
+			[]byte("$.name"),
+			[]byte(value),
+		})
+		if err == nil {
+			t.Fatalf("accepted non-string append value %q", value)
+		}
+	}
+
+	if got := execute(t, s, "JSON.GET", "doc", "$.name"); got != "$3\r\n\"a\"\r\n" {
+		t.Fatalf("invalid append mutated value: %q", got)
+	}
+}
