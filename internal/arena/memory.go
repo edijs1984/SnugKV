@@ -15,7 +15,7 @@ func (a *Arena) TotalMemoryBytes() uint64 {
 // FreeGrowth reports the heap growth caused by freeing ref. The first real
 // free in an arena lazily allocates the free-head table; later frees reuse it.
 func (a *Arena) FreeGrowth(ref Ref) uint64 {
-	if ref.generation == 0 || a.free != nil {
+	if ref.IsInline() || ref.generation == 0 || a.free != nil {
 		return 0
 	}
 	return freeTableBytes
