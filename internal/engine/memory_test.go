@@ -28,7 +28,9 @@ func auditMemory(t *testing.T, s *Store) {
 		// live key bytes. Deleted/free entry slots remain allocated
 		// until the shard is compacted/reset.
 		entries += uint64(cap(sh.entries)) * entryStructBytes
-		entries += uint64(cap(sh.metas)) * entryMetaSlotBytes
+		if sh.metas != nil {
+			entries += uint64(cap(*sh.metas)) * entryMetaSlotBytes
+		}
 
 		for k, e := range sh.all() {
 			entries += entryCharge(k, e)
@@ -241,7 +243,10 @@ func TestEncodedCounterUsesInlineStorage(t *testing.T) {
 	sh.mu.RLock()
 	entry, _ = sh.get(key)
 	arenaBytes = sh.arena.TotalMemoryBytes()
-	metaSlots := cap(sh.metas)
+	metaSlots := 0
+	if sh.metas != nil {
+		metaSlots = cap(*sh.metas)
+	}
 	sh.mu.RUnlock()
 	if !entry.ref.IsInline() || arenaBytes != 0 {
 		t.Fatalf("increment lost inline storage: inline=%v arena=%d", entry.ref.IsInline(), arenaBytes)
