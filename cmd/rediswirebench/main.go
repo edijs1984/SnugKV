@@ -123,7 +123,7 @@ func main() {
 	converged := false
 	convergenceMS := int64(0)
 	convergenceSamples := 0
-	if *convergeMS > 0 {
+	if *convergeMS != 0 {
 		maxWait := time.Duration(*convergeMS) * time.Millisecond
 		after, converged, convergenceMS, convergenceSamples, err = waitForMemoryConvergence(
 			*addr,
@@ -602,6 +602,7 @@ type convergenceProgress struct {
 	ElapsedMS             int64   `json:"elapsed_ms"`
 	UsedMemory            uint64  `json:"used_memory"`
 	OptimizerRewritten    uint64  `json:"optimizer_rewritten,omitempty"`
+	OptimizerRewrittenRun uint64  `json:"optimizer_rewritten_run,omitempty"`
 	OptimizerQueue        int     `json:"optimizer_queue_depth,omitempty"`
 	ArenaBytes            uint64  `json:"arena_bytes,omitempty"`
 	ArenaPayloadBytes     uint64  `json:"arena_payload_bytes,omitempty"`
@@ -706,19 +707,32 @@ func waitForMemoryConvergence(addr string, maxWait, poll time.Duration, keys, va
 				startRewritten = rewritten
 			}
 
-			rewrittenSinceStart := rewritten - startRewritten
+			rewrittenSinceStart := uint64(0)
+			if rewritten >= startRewritten {
+				rewrittenSinceStart = rewritten - startRewritten
+			}
+			progress.OptimizerRewrittenRun = rewrittenSinceStart
+
+			// After the first meaningful sample, estimate the final steady-state
+			// footprint from observed live-block savings per rewrite. Exclude
+			// currently-dead arena reservation from the projection because the
+			// compactor will reclaim it later.
 			if keys > 0 && rewrittenSinceStart >= 1000 && startLiveBlocks > liveBlocks {
 				savedLive := startLiveBlocks - liveBlocks
 				savedPerRewrite := float64(savedLive) / float64(rewrittenSinceStart)
-				remaining := float64(keys) - float64(rewritten)
+				remaining := float64(keys) - float64(rewrittenSinceStart)
 				if remaining < 0 {
 					remaining = 0
 				}
-				estimatedAdditionalSavings := uint64(savedPerRewrite * remaining)
-				estimated := used
-				if estimatedAdditionalSavings < estimated {
-					estimated -= estimatedAdditionalSavings
+				projectedLive := float64(liveBlocks) - savedPerRewrite*remaining
+				if projectedLive < 0 {
+					projectedLive = 0
 				}
+				fixedBytes := uint64(0)
+				if used > snug["arena_bytes"] {
+					fixedBytes = used - snug["arena_bytes"]
+				}
+				estimated := fixedBytes + uint64(projectedLive)
 				progress.EstimatedFinalMemory = estimated
 				progress.EstimatedFinalBytesKey = float64(estimated) / float64(keys)
 			}
@@ -751,7 +765,12 @@ func waitForMemoryConvergence(addr string, maxWait, poll time.Duration, keys, va
 
 		optimizerComplete := false
 		if snug != nil && keys > 0 {
-			optimizerComplete = snug["optimizer_rewritten"] >= uint64(keys) &&
+			rewritten := snug["optimizer_rewritten"]
+			rewrittenRun := uint64(0)
+			if rewritten >= startRewritten {
+				rewrittenRun = rewritten - startRewritten
+			}
+			optimizerComplete = rewrittenRun >= uint64(keys) &&
 				snug["optimizer_queue_depth"] == 0
 		}
 
