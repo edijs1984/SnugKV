@@ -604,7 +604,8 @@ func waitForMemoryConvergence(addr string, maxWait, poll time.Duration) (uint64,
 	// a transient optimizer plateau just before a compaction pass.
 	stableFor := 12 * time.Second
 	var (
-		best       uint64 = ^uint64(0)
+		anchor     uint64
+		haveAnchor bool
 		lastChange = start
 		samples    int
 	)
@@ -621,21 +622,32 @@ func waitForMemoryConvergence(addr string, maxWait, poll time.Duration) (uint64,
 		}
 		samples++
 
-		// Treat a reduction of at least 0.1% or 256 KiB as meaningful. Tiny
-		// fluctuations from diagnostics/network activity must not keep the
-		// convergence timer alive forever.
-		threshold := best / 1000
-		if threshold < 256<<10 {
-			threshold = 256 << 10
-		}
-		if best == ^uint64(0) || used+threshold < best {
-			best = used
-			lastChange = time.Now()
-		} else if used < best {
-			best = used
+		now := time.Now()
+		if !haveAnchor {
+			anchor = used
+			haveAnchor = true
+			lastChange = now
+		} else {
+			// Treat cumulative movement of at least 0.1% or 256 KiB as
+			// meaningful. Comparing with a stable anchor means a sequence of
+			// individually small reductions still resets the convergence clock
+			// once their combined effect becomes material.
+			threshold := anchor / 1000
+			if threshold < 256<<10 {
+				threshold = 256 << 10
+			}
+			var movement uint64
+			if used >= anchor {
+				movement = used - anchor
+			} else {
+				movement = anchor - used
+			}
+			if movement >= threshold {
+				anchor = used
+				lastChange = now
+			}
 		}
 
-		now := time.Now()
 		if now.Sub(lastChange) >= stableFor {
 			return used, true, now.Sub(start).Milliseconds(), samples, nil
 		}
