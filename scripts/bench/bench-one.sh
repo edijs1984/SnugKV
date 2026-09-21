@@ -22,7 +22,8 @@ Options:
   -g, --get-ops N          GET operations (default: 2000000)
   -w, --workers N          Concurrent workers (default: 8)
   -P, --pipeline N         Pipeline depth (default: 256)
-      --settle-ms N        Wait after LOAD before memory snapshot (default: 10000)
+      --settle-ms N        Wait after LOAD before convergence check (default: 10000)
+      --converge-ms N      Max convergence wait; snug-opt defaults to 120000, others 0
       --seed N             Deterministic seed (default: 1)
   -o, --output DIR         Output directory
       --no-build           Reuse /tmp/rediswirebench instead of rebuilding it
@@ -59,6 +60,7 @@ GET_OPS="2000000"
 WORKERS="8"
 PIPELINE="256"
 SETTLE_MS="10000"
+CONVERGE_MS=""
 SEED="1"
 BUILD=1
 ROOT_OUT=""
@@ -82,6 +84,8 @@ while [[ $# -gt 0 ]]; do
       PIPELINE="${2:-}"; shift 2 ;;
     --settle-ms)
       SETTLE_MS="${2:-}"; shift 2 ;;
+    --converge-ms)
+      CONVERGE_MS="${2:-}"; shift 2 ;;
     --seed)
       SEED="${2:-}"; shift 2 ;;
     -o|--output)
@@ -112,6 +116,14 @@ case "$PROFILE" in
   text|repetitive|compressed|random) VALUE_BYTES=256 ;;
 esac
 
+if [[ -z "$CONVERGE_MS" ]]; then
+  if [[ "$SERVER" == "snug-opt" ]]; then
+    CONVERGE_MS="120000"
+  else
+    CONVERGE_MS="0"
+  fi
+fi
+
 ADDR="$HOST:$PORT"
 if [[ -z "$ROOT_OUT" ]]; then
   ROOT_OUT="benchmark-results/${PROFILE}-${SERVER}-${PORT}-$(date +%Y%m%d-%H%M%S)"
@@ -135,6 +147,7 @@ echo "  workers:    $WORKERS"
 echo "  pipeline:   $PIPELINE"
 echo "  value:      $VALUE_BYTES bytes"
 echo "  settle_ms:  $SETTLE_MS"
+echo "  converge_ms:$CONVERGE_MS"
 echo "  output:     $ROOT_OUT"
 echo
 echo "WARNING: this benchmark will FLUSHDB on $ADDR"
@@ -155,6 +168,7 @@ echo "===== $PROFILE | $SERVER | LOAD ====="
   -value-shape "$PROFILE" \
   -seed "$SEED" \
   -settle-ms "$SETTLE_MS" \
+  -converge-ms "$CONVERGE_MS" \
   -reset \
   | tee "$LOAD_OUT"
 
@@ -191,8 +205,13 @@ print(f"SET:           {load['ops_per_second']:,.0f}/s")
 print(f"SET p95:       {load['p95_ns']/1000:.2f} us")
 print(f"GET:           {get['ops_per_second']:,.0f}/s")
 print(f"GET p95:       {get['p95_ns']/1000:.2f} us")
-print(f"bytes/key:     {load['bytes_per_key_delta']:.2f}")
-print(f"memory delta:  {load['used_memory_delta']:,} B")
+print(f"bytes/key hot: {load.get('bytes_per_key_post_workload', load['bytes_per_key_delta']):.2f}")
+print(f"bytes/key final:{load['bytes_per_key_delta']:.2f}")
+print(f"memory hot:    {load.get('used_memory_post_workload_delta', load['used_memory_delta']):,} B")
+print(f"memory final:  {load['used_memory_delta']:,} B")
+if load.get('converge_ms', 0):
+    state = "yes" if load.get('converged') else "timeout"
+    print(f"converged:     {state} in {load.get('convergence_elapsed_ms', 0):,} ms")
 PY
 
 echo
