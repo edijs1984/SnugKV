@@ -58,7 +58,7 @@ func (c Config) Validate() error {
 	if c.EvictionPolicy != "noeviction" && c.EvictionPolicy != "allkeys-lru" && c.EvictionPolicy != "volatile-lru" {
 		return errors.New("invalid eviction policy")
 	}
-	if c.OptimizerMode != "dedicated" && c.OptimizerMode != "sidecar" {
+	if c.OptimizerMode != "" && c.OptimizerMode != "dedicated" && c.OptimizerMode != "sidecar" {
 		return errors.New("optimizer_mode must be dedicated or sidecar")
 	}
 	if c.AOFPath != "" && c.SnapshotPath != "" {
