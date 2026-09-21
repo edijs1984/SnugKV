@@ -71,7 +71,8 @@ func (s *Store) Layout() LayoutStats {
 		entryCapacity += uint64(cap(sh.entries))
 		entryStorageBytes += uint64(cap(sh.entries)) * entryStructBytes
 		if sh.metas != nil {
-			entryStorageBytes += uint64(cap(*sh.metas)) * entryMetaSlotBytes
+			entryStorageBytes += uint64(unsafe.Sizeof(entryMetaSidecar{})) +
+				uint64(cap(sh.metas.slots))*entryMetaSlotBytes
 		}
 
 		if indexSlotBytes == 0 {
