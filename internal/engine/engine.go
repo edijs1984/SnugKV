@@ -59,8 +59,18 @@ func (sh *shard) encoded(e entry) []byte {
 	if err != nil {
 		panic(err)
 	}
-
 	return value
+}
+
+func (sh *shard) encodedInto(e entry, dst []byte) []byte {
+	if e.ref.IsInline() {
+		value, ok := e.ref.InlineInto(dst)
+		if !ok {
+			panic("invalid inline reference")
+		}
+		return value
+	}
+	return sh.encoded(e)
 }
 
 func (sh *shard) expirationAt(key string, e entry) stamp {
