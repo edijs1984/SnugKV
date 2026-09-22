@@ -56,7 +56,10 @@ func TestJSONPathAOFRestartRecovery(t *testing.T) {
 	if got := execute(t, restartedSrv, "JSON.GET", "doc", "$.items[?(@.active == true)].score"); got != "$5\r\n[2,3]\r\n" {
 		t.Fatalf("filtered scores after restart=%q", got)
 	}
-	if got := execute(t, restartedSrv, "TYPE", "doc"); got != "+json\r\n" {
-		t.Fatalf("type after restart=%q", got)
+	if got := execute(t, restartedSrv, "TYPE", "doc"); got != "+string\r\n" {
+		t.Fatalf("redis type after restart=%q", got)
+	}
+	if got := execute(t, restartedSrv, "SNUG.TYPE", "doc"); got != "$4\r\nJSON\r\n" {
+		t.Fatalf("semantic type after restart=%q", got)
 	}
 }
