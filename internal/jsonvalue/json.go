@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -34,12 +35,14 @@ type pathToken struct {
 }
 
 type filterExpr struct {
-	kind    string
-	path    []string
-	op      string
-	literal any
-	left    *filterExpr
-	right   *filterExpr
+	kind        string
+	path        []string
+	op          string
+	literal     any
+	rightPath   []string
+	rightIsPath bool
+	left        *filterExpr
+	right       *filterExpr
 }
 
 func Parse(raw []byte) (any, error) {
@@ -479,11 +482,21 @@ func findTopLevelLogical(raw, op string) int {
 }
 
 func parseFilterComparison(raw string) (*filterExpr, error) {
-	operators := []string{"<=", ">=", "==", "!=", "<", ">"}
+	type candidate struct {
+		op      string
+		isWord  bool
+	}
+	operators := []candidate{
+		{op: "<="}, {op: ">="}, {op: "=="}, {op: "!="}, {op: "=~"},
+		{op: "nin", isWord: true}, {op: "in", isWord: true},
+		{op: "<"}, {op: ">"},
+	}
+
 	var op string
 	var opIndex int
 	inString := byte(0)
 	escaped := false
+	depth := 0
 
 	for i := 0; i < len(raw); i++ {
 		ch := raw[i]
@@ -501,12 +514,35 @@ func parseFilterComparison(raw string) (*filterExpr, error) {
 			inString = ch
 			continue
 		}
-		for _, candidate := range operators {
-			if strings.HasPrefix(raw[i:], candidate) {
-				op = candidate
-				opIndex = i
-				break
+		switch ch {
+		case '[', '{', '(':
+			depth++
+			continue
+		case ']', '}', ')':
+			if depth > 0 {
+				depth--
 			}
+			continue
+		}
+		if depth != 0 {
+			continue
+		}
+
+		for _, candidate := range operators {
+			if !strings.HasPrefix(raw[i:], candidate.op) {
+				continue
+			}
+			if candidate.isWord {
+				beforeOK := i == 0 || isFilterSpace(raw[i-1])
+				after := i + len(candidate.op)
+				afterOK := after == len(raw) || isFilterSpace(raw[after])
+				if !beforeOK || !afterOK {
+					continue
+				}
+			}
+			op = candidate.op
+			opIndex = i
+			break
 		}
 		if op != "" {
 			break
@@ -516,34 +552,65 @@ func parseFilterComparison(raw string) (*filterExpr, error) {
 		return nil, errors.New("ERR invalid JSON path")
 	}
 
-	left := strings.TrimSpace(raw[:opIndex])
-	right := strings.TrimSpace(raw[opIndex+len(op):])
-	if left == "" || right == "" || (left != "@" && !strings.HasPrefix(left, "@.")) {
+	leftRaw := strings.TrimSpace(raw[:opIndex])
+	rightRaw := strings.TrimSpace(raw[opIndex+len(op):])
+	if leftRaw == "" || rightRaw == "" || (leftRaw != "@" && !strings.HasPrefix(leftRaw, "@.")) {
 		return nil, errors.New("ERR invalid JSON path")
 	}
 
-	var fields []string
-	if left != "@" {
-		parts := strings.Split(strings.TrimPrefix(left, "@."), ".")
-		for _, part := range parts {
-			if part == "" {
-				return nil, errors.New("ERR invalid JSON path")
-			}
-		}
-		fields = parts
+	leftPath, err := parseFilterPath(leftRaw)
+	if err != nil {
+		return nil, err
 	}
 
-	var literal any
-	if len(right) >= 2 && right[0] == '\'' && right[len(right)-1] == '\'' {
-		literal = strings.ReplaceAll(right[1:len(right)-1], "\\'", "'")
-	} else {
-		if err := json.Unmarshal([]byte(right), &literal); err != nil {
+	expr := &filterExpr{kind: "compare", path: leftPath, op: op}
+
+	if rightRaw == "@" || strings.HasPrefix(rightRaw, "@.") {
+		rightPath, err := parseFilterPath(rightRaw)
+		if err != nil {
+			return nil, err
+		}
+		expr.rightPath = rightPath
+		expr.rightIsPath = true
+		return expr, nil
+	}
+
+	if len(rightRaw) >= 2 && rightRaw[0] == '\'' && rightRaw[len(rightRaw)-1] == '\'' {
+		expr.literal = strings.ReplaceAll(rightRaw[1:len(rightRaw)-1], "\\'", "'")
+		return expr, nil
+	}
+
+	if err := json.Unmarshal([]byte(rightRaw), &expr.literal); err != nil {
+		return nil, errors.New("ERR invalid JSON path")
+	}
+	return expr, nil
+}
+
+func parseFilterPath(raw string) ([]string, error) {
+	if raw == "@" {
+		return nil, nil
+	}
+	if !strings.HasPrefix(raw, "@.") {
+		return nil, errors.New("ERR invalid JSON path")
+	}
+	parts := strings.Split(strings.TrimPrefix(raw, "@."), ".")
+	for _, part := range parts {
+		if part == "" {
 			return nil, errors.New("ERR invalid JSON path")
 		}
 	}
-
-	return &filterExpr{kind: "compare", path: fields, op: op, literal: literal}, nil
+	return parts, nil
 }
+
+func isFilterSpace(ch byte) bool {
+	switch ch {
+	case ' ', '\t', '\r', '\n':
+		return true
+	default:
+		return false
+	}
+}
+
 
 func filterValue(current any, fields []string) (any, bool) {
 	value := current
@@ -577,51 +644,95 @@ func matchesFilter(current any, expr *filterExpr) bool {
 		return false
 	}
 
-	left, ok := filterValue(current, expr.path)
+	leftValue, ok := filterValue(current, expr.path)
 	if !ok {
 		return false
 	}
 
-	switch expr.op {
-	case "==":
-		return reflect.DeepEqual(left, expr.literal)
-	case "!=":
-		return !reflect.DeepEqual(left, expr.literal)
+	rightValue := expr.literal
+	if expr.rightIsPath {
+		var found bool
+		rightValue, found = filterValue(current, expr.rightPath)
+		if !found {
+			return false
+		}
 	}
 
-	switch l := left.(type) {
+	switch expr.op {
+	case "==":
+		return filterEqual(leftValue, rightValue)
+	case "!=":
+		return !filterEqual(leftValue, rightValue)
+	case "=~":
+		leftString, ok := leftValue.(string)
+		if !ok {
+			return false
+		}
+		pattern, ok := rightValue.(string)
+		if !ok {
+			return false
+		}
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			return false
+		}
+		return re.MatchString(leftString)
+	case "in", "nin":
+		array, ok := rightValue.([]any)
+		match := false
+		if ok {
+			for _, candidate := range array {
+				if filterEqual(leftValue, candidate) {
+					match = true
+					break
+				}
+			}
+		}
+		if expr.op == "nin" {
+			return !match
+		}
+		return match
+	}
+
+	switch left := leftValue.(type) {
 	case float64:
-		r, ok := expr.literal.(float64)
+		right, ok := rightValue.(float64)
 		if !ok {
 			return false
 		}
 		switch expr.op {
 		case "<":
-			return l < r
+			return left < right
 		case "<=":
-			return l <= r
+			return left <= right
 		case ">":
-			return l > r
+			return left > right
 		case ">=":
-			return l >= r
+			return left >= right
 		}
 	case string:
-		r, ok := expr.literal.(string)
+		right, ok := rightValue.(string)
 		if !ok {
 			return false
 		}
 		switch expr.op {
 		case "<":
-			return l < r
+			return left < right
 		case "<=":
-			return l <= r
+			return left <= right
 		case ">":
-			return l > r
+			return left > right
 		case ">=":
-			return l >= r
+			return left >= right
 		}
 	}
 	return false
+}
+
+func filterEqual(left, right any) bool {
+	// JSON numbers are decoded as float64 today, so this already gives the
+	// desired numeric value equality for SnugKV's current representation.
+	return reflect.DeepEqual(left, right)
 }
 
 func filteredArrayIndices(array []any, expr *filterExpr) []int {
