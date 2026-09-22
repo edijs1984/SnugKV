@@ -908,6 +908,51 @@ func TestFTCreateAllowsMalformedJSONPathDefinitionLikeRedis(t *testing.T) {
 }
 
 
+func TestFTCreateAllowsMalformedJSONPathWithExistingDocuments(t *testing.T) {
+	s := newSearchTestServer(t)
+
+	if _, err := s.Execute([][]byte{
+		[]byte("JSON.SET"),
+		[]byte("product:1"),
+		[]byte("$"),
+		[]byte(`{"category":"books"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	reply, err := s.Execute([][]byte{
+		[]byte("FT.CREATE"),
+		[]byte("badpath"),
+		[]byte("ON"),
+		[]byte("JSON"),
+		[]byte("SCHEMA"),
+		[]byte("$["),
+		[]byte("AS"),
+		[]byte("broken"),
+		[]byte("TAG"),
+	})
+	if err != nil {
+		t.Fatalf("FT.CREATE malformed path with backfill: %v", err)
+	}
+	if got, want := string(reply), "+OK\r\n"; got != want {
+		t.Fatalf("reply=%q want=%q", got, want)
+	}
+
+	reply, err = s.Execute([][]byte{
+		[]byte("FT.SEARCH"),
+		[]byte("badpath"),
+		[]byte("*"),
+		[]byte("NOCONTENT"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(reply), "*2\r\n:1\r\n$9\r\nproduct:1\r\n"; got != want {
+		t.Fatalf("reply=%q want=%q", got, want)
+	}
+}
+
+
 func TestFTSearchSortByNumeric(t *testing.T) {
 	s := newSearchTestServer(t)
 	createProductSearchFixture(t, s)
@@ -981,11 +1026,15 @@ func TestFTSearchSortByUnknownField(t *testing.T) {
 	s := newSearchTestServer(t)
 	createProductSearchFixture(t, s)
 
-	if _, err := s.Execute([][]byte{
+	_, err := s.Execute([][]byte{
 		[]byte("FT.SEARCH"), []byte("products"), []byte("*"),
 		[]byte("SORTBY"), []byte("missing"),
-	}); err == nil {
+	})
+	if err == nil {
 		t.Fatal("unknown SORTBY field unexpectedly succeeded")
+	}
+	if got, want := err.Error(), "SEARCH_PROP_NOT_FOUND Property `missing` not loaded nor in schema"; got != want {
+		t.Fatalf("error=%q want=%q", got, want)
 	}
 }
 
