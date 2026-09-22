@@ -661,7 +661,7 @@ func TestJSONSetNested(t *testing.T) {
 		"JSON.GET",
 		"user:1",
 		"$.profile.name",
-	); got != "$7\r\n\"Edijs\"\r\n" {
+	); got != "$9\r\n[\"Edijs\"]\r\n" {
 		t.Fatalf("nested JSON.GET got %q", got)
 	}
 }
