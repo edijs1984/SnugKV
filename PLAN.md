@@ -342,7 +342,8 @@ lands.
 
 - [x] Expand first-class JSON operations beyond the SET/GET/TYPE/DEL core.
 - [x] Add JSONPath support with Redis 8.10 differential tests and AOF/restart persistence coverage. See `docs/JSONPATH-COMPATIBILITY.md`.
-- [ ] Add secondary-index/search design after the JSON model is stable.
+- [x] Add secondary-index/search design after the JSON model is stable. See `docs/JSON-SEARCH-INDEX-DESIGN.md`.
+- [ ] Implement search Phase 1: opt-in JSON index catalog, TAG/NUMERIC postings, reverse document state, and memory accounting.
 - [ ] Add probabilistic/time-series structures only after the JSON/search storage
   boundaries are settled.
 - [ ] Return to optimizer convergence so dense-entry compaction is reached
