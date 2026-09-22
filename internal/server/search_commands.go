@@ -522,10 +522,101 @@ func parseSearchQuery(query string, dialect int) (*searchQueryNode, error) {
 		if err := validateSearchDialect1BooleanSyntax(query); err != nil {
 			return nil, err
 		}
+	} else if dialect == 2 {
+		if err := validateSearchDialect2BooleanSyntax(query); err != nil {
+			return nil, err
+		}
 	}
 
 	parser := searchQueryParser{query: query}
 	return parser.parse()
+}
+
+func validateSearchDialect2BooleanSyntax(query string) error {
+	type parenFrame struct {
+		start int
+	}
+
+	stack := make([]parenFrame, 0, 4)
+	bracketDepth := 0
+
+	for i := 0; i < len(query); i++ {
+		switch query[i] {
+		case '{', '[':
+			bracketDepth++
+		case '}', ']':
+			if bracketDepth == 0 {
+				return errors.New("ERR unsupported search query")
+			}
+			bracketDepth--
+		case '(':
+			if bracketDepth == 0 {
+				stack = append(stack, parenFrame{start: i})
+			}
+		case ')':
+			if bracketDepth != 0 {
+				continue
+			}
+			if len(stack) == 0 {
+				return errors.New("ERR unsupported search query")
+			}
+
+			frame := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			content := strings.TrimSpace(query[frame.start+1 : i])
+
+			parts := splitTopLevelSearchOR(content)
+			if len(parts) > 1 {
+				for _, part := range parts {
+					if !isFullyParenthesizedSearchExpression(strings.TrimSpace(part)) {
+						return errors.New("ERR unsupported search query")
+					}
+				}
+			}
+		}
+	}
+
+	if bracketDepth != 0 || len(stack) != 0 {
+		return errors.New("ERR unsupported search query")
+	}
+	return nil
+}
+
+func splitTopLevelSearchOR(expr string) []string {
+	parts := make([]string, 0, 2)
+	start := 0
+	parenDepth := 0
+	bracketDepth := 0
+
+	for i := 0; i < len(expr); i++ {
+		switch expr[i] {
+		case '{', '[':
+			bracketDepth++
+		case '}', ']':
+			if bracketDepth > 0 {
+				bracketDepth--
+			}
+		case '(':
+			if bracketDepth == 0 {
+				parenDepth++
+			}
+		case ')':
+			if bracketDepth == 0 && parenDepth > 0 {
+				parenDepth--
+			}
+		case '|':
+			if bracketDepth == 0 && parenDepth == 0 {
+				parts = append(parts, strings.TrimSpace(expr[start:i]))
+				start = i + 1
+			}
+		}
+	}
+
+	if len(parts) == 0 {
+		return nil
+	}
+	parts = append(parts, strings.TrimSpace(expr[start:]))
+	return parts
 }
 
 func validateSearchDialect1BooleanSyntax(query string) error {
