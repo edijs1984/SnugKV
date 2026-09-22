@@ -19,17 +19,18 @@ echo
 echo "=== reset ==="
 run FLUSHDB
 run FT.DROPINDEX products
+run FT.DROPINDEX badpath
 
 echo
 echo "=== seed ==="
-run JSON.SET product:1 '$' '{"category":"books","price":10,"title":"A"}'
-run JSON.SET product:2 '$' '{"category":"games","price":20,"title":"B"}'
-run JSON.SET product:3 '$' '{"category":"books","price":30,"title":"C"}'
-run JSON.SET ignored:1 '$' '{"category":"books","price":15,"title":"ignored"}'
+run JSON.SET product:1 '$' '{"category":"books","price":10,"title":"A","description":"Memory Guide"}'
+run JSON.SET product:2 '$' '{"category":"games","price":20,"title":"B","description":"Game Server Design"}'
+run JSON.SET product:3 '$' '{"category":"books","price":30,"title":"C","description":"Memory-Search Engine"}'
+run JSON.SET ignored:1 '$' '{"category":"books","price":15,"title":"ignored","description":"Memory Ignored"}'
 
 echo
 echo "=== create ==="
-run FT.CREATE products ON JSON PREFIX 1 product: SCHEMA   '$.category' AS category TAG   '$.price' AS price NUMERIC
+run FT.CREATE products ON JSON PREFIX 1 product: SCHEMA   '$.category' AS category TAG   '$.price' AS price NUMERIC   '$.description' AS description TEXT
 
 echo
 echo "=== list ==="
@@ -46,6 +47,13 @@ run FT.SEARCH products '@category:{books}' NOCONTENT
 echo
 echo "=== numeric ==="
 run FT.SEARCH products '@price:[10 20]' NOCONTENT
+
+echo
+echo "=== text ==="
+run FT.SEARCH products '@description:memory' NOCONTENT
+run FT.SEARCH products '@description:MEMORY' NOCONTENT
+run FT.SEARCH products '@description:search' NOCONTENT
+run FT.SEARCH products '@description:server' NOCONTENT
 
 echo
 echo "=== numeric infinities ==="

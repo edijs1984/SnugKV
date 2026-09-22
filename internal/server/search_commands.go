@@ -100,6 +100,8 @@ func executeFTCreate(store *engine.Store, args [][]byte) ([]byte, error) {
 			kind = engine.SearchFieldTag
 		case "NUMERIC":
 			kind = engine.SearchFieldNumeric
+		case "TEXT":
+			kind = engine.SearchFieldText
 		default:
 			return nil, errors.New("ERR unsupported search field type")
 		}
@@ -169,8 +171,11 @@ func executeFTInfo(store *engine.Store, args [][]byte) ([]byte, error) {
 	attributes := make([][]byte, 0, len(def.Fields))
 	for _, field := range def.Fields {
 		fieldType := "TAG"
-		if field.Kind == engine.SearchFieldNumeric {
+		switch field.Kind {
+		case engine.SearchFieldNumeric:
 			fieldType = "NUMERIC"
+		case engine.SearchFieldText:
+			fieldType = "TEXT"
 		}
 		attributes = append(attributes, array(
 			formatBulkString([]byte("identifier")),
@@ -212,6 +217,7 @@ func executeFTInfo(store *engine.Store, args [][]byte) ([]byte, error) {
 type searchQueryClause struct {
 	alias   string
 	tag     *string
+	text    *string
 	minimum *float64
 	maximum *float64
 }
@@ -503,6 +509,12 @@ func parseSearchClause(part, fullQuery string) (searchQueryClause, error) {
 
 		clause.minimum = &minimum
 		clause.maximum = &maximum
+		return clause, nil
+	}
+
+	if expr != "" && !strings.ContainsAny(expr, "{}[]()|") {
+		value := strings.ToLower(expr)
+		clause.text = &value
 		return clause, nil
 	}
 
@@ -865,6 +877,13 @@ func evaluateSearchQuery(store *engine.Store, indexName string, node *searchQuer
 			}
 			return keys, nil
 
+		case node.clause.text != nil:
+			keys, ok := store.SearchTextKeys(indexName, node.clause.alias, *node.clause.text)
+			if !ok {
+				return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
+			}
+			return keys, nil
+
 		case node.clause.minimum != nil && node.clause.maximum != nil:
 			keys, ok := store.SearchNumericRangeKeys(
 				indexName,
@@ -935,6 +954,43 @@ func evaluateSearchQuery(store *engine.Store, indexName string, node *searchQuer
 	}
 }
 
+func validateSearchTextAliases(def engine.SearchDefinition, node *searchQueryNode) error {
+	if node == nil {
+		return nil
+	}
+
+	switch node.kind {
+	case searchQueryClauseNode:
+		if node.clause == nil || node.clause.text == nil {
+			return nil
+		}
+		for _, field := range def.Fields {
+			if field.Alias != node.clause.alias {
+				continue
+			}
+			if field.Kind != engine.SearchFieldText {
+				return errors.New("ERR unsupported search query")
+			}
+			return nil
+		}
+		// Unknown field aliases preserve existing Search behavior: they simply
+		// produce no matches rather than turning into a parser error.
+		return nil
+
+	case searchQueryAndNode, searchQueryOrNode:
+		if err := validateSearchTextAliases(def, node.left); err != nil {
+			return err
+		}
+		return validateSearchTextAliases(def, node.right)
+
+	case searchQueryNotNode:
+		return validateSearchTextAliases(def, node.child)
+
+	default:
+		return errors.New("ERR unsupported search query")
+	}
+}
+
 func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 	if len(args) < 3 {
 		return nil, errors.New("ERR wrong number of arguments for 'ft.search' command")
@@ -947,6 +1003,14 @@ func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 	}
 	queryNode, err := parseSearchQuery(string(args[2]), options.dialect)
 	if err != nil {
+		return nil, err
+	}
+
+	def, ok := store.SearchDefinition(indexName)
+	if !ok {
+		return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
+	}
+	if err := validateSearchTextAliases(def, queryNode); err != nil {
 		return nil, err
 	}
 
@@ -975,10 +1039,6 @@ func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 
 	var sortField *engine.SearchField
 	if options.sortBy != "" {
-		def, ok := store.SearchDefinition(indexName)
-		if !ok {
-			return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
-		}
 		for i := range def.Fields {
 			if def.Fields[i].Alias == options.sortBy {
 				field := def.Fields[i]
