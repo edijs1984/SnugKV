@@ -27,9 +27,11 @@ type SearchField struct {
 }
 
 type SearchDefinition struct {
-	Name     string
-	Prefixes []string
-	Fields   []SearchField
+	Name                string
+	Prefixes            []string
+	Fields              []SearchField
+	Stopwords           []string
+	StopwordsConfigured bool
 }
 
 type numericPosting struct {
@@ -70,9 +72,11 @@ func newSearchManager() *searchManager {
 
 func cloneSearchDefinition(def SearchDefinition) SearchDefinition {
 	return SearchDefinition{
-		Name:     def.Name,
-		Prefixes: append([]string(nil), def.Prefixes...),
-		Fields:   append([]SearchField(nil), def.Fields...),
+		Name:                def.Name,
+		Prefixes:            append([]string(nil), def.Prefixes...),
+		Fields:              append([]SearchField(nil), def.Fields...),
+		Stopwords:           append([]string(nil), def.Stopwords...),
+		StopwordsConfigured: def.StopwordsConfigured,
 	}
 }
 
@@ -148,6 +152,46 @@ func canonicalSearchTag(value any) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+var defaultSearchStopwords = map[string]struct{}{
+	"a": {}, "is": {}, "the": {}, "an": {}, "and": {}, "are": {}, "as": {},
+	"at": {}, "be": {}, "but": {}, "by": {}, "for": {}, "if": {}, "in": {},
+	"into": {}, "it": {}, "no": {}, "not": {}, "of": {}, "on": {}, "or": {},
+	"such": {}, "that": {}, "their": {}, "then": {}, "there": {}, "these": {},
+	"they": {}, "this": {}, "to": {}, "was": {}, "will": {}, "with": {},
+}
+
+func normalizeSearchStopwords(def *SearchDefinition) {
+	for i := range def.Stopwords {
+		def.Stopwords[i] = strings.ToLower(def.Stopwords[i])
+	}
+	def.Stopwords = uniqueStrings(def.Stopwords)
+}
+
+func SearchIsStopword(def SearchDefinition, token string) bool {
+	token = strings.ToLower(token)
+	if def.StopwordsConfigured {
+		for _, stopword := range def.Stopwords {
+			if stopword == token {
+				return true
+			}
+		}
+		return false
+	}
+	_, ok := defaultSearchStopwords[token]
+	return ok
+}
+
+func filterSearchStopwords(def SearchDefinition, tokens []string) []string {
+	out := make([]string, 0, len(tokens))
+	for _, token := range tokens {
+		if SearchIsStopword(def, token) {
+			continue
+		}
+		out = append(out, token)
+	}
+	return out
 }
 
 func tokenizeSearchTextSequence(value string) []string {
@@ -254,7 +298,7 @@ func extractSearchDocument(def SearchDefinition, raw []byte) (searchDocumentStat
 				if !ok {
 					continue
 				}
-				sequence := tokenizeSearchTextSequence(text)
+				sequence := filterSearchStopwords(def, tokenizeSearchTextSequence(text))
 				if len(sequence) == 0 {
 					continue
 				}
@@ -298,6 +342,7 @@ func (m *searchManager) create(def SearchDefinition) error {
 	}
 	def = cloneSearchDefinition(def)
 	def.Prefixes = normalizeSearchPrefixes(def.Prefixes)
+	normalizeSearchStopwords(&def)
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -655,7 +700,7 @@ func (m *searchManager) textPhraseKeys(indexName, alias, phrase string) ([]strin
 		return nil, false
 	}
 
-	tokens := tokenizeSearchTextSequence(phrase)
+	tokens := filterSearchStopwords(idx.def, tokenizeSearchTextSequence(phrase))
 	if len(tokens) == 0 {
 		return []string{}, true
 	}
@@ -914,6 +959,7 @@ func (s *Store) RestoreSearchDefinitions(defs []SearchDefinition) error {
 		seen[def.Name] = struct{}{}
 		normalized[i] = cloneSearchDefinition(def)
 		normalized[i].Prefixes = normalizeSearchPrefixes(normalized[i].Prefixes)
+		normalizeSearchStopwords(&normalized[i])
 	}
 
 	next := newSearchManager()
