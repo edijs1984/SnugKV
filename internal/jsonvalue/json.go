@@ -1773,123 +1773,13 @@ func deleteAt(current any, tokens []pathToken) (any, bool, error) {
 }
 
 func Matches(root any, path string) ([]any, error) {
-	if isProjectionExpression(path) {
-		exprRaw, err := projectionToFilterExpr(path)
-		if err != nil {
-			return nil, err
-		}
-		expr, err := parseFilterValueExpr(exprRaw)
-		if err != nil {
-			return nil, err
-		}
-		value, ok := evalFilterValue(root, expr)
-		if !ok {
-			return []any{}, nil
-		}
-		return []any{value}, nil
-	}
-
-	plainPath := strings.TrimSpace(path)
-	for hasOuterParens(plainPath) {
-		inner := strings.TrimSpace(plainPath[1 : len(plainPath)-1])
-		if isProjectionExpression(inner) {
-			break
-		}
-		if _, err := parsePath(inner); err != nil {
-			break
-		}
-		plainPath = inner
-	}
-
-	tokens, err := parsePath(plainPath)
+	tokens, err := parsePath(path)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]any, 0)
 	collectMatches(root, tokens, &out)
 	return out, nil
-}
-
-func isProjectionExpression(path string) bool {
-	raw := strings.TrimSpace(path)
-	if raw == "" {
-		return false
-	}
-
-	knownFunctions := []string{
-		"length", "abs", "ceiling", "floor",
-		"first", "last", "index", "append",
-		"min", "max", "sum", "avg", "stddev",
-		"keys", "count", "value",
-	}
-	for _, name := range knownFunctions {
-		if strings.HasPrefix(raw, name+"(") {
-			return true
-		}
-		if strings.Contains(raw, "."+name+"(") {
-			return true
-		}
-	}
-
-	for _, op := range []string{" + ", " - ", " * ", " / ", " % "} {
-		if strings.Contains(raw, op) {
-			return true
-		}
-	}
-
-	if (strings.HasPrefix(raw, "-$") || strings.HasPrefix(raw, "+$")) ||
-		(strings.HasPrefix(raw, "(-$") || strings.HasPrefix(raw, "(+$")) {
-		return true
-	}
-
-	// A parenthesized top-level expression is a projection unless it contains
-	// only a single plain path, which Redis still treats as a node selection.
-	if hasOuterParens(raw) {
-		inner := strings.TrimSpace(raw[1 : len(raw)-1])
-		if _, err := parsePath(inner); err != nil || isProjectionExpression(inner) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func projectionToFilterExpr(raw string) (string, error) {
-	var out strings.Builder
-	inString := byte(0)
-	escaped := false
-
-	for i := 0; i < len(raw); i++ {
-		ch := raw[i]
-		if inString != 0 {
-			out.WriteByte(ch)
-			if escaped {
-				escaped = false
-			} else if ch == '\\' {
-				escaped = true
-			} else if ch == inString {
-				inString = 0
-			}
-			continue
-		}
-
-		if ch == '"' || ch == '\'' {
-			inString = ch
-			out.WriteByte(ch)
-			continue
-		}
-
-		if ch == '$' {
-			out.WriteByte('@')
-			continue
-		}
-		out.WriteByte(ch)
-	}
-
-	if inString != 0 {
-		return "", errors.New("ERR invalid JSON path")
-	}
-	return out.String(), nil
 }
 
 func collectMatches(current any, tokens []pathToken, out *[]any) {
