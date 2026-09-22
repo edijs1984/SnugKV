@@ -264,6 +264,15 @@ func (p *searchQueryParser) skipSpace() {
 	}
 }
 
+func isSearchSpace(b byte) bool {
+	switch b {
+	case ' ', '\t', '\n', '\r':
+		return true
+	default:
+		return false
+	}
+}
+
 func (p *searchQueryParser) parse() (*searchQueryNode, error) {
 	p.skipSpace()
 	if p.pos >= len(p.query) {
@@ -289,9 +298,13 @@ func (p *searchQueryParser) parseOr() (*searchQueryNode, error) {
 	}
 
 	for {
+		beforeSpace := p.pos
 		p.skipSpace()
 		if p.pos >= len(p.query) || p.query[p.pos] != '|' {
 			return left, nil
+		}
+		if beforeSpace == p.pos || p.pos+1 >= len(p.query) || !isSearchSpace(p.query[p.pos+1]) {
+			return nil, errors.New("ERR unsupported search query")
 		}
 		p.pos++
 		p.skipSpace()
