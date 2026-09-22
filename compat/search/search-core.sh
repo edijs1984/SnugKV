@@ -67,9 +67,9 @@ run FT.SEARCH products '(@category:{books} @price:[10 10]) | (@category:{games})
 
 echo
 echo "=== nested boolean queries ==="
-run FT.SEARCH products '(@category:{books} | @category:{games}) @price:[20 30]' NOCONTENT DIALECT 2
+run FT.SEARCH products '((@category:{books}) | (@category:{games})) @price:[20 30]' NOCONTENT DIALECT 2
 run FT.SEARCH products '(@category:{games}) | (@category:{books} @price:[30 30])' NOCONTENT DIALECT 2
-run FT.SEARCH products '-(@category:{games} | @price:[30 30])' NOCONTENT DIALECT 2
+run FT.SEARCH products '-((@category:{games}) | (@price:[30 30]))' NOCONTENT DIALECT 2
 run FT.SEARCH products '((@category:{books}) | (@category:{games})) @price:[10 20]' NOCONTENT DIALECT 2
 
 echo
