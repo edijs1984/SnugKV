@@ -935,3 +935,50 @@ func TestJSONPathKeysFunction(t *testing.T) {
 		}
 	}
 }
+
+
+func TestJSONPathNodeListFunctions(t *testing.T) {
+	root, err := Parse([]byte(`[
+		{"a":1,"b":2,"c":3},
+		{"a":1},
+		{"x":9},
+		{}
+	]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		path string
+		want []any
+	}{
+		{"$[?count(@.*) == 3].a", []any{float64(1)}},
+		{"$[?count(@.missing) == 0].x", []any{float64(9)}},
+		{"$[?value(@.a) == 1].a", []any{float64(1), float64(1)}},
+	}
+
+	for _, tc := range cases {
+		got, err := Matches(root, tc.path)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.path, err)
+		}
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Fatalf("%s got %#v want %#v", tc.path, got, tc.want)
+		}
+	}
+}
+
+func TestJSONPathValueRequiresExactlyOneNode(t *testing.T) {
+	root, err := Parse([]byte(`[{"a":1,"b":2},{"a":1}]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Matches(root, "$[?value(@.*) == 1]")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("value() should produce Nothing for multi-node input: %#v", got)
+	}
+}
