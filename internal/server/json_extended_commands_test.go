@@ -595,3 +595,27 @@ func TestJSONPathRegexAndMembershipCoreCommands(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+
+func TestJSONPathSetRelationSizeAndEmptyCoreCommands(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "JSON.SET", "doc", "$",
+		`{"items":[{"name":"a","tags":["x"]},{"name":"b","tags":["x","y"]},{"name":"c","tags":[]},{"name":"d","tags":["z"]}]}`)
+
+	if got := execute(t, s, "JSON.GET", "doc", `$.items[?(@.tags subsetof ["x","y"])].name`); got != "$13\r\n[\"a\",\"b\",\"c\"]\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.GET", "doc", `$.items[?(@.tags anyof ["y","z"])].name`); got != "$9\r\n[\"b\",\"d\"]\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.SET", "doc", "$.items[?(@.tags empty true)].name", `"empty"`); got != "+OK\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[?(@.name size 5)].name"); got != "$9\r\n[\"empty\"]\r\n" {
+		t.Fatal(got)
+	}
+}
