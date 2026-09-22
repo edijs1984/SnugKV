@@ -520,3 +520,75 @@ func TestJSONPathRegexAndMembershipComposeWithLogic(t *testing.T) {
 		t.Fatalf("got %#v want %#v", got, want)
 	}
 }
+
+
+func TestJSONPathSetRelationSizeAndEmptyFilters(t *testing.T) {
+	root, err := Parse([]byte(`{
+		"sets":[
+			{"vals":[1,2],"allow":[1,2,3],"name":"subset"},
+			{"vals":[1,5],"allow":[1,2,3],"name":"overlap"},
+			{"vals":[8,9],"allow":[1,2,3],"name":"disjoint"},
+			{"vals":[],"allow":[1,2,3],"name":"empty"}
+		],
+		"mixed":[[],[1],"",[2,3],{},{"k":1},"åä"]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		path string
+		want []any
+	}{
+		{"$.sets[?(@.vals subsetof @.allow)].name", []any{"subset", "empty"}},
+		{"$.sets[?(@.vals anyof @.allow)].name", []any{"subset", "overlap"}},
+		{"$.sets[?(@.vals noneof @.allow)].name", []any{"disjoint", "empty"}},
+		{"$.mixed[?(@ sizeof 0)]", []any{[]any{}, "", map[string]any{}}},
+		{"$.mixed[?(@ size 2)]", []any{[]any{float64(2), float64(3)}, "åä"}},
+		{"$.mixed[?(@ empty true)]", []any{[]any{}, "", map[string]any{}}},
+		{"$.mixed[?(@ empty false)]", []any{[]any{float64(1)}, []any{float64(2), float64(3)}, map[string]any{"k": float64(1)}, "åä"}},
+	}
+
+	for _, tc := range cases {
+		got, err := Matches(root, tc.path)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.path, err)
+		}
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Fatalf("%s got %#v want %#v", tc.path, got, tc.want)
+		}
+	}
+}
+
+func TestJSONPathSetRelationAndSizeMutation(t *testing.T) {
+	root, err := Parse([]byte(`{"items":[{"tags":["a"]},{"tags":["a","b"]},{"tags":[]},{"tags":["z"]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	root, count, err := SetMatches(root, `$.items[?(@.tags subsetof ["a","b"])].matched`, true)
+	if err != nil || count != 3 {
+		t.Fatalf("set count=%d err=%v", count, err)
+	}
+
+	values, err := Matches(root, "$.items[?(@.matched == true)].tags")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(values) != 3 {
+		t.Fatalf("matched values=%#v", values)
+	}
+
+	root, count, err = DeleteMatches(root, "$.items[?(@.tags empty true)]")
+	if err != nil || count != 1 {
+		t.Fatalf("delete count=%d err=%v", count, err)
+	}
+
+	values, err = Matches(root, "$.items[*].tags")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(values) != 3 {
+		t.Fatalf("remaining values=%#v", values)
+	}
+}
