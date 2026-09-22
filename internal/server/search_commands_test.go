@@ -238,3 +238,211 @@ func TestACLSearchCategoryIncludesImplementedFTCommands(t *testing.T) {
 		}
 	}
 }
+
+
+func createProductSearchFixture(t *testing.T, s *Server) {
+	t.Helper()
+
+	for key, raw := range map[string]string{
+		"product:1": `{"category":"books","price":10,"title":"A"}`,
+		"product:2": `{"category":"games","price":20,"title":"B"}`,
+		"product:3": `{"category":"books","price":30,"title":"C"}`,
+	} {
+		if _, err := s.Execute([][]byte{
+			[]byte("JSON.SET"),
+			[]byte(key),
+			[]byte("$"),
+			[]byte(raw),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := s.Execute([][]byte{
+		[]byte("FT.CREATE"),
+		[]byte("products"),
+		[]byte("ON"),
+		[]byte("JSON"),
+		[]byte("PREFIX"),
+		[]byte("1"),
+		[]byte("product:"),
+		[]byte("SCHEMA"),
+		[]byte("$.category"),
+		[]byte("AS"),
+		[]byte("category"),
+		[]byte("TAG"),
+		[]byte("$.price"),
+		[]byte("AS"),
+		[]byte("price"),
+		[]byte("NUMERIC"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFTSearchMatchAllNoContent(t *testing.T) {
+	s := newSearchTestServer(t)
+	createProductSearchFixture(t, s)
+
+	reply, err := s.Execute([][]byte{
+		[]byte("FT.SEARCH"),
+		[]byte("products"),
+		[]byte("*"),
+		[]byte("NOCONTENT"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := "*4\r\n:3\r\n$9\r\nproduct:1\r\n$9\r\nproduct:2\r\n$9\r\nproduct:3\r\n"
+	if string(reply) != want {
+		t.Fatalf("reply=%q want=%q", reply, want)
+	}
+}
+
+func TestFTSearchTagNumericAndImplicitAND(t *testing.T) {
+	s := newSearchTestServer(t)
+	createProductSearchFixture(t, s)
+
+	tests := []struct {
+		query string
+		want  string
+	}{
+		{
+			query: "@category:{books}",
+			want:  "*3\r\n:2\r\n$9\r\nproduct:1\r\n$9\r\nproduct:3\r\n",
+		},
+		{
+			query: "@price:[10 20]",
+			want:  "*3\r\n:2\r\n$9\r\nproduct:1\r\n$9\r\nproduct:2\r\n",
+		},
+		{
+			query: "@category:{books} @price:[20 40]",
+			want:  "*2\r\n:1\r\n$9\r\nproduct:3\r\n",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.query, func(t *testing.T) {
+			reply, err := s.Execute([][]byte{
+				[]byte("FT.SEARCH"),
+				[]byte("products"),
+				[]byte(tc.query),
+				[]byte("NOCONTENT"),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(reply) != tc.want {
+				t.Fatalf("reply=%q want=%q", reply, tc.want)
+			}
+		})
+	}
+}
+
+func TestFTSearchLimitPreservesTotal(t *testing.T) {
+	s := newSearchTestServer(t)
+	createProductSearchFixture(t, s)
+
+	reply, err := s.Execute([][]byte{
+		[]byte("FT.SEARCH"),
+		[]byte("products"),
+		[]byte("*"),
+		[]byte("NOCONTENT"),
+		[]byte("LIMIT"),
+		[]byte("1"),
+		[]byte("1"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := "*2\r\n:3\r\n$9\r\nproduct:2\r\n"
+	if string(reply) != want {
+		t.Fatalf("reply=%q want=%q", reply, want)
+	}
+}
+
+func TestFTSearchReturnsJSONContent(t *testing.T) {
+	s := newSearchTestServer(t)
+	createProductSearchFixture(t, s)
+
+	reply, err := s.Execute([][]byte{
+		[]byte("FT.SEARCH"),
+		[]byte("products"),
+		[]byte("@category:{games}"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := string(reply)
+	if !strings.Contains(got, "product:2") {
+		t.Fatalf("missing key in reply=%q", reply)
+	}
+	if !strings.Contains(got, "$") {
+		t.Fatalf("missing root field in reply=%q", reply)
+	}
+	if !strings.Contains(got, `{"category":"games","price":20,"title":"B"}`) {
+		t.Fatalf("missing JSON content in reply=%q", reply)
+	}
+}
+
+func TestFTSearchRejectsUnsupportedGrammar(t *testing.T) {
+	s := newSearchTestServer(t)
+	createProductSearchFixture(t, s)
+
+	for _, query := range []string{
+		"books",
+		"@price:10",
+		"@price:[10]",
+		"@category:(books)",
+	} {
+		if _, err := s.Execute([][]byte{
+			[]byte("FT.SEARCH"),
+			[]byte("products"),
+			[]byte(query),
+		}); err == nil {
+			t.Fatalf("query %q unexpectedly succeeded", query)
+		}
+	}
+}
+
+func TestFTSearchUnknownIndex(t *testing.T) {
+	s := newSearchTestServer(t)
+
+	if _, err := s.Execute([][]byte{
+		[]byte("FT.SEARCH"),
+		[]byte("missing"),
+		[]byte("*"),
+	}); err == nil {
+		t.Fatal("unknown index unexpectedly succeeded")
+	}
+}
+
+func TestACLSearchCategoryAndReadIncludeFTSearch(t *testing.T) {
+	searchCommands, ok := aclCommandsForCategory("search")
+	if !ok {
+		t.Fatal("search category missing")
+	}
+	readCommands, ok := aclCommandsForCategory("read")
+	if !ok {
+		t.Fatal("read category missing")
+	}
+
+	contains := func(commands []string, target string) bool {
+		for _, command := range commands {
+			if command == target {
+				return true
+			}
+		}
+		return false
+	}
+
+	if !contains(searchCommands, "ft.search") {
+		t.Fatal("ft.search missing from @search")
+	}
+	if !contains(readCommands, "ft.search") {
+		t.Fatal("ft.search missing from @read")
+	}
+}
