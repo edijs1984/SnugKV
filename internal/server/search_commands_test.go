@@ -1159,6 +1159,8 @@ func TestFTSearchNestedBooleanExpressions(t *testing.T) {
 				[]byte("products"),
 				[]byte(tc.query),
 				[]byte("NOCONTENT"),
+				[]byte("DIALECT"),
+				[]byte("2"),
 			})
 			if err != nil {
 				t.Fatal(err)
