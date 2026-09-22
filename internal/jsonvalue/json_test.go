@@ -1,6 +1,9 @@
 package jsonvalue
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestGetNested(t *testing.T) {
 	root, err := Parse([]byte(`{
