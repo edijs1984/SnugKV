@@ -111,6 +111,7 @@ The first TEXT implementation is intentionally small:
 - exact adjacent TEXT phrase queries such as `@title:"memory guide"`;
 - default English stemming for ordinary TEXT terms and phrases;
 - per-field `NOSTEM` to disable stem postings;
+- Redis-compatible default stopword filtering, `STOPWORDS 0`, and custom stopword lists;
 - string JSON values only;
 - case-insensitive token lookup;
 - whitespace and punctuation separate tokens;
@@ -118,7 +119,7 @@ The first TEXT implementation is intentionally small:
 - exact token postings only.
 
 Not yet implemented: unqualified full-text terms, phrase slop/inorder controls,
-stopwords, fuzzy matching, phonetics, suffix/infix wildcard expansion,
+fuzzy matching, phonetics, suffix/infix wildcard expansion,
 relevance scoring, TEXT weights, non-English stemming, or language-specific tokenization.
 
 TEXT prefix search currently supports only a single trailing `*`. Bare `*`,
@@ -132,7 +133,12 @@ Redis phrase `SLOP`/`INORDER` controls.
 
 The first stemming milestone is intentionally English-only. Redis defaults indexes
 to English stemming unless another index language is selected; SnugKV does not yet
-implement `LANGUAGE`, `LANGUAGE_FIELD`, query `LANGUAGE`, or stopword filtering.
+implement `LANGUAGE`, `LANGUAGE_FIELD`, or query `LANGUAGE`.
+
+Stopwords are index-wide. Omitting `STOPWORDS` uses Redis's 33-word default list.
+`STOPWORDS 0` disables filtering completely, and `STOPWORDS N ...` replaces the
+default list with exactly the supplied words. Stopwords are removed both when
+building TEXT postings/token sequences and when evaluating TEXT query terms.
 
 For multi-term field scoping, SnugKV currently requires the explicit grouped
 form `@field:(term1 term2)`. This matches Redis's unambiguous same-field
