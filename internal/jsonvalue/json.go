@@ -616,6 +616,67 @@ func parseFilterValueExpr(raw string) (*filterValueExpr, error) {
 		raw = strings.TrimSpace(raw[1 : len(raw)-1])
 	}
 
+	for _, name := range []string{"first", "last"} {
+		prefix := name + "("
+		if strings.HasPrefix(raw, prefix) && strings.HasSuffix(raw, ")") {
+			inner := strings.TrimSpace(raw[len(prefix) : len(raw)-1])
+			arg, err := parseFilterValueExpr(inner)
+			if err != nil {
+				return nil, err
+			}
+			return &filterValueExpr{kind: "func", op: name, left: arg}, nil
+		}
+
+		suffix := "." + name + "()"
+		if strings.HasSuffix(raw, suffix) {
+			base := strings.TrimSpace(raw[:len(raw)-len(suffix)])
+			if base == "" {
+				return nil, errors.New("ERR invalid JSON path")
+			}
+			arg, err := parseFilterValueExpr(base)
+			if err != nil {
+				return nil, err
+			}
+			return &filterValueExpr{kind: "func", op: name, left: arg}, nil
+		}
+	}
+
+	if strings.HasPrefix(raw, "index(") && strings.HasSuffix(raw, ")") {
+		args, err := splitFunctionArgs(raw[len("index(") : len(raw)-1])
+		if err != nil || len(args) != 2 {
+			return nil, errors.New("ERR invalid JSON path")
+		}
+		arrayExpr, err := parseFilterValueExpr(args[0])
+		if err != nil {
+			return nil, err
+		}
+		indexExpr, err := parseFilterValueExpr(args[1])
+		if err != nil {
+			return nil, err
+		}
+		return &filterValueExpr{kind: "func", op: "index", left: arrayExpr, right: indexExpr}, nil
+	}
+
+	if strings.Contains(raw, ".index(") && strings.HasSuffix(raw, ")") {
+		call := strings.LastIndex(raw, ".index(")
+		if call > 0 {
+			base := strings.TrimSpace(raw[:call])
+			argRaw := strings.TrimSpace(raw[call+len(".index(") : len(raw)-1])
+			if base == "" || argRaw == "" {
+				return nil, errors.New("ERR invalid JSON path")
+			}
+			arrayExpr, err := parseFilterValueExpr(base)
+			if err != nil {
+				return nil, err
+			}
+			indexExpr, err := parseFilterValueExpr(argRaw)
+			if err != nil {
+				return nil, err
+			}
+			return &filterValueExpr{kind: "func", op: "index", left: arrayExpr, right: indexExpr}, nil
+		}
+	}
+
 	for _, name := range []string{"length", "abs", "ceiling", "floor"} {
 		prefix := name + "("
 		if strings.HasPrefix(raw, prefix) && strings.HasSuffix(raw, ")") {
@@ -758,6 +819,38 @@ func evalFilterValue(current any, expr *filterValueExpr) (any, bool) {
 			}
 			return float64(size), true
 
+		case "first", "last":
+			array, ok := value.([]any)
+			if !ok || len(array) == 0 {
+				return nil, false
+			}
+			if expr.op == "first" {
+				return array[0], true
+			}
+			return array[len(array)-1], true
+
+		case "index":
+			array, ok := value.([]any)
+			if !ok || expr.right == nil {
+				return nil, false
+			}
+			rawIndex, ok := evalFilterValue(current, expr.right)
+			if !ok {
+				return nil, false
+			}
+			number, ok := rawIndex.(float64)
+			if !ok || math.IsNaN(number) || math.IsInf(number, 0) {
+				return nil, false
+			}
+			index := int(math.Trunc(number))
+			if index < 0 {
+				index += len(array)
+			}
+			if index < 0 || index >= len(array) {
+				return nil, false
+			}
+			return array[index], true
+
 		case "abs", "ceiling", "floor":
 			number, ok := value.(float64)
 			if !ok {
@@ -840,6 +933,75 @@ func evalFilterValue(current any, expr *filterValueExpr) (any, bool) {
 	default:
 		return nil, false
 	}
+}
+
+func splitFunctionArgs(raw string) ([]string, error) {
+	args := make([]string, 0, 2)
+	start := 0
+	parenDepth := 0
+	bracketDepth := 0
+	braceDepth := 0
+	inString := byte(0)
+	escaped := false
+
+	for i := 0; i < len(raw); i++ {
+		ch := raw[i]
+		if inString != 0 {
+			if escaped {
+				escaped = false
+			} else if ch == '\\' {
+				escaped = true
+			} else if ch == inString {
+				inString = 0
+			}
+			continue
+		}
+		if ch == '"' || ch == '\'' {
+			inString = ch
+			continue
+		}
+		switch ch {
+		case '(':
+			parenDepth++
+		case ')':
+			if parenDepth == 0 {
+				return nil, errors.New("ERR invalid JSON path")
+			}
+			parenDepth--
+		case '[':
+			bracketDepth++
+		case ']':
+			if bracketDepth == 0 {
+				return nil, errors.New("ERR invalid JSON path")
+			}
+			bracketDepth--
+		case '{':
+			braceDepth++
+		case '}':
+			if braceDepth == 0 {
+				return nil, errors.New("ERR invalid JSON path")
+			}
+			braceDepth--
+		case ',':
+			if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
+				arg := strings.TrimSpace(raw[start:i])
+				if arg == "" {
+					return nil, errors.New("ERR invalid JSON path")
+				}
+				args = append(args, arg)
+				start = i + 1
+			}
+		}
+	}
+	if inString != 0 || parenDepth != 0 || bracketDepth != 0 || braceDepth != 0 {
+		return nil, errors.New("ERR invalid JSON path")
+	}
+	arg := strings.TrimSpace(raw[start:])
+	if arg == "" {
+		return nil, errors.New("ERR invalid JSON path")
+	}
+	args = append(args, arg)
+	return args, nil
 }
 
 func parseFilterPath(raw string) ([]string, error) {
