@@ -382,27 +382,6 @@ func parseFilterExpr(raw string) (*filterExpr, error) {
 		raw = strings.TrimSpace(raw[1 : len(raw)-1])
 	}
 
-	if strings.HasPrefix(raw, "length(") && strings.HasSuffix(raw, ")") {
-		inner := strings.TrimSpace(raw[len("length(") : len(raw)-1])
-		arg, err := parseFilterValueExpr(inner)
-		if err != nil {
-			return nil, err
-		}
-		return &filterValueExpr{kind: "func", op: "length", left: arg}, nil
-	}
-
-	if strings.HasSuffix(raw, ".length()") {
-		base := strings.TrimSpace(raw[:len(raw)-len(".length()")])
-		if base == "" {
-			return nil, errors.New("ERR invalid JSON path")
-		}
-		arg, err := parseFilterValueExpr(base)
-		if err != nil {
-			return nil, err
-		}
-		return &filterValueExpr{kind: "func", op: "length", left: arg}, nil
-	}
-
 	if index := findTopLevelLogical(raw, "||"); index >= 0 {
 		left, err := parseFilterExpr(raw[:index])
 		if err != nil {
@@ -619,6 +598,27 @@ func parseFilterValueExpr(raw string) (*filterValueExpr, error) {
 
 	for hasOuterParens(raw) {
 		raw = strings.TrimSpace(raw[1 : len(raw)-1])
+	}
+
+	if strings.HasPrefix(raw, "length(") && strings.HasSuffix(raw, ")") {
+		inner := strings.TrimSpace(raw[len("length(") : len(raw)-1])
+		arg, err := parseFilterValueExpr(inner)
+		if err != nil {
+			return nil, err
+		}
+		return &filterValueExpr{kind: "func", op: "length", left: arg}, nil
+	}
+
+	if strings.HasSuffix(raw, ".length()") {
+		base := strings.TrimSpace(raw[:len(raw)-len(".length()")])
+		if base == "" {
+			return nil, errors.New("ERR invalid JSON path")
+		}
+		arg, err := parseFilterValueExpr(base)
+		if err != nil {
+			return nil, err
+		}
+		return &filterValueExpr{kind: "func", op: "length", left: arg}, nil
 	}
 
 	if index, op := findTopLevelArithmetic(raw, []string{" + ", " - "}); index >= 0 {
