@@ -56,6 +56,14 @@ run FT.SEARCH products '@description:search' NOCONTENT
 run FT.SEARCH products '@description:server' NOCONTENT
 
 echo
+echo "=== multi-term text ==="
+run FT.SEARCH products '@description:(memory guide)' NOCONTENT
+run FT.SEARCH products '@description:(memory search)' NOCONTENT
+run FT.SEARCH products '@description:(memory engine)' NOCONTENT
+run FT.SEARCH products '@description:(MEMORY GUIDE)' NOCONTENT
+run FT.SEARCH products '@description:(memory server)' NOCONTENT
+
+echo
 echo "=== numeric infinities ==="
 run FT.SEARCH products '@price:[-inf 20]' NOCONTENT
 run FT.SEARCH products '@price:[20 +inf]' NOCONTENT
