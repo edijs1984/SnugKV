@@ -248,7 +248,7 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		return integer(length), nil
 
 	case "JSON.TYPE":
-		path := "$"
+		path := "."
 
 		if len(args) == 3 {
 			path = string(args[2])
@@ -541,7 +541,7 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		return []byte("+OK\r\n"), nil
 
 	case "JSON.GET":
-		path := "$"
+		path := "."
 
 		if len(args) == 3 {
 			path = string(args[2])
