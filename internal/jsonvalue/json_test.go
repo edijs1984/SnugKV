@@ -688,3 +688,53 @@ func TestJSONPathLengthFunctionFilters(t *testing.T) {
 		}
 	}
 }
+
+
+func TestJSONPathNumericFunctions(t *testing.T) {
+	root, err := Parse([]byte(`{"items":[{"n":-5},{"n":5},{"n":2.1},{"n":2.9},{"n":3.5},{"n":"x"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		path string
+		want int
+	}{
+		{"$.items[?abs(@.n) == 5]", 2},
+		{"$.items[?(@.n.abs() == 5)]", 2},
+		{"$.items[?ceiling(@.n) == 3]", 2},
+		{"$.items[?(@.n.floor() == 2)]", 2},
+		{"$.items[?(floor(abs(@.n)) == 5)]", 2},
+	}
+
+	for _, tc := range cases {
+		got, err := Matches(root, tc.path)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.path, err)
+		}
+		if len(got) != tc.want {
+			t.Fatalf("%s got %d matches want %d (%#v)", tc.path, len(got), tc.want, got)
+		}
+	}
+}
+
+func TestJSONPathNumericFunctionMutation(t *testing.T) {
+	root, err := Parse([]byte(`{"items":[{"n":-5},{"n":2.1},{"n":2.9}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	root, count, err := SetMatches(root, "$.items[?ceiling(@.n) == 3].hit", true)
+	if err != nil || count != 2 {
+		t.Fatalf("set count=%d err=%v", count, err)
+	}
+
+	got, err := Matches(root, "$.items[?(@.hit == true)].n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []any{float64(2.1), float64(2.9)}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v want %#v", got, want)
+	}
+}
