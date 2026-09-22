@@ -129,6 +129,9 @@ var commandTable = map[string]commandInfo{
 	"JSON.ARRINSERT": {5, 0, 1, 1, 1, true},
 	"JSON.ARRINDEX":  {4, 6, 1, 1, 1, false},
 	"JSON.CLEAR":     {2, 3, 1, 1, 1, true},
+	"JSON.ARRTRIM":   {5, 5, 1, 1, 1, true},
+	"JSON.MGET":      {3, 0, 1, -2, 1, false},
+	"JSON.MERGE":     {4, 4, 1, 1, 1, true},
 	"MEMORY":         {2, 5, 0, 0, 0, false},
 }
 
@@ -406,6 +409,55 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			return nil, err
 		}
 		return integer(cleared), nil
+
+	case "JSON.ARRTRIM":
+		start, err := strconv.Atoi(string(args[3]))
+		if err != nil {
+			return nil, errors.New("ERR value is not an integer or out of range")
+		}
+		stop, err := strconv.Atoi(string(args[4]))
+		if err != nil {
+			return nil, errors.New("ERR value is not an integer or out of range")
+		}
+
+		length, found, err := s.store.JSONArrTrim(
+			key,
+			string(args[2]),
+			start,
+			stop,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nullBulk(), nil
+		}
+		return integer(length), nil
+
+	case "JSON.MGET":
+		path := string(args[len(args)-1])
+		keyArgs := args[1 : len(args)-1]
+		keyNames := make([]string, len(keyArgs))
+		for i, arg := range keyArgs {
+			keyNames[i] = string(arg)
+		}
+
+		values, found := s.store.JSONMGet(keyNames, path)
+		items := make([][]byte, len(values))
+		for i := range values {
+			items[i] = optionalBulk(values[i], found[i])
+		}
+		return array(items...), nil
+
+	case "JSON.MERGE":
+		applied, err := s.store.JSONMerge(key, string(args[2]), args[3])
+		if err != nil {
+			return nil, err
+		}
+		if !applied {
+			return nullBulk(), nil
+		}
+		return []byte("+OK\r\n"), nil
 	case "JSON.SET":
 		path := string(args[2])
 
