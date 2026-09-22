@@ -860,3 +860,45 @@ func TestJSONPathAggregationFunctionMutation(t *testing.T) {
 		t.Fatalf("got %#v want %#v", got, want)
 	}
 }
+
+
+func TestJSONPathAppendFunction(t *testing.T) {
+	root, err := Parse([]byte(`{
+		"items":[
+			{"n":[1,2],"name":"a"},
+			{"n":[5],"name":"b"},
+			{"n":"bad","name":"c"}
+		]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		path string
+		want []any
+	}{
+		{"$.items[?last(append(@.n, 9)) == 9].name", []any{"a", "b"}},
+		{"$.items[?(@.n.append(7,8).length() == 4)].name", []any{"a"}},
+		{"$.items[?index(append(@.n, [7,8]), -1) == [7,8]].name", []any{"a", "b"}},
+	}
+
+	for _, tc := range cases {
+		got, err := Matches(root, tc.path)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.path, err)
+		}
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Fatalf("%s got %#v want %#v", tc.path, got, tc.want)
+		}
+	}
+
+	original, err := Matches(root, "$.items[0].n[*]")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantOriginal := []any{float64(1), float64(2)}
+	if !reflect.DeepEqual(original, wantOriginal) {
+		t.Fatalf("append mutated stored value: %#v", original)
+	}
+}
