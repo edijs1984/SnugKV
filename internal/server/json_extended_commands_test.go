@@ -486,3 +486,35 @@ func TestJSONPathRecursiveCoreCommands(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+
+func TestJSONPathSliceAndUnionCoreCommands(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "JSON.SET", "doc", "$",
+		`{"items":[0,1,2,3,4,5]}`)
+
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[1:4]"); got != "$7\r\n[1,2,3]\r\n" {
+		t.Fatal(got)
+	}
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[::2]"); got != "$7\r\n[0,2,4]\r\n" {
+		t.Fatal(got)
+	}
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[0,2,4]"); got != "$7\r\n[0,2,4]\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.SET", "doc", "$.items[1:5:2]", "9"); got != "+OK\r\n" {
+		t.Fatal(got)
+	}
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[*]"); got != "$13\r\n[0,9,2,9,4,5]\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.DEL", "doc", "$.items[0,2,4]"); got != ":3\r\n" {
+		t.Fatal(got)
+	}
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[*]"); got != "$7\r\n[9,9,5]\r\n" {
+		t.Fatal(got)
+	}
+}
