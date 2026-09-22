@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
 
 	"snugkv/internal/jsonvalue"
 )
@@ -15,6 +16,7 @@ type SearchFieldKind uint8
 const (
 	SearchFieldTag SearchFieldKind = iota
 	SearchFieldNumeric
+	SearchFieldText
 )
 
 type SearchField struct {
@@ -37,6 +39,7 @@ type numericPosting struct {
 type searchDocumentState struct {
 	Tags     map[string][]string
 	Numerics map[string][]float64
+	Texts    map[string][]string
 }
 
 type searchIndex struct {
@@ -44,7 +47,8 @@ type searchIndex struct {
 
 	docs map[string]searchDocumentState
 
-	tags map[string]map[string]map[string]struct{}
+	tags  map[string]map[string]map[string]struct{}
+	texts map[string]map[string]map[string]struct{}
 
 	numerics      map[string]map[string][]float64
 	numericSorted map[string][]numericPosting
@@ -73,6 +77,7 @@ func newSearchIndex(def SearchDefinition) *searchIndex {
 		def:           cloneSearchDefinition(def),
 		docs:          make(map[string]searchDocumentState),
 		tags:          make(map[string]map[string]map[string]struct{}),
+		texts:         make(map[string]map[string]map[string]struct{}),
 		numerics:      make(map[string]map[string][]float64),
 		numericSorted: make(map[string][]numericPosting),
 		numericDirty:  make(map[string]bool),
@@ -98,7 +103,7 @@ func validateSearchDefinition(def SearchDefinition) error {
 		aliases[field.Alias] = struct{}{}
 
 		switch field.Kind {
-		case SearchFieldTag, SearchFieldNumeric:
+		case SearchFieldTag, SearchFieldNumeric, SearchFieldText:
 		default:
 			return errors.New("ERR unsupported search field type")
 		}
@@ -138,6 +143,30 @@ func canonicalSearchTag(value any) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+func tokenizeSearchText(value string) []string {
+	tokens := make([]string, 0, 8)
+	var current []rune
+
+	flush := func() {
+		if len(current) == 0 {
+			return
+		}
+		tokens = append(tokens, strings.ToLower(string(current)))
+		current = current[:0]
+	}
+
+	for _, r := range value {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' {
+			current = append(current, r)
+			continue
+		}
+		flush()
+	}
+	flush()
+
+	return uniqueStrings(tokens)
 }
 
 func uniqueStrings(values []string) []string {
@@ -181,6 +210,7 @@ func extractSearchDocument(def SearchDefinition, raw []byte) (searchDocumentStat
 	state := searchDocumentState{
 		Tags:     make(map[string][]string),
 		Numerics: make(map[string][]float64),
+		Texts:    make(map[string][]string),
 	}
 
 	for _, field := range def.Fields {
@@ -202,6 +232,19 @@ func extractSearchDocument(def SearchDefinition, raw []byte) (searchDocumentStat
 			}
 			if len(tags) > 0 {
 				state.Tags[field.Alias] = uniqueStrings(tags)
+			}
+
+		case SearchFieldText:
+			tokens := make([]string, 0)
+			for _, value := range values {
+				text, ok := value.(string)
+				if !ok {
+					continue
+				}
+				tokens = append(tokens, tokenizeSearchText(text)...)
+			}
+			if len(tokens) > 0 {
+				state.Texts[field.Alias] = uniqueStrings(tokens)
 			}
 
 		case SearchFieldNumeric:
@@ -300,6 +343,20 @@ func (idx *searchIndex) removeDocument(key string) {
 		}
 	}
 
+	for alias, values := range old.Texts {
+		field := idx.texts[alias]
+		for _, value := range values {
+			postings := field[value]
+			delete(postings, key)
+			if len(postings) == 0 {
+				delete(field, value)
+			}
+		}
+		if len(field) == 0 {
+			delete(idx.texts, alias)
+		}
+	}
+
 	for alias := range old.Numerics {
 		if field := idx.numerics[alias]; field != nil {
 			delete(field, key)
@@ -314,7 +371,7 @@ func (idx *searchIndex) removeDocument(key string) {
 }
 
 func (idx *searchIndex) addDocument(key string, state searchDocumentState) {
-	if len(state.Tags) == 0 && len(state.Numerics) == 0 {
+	if len(state.Tags) == 0 && len(state.Numerics) == 0 && len(state.Texts) == 0 {
 		return
 	}
 
@@ -325,6 +382,22 @@ func (idx *searchIndex) addDocument(key string, state searchDocumentState) {
 		if field == nil {
 			field = make(map[string]map[string]struct{})
 			idx.tags[alias] = field
+		}
+		for _, value := range values {
+			postings := field[value]
+			if postings == nil {
+				postings = make(map[string]struct{})
+				field[value] = postings
+			}
+			postings[key] = struct{}{}
+		}
+	}
+
+	for alias, values := range state.Texts {
+		field := idx.texts[alias]
+		if field == nil {
+			field = make(map[string]map[string]struct{})
+			idx.texts[alias] = field
 		}
 		for _, value := range values {
 			postings := field[value]
@@ -423,6 +496,21 @@ func (m *searchManager) tagKeys(indexName, alias, value string) ([]string, bool)
 		return []string{}, true
 	}
 	return sortedPostingKeys(field[value]), true
+}
+
+func (m *searchManager) textKeys(indexName, alias, token string) ([]string, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	idx, ok := m.indexes[indexName]
+	if !ok {
+		return nil, false
+	}
+	field := idx.texts[alias]
+	if field == nil {
+		return []string{}, true
+	}
+	return sortedPostingKeys(field[strings.ToLower(token)]), true
 }
 
 func (idx *searchIndex) ensureNumericSorted(alias string) []numericPosting {
@@ -526,6 +614,12 @@ func (m *searchManager) memoryBytes() uint64 {
 		for key, state := range idx.docs {
 			bytes += uint64(len(key))
 			for alias, values := range state.Tags {
+				bytes += uint64(len(alias))
+				for _, value := range values {
+					bytes += uint64(len(value) + len(key))
+				}
+			}
+			for alias, values := range state.Texts {
 				bytes += uint64(len(alias))
 				for _, value := range values {
 					bytes += uint64(len(value) + len(key))
@@ -703,6 +797,14 @@ func (s *Store) SearchTagKeys(indexName, alias, value string) ([]string, bool) {
 		return nil, false
 	}
 	return manager.tagKeys(indexName, alias, value)
+}
+
+func (s *Store) SearchTextKeys(indexName, alias, token string) ([]string, bool) {
+	manager := s.getSearchManager()
+	if manager == nil {
+		return nil, false
+	}
+	return manager.textKeys(indexName, alias, token)
 }
 
 func (s *Store) SearchNumericRangeKeys(indexName, alias string, min, max float64) ([]string, bool) {
