@@ -263,7 +263,7 @@ func TestJSONPathSlicesAndUnions(t *testing.T) {
 		{"$.items[::2]", []any{float64(0), float64(2), float64(4)}},
 		{"$.items[-3:]", []any{float64(3), float64(4), float64(5)}},
 		{"$.items[0,2,4]", []any{float64(0), float64(2), float64(4)}},
-		{"$.items[-1,0,-1]", []any{float64(5), float64(0)}},
+		{"$.items[-1,0,-1]", []any{float64(5), float64(0), float64(5)}},
 	}
 
 	for _, tc := range cases {
