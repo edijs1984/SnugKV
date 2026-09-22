@@ -623,6 +623,28 @@ func (s *Store) SearchDefinition(name string) (SearchDefinition, bool) {
 	return cloneSearchDefinition(idx.def), true
 }
 
+
+func (s *Store) SearchFieldKind(indexName, alias string) (SearchFieldKind, bool) {
+	manager := s.getSearchManager()
+	if manager == nil {
+		return 0, false
+	}
+
+	manager.mu.RLock()
+	defer manager.mu.RUnlock()
+
+	idx, ok := manager.indexes[indexName]
+	if !ok {
+		return 0, false
+	}
+	for _, field := range idx.def.Fields {
+		if field.Alias == alias {
+			return field.Kind, true
+		}
+	}
+	return 0, false
+}
+
 // RestoreSearchDefinitions atomically replaces the search definition registry
 // and rebuilds all derived postings from the current primary JSON keyspace.
 func (s *Store) RestoreSearchDefinitions(defs []SearchDefinition) error {
