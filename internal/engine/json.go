@@ -172,6 +172,46 @@ func (s *Store) JSONGet(key, path string) ([]byte, bool, error) {
 	return encoded, true, nil
 }
 
+
+
+func (s *Store) JSONProjection(key, path string) ([]byte, bool, error) {
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	now := s.now()
+	e, exists := sh.get(key)
+	if !exists {
+		return nil, false, nil
+	}
+	if sh.expired(key, e, now) {
+		s.remove(sh, key)
+		return nil, false, nil
+	}
+	if e.valueType != TypeJSON {
+		return nil, false, errors.New("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+
+	root, err := jsonvalue.Parse(s.decode(sh, e))
+	if err != nil {
+		return nil, false, errors.New("WRONGTYPE value is not valid JSON")
+	}
+
+	values, err := jsonvalue.Matches(root, path)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(values) == 0 {
+		return nil, false, nil
+	}
+
+	encoded, err := jsonvalue.Encode(values[0])
+	if err != nil {
+		return nil, false, err
+	}
+	return encoded, true, nil
+}
+
 func (s *Store) JSONType(key, path string) (string, bool, error) {
 	sh := s.shardFor(key)
 	sh.mu.Lock()
