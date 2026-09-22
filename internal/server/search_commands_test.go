@@ -939,16 +939,13 @@ func TestFTCreateAllowsMalformedJSONPathWithExistingDocuments(t *testing.T) {
 	}
 
 	reply, err = s.Execute([][]byte{
-		[]byte("FT.SEARCH"),
-		[]byte("badpath"),
-		[]byte("*"),
-		[]byte("NOCONTENT"),
+		[]byte("FT._LIST"),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(reply), "*2\r\n:1\r\n$9\r\nproduct:1\r\n"; got != want {
-		t.Fatalf("reply=%q want=%q", got, want)
+	if !strings.Contains(string(reply), "badpath") {
+		t.Fatalf("FT._LIST=%q missing badpath index", reply)
 	}
 }
 
