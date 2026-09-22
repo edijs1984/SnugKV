@@ -11,8 +11,14 @@ func TestRedis810RejectsDynamicMissingJSONSetPath(t *testing.T) {
 
 	execute(t, s, "JSON.SET", "doc", "$", `{"items":[{"score":1},{"score":2},{"score":3}]}`)
 
-	if got := execute(t, s, "JSON.SET", "doc", "$.items[?(@.score >= 2)].expensive", "true"); got != "-ERR wrong static path\r\n" {
-		t.Fatalf("dynamic missing path=%q", got)
+	_, err := s.Execute([][]byte{
+		[]byte("JSON.SET"),
+		[]byte("doc"),
+		[]byte("$.items[?(@.score >= 2)].expensive"),
+		[]byte("true"),
+	})
+	if err == nil || err.Error() != "ERR wrong static path" {
+		t.Fatalf("dynamic missing path err=%v", err)
 	}
 
 	if got := execute(t, s, "JSON.GET", "doc", "$.items[*].expensive"); got != "$2\r\n[]\r\n" {
