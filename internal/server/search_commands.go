@@ -214,10 +214,24 @@ type searchQueryClause struct {
 	tag     *string
 	minimum *float64
 	maximum *float64
-	negated bool
 }
 
-type searchQueryGroup []searchQueryClause
+type searchQueryNodeKind uint8
+
+const (
+	searchQueryClauseNode searchQueryNodeKind = iota
+	searchQueryAndNode
+	searchQueryOrNode
+	searchQueryNotNode
+)
+
+type searchQueryNode struct {
+	kind   searchQueryNodeKind
+	clause *searchQueryClause
+	left   *searchQueryNode
+	right  *searchQueryNode
+	child  *searchQueryNode
+}
 
 type searchReturnField struct {
 	path  string
@@ -231,48 +245,204 @@ type searchOptions struct {
 	returnFields []searchReturnField
 	sortBy       string
 	sortDesc     bool
+	dialect      int
 }
 
 
-func splitSearchTerms(query string) ([]string, error) {
-	var terms []string
-	start := -1
+type searchQueryParser struct {
+	query string
+	pos   int
+}
+
+func (p *searchQueryParser) skipSpace() {
+	for p.pos < len(p.query) {
+		switch p.query[p.pos] {
+		case ' ', '\t', '\n', '\r':
+			p.pos++
+		default:
+			return
+		}
+	}
+}
+
+func isSearchSpace(b byte) bool {
+	switch b {
+	case ' ', '\t', '\n', '\r':
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *searchQueryParser) parse() (*searchQueryNode, error) {
+	p.skipSpace()
+	if p.pos >= len(p.query) {
+		return nil, errors.New("ERR invalid search query")
+	}
+
+	node, err := p.parseOr()
+	if err != nil {
+		return nil, err
+	}
+
+	p.skipSpace()
+	if p.pos != len(p.query) {
+		return nil, errors.New("ERR unsupported search query")
+	}
+	return node, nil
+}
+
+func (p *searchQueryParser) parseOr() (*searchQueryNode, error) {
+	left, err := p.parseAnd()
+	if err != nil {
+		return nil, err
+	}
+
+	for {
+		p.skipSpace()
+		if p.pos >= len(p.query) || p.query[p.pos] != '|' {
+			return left, nil
+		}
+		if p.pos == 0 || p.pos+1 >= len(p.query) ||
+			!isSearchSpace(p.query[p.pos-1]) || !isSearchSpace(p.query[p.pos+1]) {
+			return nil, errors.New("ERR unsupported search query")
+		}
+		p.pos++
+		p.skipSpace()
+		if p.pos >= len(p.query) {
+			return nil, errors.New("ERR unsupported search query")
+		}
+
+		right, err := p.parseAnd()
+		if err != nil {
+			return nil, err
+		}
+		left = &searchQueryNode{
+			kind:  searchQueryOrNode,
+			left:  left,
+			right: right,
+		}
+	}
+}
+
+func (p *searchQueryParser) parseAnd() (*searchQueryNode, error) {
+	left, err := p.parseUnary()
+	if err != nil {
+		return nil, err
+	}
+
+	for {
+		beforeSpace := p.pos
+		p.skipSpace()
+
+		if p.pos >= len(p.query) || p.query[p.pos] == ')' || p.query[p.pos] == '|' {
+			return left, nil
+		}
+
+		// Implicit AND requires a separator between adjacent expressions.
+		if beforeSpace == p.pos {
+			return nil, errors.New("ERR unsupported search query")
+		}
+
+		right, err := p.parseUnary()
+		if err != nil {
+			return nil, err
+		}
+		left = &searchQueryNode{
+			kind:  searchQueryAndNode,
+			left:  left,
+			right: right,
+		}
+	}
+}
+
+func (p *searchQueryParser) parseUnary() (*searchQueryNode, error) {
+	p.skipSpace()
+	if p.pos >= len(p.query) {
+		return nil, errors.New("ERR unsupported search query")
+	}
+
+	if p.query[p.pos] == '-' {
+		p.pos++
+		child, err := p.parseUnary()
+		if err != nil {
+			return nil, err
+		}
+		return &searchQueryNode{
+			kind:  searchQueryNotNode,
+			child: child,
+		}, nil
+	}
+
+	return p.parsePrimary()
+}
+
+func (p *searchQueryParser) parsePrimary() (*searchQueryNode, error) {
+	p.skipSpace()
+	if p.pos >= len(p.query) {
+		return nil, errors.New("ERR unsupported search query")
+	}
+
+	if p.query[p.pos] == '(' {
+		p.pos++
+		node, err := p.parseOr()
+		if err != nil {
+			return nil, err
+		}
+		p.skipSpace()
+		if p.pos >= len(p.query) || p.query[p.pos] != ')' {
+			return nil, errors.New("ERR unsupported search query")
+		}
+		p.pos++
+		return node, nil
+	}
+
+	part, err := p.readClause()
+	if err != nil {
+		return nil, err
+	}
+	clause, err := parseSearchClause(part, p.query)
+	if err != nil {
+		return nil, err
+	}
+	return &searchQueryNode{
+		kind:   searchQueryClauseNode,
+		clause: &clause,
+	}, nil
+}
+
+func (p *searchQueryParser) readClause() (string, error) {
+	start := p.pos
 	depth := 0
 
-	for i, r := range query {
-		switch r {
+	for p.pos < len(p.query) {
+		switch p.query[p.pos] {
 		case '{', '[':
-			if start < 0 {
-				start = i
-			}
 			depth++
+			p.pos++
 		case '}', ']':
 			if depth == 0 {
-				return nil, errors.New("ERR unsupported search query")
+				return "", errors.New("ERR unsupported search query")
 			}
 			depth--
-		case ' ', '\t', '\n', '\r':
+			p.pos++
+		case ' ', '\t', '\n', '\r', '|', ')', '(':
 			if depth == 0 {
-				if start >= 0 {
-					terms = append(terms, strings.TrimSpace(query[start:i]))
-					start = -1
+				if p.pos == start {
+					return "", errors.New("ERR unsupported search query")
 				}
-				continue
+				return strings.TrimSpace(p.query[start:p.pos]), nil
 			}
+			p.pos++
 		default:
-			if start < 0 {
-				start = i
-			}
+			p.pos++
 		}
 	}
 
-	if depth != 0 {
-		return nil, errors.New("ERR unsupported search query")
+	if depth != 0 || p.pos == start {
+		return "", errors.New("ERR unsupported search query")
 	}
-	if start >= 0 {
-		terms = append(terms, strings.TrimSpace(query[start:]))
-	}
-	return terms, nil
+	return strings.TrimSpace(p.query[start:p.pos]), nil
 }
 
 func parseSearchBound(value string) (float64, error) {
@@ -290,99 +460,8 @@ func parseSearchBound(value string) (float64, error) {
 	}
 }
 
-func splitSearchOrGroups(query string) ([]string, error) {
-	var groups []string
-	start := 0
-	depth := 0
-
-	for i, r := range query {
-		switch r {
-		case '(':
-			depth++
-		case ')':
-			if depth == 0 {
-				return nil, errors.New("ERR unsupported search query")
-			}
-			depth--
-		case '{', '[':
-			depth++
-		case '}', ']':
-			if depth == 0 {
-				return nil, errors.New("ERR unsupported search query")
-			}
-			depth--
-		case '|':
-			if depth != 0 {
-				continue
-			}
-			if i == 0 || i+1 >= len(query) ||
-				!isSearchSpace(query[i-1]) || !isSearchSpace(query[i+1]) {
-				return nil, errors.New("ERR unsupported search query")
-			}
-
-			group := strings.TrimSpace(query[start:i])
-			if group == "" {
-				return nil, errors.New("ERR unsupported search query")
-			}
-			groups = append(groups, group)
-			start = i + 1
-		}
-	}
-
-	if depth != 0 {
-		return nil, errors.New("ERR unsupported search query")
-	}
-
-	group := strings.TrimSpace(query[start:])
-	if group == "" {
-		return nil, errors.New("ERR unsupported search query")
-	}
-	groups = append(groups, group)
-	return groups, nil
-}
-
-func isSearchSpace(b byte) bool {
-	switch b {
-	case ' ', '\t', '\n', '\r':
-		return true
-	default:
-		return false
-	}
-}
-
-func unwrapSearchGroup(group string) (string, bool) {
-	group = strings.TrimSpace(group)
-	if !strings.HasPrefix(group, "(") || !strings.HasSuffix(group, ")") {
-		return group, false
-	}
-
-	depth := 0
-	for i, r := range group {
-		switch r {
-		case '(':
-			depth++
-		case ')':
-			depth--
-			if depth == 0 && i != len(group)-1 {
-				return group, false
-			}
-			if depth < 0 {
-				return group, false
-			}
-		}
-	}
-	if depth != 0 {
-		return group, false
-	}
-	return strings.TrimSpace(group[1 : len(group)-1]), true
-}
-
 func parseSearchClause(part, fullQuery string) (searchQueryClause, error) {
 	clause := searchQueryClause{}
-	if strings.HasPrefix(part, "-") {
-		clause.negated = true
-		part = strings.TrimSpace(part[1:])
-	}
 	if !strings.HasPrefix(part, "@") {
 		return searchQueryClause{}, errors.New("ERR unsupported search query")
 	}
@@ -430,7 +509,7 @@ func parseSearchClause(part, fullQuery string) (searchQueryClause, error) {
 	return searchQueryClause{}, errors.New("ERR unsupported search query")
 }
 
-func parseSearchQuery(query string) ([]searchQueryGroup, error) {
+func parseSearchQuery(query string, dialect int) (*searchQueryNode, error) {
 	query = strings.TrimSpace(query)
 	if query == "*" {
 		return nil, nil
@@ -439,48 +518,181 @@ func parseSearchQuery(query string) ([]searchQueryGroup, error) {
 		return nil, errors.New("ERR invalid search query")
 	}
 
-	rawGroups, err := splitSearchOrGroups(query)
-	if err != nil {
-		return nil, err
-	}
-
-	groups := make([]searchQueryGroup, 0, len(rawGroups))
-	hasOR := len(rawGroups) > 1
-	for _, rawGroup := range rawGroups {
-		if hasOR {
-			var ok bool
-			rawGroup, ok = unwrapSearchGroup(rawGroup)
-			if !ok {
-				return nil, errors.New("ERR unsupported search query")
-			}
-		}
-
-		parts, err := splitSearchTerms(rawGroup)
-		if err != nil {
+	if dialect == 1 {
+		if err := validateSearchDialect1BooleanSyntax(query); err != nil {
 			return nil, err
 		}
-		if len(parts) == 0 {
-			return nil, errors.New("ERR unsupported search query")
+	} else if dialect == 2 {
+		if err := validateSearchDialect2BooleanSyntax(query); err != nil {
+			return nil, err
 		}
-
-		group := make(searchQueryGroup, 0, len(parts))
-		for _, part := range parts {
-			clause, err := parseSearchClause(part, query)
-			if err != nil {
-				return nil, err
-			}
-			group = append(group, clause)
-		}
-		groups = append(groups, group)
 	}
 
-	return groups, nil
+	parser := searchQueryParser{query: query}
+	return parser.parse()
+}
+
+func validateSearchDialect2BooleanSyntax(query string) error {
+	type parenFrame struct {
+		start int
+	}
+
+	stack := make([]parenFrame, 0, 4)
+	bracketDepth := 0
+
+	for i := 0; i < len(query); i++ {
+		switch query[i] {
+		case '{', '[':
+			bracketDepth++
+		case '}', ']':
+			if bracketDepth == 0 {
+				return errors.New("ERR unsupported search query")
+			}
+			bracketDepth--
+		case '(':
+			if bracketDepth == 0 {
+				stack = append(stack, parenFrame{start: i})
+			}
+		case ')':
+			if bracketDepth != 0 {
+				continue
+			}
+			if len(stack) == 0 {
+				return errors.New("ERR unsupported search query")
+			}
+
+			frame := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			content := strings.TrimSpace(query[frame.start+1 : i])
+
+			parts := splitTopLevelSearchOR(content)
+			if len(parts) > 1 {
+				for _, part := range parts {
+					if !isFullyParenthesizedSearchExpression(strings.TrimSpace(part)) {
+						return errors.New("ERR unsupported search query")
+					}
+				}
+			}
+		}
+	}
+
+	if bracketDepth != 0 || len(stack) != 0 {
+		return errors.New("ERR unsupported search query")
+	}
+	return nil
+}
+
+func splitTopLevelSearchOR(expr string) []string {
+	parts := make([]string, 0, 2)
+	start := 0
+	parenDepth := 0
+	bracketDepth := 0
+
+	for i := 0; i < len(expr); i++ {
+		switch expr[i] {
+		case '{', '[':
+			bracketDepth++
+		case '}', ']':
+			if bracketDepth > 0 {
+				bracketDepth--
+			}
+		case '(':
+			if bracketDepth == 0 {
+				parenDepth++
+			}
+		case ')':
+			if bracketDepth == 0 && parenDepth > 0 {
+				parenDepth--
+			}
+		case '|':
+			if bracketDepth == 0 && parenDepth == 0 {
+				parts = append(parts, strings.TrimSpace(expr[start:i]))
+				start = i + 1
+			}
+		}
+	}
+
+	if len(parts) == 0 {
+		return nil
+	}
+	parts = append(parts, strings.TrimSpace(expr[start:]))
+	return parts
+}
+
+func validateSearchDialect1BooleanSyntax(query string) error {
+	depth := 0
+	segmentStart := 0
+	topLevelOR := false
+
+	for i := 0; i < len(query); i++ {
+		switch query[i] {
+		case '{', '[':
+			depth++
+		case '}', ']':
+			if depth == 0 {
+				return errors.New("ERR unsupported search query")
+			}
+			depth--
+		case '(':
+			depth++
+		case ')':
+			if depth == 0 {
+				return errors.New("ERR unsupported search query")
+			}
+			depth--
+		case '|':
+			if depth != 0 {
+				continue
+			}
+			topLevelOR = true
+			if i == 0 || i+1 >= len(query) ||
+				!isSearchSpace(query[i-1]) || !isSearchSpace(query[i+1]) {
+				return errors.New("ERR unsupported search query")
+			}
+			if !isFullyParenthesizedSearchExpression(strings.TrimSpace(query[segmentStart:i])) {
+				return errors.New("ERR unsupported search query")
+			}
+			segmentStart = i + 1
+		}
+	}
+
+	if depth != 0 {
+		return errors.New("ERR unsupported search query")
+	}
+	if topLevelOR && !isFullyParenthesizedSearchExpression(strings.TrimSpace(query[segmentStart:])) {
+		return errors.New("ERR unsupported search query")
+	}
+	return nil
+}
+
+func isFullyParenthesizedSearchExpression(expr string) bool {
+	if len(expr) < 2 || expr[0] != '(' || expr[len(expr)-1] != ')' {
+		return false
+	}
+
+	depth := 0
+	for i := 0; i < len(expr); i++ {
+		switch expr[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth < 0 {
+				return false
+			}
+			if depth == 0 && i != len(expr)-1 {
+				return false
+			}
+		}
+	}
+	return depth == 0
 }
 
 func parseSearchOptions(args [][]byte) (searchOptions, error) {
 	options := searchOptions{
-		offset: 0,
-		count:  10,
+		offset:  0,
+		count:   10,
+		dialect: 1,
 	}
 
 	for pos := 3; pos < len(args); {
@@ -523,6 +735,17 @@ func parseSearchOptions(args [][]byte) (searchOptions, error) {
 					pos++
 				}
 			}
+
+		case "DIALECT":
+			if pos+1 >= len(args) {
+				return searchOptions{}, errors.New("ERR syntax error")
+			}
+			dialect, err := strconv.Atoi(string(args[pos+1]))
+			if err != nil || (dialect != 1 && dialect != 2) {
+				return searchOptions{}, errors.New("ERR unsupported search dialect")
+			}
+			options.dialect = dialect
+			pos += 2
 
 		case "RETURN":
 			if pos+1 >= len(args) {
@@ -606,17 +829,123 @@ func intersectSortedSearchKeys(sets ...[]string) []string {
 	return result
 }
 
+func searchKeySet(keys []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		set[key] = struct{}{}
+	}
+	return set
+}
+
+func orderedSearchKeys(allKeys []string, set map[string]struct{}) []string {
+	keys := make([]string, 0, len(set))
+	for _, key := range allKeys {
+		if _, ok := set[key]; ok {
+			keys = append(keys, key)
+		}
+	}
+	return keys
+}
+
+func evaluateSearchQuery(store *engine.Store, indexName string, node *searchQueryNode, allKeys []string) ([]string, error) {
+	if node == nil {
+		return append([]string(nil), allKeys...), nil
+	}
+
+	switch node.kind {
+	case searchQueryClauseNode:
+		if node.clause == nil {
+			return nil, errors.New("ERR unsupported search query")
+		}
+		switch {
+		case node.clause.tag != nil:
+			keys, ok := store.SearchTagKeys(indexName, node.clause.alias, *node.clause.tag)
+			if !ok {
+				return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
+			}
+			return keys, nil
+
+		case node.clause.minimum != nil && node.clause.maximum != nil:
+			keys, ok := store.SearchNumericRangeKeys(
+				indexName,
+				node.clause.alias,
+				*node.clause.minimum,
+				*node.clause.maximum,
+			)
+			if !ok {
+				return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
+			}
+			return keys, nil
+
+		default:
+			return nil, errors.New("ERR unsupported search query")
+		}
+
+	case searchQueryNotNode:
+		child, err := evaluateSearchQuery(store, indexName, node.child, allKeys)
+		if err != nil {
+			return nil, err
+		}
+		excluded := searchKeySet(child)
+		out := make([]string, 0, len(allKeys)-len(child))
+		for _, key := range allKeys {
+			if _, found := excluded[key]; !found {
+				out = append(out, key)
+			}
+		}
+		return out, nil
+
+	case searchQueryAndNode:
+		left, err := evaluateSearchQuery(store, indexName, node.left, allKeys)
+		if err != nil {
+			return nil, err
+		}
+		right, err := evaluateSearchQuery(store, indexName, node.right, allKeys)
+		if err != nil {
+			return nil, err
+		}
+
+		rightSet := searchKeySet(right)
+		out := make([]string, 0)
+		for _, key := range left {
+			if _, ok := rightSet[key]; ok {
+				out = append(out, key)
+			}
+		}
+		return out, nil
+
+	case searchQueryOrNode:
+		left, err := evaluateSearchQuery(store, indexName, node.left, allKeys)
+		if err != nil {
+			return nil, err
+		}
+		right, err := evaluateSearchQuery(store, indexName, node.right, allKeys)
+		if err != nil {
+			return nil, err
+		}
+
+		union := searchKeySet(left)
+		for _, key := range right {
+			union[key] = struct{}{}
+		}
+		return orderedSearchKeys(allKeys, union), nil
+
+	default:
+		return nil, errors.New("ERR unsupported search query")
+	}
+}
+
 func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 	if len(args) < 3 {
 		return nil, errors.New("ERR wrong number of arguments for 'ft.search' command")
 	}
 
 	indexName := string(args[1])
-	clauses, err := parseSearchQuery(string(args[2]))
+	options, err := parseSearchOptions(args)
 	if err != nil {
 		return nil, err
 	}
-	options, err := parseSearchOptions(args)
+	queryNode, err := parseSearchQuery(string(args[2]), options.dialect)
 	if err != nil {
 		return nil, err
 	}
@@ -627,72 +956,14 @@ func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 	}
 
 	candidates := allKeys
-	if len(clauses) > 0 {
-		orMatches := make(map[string]struct{})
-
-		for _, group := range clauses {
-			groupSet := make(map[string]struct{}, len(allKeys))
-			for _, key := range allKeys {
-				groupSet[key] = struct{}{}
-			}
-
-			for _, clause := range group {
-				var keys []string
-				switch {
-				case clause.tag != nil:
-					var ok bool
-					keys, ok = store.SearchTagKeys(indexName, clause.alias, *clause.tag)
-					if !ok {
-						return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
-					}
-
-				case clause.minimum != nil && clause.maximum != nil:
-					var ok bool
-					keys, ok = store.SearchNumericRangeKeys(
-						indexName,
-						clause.alias,
-						*clause.minimum,
-						*clause.maximum,
-					)
-					if !ok {
-						return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
-					}
-
-				default:
-					return nil, errors.New("ERR unsupported search query")
-				}
-
-				matches := make(map[string]struct{}, len(keys))
-				for _, key := range keys {
-					matches[key] = struct{}{}
-				}
-
-				if clause.negated {
-					for key := range matches {
-						delete(groupSet, key)
-					}
-					continue
-				}
-
-				for key := range groupSet {
-					if _, ok := matches[key]; !ok {
-						delete(groupSet, key)
-					}
-				}
-			}
-
-			for key := range groupSet {
-				orMatches[key] = struct{}{}
-			}
+	if queryNode != nil {
+		matches, err := evaluateSearchQuery(store, indexName, queryNode, allKeys)
+		if err != nil {
+			return nil, err
 		}
-
-		candidates = candidates[:0]
-		for _, key := range allKeys {
-			if _, ok := orMatches[key]; ok {
-				candidates = append(candidates, key)
-			}
-		}
+		candidates = matches
 	}
+
 
 	type hit struct {
 		key        string

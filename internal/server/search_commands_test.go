@@ -1119,3 +1119,96 @@ func TestFTSearchBooleanRejectsMalformedOperators(t *testing.T) {
 		}
 	}
 }
+
+
+func TestFTSearchNestedBooleanExpressions(t *testing.T) {
+	s := newSearchTestServer(t)
+	createProductSearchFixture(t, s)
+
+	tests := []struct {
+		name  string
+		query string
+		want  string
+	}{
+		{
+			name:  "nested or then and",
+			query: "((@category:{books}) | (@category:{games})) @price:[20 30]",
+			want:  "*3\r\n:2\r\n$9\r\nproduct:2\r\n$9\r\nproduct:3\r\n",
+		},
+		{
+			name:  "or with nested and arm",
+			query: "(@category:{games}) | (@category:{books} @price:[30 30])",
+			want:  "*3\r\n:2\r\n$9\r\nproduct:2\r\n$9\r\nproduct:3\r\n",
+		},
+		{
+			name:  "negated group",
+			query: "-((@category:{games}) | (@price:[30 30]))",
+			want:  "*2\r\n:1\r\n$9\r\nproduct:1\r\n",
+		},
+		{
+			name:  "nested grouping",
+			query: "((@category:{books}) | (@category:{games})) @price:[10 20]",
+			want:  "*3\r\n:2\r\n$9\r\nproduct:1\r\n$9\r\nproduct:2\r\n",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			reply, err := s.Execute([][]byte{
+				[]byte("FT.SEARCH"),
+				[]byte("products"),
+				[]byte(tc.query),
+				[]byte("NOCONTENT"),
+				[]byte("DIALECT"),
+				[]byte("2"),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := string(reply); got != tc.want {
+				t.Fatalf("reply=%q want=%q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFTSearchNestedBooleanRejectsRedisInvalidGrouping(t *testing.T) {
+	s := newSearchTestServer(t)
+	createProductSearchFixture(t, s)
+
+	for _, query := range []string{
+		"(@category:{books} | @category:{games}) @price:[20 30]",
+		"-(@category:{games} | @price:[30 30])",
+	} {
+		if _, err := s.Execute([][]byte{
+			[]byte("FT.SEARCH"),
+			[]byte("products"),
+			[]byte(query),
+			[]byte("NOCONTENT"),
+			[]byte("DIALECT"),
+			[]byte("2"),
+		}); err == nil {
+			t.Fatalf("query %q unexpectedly succeeded", query)
+		}
+	}
+}
+
+func TestFTSearchNestedBooleanRejectsUnbalancedParentheses(t *testing.T) {
+	s := newSearchTestServer(t)
+	createProductSearchFixture(t, s)
+
+	for _, query := range []string{
+		"(@category:{books}",
+		"@category:{books})",
+		"()",
+		"(@category:{books} | )",
+	} {
+		if _, err := s.Execute([][]byte{
+			[]byte("FT.SEARCH"),
+			[]byte("products"),
+			[]byte(query),
+		}); err == nil {
+			t.Fatalf("query %q unexpectedly succeeded", query)
+		}
+	}
+}
