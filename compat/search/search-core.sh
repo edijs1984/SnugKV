@@ -56,6 +56,14 @@ echo
 echo "=== implicit AND ==="
 run FT.SEARCH products '@category:{books} @price:[20 40]' NOCONTENT
 
+
+echo
+echo "=== boolean queries ==="
+run FT.SEARCH products '@category:{games}|@price:[30 30]' NOCONTENT
+run FT.SEARCH products '@category:{books} -@price:[30 30]' NOCONTENT
+run FT.SEARCH products '-@category:{games}' NOCONTENT
+run FT.SEARCH products '@category:{books} @price:[10 10]|@category:{games}' NOCONTENT
+
 echo
 echo "=== limit ==="
 run FT.SEARCH products '*' NOCONTENT LIMIT 1 1
