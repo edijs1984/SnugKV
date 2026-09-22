@@ -619,3 +619,23 @@ func TestJSONPathSetRelationSizeAndEmptyCoreCommands(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+
+func TestJSONPathArithmeticFilterCoreCommands(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "JSON.SET", "doc", "$",
+		`{"items":[{"price":10,"qty":2,"name":"a"},{"price":30,"qty":4,"name":"b"},{"price":5,"qty":50,"name":"c"}]}`)
+
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[?(@.price * @.qty >= 100)].name"); got != "$9\r\n[\"b\",\"c\"]\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.SET", "doc", "$.items[?((@.price + @.qty) * 2 > 60)].name", `"hot"`); got != "+OK\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[*].name"); got != "$17\r\n[\"a\",\"hot\",\"hot\"]\r\n" {
+		t.Fatal(got)
+	}
+}
