@@ -747,3 +747,23 @@ func TestJSONPathAppendFunctionCoreCommands(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+
+func TestJSONPathKeysFunctionCoreCommands(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "JSON.SET", "doc", "$",
+		`{"items":[{"meta":{"b":2,"a":1},"name":"x"},{"meta":{"z":1},"name":"y"}]}`)
+
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[?keys(@.meta).length() == 2].name"); got != "$5\r\n[\"x\"]\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.SET", "doc", "$.items[?first(@.meta.keys()) == \"a\"].name", `"keys"`); got != "+OK\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[*].name"); got != "$12\r\n[\"keys\",\"y\"]\r\n" {
+		t.Fatal(got)
+	}
+}
