@@ -679,3 +679,27 @@ func TestJSONPathNumericFunctionCoreCommands(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+
+func TestJSONPathArrayAccessFunctionCoreCommands(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "JSON.SET", "doc", "$",
+		`{"items":[{"n":[1,2,3],"name":"a"},{"n":[9,8],"name":"b"},{"n":[],"name":"c"}]}`)
+
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[?first(@.n) == 1].name"); got != "$5\r\n[\"a\"]\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[?(@.n.index(-1) == 8)].name"); got != "$5\r\n[\"b\"]\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.SET", "doc", "$.items[?last(@.n) == 3].name", `"last"`); got != "+OK\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[*].name"); got != "$16\r\n[\"last\",\"b\",\"c\"]\r\n" {
+		t.Fatal(got)
+	}
+}
