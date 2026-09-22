@@ -488,6 +488,9 @@ func parseFilterComparison(raw string) (*filterExpr, error) {
 	}
 	operators := []candidate{
 		{op: "<="}, {op: ">="}, {op: "=="}, {op: "!="}, {op: "=~"},
+		{op: "subsetof", isWord: true}, {op: "noneof", isWord: true}, {op: "anyof", isWord: true},
+		{op: "sizeof", isWord: true}, {op: "empty", isWord: true},
+		{op: "size", isWord: true},
 		{op: "nin", isWord: true}, {op: "in", isWord: true},
 		{op: "<"}, {op: ">"},
 	}
@@ -692,6 +695,58 @@ func matchesFilter(current any, expr *filterExpr) bool {
 			return !match
 		}
 		return match
+
+	case "subsetof", "anyof", "noneof":
+		leftArray, leftOK := leftValue.([]any)
+		rightArray, rightOK := rightValue.([]any)
+		if !leftOK || !rightOK {
+			return false
+		}
+		switch expr.op {
+		case "subsetof":
+			for _, value := range leftArray {
+				if !arrayContains(rightArray, value) {
+					return false
+				}
+			}
+			return true
+		case "anyof":
+			for _, value := range leftArray {
+				if arrayContains(rightArray, value) {
+					return true
+				}
+			}
+			return false
+		case "noneof":
+			for _, value := range leftArray {
+				if arrayContains(rightArray, value) {
+					return false
+				}
+			}
+			return true
+		}
+
+	case "size", "sizeof":
+		size, ok := filterSize(leftValue)
+		if !ok {
+			return false
+		}
+		number, ok := rightValue.(float64)
+		if !ok {
+			return false
+		}
+		return size == int(number)
+
+	case "empty":
+		wantEmpty, ok := rightValue.(bool)
+		if !ok {
+			return false
+		}
+		size, ok := filterSize(leftValue)
+		if !ok {
+			return false
+		}
+		return (size == 0) == wantEmpty
 	}
 
 	switch left := leftValue.(type) {
@@ -733,6 +788,29 @@ func filterEqual(left, right any) bool {
 	// JSON numbers are decoded as float64 today, so this already gives the
 	// desired numeric value equality for SnugKV's current representation.
 	return reflect.DeepEqual(left, right)
+}
+
+func arrayContains(values []any, candidate any) bool {
+	for _, value := range values {
+		if filterEqual(value, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func filterSize(value any) (int, bool) {
+	switch typed := value.(type) {
+	case string:
+		// Redis defines size in characters, not bytes.
+		return len([]rune(typed)), true
+	case []any:
+		return len(typed), true
+	case map[string]any:
+		return len(typed), true
+	default:
+		return 0, false
+	}
 }
 
 func filteredArrayIndices(array []any, expr *filterExpr) []int {
