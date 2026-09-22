@@ -34,9 +34,12 @@ type pathToken struct {
 }
 
 type filterExpr struct {
+	kind    string
 	path    []string
 	op      string
 	literal any
+	left    *filterExpr
+	right   *filterExpr
 }
 
 func Parse(raw []byte) (any, error) {
@@ -179,6 +182,7 @@ func parseBracketToken(path string, start int) (pathToken, int, error) {
 		}
 		exprStart := i + 2
 		j := exprStart
+		depth := 1
 		inString := byte(0)
 		escaped := false
 		for j < len(path) {
@@ -199,12 +203,21 @@ func parseBracketToken(path string, start int) (pathToken, int, error) {
 				j++
 				continue
 			}
-			if ch == ')' {
+			switch ch {
+			case '(':
+				depth++
+			case ')':
+				depth--
+				if depth == 0 {
+					break
+				}
+			}
+			if depth == 0 {
 				break
 			}
 			j++
 		}
-		if j >= len(path) || path[j] != ')' || j+1 >= len(path) || path[j+1] != ']' {
+		if j >= len(path) || depth != 0 || path[j] != ')' || j+1 >= len(path) || path[j+1] != ']' {
 			return pathToken{}, 0, errors.New("ERR invalid JSON path")
 		}
 		expr, err := parseFilterExpr(strings.TrimSpace(path[exprStart:j]))
@@ -345,6 +358,127 @@ func parseBracketToken(path string, start int) (pathToken, int, error) {
 }
 
 func parseFilterExpr(raw string) (*filterExpr, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, errors.New("ERR invalid JSON path")
+	}
+
+	for hasOuterParens(raw) {
+		raw = strings.TrimSpace(raw[1 : len(raw)-1])
+	}
+
+	if index := findTopLevelLogical(raw, "||"); index >= 0 {
+		left, err := parseFilterExpr(raw[:index])
+		if err != nil {
+			return nil, err
+		}
+		right, err := parseFilterExpr(raw[index+2:])
+		if err != nil {
+			return nil, err
+		}
+		return &filterExpr{kind: "or", left: left, right: right}, nil
+	}
+
+	if index := findTopLevelLogical(raw, "&&"); index >= 0 {
+		left, err := parseFilterExpr(raw[:index])
+		if err != nil {
+			return nil, err
+		}
+		right, err := parseFilterExpr(raw[index+2:])
+		if err != nil {
+			return nil, err
+		}
+		return &filterExpr{kind: "and", left: left, right: right}, nil
+	}
+
+	if strings.HasPrefix(raw, "!") {
+		child, err := parseFilterExpr(strings.TrimSpace(raw[1:]))
+		if err != nil {
+			return nil, err
+		}
+		return &filterExpr{kind: "not", left: child}, nil
+	}
+
+	return parseFilterComparison(raw)
+}
+
+func hasOuterParens(raw string) bool {
+	if len(raw) < 2 || raw[0] != '(' || raw[len(raw)-1] != ')' {
+		return false
+	}
+	depth := 0
+	inString := byte(0)
+	escaped := false
+	for i := 0; i < len(raw); i++ {
+		ch := raw[i]
+		if inString != 0 {
+			if escaped {
+				escaped = false
+			} else if ch == '\\' {
+				escaped = true
+			} else if ch == inString {
+				inString = 0
+			}
+			continue
+		}
+		if ch == '"' || ch == '\'' {
+			inString = ch
+			continue
+		}
+		switch ch {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 && i != len(raw)-1 {
+				return false
+			}
+			if depth < 0 {
+				return false
+			}
+		}
+	}
+	return depth == 0
+}
+
+func findTopLevelLogical(raw, op string) int {
+	depth := 0
+	inString := byte(0)
+	escaped := false
+	for i := 0; i <= len(raw)-len(op); i++ {
+		ch := raw[i]
+		if inString != 0 {
+			if escaped {
+				escaped = false
+			} else if ch == '\\' {
+				escaped = true
+			} else if ch == inString {
+				inString = 0
+			}
+			continue
+		}
+		if ch == '"' || ch == '\'' {
+			inString = ch
+			continue
+		}
+		switch ch {
+		case '(':
+			depth++
+			continue
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+			continue
+		}
+		if depth == 0 && strings.HasPrefix(raw[i:], op) {
+			return i
+		}
+	}
+	return -1
+}
+
+func parseFilterComparison(raw string) (*filterExpr, error) {
 	operators := []string{"<=", ">=", "==", "!=", "<", ">"}
 	var op string
 	var opIndex int
@@ -408,7 +542,7 @@ func parseFilterExpr(raw string) (*filterExpr, error) {
 		}
 	}
 
-	return &filterExpr{path: fields, op: op, literal: literal}, nil
+	return &filterExpr{kind: "compare", path: fields, op: op, literal: literal}, nil
 }
 
 func filterValue(current any, fields []string) (any, bool) {
@@ -430,6 +564,19 @@ func matchesFilter(current any, expr *filterExpr) bool {
 	if expr == nil {
 		return false
 	}
+
+	switch expr.kind {
+	case "or":
+		return matchesFilter(current, expr.left) || matchesFilter(current, expr.right)
+	case "and":
+		return matchesFilter(current, expr.left) && matchesFilter(current, expr.right)
+	case "not":
+		return !matchesFilter(current, expr.left)
+	case "compare":
+	default:
+		return false
+	}
+
 	left, ok := filterValue(current, expr.path)
 	if !ok {
 		return false
