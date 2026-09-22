@@ -184,7 +184,7 @@ func TestACLJSONReadAndWriteRulesAreIndependent(t *testing.T) {
 	}
 }
 
-func TestACLAuthorizeJSONMGetChecksEveryKey(t *testing.T) {
+func TestACLAuthorizeJSONMGetMatchesRedisFirstKeyVisibility(t *testing.T) {
 	acl := NewACL()
 	if err := acl.SetUser("jsonreader", []string{
 		"on",
@@ -207,14 +207,26 @@ func TestACLAuthorizeJSONMGetChecksEveryKey(t *testing.T) {
 		t.Fatalf("allowed JSON.MGET rejected: %v", err)
 	}
 
-	err := s.authorizeCommandKeys("jsonreader", [][]byte{
+	// Redis 8.10 exposes only the first JSON.MGET key to ACL key-pattern
+	// checks. Preserve that module-command compatibility even though the
+	// command reads subsequent keys too.
+	if err := s.authorizeCommandKeys("jsonreader", [][]byte{
 		[]byte("JSON.MGET"),
 		[]byte("allowed:1"),
 		[]byte("denied:2"),
 		[]byte("$.name"),
+	}); err != nil {
+		t.Fatalf("Redis-compatible JSON.MGET second-key visibility rejected: %v", err)
+	}
+
+	err := s.authorizeCommandKeys("jsonreader", [][]byte{
+		[]byte("JSON.MGET"),
+		[]byte("denied:1"),
+		[]byte("allowed:2"),
+		[]byte("$.name"),
 	})
 	if err == nil {
-		t.Fatal("JSON.MGET containing denied key was allowed")
+		t.Fatal("JSON.MGET denied first key was allowed")
 	}
 	if got := err.Error(); got != "NOPERM No permissions to access a key" {
 		t.Fatalf("unexpected error: %q", got)
