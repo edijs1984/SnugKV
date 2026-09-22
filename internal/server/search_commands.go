@@ -561,7 +561,7 @@ func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 			}
 		}
 		if sortField == nil {
-			return nil, errors.New("ERR unknown sort field: " + options.sortBy)
+			return nil, errors.New("SEARCH_PROP_NOT_FOUND Property `" + options.sortBy + "` not loaded nor in schema")
 		}
 	}
 
