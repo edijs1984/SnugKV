@@ -114,6 +114,7 @@ type Store struct {
 	sampleCursor     uint64
 	shapeCatalog     globalShapeCatalog
 	hashShapes       hashShapeCatalog
+	search           *searchManager
 }
 
 func New() *Store                             { s, _ := NewWithShards(256); return s }
