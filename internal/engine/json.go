@@ -70,10 +70,11 @@ func (s *Store) JSONSet(
 		return false, errors.New("WRONGTYPE value is not valid JSON")
 	}
 
-	_, pathExists, err := jsonvalue.Get(root, path)
+	matches, err := jsonvalue.Matches(root, path)
 	if err != nil {
 		return false, err
 	}
+	pathExists := len(matches) > 0
 
 	if nx && pathExists {
 		return false, nil
@@ -83,9 +84,12 @@ func (s *Store) JSONSet(
 		return false, nil
 	}
 
-	updatedRoot, err := jsonvalue.Set(root, path, newValue)
+	updatedRoot, updatedCount, err := jsonvalue.SetMatches(root, path, newValue)
 	if err != nil {
 		return false, err
+	}
+	if updatedCount == 0 {
+		return false, nil
 	}
 
 	encoded, err := jsonvalue.Encode(updatedRoot)
@@ -131,11 +135,22 @@ func (s *Store) JSONGet(key, path string) ([]byte, bool, error) {
 		return nil, false, errors.New("WRONGTYPE value is not valid JSON")
 	}
 
+	if jsonvalue.IsJSONPath(path) {
+		values, err := jsonvalue.Matches(root, path)
+		if err != nil {
+			return nil, false, err
+		}
+		encoded, err := jsonvalue.Encode(values)
+		if err != nil {
+			return nil, false, err
+		}
+		return encoded, true, nil
+	}
+
 	value, found, err := jsonvalue.Get(root, path)
 	if err != nil {
 		return nil, false, err
 	}
-
 	if !found {
 		return nil, false, nil
 	}
@@ -144,7 +159,6 @@ func (s *Store) JSONGet(key, path string) ([]byte, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-
 	return encoded, true, nil
 }
 
@@ -187,6 +201,40 @@ func (s *Store) JSONType(key, path string) (string, bool, error) {
 	return jsonvalue.TypeOf(value), true, nil
 }
 
+func (s *Store) JSONTypes(key, path string) ([]string, bool, error) {
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	now := s.now()
+	e, exists := sh.get(key)
+	if !exists {
+		return nil, false, nil
+	}
+	if sh.expired(key, e, now) {
+		s.remove(sh, key)
+		return nil, false, nil
+	}
+	if e.valueType != TypeJSON {
+		return nil, false, errors.New("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+
+	root, err := jsonvalue.Parse(s.decode(sh, e))
+	if err != nil {
+		return nil, false, errors.New("WRONGTYPE value is not valid JSON")
+	}
+
+	values, err := jsonvalue.Matches(root, path)
+	if err != nil {
+		return nil, false, err
+	}
+	types := make([]string, len(values))
+	for i, value := range values {
+		types[i] = jsonvalue.TypeOf(value)
+	}
+	return types, true, nil
+}
+
 func (s *Store) JSONDel(key, path string) (int64, error) {
 	sh := s.shardFor(key)
 	sh.mu.Lock()
@@ -219,12 +267,26 @@ func (s *Store) JSONDel(key, path string) (int64, error) {
 		return 0, errors.New("WRONGTYPE value is not valid JSON")
 	}
 
-	updatedRoot, deleted, err := jsonvalue.Delete(root, path)
-	if err != nil {
-		return 0, err
+	var updatedRoot any
+	var deletedCount int
+
+	if jsonvalue.IsJSONPath(path) {
+		updatedRoot, deletedCount, err = jsonvalue.DeleteMatches(root, path)
+		if err != nil {
+			return 0, err
+		}
+	} else {
+		var deleted bool
+		updatedRoot, deleted, err = jsonvalue.Delete(root, path)
+		if err != nil {
+			return 0, err
+		}
+		if deleted {
+			deletedCount = 1
+		}
 	}
 
-	if !deleted {
+	if deletedCount == 0 {
 		return 0, nil
 	}
 
@@ -241,7 +303,7 @@ func (s *Store) JSONDel(key, path string) (int64, error) {
 		return 0, err
 	}
 
-	return 1, nil
+	return int64(deletedCount), nil
 }
 
 
