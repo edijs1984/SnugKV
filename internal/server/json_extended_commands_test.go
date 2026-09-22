@@ -518,3 +518,33 @@ func TestJSONPathSliceAndUnionCoreCommands(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+
+func TestJSONPathFilterCoreCommands(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "JSON.SET", "doc", "$",
+		`{"items":[{"price":50,"name":"cheap"},{"price":100,"name":"mid"},{"price":150,"name":"expensive"}]}`)
+
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[?(@.price < 100)].name"); got != "$9\r\n[\"cheap\"]\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.TYPE", "doc", "$.items[?(@.price >= 100)].price"); got != "*2\r\n$7\r\ninteger\r\n$7\r\ninteger\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.SET", "doc", "$.items[?(@.price >= 100)].price", "999"); got != "+OK\r\n" {
+		t.Fatal(got)
+	}
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[*].price"); got != "$12\r\n[50,999,999]\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.DEL", "doc", "$.items[?(@.price == 999)]"); got != ":2\r\n" {
+		t.Fatal(got)
+	}
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[*].name"); got != "$9\r\n[\"cheap\"]\r\n" {
+		t.Fatal(got)
+	}
+}
