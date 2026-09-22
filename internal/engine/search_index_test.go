@@ -3,6 +3,7 @@ package engine
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"snugkv/internal/persistence"
 )
@@ -473,4 +474,161 @@ func mustStoreNumericKeys(t *testing.T, store *Store, indexName, alias string, m
 		t.Fatalf("missing index %q", indexName)
 	}
 	return keys
+}
+
+
+func TestStoreSearchIndexDropsExpiredJSON(t *testing.T) {
+	store, err := NewWithShards(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	store.now = func() time.Time { return now }
+
+	if err := store.CreateSearchIndex(testSearchDefinition()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.JSONSet(
+		"product:1",
+		"$",
+		[]byte(`{"category":"books","price":10}`),
+		false,
+		false,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if !store.Expire("product:1", time.Second) {
+		t.Fatal("expire returned false")
+	}
+
+	now = now.Add(2 * time.Second)
+	if removed := store.CleanupExpiredLimit(10); removed != 1 {
+		t.Fatalf("removed=%d want=1", removed)
+	}
+
+	if got := mustStoreTagKeys(t, store, "products", "category", "books"); len(got) != 0 {
+		t.Fatalf("posting remained after expiration=%v", got)
+	}
+}
+
+func TestStoreRenamePreservesJSONTypeAndSearchIndex(t *testing.T) {
+	store, err := NewWithShards(4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateSearchIndex(testSearchDefinition()); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.JSONSet(
+		"product:1",
+		"$",
+		[]byte(`{"category":"books","price":10}`),
+		false,
+		false,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	renamed, err := store.Rename("product:1", "product:2", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !renamed {
+		t.Fatal("rename returned false")
+	}
+
+	if got := mustStoreTagKeys(t, store, "products", "category", "books"); !reflect.DeepEqual(got, []string{"product:2"}) {
+		t.Fatalf("rename postings=%v want=[product:2]", got)
+	}
+
+	jsonType, found, err := store.JSONType("product:2", "$")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || jsonType != "object" {
+		t.Fatalf("renamed JSON type=%q found=%v", jsonType, found)
+	}
+}
+
+func TestStoreRenameJSONOutOfIndexedPrefixRemovesPosting(t *testing.T) {
+	store, err := NewWithShards(4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateSearchIndex(testSearchDefinition()); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.JSONSet(
+		"product:1",
+		"$",
+		[]byte(`{"category":"books","price":10}`),
+		false,
+		false,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	renamed, err := store.Rename("product:1", "archive:1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !renamed {
+		t.Fatal("rename returned false")
+	}
+
+	if got := mustStoreTagKeys(t, store, "products", "category", "books"); len(got) != 0 {
+		t.Fatalf("posting remained after rename out of prefix=%v", got)
+	}
+
+	jsonType, found, err := store.JSONType("archive:1", "$")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || jsonType != "object" {
+		t.Fatalf("renamed JSON type=%q found=%v", jsonType, found)
+	}
+}
+
+func TestStoreCopyStyleRestoreIndexesDestination(t *testing.T) {
+	store, err := NewWithShards(4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateSearchIndex(testSearchDefinition()); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.JSONSet(
+		"product:1",
+		"$",
+		[]byte(`{"category":"books","price":10}`),
+		false,
+		false,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	records := store.Export([]string{"product:1"})
+	if len(records) != 1 {
+		t.Fatalf("records=%d want=1", len(records))
+	}
+	records[0].Key = []byte("product:2")
+
+	if err := store.Restore(records, false); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := mustStoreTagKeys(t, store, "products", "category", "books"), []string{"product:1", "product:2"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("copy-style postings=%v want=%v", got, want)
+	}
+
+	jsonType, found, err := store.JSONType("product:2", "$")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || jsonType != "object" {
+		t.Fatalf("copied JSON type=%q found=%v", jsonType, found)
+	}
 }
