@@ -391,7 +391,7 @@ func TestJSONExactPathIntegration(t *testing.T) {
 		{[]string{"JSON.SET", "doc", "$.items[1].name", `"Bee"`}, "+OK\r\n"},
 		{[]string{"JSON.GET", "doc", "$.items[1].name"}, "$5\r\n\"Bee\"\r\n"},
 		{[]string{"JSON.DEL", "doc", "$.items[0]"}, ":1\r\n"},
-		{[]string{"JSON.GET", "doc", "$.items"}, "$20\r\n[{\"name\":\"Bee\"},3]\r\n"},
+		{[]string{"JSON.GET", "doc", "$.items"}, "$18\r\n[{\"name\":\"Bee\"},3]\r\n"},
 	} {
 		if got := execute(t, s, tc.args...); got != tc.want {
 			t.Fatalf("%q got %q want %q", tc.args, got, tc.want)
