@@ -128,6 +128,14 @@ func parseBracketToken(path string, start int) (pathToken, int, error) {
 		return pathToken{}, 0, errors.New("ERR invalid JSON path")
 	}
 
+	if path[i] == '*' {
+		i++
+		if i >= len(path) || path[i] != ']' {
+			return pathToken{}, 0, errors.New("ERR invalid JSON path")
+		}
+		return pathToken{kind: pathWildcard}, i + 1, nil
+	}
+
 	if path[i] == '"' || path[i] == '\'' {
 		quote := path[i]
 		i++
