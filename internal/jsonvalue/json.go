@@ -1879,7 +1879,19 @@ func projectionToFilterExpr(raw string) (string, error) {
 			continue
 		}
 
-		if ch == '
+		if ch == '$' {
+			out.WriteByte('@')
+			continue
+		}
+		out.WriteByte(ch)
+	}
+
+	if inString != 0 {
+		return "", errors.New("ERR invalid JSON path")
+	}
+	return out.String(), nil
+}
+
 func collectMatches(current any, tokens []pathToken, out *[]any) {
 	if len(tokens) == 0 {
 		*out = append(*out, current)
