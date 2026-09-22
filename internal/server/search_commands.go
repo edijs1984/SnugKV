@@ -515,9 +515,13 @@ func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 func (s *Server) executeSearchCommand(args [][]byte) ([]byte, error) {
 	switch strings.ToUpper(string(args[0])) {
 	case "FT.CREATE":
-		return executeFTCreate(s.store, args)
+		return s.executeSearchDefinitionMutation(args, func() ([]byte, error) {
+			return executeFTCreate(s.store, args)
+		})
 	case "FT.DROPINDEX":
-		return executeFTDropIndex(s.store, args)
+		return s.executeSearchDefinitionMutation(args, func() ([]byte, error) {
+			return executeFTDropIndex(s.store, args)
+		})
 	case "FT._LIST":
 		return executeFTList(s.store, args)
 	case "FT.SEARCH":

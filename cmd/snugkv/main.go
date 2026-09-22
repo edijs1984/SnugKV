@@ -120,6 +120,10 @@ func main() {
 		listener.Close()
 		log.Fatal(err)
 	}
+	if err = listener.ConfigureSearchPersistence(cfg.AOFPath, cfg.SnapshotPath); err != nil {
+		listener.Close()
+		log.Fatal(err)
+	}
 	if cfg.AdminAddr != "" {
 		if err = listener.OpenAdmin(cfg.AdminAddr); err != nil {
 			listener.Close()

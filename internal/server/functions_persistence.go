@@ -49,7 +49,7 @@ func (s *TCPServer) ConfigureFunctionPersistence(aofPath, snapshotPath string) e
 	return nil
 }
 
-func writeFunctionStateAtomic(path string, data []byte) error {
+func writeSidecarStateAtomic(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
@@ -93,7 +93,7 @@ func (s *Server) persistFunctionRegistry() error {
 	if err != nil {
 		return err
 	}
-	return writeFunctionStateAtomic(value.(string), payload)
+	return writeSidecarStateAtomic(value.(string), payload)
 }
 
 func functionAdminMutation(args [][]byte) bool {
