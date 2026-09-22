@@ -372,3 +372,41 @@ func TestJSONMSetPreservesExistingTTL(t *testing.T) {
 		t.Fatalf("JSON.MSET lost TTL: %q", got)
 	}
 }
+
+
+func TestJSONExactPathIntegration(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "JSON.SET", "doc", "$",
+		`{"user":{"weird.key":"dot"},"items":[{"name":"a"},{"name":"b"},3]}`)
+
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"JSON.GET", "doc", "$.items[0].name"}, "$3\r\n\"a\"\r\n"},
+		{[]string{"JSON.GET", "doc", "$.items[-1]"}, "$1\r\n3\r\n"},
+		{[]string{"JSON.GET", "doc", `$["user"]["weird.key"]`}, "$5\r\n\"dot\"\r\n"},
+		{[]string{"JSON.TYPE", "doc", "$.items[2]"}, "$7\r\ninteger\r\n"},
+		{[]string{"JSON.SET", "doc", "$.items[1].name", `"Bee"`}, "+OK\r\n"},
+		{[]string{"JSON.GET", "doc", "$.items[1].name"}, "$5\r\n\"Bee\"\r\n"},
+		{[]string{"JSON.DEL", "doc", "$.items[0]"}, ":1\r\n"},
+		{[]string{"JSON.GET", "doc", "$.items"}, "$20\r\n[{\"name\":\"Bee\"},3]\r\n"},
+	} {
+		if got := execute(t, s, tc.args...); got != tc.want {
+			t.Fatalf("%q got %q want %q", tc.args, got, tc.want)
+		}
+	}
+}
+
+func TestJSONLegacyRootAliasDelete(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "JSON.SET", "doc", "$", `{"a":1}`)
+	if got := execute(t, s, "JSON.DEL", "doc", "."); got != ":1\r\n" {
+		t.Fatal(got)
+	}
+	if got := execute(t, s, "JSON.GET", "doc"); got != "$-1\r\n" {
+		t.Fatal(got)
+	}
+}
