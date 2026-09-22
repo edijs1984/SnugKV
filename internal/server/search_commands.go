@@ -149,10 +149,16 @@ type searchQueryClause struct {
 	maximum *float64
 }
 
+type searchReturnField struct {
+	path  string
+	alias string
+}
+
 type searchOptions struct {
-	offset    int
-	count     int
-	noContent bool
+	offset       int
+	count        int
+	noContent    bool
+	returnFields []searchReturnField
 }
 
 
@@ -306,6 +312,46 @@ func parseSearchOptions(args [][]byte) (searchOptions, error) {
 			options.count = count
 			pos += 3
 
+		case "RETURN":
+			if pos+1 >= len(args) {
+				return searchOptions{}, errors.New("ERR syntax error")
+			}
+			tokenCount, err := strconv.Atoi(string(args[pos+1]))
+			if err != nil || tokenCount < 0 {
+				return searchOptions{}, errors.New("ERR invalid RETURN count")
+			}
+			pos += 2
+			if len(args)-pos < tokenCount {
+				return searchOptions{}, errors.New("ERR syntax error")
+			}
+			if tokenCount == 0 {
+				options.noContent = true
+				continue
+			}
+
+			end := pos + tokenCount
+			for pos < end {
+				path := string(args[pos])
+				if !strings.HasPrefix(path, "$") {
+					return searchOptions{}, errors.New("ERR RETURN currently supports JSONPath identifiers only")
+				}
+				pos++
+
+				alias := path
+				if pos < end && strings.EqualFold(string(args[pos]), "AS") {
+					if pos+1 >= end {
+						return searchOptions{}, errors.New("ERR syntax error")
+					}
+					alias = string(args[pos+1])
+					pos += 2
+				}
+
+				options.returnFields = append(options.returnFields, searchReturnField{
+					path:  path,
+					alias: alias,
+				})
+			}
+
 		default:
 			return searchOptions{}, errors.New("ERR unsupported FT.SEARCH option")
 		}
@@ -432,12 +478,35 @@ func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 
 	for _, hit := range hits[start:end] {
 		items = append(items, formatBulkString([]byte(hit.key)))
-		if !options.noContent {
+		if options.noContent {
+			continue
+		}
+
+		if len(options.returnFields) == 0 {
 			items = append(items, array(
 				formatBulkString([]byte("$")),
 				formatBulkString(hit.raw),
 			))
+			continue
 		}
+
+		fields := make([][]byte, 0, len(options.returnFields)*2)
+		for _, projection := range options.returnFields {
+			value, found, err := store.JSONProjection(hit.key, projection.path)
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				continue
+			}
+
+			fields = append(
+				fields,
+				formatBulkString([]byte(projection.alias)),
+				formatBulkString(value),
+			)
+		}
+		items = append(items, array(fields...))
 	}
 
 	return array(items...), nil
