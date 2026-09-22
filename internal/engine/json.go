@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 	"sort"
+	"strconv"
 	"reflect"
 	"snugkv/internal/jsonvalue"
 )
@@ -205,11 +206,25 @@ func (s *Store) JSONProjection(key, path string) ([]byte, bool, error) {
 		return nil, false, nil
 	}
 
-	encoded, err := jsonvalue.Encode(values[0])
-	if err != nil {
-		return nil, false, err
+	switch value := values[0].(type) {
+	case string:
+		return []byte(value), true, nil
+	case float64:
+		return []byte(strconv.FormatFloat(value, 'g', -1, 64)), true, nil
+	case bool:
+		if value {
+			return []byte("true"), true, nil
+		}
+		return []byte("false"), true, nil
+	case nil:
+		return []byte("null"), true, nil
+	default:
+		encoded, err := jsonvalue.Encode(value)
+		if err != nil {
+			return nil, false, err
+		}
+		return encoded, true, nil
 	}
-	return encoded, true, nil
 }
 
 func (s *Store) JSONType(key, path string) (string, bool, error) {
