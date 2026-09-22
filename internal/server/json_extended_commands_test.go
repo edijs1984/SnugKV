@@ -273,3 +273,102 @@ func TestJSONMergeCreatesMissingRootKey(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+
+func TestJSONMSetAndForget(t *testing.T) {
+	s := New(engine.New())
+
+	if got := execute(
+		t,
+		s,
+		"JSON.MSET",
+		"doc1", "$", `{"a":1,"nested":{"x":1}}`,
+		"doc2", "$", `{"b":2}`,
+	); got != "+OK\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.MSET",
+		"doc1", "$.a", "3",
+		"doc2", "$.c", "4",
+	); got != "+OK\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.GET", "doc1", "$"); got != "$24\r\n{\"a\":3,\"nested\":{\"x\":1}}\r\n" {
+		t.Fatal(got)
+	}
+	if got := execute(t, s, "JSON.GET", "doc2", "$"); got != "$13\r\n{\"b\":2,\"c\":4}\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.FORGET", "doc1", "$.nested.x"); got != ":1\r\n" {
+		t.Fatal(got)
+	}
+	if got := execute(t, s, "JSON.GET", "doc1", "$"); got != "$19\r\n{\"a\":3,\"nested\":{}}\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.FORGET", "doc2"); got != ":1\r\n" {
+		t.Fatal(got)
+	}
+	if got := execute(t, s, "JSON.GET", "doc2"); got != "$-1\r\n" {
+		t.Fatal(got)
+	}
+}
+
+func TestJSONMSetRollsBackOnFailure(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "JSON.SET", "doc1", "$", `{"a":1}`)
+	execute(t, s, "JSON.SET", "doc2", "$", `{"b":2}`)
+
+	_, err := s.Execute([][]byte{
+		[]byte("JSON.MSET"),
+		[]byte("doc1"), []byte("$.a"), []byte("9"),
+		[]byte("doc2"), []byte("$.missing.child"), []byte("7"),
+	})
+	if err == nil {
+		t.Fatal("expected JSON.MSET failure")
+	}
+
+	if got := execute(t, s, "JSON.GET", "doc1", "$"); got != "$7\r\n{\"a\":1}\r\n" {
+		t.Fatalf("doc1 was partially mutated: %q", got)
+	}
+	if got := execute(t, s, "JSON.GET", "doc2", "$"); got != "$7\r\n{\"b\":2}\r\n" {
+		t.Fatalf("doc2 was partially mutated: %q", got)
+	}
+}
+
+func TestJSONMSetRollsBackNewKeysOnInvalidJSON(t *testing.T) {
+	s := New(engine.New())
+
+	_, err := s.Execute([][]byte{
+		[]byte("JSON.MSET"),
+		[]byte("new1"), []byte("$"), []byte(`{"a":1}`),
+		[]byte("new2"), []byte("$"), []byte("{invalid"),
+	})
+	if err == nil {
+		t.Fatal("expected invalid JSON failure")
+	}
+
+	if got := execute(t, s, "JSON.GET", "new1"); got != "$-1\r\n" {
+		t.Fatalf("new key survived rollback: %q", got)
+	}
+	if got := execute(t, s, "JSON.GET", "new2"); got != "$-1\r\n" {
+		t.Fatalf("invalid key exists after rollback: %q", got)
+	}
+}
+
+func TestJSONMSetPreservesExistingTTL(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "JSON.SET", "doc", "$", `{"a":1}`)
+	execute(t, s, "PEXPIRE", "doc", "60000")
+
+	execute(t, s, "JSON.MSET", "doc", "$.a", "2")
+
+	if got := execute(t, s, "PTTL", "doc"); strings.HasPrefix(got, ":-") {
+		t.Fatalf("JSON.MSET lost TTL: %q", got)
+	}
+}
