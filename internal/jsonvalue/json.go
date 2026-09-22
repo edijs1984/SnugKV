@@ -620,7 +620,7 @@ func parseFilterValueExpr(raw string) (*filterValueExpr, error) {
 	// Parse zero-argument postfix functions before argument-taking postfix
 	// functions so chained expressions are resolved from the outside inward.
 	// Example: @.n.append(7,8).length() => length(append(@.n,7,8)).
-	for _, name := range []string{"length", "abs", "ceiling", "floor", "min", "max", "sum", "avg", "stddev", "first", "last"} {
+	for _, name := range []string{"length", "abs", "ceiling", "floor", "min", "max", "sum", "avg", "stddev", "keys", "first", "last"} {
 		suffix := "." + name + "()"
 		if strings.HasSuffix(raw, suffix) {
 			base := strings.TrimSpace(raw[:len(raw)-len(suffix)])
@@ -744,7 +744,7 @@ func parseFilterValueExpr(raw string) (*filterValueExpr, error) {
 		}
 	}
 
-	for _, name := range []string{"length", "abs", "ceiling", "floor", "min", "max", "sum", "avg", "stddev"} {
+	for _, name := range []string{"length", "abs", "ceiling", "floor", "min", "max", "sum", "avg", "stddev", "keys"} {
 		prefix := name + "("
 		if strings.HasPrefix(raw, prefix) && strings.HasSuffix(raw, ")") {
 			inner := strings.TrimSpace(raw[len(prefix) : len(raw)-1])
@@ -885,6 +885,22 @@ func evalFilterValue(current any, expr *filterValueExpr) (any, bool) {
 				return nil, false
 			}
 			return float64(size), true
+
+		case "keys":
+			object, ok := value.(map[string]any)
+			if !ok {
+				return nil, false
+			}
+			keys := make([]string, 0, len(object))
+			for key := range object {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			result := make([]any, len(keys))
+			for i, key := range keys {
+				result[i] = key
+			}
+			return result, true
 
 		case "append":
 			array, ok := value.([]any)
