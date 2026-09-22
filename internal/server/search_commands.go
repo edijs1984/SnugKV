@@ -12,6 +12,7 @@ var searchCommands = map[string]commandInfo{
 	"FT.CREATE":    {6, 0, 0, 0, 0, true},
 	"FT.DROPINDEX": {2, 2, 0, 0, 0, true},
 	"FT._LIST":     {1, 1, 0, 0, 0, false},
+	"FT.INFO":      {2, 2, 0, 0, 0, false},
 	"FT.SEARCH":    {3, 0, 0, 0, 0, false},
 }
 
@@ -138,6 +139,69 @@ func executeFTList(store *engine.Store, args [][]byte) ([]byte, error) {
 		items = append(items, formatBulkString([]byte(name)))
 	}
 	return array(items...), nil
+}
+
+
+func executeFTInfo(store *engine.Store, args [][]byte) ([]byte, error) {
+	if len(args) != 2 {
+		return nil, errors.New("ERR wrong number of arguments for 'ft.info' command")
+	}
+
+	name := string(args[1])
+	def, ok := store.SearchDefinition(name)
+	if !ok {
+		return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + name)
+	}
+
+	keys, ok := store.SearchAllKeys(name)
+	if !ok {
+		return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + name)
+	}
+
+	prefixItems := make([][]byte, 0, len(def.Prefixes))
+	for _, prefix := range def.Prefixes {
+		prefixItems = append(prefixItems, formatBulkString([]byte(prefix)))
+	}
+
+	attributes := make([][]byte, 0, len(def.Fields))
+	for _, field := range def.Fields {
+		fieldType := "TAG"
+		if field.Kind == engine.SearchFieldNumeric {
+			fieldType = "NUMERIC"
+		}
+		attributes = append(attributes, array(
+			formatBulkString([]byte("identifier")),
+			formatBulkString([]byte(field.Path)),
+			formatBulkString([]byte("attribute")),
+			formatBulkString([]byte(field.Alias)),
+			formatBulkString([]byte("type")),
+			formatBulkString([]byte(fieldType)),
+		))
+	}
+
+	return array(
+		formatBulkString([]byte("index_name")),
+		formatBulkString([]byte(def.Name)),
+		formatBulkString([]byte("index_options")),
+		array(),
+		formatBulkString([]byte("index_definition")),
+		array(
+			formatBulkString([]byte("key_type")),
+			formatBulkString([]byte("JSON")),
+			formatBulkString([]byte("prefixes")),
+			array(prefixItems...),
+			formatBulkString([]byte("default_score")),
+			formatBulkString([]byte("1")),
+		),
+		formatBulkString([]byte("attributes")),
+		array(attributes...),
+		formatBulkString([]byte("num_docs")),
+		integer(int64(len(keys))),
+		formatBulkString([]byte("indexing")),
+		integer(0),
+		formatBulkString([]byte("percent_indexed")),
+		formatBulkString([]byte("1")),
+	), nil
 }
 
 
@@ -524,6 +588,8 @@ func (s *Server) executeSearchCommand(args [][]byte) ([]byte, error) {
 		})
 	case "FT._LIST":
 		return executeFTList(s.store, args)
+	case "FT.INFO":
+		return executeFTInfo(s.store, args)
 	case "FT.SEARCH":
 		return executeFTSearch(s.store, args)
 	default:
