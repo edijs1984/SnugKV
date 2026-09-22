@@ -64,6 +64,14 @@ run FT.SEARCH products '@category:{books} -@price:[30 30]' NOCONTENT
 run FT.SEARCH products '-@category:{games}' NOCONTENT
 run FT.SEARCH products '(@category:{books} @price:[10 10]) | (@category:{games})' NOCONTENT
 
+
+echo
+echo "=== nested boolean queries ==="
+run FT.SEARCH products '(@category:{books} | @category:{games}) @price:[20 30]' NOCONTENT
+run FT.SEARCH products '(@category:{games}) | (@category:{books} @price:[30 30])' NOCONTENT
+run FT.SEARCH products '-(@category:{games} | @price:[30 30])' NOCONTENT
+run FT.SEARCH products '((@category:{books}) | (@category:{games})) @price:[10 20]' NOCONTENT
+
 echo
 echo "=== limit ==="
 run FT.SEARCH products '*' NOCONTENT LIMIT 1 1
