@@ -555,6 +555,7 @@ func SetMatches(root any, path string, value any) (any, int, error) {
 
 func setMatchesAt(current any, tokens []pathToken, value any) (any, int) {
 	token := tokens[0]
+	rest := tokens[1:]
 	last := len(tokens) == 1
 
 	switch token.kind {
@@ -757,6 +758,7 @@ func DeleteMatches(root any, path string) (any, int, error) {
 
 func deleteMatchesAt(current any, tokens []pathToken) (any, int) {
 	token := tokens[0]
+	rest := tokens[1:]
 	last := len(tokens) == 1
 
 	switch token.kind {
