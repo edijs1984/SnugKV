@@ -723,7 +723,7 @@ func TestJSONPathAggregationFunctionCoreCommands(t *testing.T) {
 		t.Fatal(got)
 	}
 
-	if got := execute(t, s, "JSON.GET", "doc", "$.items[*].name"); got != "$13\r\n[\"a\",\"agg\",\"c\"]\r\n" {
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[*].name"); got != "$15\r\n[\"a\",\"agg\",\"c\"]\r\n" {
 		t.Fatal(got)
 	}
 }
