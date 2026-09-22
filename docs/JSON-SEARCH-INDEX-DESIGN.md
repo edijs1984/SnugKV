@@ -85,9 +85,16 @@ FT.SEARCH index "*"
 FT.SEARCH index "@category:{books}"
 FT.SEARCH index "@price:[10 50]"
 FT.SEARCH index "@category:{books} @price:[10 50]"
+FT.SEARCH index "@category:{books}|@category:{games}"
+FT.SEARCH index "@category:{books} -@price:[50 +inf]"
+FT.SEARCH index "-@category:{games}"
 ```
 
-The space-separated form is an implicit AND in v1.
+Space-separated clauses are implicit AND. A top-level pipe (`|`) joins flat
+OR groups, and a leading dash (`-`) negates the adjacent field clause. The
+first boolean-query subset intentionally does not support parentheses or nested
+boolean expressions; those require a real expression tree and separate
+differential coverage.
 
 Initial options:
 
@@ -570,7 +577,7 @@ Only after measured demand:
 
 - TEXT fields/tokenization;
 - richer SORTBY optimization / sortable-value storage;
-- OR / negation query operators;
+- parenthesized / nested boolean query expressions;
 - aggregation;
 - GEO;
 - vector search;
