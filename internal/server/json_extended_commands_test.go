@@ -548,3 +548,27 @@ func TestJSONPathFilterCoreCommands(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+
+func TestJSONPathLogicalFilterCoreCommands(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "JSON.SET", "doc", "$",
+		`{"items":[{"price":25,"active":true,"name":"a"},{"price":75,"active":false,"name":"b"},{"price":150,"active":true,"name":"c"},{"price":700,"active":false,"name":"d"}]}`)
+
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[?(@.price < 100 && @.active == true)].name"); got != "$5\r\n[\"a\"]\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[?(@.price < 50 || @.price > 500)].name"); got != "$9\r\n[\"a\",\"d\"]\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.SET", "doc", "$.items[?(!(@.active == true))].price", "999"); got != "+OK\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[*].price"); got != "$16\r\n[25,999,150,999]\r\n" {
+		t.Fatal(got)
+	}
+}
