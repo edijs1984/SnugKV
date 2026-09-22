@@ -464,3 +464,141 @@ func TestFTDropIndexMissingMatchesRedisError(t *testing.T) {
 		t.Fatalf("error=%q want=%q", err.Error(), want)
 	}
 }
+
+
+func TestFTSearchReturnJSONPath(t *testing.T) {
+	s := newSearchTestServer(t)
+	createProductSearchFixture(t, s)
+
+	reply, err := s.Execute([][]byte{
+		[]byte("FT.SEARCH"),
+		[]byte("products"),
+		[]byte("@category:{games}"),
+		[]byte("RETURN"),
+		[]byte("1"),
+		[]byte("$.title"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := "*3\r\n:1\r\n$9\r\nproduct:2\r\n*2\r\n$7\r\n$.title\r\n$3\r\n\"B\"\r\n"
+	if string(reply) != want {
+		t.Fatalf("reply=%q want=%q", reply, want)
+	}
+}
+
+func TestFTSearchReturnJSONPathAsAlias(t *testing.T) {
+	s := newSearchTestServer(t)
+	createProductSearchFixture(t, s)
+
+	reply, err := s.Execute([][]byte{
+		[]byte("FT.SEARCH"),
+		[]byte("products"),
+		[]byte("@category:{games}"),
+		[]byte("RETURN"),
+		[]byte("3"),
+		[]byte("$.title"),
+		[]byte("AS"),
+		[]byte("title"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := "*3\r\n:1\r\n$9\r\nproduct:2\r\n*2\r\n$5\r\ntitle\r\n$3\r\n\"B\"\r\n"
+	if string(reply) != want {
+		t.Fatalf("reply=%q want=%q", reply, want)
+	}
+}
+
+func TestFTSearchReturnMultipleJSONPaths(t *testing.T) {
+	s := newSearchTestServer(t)
+	createProductSearchFixture(t, s)
+
+	reply, err := s.Execute([][]byte{
+		[]byte("FT.SEARCH"),
+		[]byte("products"),
+		[]byte("@category:{games}"),
+		[]byte("RETURN"),
+		[]byte("4"),
+		[]byte("$.title"),
+		[]byte("$.price"),
+		[]byte("AS"),
+		[]byte("cost"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := string(reply)
+	if !strings.Contains(got, "$.title") || !strings.Contains(got, "\"B\"") {
+		t.Fatalf("missing title projection in reply=%q", reply)
+	}
+	if !strings.Contains(got, "cost") || !strings.Contains(got, "20") {
+		t.Fatalf("missing price projection in reply=%q", reply)
+	}
+}
+
+func TestFTSearchReturnZeroActsLikeNoContent(t *testing.T) {
+	s := newSearchTestServer(t)
+	createProductSearchFixture(t, s)
+
+	reply, err := s.Execute([][]byte{
+		[]byte("FT.SEARCH"),
+		[]byte("products"),
+		[]byte("*"),
+		[]byte("RETURN"),
+		[]byte("0"),
+		[]byte("LIMIT"),
+		[]byte("0"),
+		[]byte("1"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := "*2\r\n:3\r\n$9\r\nproduct:1\r\n"
+	if string(reply) != want {
+		t.Fatalf("reply=%q want=%q", reply, want)
+	}
+}
+
+func TestFTSearchReturnMissingPathIsOmitted(t *testing.T) {
+	s := newSearchTestServer(t)
+	createProductSearchFixture(t, s)
+
+	reply, err := s.Execute([][]byte{
+		[]byte("FT.SEARCH"),
+		[]byte("products"),
+		[]byte("@category:{games}"),
+		[]byte("RETURN"),
+		[]byte("1"),
+		[]byte("$.missing"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := "*3\r\n:1\r\n$9\r\nproduct:2\r\n*0\r\n"
+	if string(reply) != want {
+		t.Fatalf("reply=%q want=%q", reply, want)
+	}
+}
+
+func TestFTSearchReturnRejectsNonJSONPathForNow(t *testing.T) {
+	s := newSearchTestServer(t)
+	createProductSearchFixture(t, s)
+
+	_, err := s.Execute([][]byte{
+		[]byte("FT.SEARCH"),
+		[]byte("products"),
+		[]byte("*"),
+		[]byte("RETURN"),
+		[]byte("1"),
+		[]byte("title"),
+	})
+	if err == nil {
+		t.Fatal("non-JSONPath RETURN unexpectedly succeeded")
+	}
+}
