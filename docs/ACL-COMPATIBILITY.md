@@ -56,6 +56,11 @@ EVAL/FCALL, COPY, BITOP, ZSET algebra/store, ZMPOP/BZMPOP, XREAD, and XREADGROUP
 
 A complete matching ACL rule set must permit every referenced key.
 
+Redis 8.10's JSON module exposes only the first `JSON.MGET` key to ACL
+key-pattern checks, even though the command may read multiple keys. SnugKV matches
+that audited behavior for Redis compatibility. `JSON.MSET`, by contrast, exposes
+and authorizes every destination key, matching Redis 8.10.
+
 Nested `redis.call()` / `redis.pcall()` execution inside EVAL/EVALSHA,
 EVAL_RO/EVALSHA_RO, FCALL, and FCALL_RO is re-authorized using the authenticated
 caller's ACL context. Scripts and Functions therefore cannot use nested commands
