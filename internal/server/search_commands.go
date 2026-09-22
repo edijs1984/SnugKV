@@ -155,6 +155,59 @@ type searchOptions struct {
 	noContent bool
 }
 
+
+func splitSearchTerms(query string) ([]string, error) {
+	var terms []string
+	start := -1
+	depth := 0
+
+	for i, r := range query {
+		switch r {
+		case '{', '[':
+			if start < 0 {
+				start = i
+			}
+			depth++
+		case '}', ']':
+			if depth == 0 {
+				return nil, errors.New("ERR unsupported search query")
+			}
+			depth--
+		case ' ', '\t', '\n', '\r':
+			if depth == 0 {
+				if start >= 0 {
+					terms = append(terms, strings.TrimSpace(query[start:i]))
+					start = -1
+				}
+				continue
+			}
+		default:
+			if start < 0 {
+				start = i
+			}
+		}
+	}
+
+	if depth != 0 {
+		return nil, errors.New("ERR unsupported search query")
+	}
+	if start >= 0 {
+		terms = append(terms, strings.TrimSpace(query[start:]))
+	}
+	return terms, nil
+}
+
+func parseSearchBound(value string) (float64, error) {
+	switch strings.ToLower(value) {
+	case "-inf":
+		return -1.7976931348623157e+308, nil
+	case "+inf", "inf":
+		return 1.7976931348623157e+308, nil
+	default:
+		return strconv.ParseFloat(value, 64)
+	}
+}
+
 func parseSearchQuery(query string) ([]searchQueryClause, error) {
 	query = strings.TrimSpace(query)
 	if query == "*" {
@@ -164,7 +217,10 @@ func parseSearchQuery(query string) ([]searchQueryClause, error) {
 		return nil, errors.New("ERR invalid search query")
 	}
 
-	parts := strings.Fields(query)
+	parts, err := splitSearchTerms(query)
+	if err != nil {
+		return nil, err
+	}
 	clauses := make([]searchQueryClause, 0, len(parts))
 
 	for _, part := range parts {
@@ -199,11 +255,11 @@ func parseSearchQuery(query string) ([]searchQueryClause, error) {
 				return nil, errors.New("ERR unsupported numeric range")
 			}
 
-			minimum, err := strconv.ParseFloat(bounds[0], 64)
+			minimum, err := parseSearchBound(bounds[0])
 			if err != nil {
 				return nil, errors.New("ERR unsupported numeric range")
 			}
-			maximum, err := strconv.ParseFloat(bounds[1], 64)
+			maximum, err := parseSearchBound(bounds[1])
 			if err != nil {
 				return nil, errors.New("ERR unsupported numeric range")
 			}
