@@ -107,10 +107,17 @@ func executeFTCreate(store *engine.Store, args [][]byte) ([]byte, error) {
 		}
 		pos++
 
+		noStem := false
+		if kind == engine.SearchFieldText && pos < len(args) && strings.EqualFold(string(args[pos]), "NOSTEM") {
+			noStem = true
+			pos++
+		}
+
 		def.Fields = append(def.Fields, engine.SearchField{
-			Path:  path,
-			Alias: alias,
-			Kind:  kind,
+			Path:   path,
+			Alias:  alias,
+			Kind:   kind,
+			NoStem: noStem,
 		})
 	}
 
@@ -177,14 +184,18 @@ func executeFTInfo(store *engine.Store, args [][]byte) ([]byte, error) {
 		case engine.SearchFieldText:
 			fieldType = "TEXT"
 		}
-		attributes = append(attributes, array(
+		fieldItems := [][]byte{
 			formatBulkString([]byte("identifier")),
 			formatBulkString([]byte(field.Path)),
 			formatBulkString([]byte("attribute")),
 			formatBulkString([]byte(field.Alias)),
 			formatBulkString([]byte("type")),
 			formatBulkString([]byte(fieldType)),
-		))
+		}
+		if field.Kind == engine.SearchFieldText && field.NoStem {
+			fieldItems = append(fieldItems, formatBulkString([]byte("NOSTEM")))
+		}
+		attributes = append(attributes, array(fieldItems...))
 	}
 
 	return array(
