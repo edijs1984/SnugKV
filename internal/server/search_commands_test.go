@@ -906,3 +906,98 @@ func TestFTCreateAllowsMalformedJSONPathDefinitionLikeRedis(t *testing.T) {
 		t.Fatalf("reply=%q want=%q", got, want)
 	}
 }
+
+
+func TestFTSearchSortByNumeric(t *testing.T) {
+	s := newSearchTestServer(t)
+	createProductSearchFixture(t, s)
+
+	tests := []struct {
+		name string
+		args [][]byte
+		want string
+	}{
+		{
+			name: "ascending default",
+			args: [][]byte{
+				[]byte("FT.SEARCH"), []byte("products"), []byte("*"),
+				[]byte("NOCONTENT"), []byte("SORTBY"), []byte("price"),
+			},
+			want: "*4\r\n:3\r\n$9\r\nproduct:1\r\n$9\r\nproduct:2\r\n$9\r\nproduct:3\r\n",
+		},
+		{
+			name: "descending",
+			args: [][]byte{
+				[]byte("FT.SEARCH"), []byte("products"), []byte("*"),
+				[]byte("NOCONTENT"), []byte("SORTBY"), []byte("price"), []byte("DESC"),
+			},
+			want: "*4\r\n:3\r\n$9\r\nproduct:3\r\n$9\r\nproduct:2\r\n$9\r\nproduct:1\r\n",
+		},
+		{
+			name: "sort before limit",
+			args: [][]byte{
+				[]byte("FT.SEARCH"), []byte("products"), []byte("*"),
+				[]byte("NOCONTENT"), []byte("SORTBY"), []byte("price"), []byte("DESC"),
+				[]byte("LIMIT"), []byte("1"), []byte("1"),
+			},
+			want: "*2\r\n:3\r\n$9\r\nproduct:2\r\n",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			reply, err := s.Execute(tc.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := string(reply); got != tc.want {
+				t.Fatalf("reply=%q want=%q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFTSearchSortByTag(t *testing.T) {
+	s := newSearchTestServer(t)
+	createProductSearchFixture(t, s)
+
+	reply, err := s.Execute([][]byte{
+		[]byte("FT.SEARCH"), []byte("products"), []byte("*"),
+		[]byte("NOCONTENT"),
+		[]byte("SORTBY"), []byte("category"), []byte("ASC"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// books sorts before games; equal values use deterministic key order.
+	want := "*4\r\n:3\r\n$9\r\nproduct:1\r\n$9\r\nproduct:3\r\n$9\r\nproduct:2\r\n"
+	if got := string(reply); got != want {
+		t.Fatalf("reply=%q want=%q", got, want)
+	}
+}
+
+func TestFTSearchSortByUnknownField(t *testing.T) {
+	s := newSearchTestServer(t)
+	createProductSearchFixture(t, s)
+
+	if _, err := s.Execute([][]byte{
+		[]byte("FT.SEARCH"), []byte("products"), []byte("*"),
+		[]byte("SORTBY"), []byte("missing"),
+	}); err == nil {
+		t.Fatal("unknown SORTBY field unexpectedly succeeded")
+	}
+}
+
+func TestFTSearchSortByRejectsDuplicateClause(t *testing.T) {
+	s := newSearchTestServer(t)
+	createProductSearchFixture(t, s)
+
+	if _, err := s.Execute([][]byte{
+		[]byte("FT.SEARCH"), []byte("products"), []byte("*"),
+		[]byte("SORTBY"), []byte("price"),
+		[]byte("SORTBY"), []byte("category"),
+	}); err == nil {
+		t.Fatal("duplicate SORTBY unexpectedly succeeded")
+	}
+}
