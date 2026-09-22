@@ -1022,7 +1022,11 @@ func TestJSONPathParenthesizedPlainPathIsNotProjection(t *testing.T) {
 	}
 
 	got, err := Matches(root, "($.a)")
-	if err == nil {
-		t.Fatalf("expected current plain-path parser to reject outer parentheses, got %#v", got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []any{float64(2)}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v want %#v", got, want)
 	}
 }
