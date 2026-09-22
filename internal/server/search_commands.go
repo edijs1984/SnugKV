@@ -214,7 +214,10 @@ type searchQueryClause struct {
 	tag     *string
 	minimum *float64
 	maximum *float64
+	negated bool
 }
+
+type searchQueryGroup []searchQueryClause
 
 type searchReturnField struct {
 	path  string
@@ -287,7 +290,147 @@ func parseSearchBound(value string) (float64, error) {
 	}
 }
 
-func parseSearchQuery(query string) ([]searchQueryClause, error) {
+func splitSearchOrGroups(query string) ([]string, error) {
+	var groups []string
+	start := 0
+	depth := 0
+
+	for i, r := range query {
+		switch r {
+		case '(':
+			depth++
+		case ')':
+			if depth == 0 {
+				return nil, errors.New("ERR unsupported search query")
+			}
+			depth--
+		case '{', '[':
+			depth++
+		case '}', ']':
+			if depth == 0 {
+				return nil, errors.New("ERR unsupported search query")
+			}
+			depth--
+		case '|':
+			if depth != 0 {
+				continue
+			}
+			if i == 0 || i+1 >= len(query) ||
+				!isSearchSpace(query[i-1]) || !isSearchSpace(query[i+1]) {
+				return nil, errors.New("ERR unsupported search query")
+			}
+
+			group := strings.TrimSpace(query[start:i])
+			if group == "" {
+				return nil, errors.New("ERR unsupported search query")
+			}
+			groups = append(groups, group)
+			start = i + 1
+		}
+	}
+
+	if depth != 0 {
+		return nil, errors.New("ERR unsupported search query")
+	}
+
+	group := strings.TrimSpace(query[start:])
+	if group == "" {
+		return nil, errors.New("ERR unsupported search query")
+	}
+	groups = append(groups, group)
+	return groups, nil
+}
+
+func isSearchSpace(b byte) bool {
+	switch b {
+	case ' ', '\t', '\n', '\r':
+		return true
+	default:
+		return false
+	}
+}
+
+func unwrapSearchGroup(group string) (string, bool) {
+	group = strings.TrimSpace(group)
+	if !strings.HasPrefix(group, "(") || !strings.HasSuffix(group, ")") {
+		return group, false
+	}
+
+	depth := 0
+	for i, r := range group {
+		switch r {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 && i != len(group)-1 {
+				return group, false
+			}
+			if depth < 0 {
+				return group, false
+			}
+		}
+	}
+	if depth != 0 {
+		return group, false
+	}
+	return strings.TrimSpace(group[1 : len(group)-1]), true
+}
+
+func parseSearchClause(part, fullQuery string) (searchQueryClause, error) {
+	clause := searchQueryClause{}
+	if strings.HasPrefix(part, "-") {
+		clause.negated = true
+		part = strings.TrimSpace(part[1:])
+	}
+	if !strings.HasPrefix(part, "@") {
+		return searchQueryClause{}, errors.New("ERR unsupported search query")
+	}
+
+	colon := strings.IndexByte(part, ':')
+	if colon <= 1 || colon == len(part)-1 {
+		return searchQueryClause{}, errors.New("ERR unsupported search query")
+	}
+
+	clause.alias = part[1:colon]
+	expr := part[colon+1:]
+
+	if strings.HasPrefix(expr, "{") && strings.HasSuffix(expr, "}") {
+		value := expr[1 : len(expr)-1]
+		if value == "" {
+			return searchQueryClause{}, errors.New("ERR unsupported search query")
+		}
+		clause.tag = &value
+		return clause, nil
+	}
+
+	if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") {
+		rangeBody := strings.TrimSpace(expr[1 : len(expr)-1])
+		bounds := strings.Fields(rangeBody)
+		if len(bounds) != 2 {
+			return searchQueryClause{}, errors.New("ERR unsupported numeric range")
+		}
+
+		minimum, err := parseSearchBound(bounds[0])
+		if err != nil {
+			offset := strings.Index(fullQuery, bounds[0])
+			return searchQueryClause{}, fmt.Errorf("SEARCH_SYNTAX Syntax error at offset %d near %s", offset, bounds[0])
+		}
+		maximum, err := parseSearchBound(bounds[1])
+		if err != nil {
+			offset := strings.Index(fullQuery, bounds[1])
+			return searchQueryClause{}, fmt.Errorf("SEARCH_SYNTAX Syntax error at offset %d near %s", offset, bounds[1])
+		}
+
+		clause.minimum = &minimum
+		clause.maximum = &maximum
+		return clause, nil
+	}
+
+	return searchQueryClause{}, errors.New("ERR unsupported search query")
+}
+
+func parseSearchQuery(query string) ([]searchQueryGroup, error) {
 	query = strings.TrimSpace(query)
 	if query == "*" {
 		return nil, nil
@@ -296,67 +439,42 @@ func parseSearchQuery(query string) ([]searchQueryClause, error) {
 		return nil, errors.New("ERR invalid search query")
 	}
 
-	parts, err := splitSearchTerms(query)
+	rawGroups, err := splitSearchOrGroups(query)
 	if err != nil {
 		return nil, err
 	}
-	clauses := make([]searchQueryClause, 0, len(parts))
 
-	for _, part := range parts {
-		if !strings.HasPrefix(part, "@") {
-			return nil, errors.New("ERR unsupported search query")
-		}
-
-		colon := strings.IndexByte(part, ':')
-		if colon <= 1 || colon == len(part)-1 {
-			return nil, errors.New("ERR unsupported search query")
-		}
-
-		alias := part[1:colon]
-		expr := part[colon+1:]
-
-		if strings.HasPrefix(expr, "{") && strings.HasSuffix(expr, "}") {
-			value := expr[1 : len(expr)-1]
-			if value == "" {
+	groups := make([]searchQueryGroup, 0, len(rawGroups))
+	hasOR := len(rawGroups) > 1
+	for _, rawGroup := range rawGroups {
+		if hasOR {
+			var ok bool
+			rawGroup, ok = unwrapSearchGroup(rawGroup)
+			if !ok {
 				return nil, errors.New("ERR unsupported search query")
 			}
-			clauses = append(clauses, searchQueryClause{
-				alias: alias,
-				tag:   &value,
-			})
-			continue
 		}
 
-		if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") {
-			rangeBody := strings.TrimSpace(expr[1 : len(expr)-1])
-			bounds := strings.Fields(rangeBody)
-			if len(bounds) != 2 {
-				return nil, errors.New("ERR unsupported numeric range")
-			}
-
-			minimum, err := parseSearchBound(bounds[0])
-			if err != nil {
-				offset := strings.Index(query, bounds[0])
-				return nil, fmt.Errorf("SEARCH_SYNTAX Syntax error at offset %d near %s", offset, bounds[0])
-			}
-			maximum, err := parseSearchBound(bounds[1])
-			if err != nil {
-				offset := strings.Index(query, bounds[1])
-				return nil, fmt.Errorf("SEARCH_SYNTAX Syntax error at offset %d near %s", offset, bounds[1])
-			}
-
-			clauses = append(clauses, searchQueryClause{
-				alias:   alias,
-				minimum: &minimum,
-				maximum: &maximum,
-			})
-			continue
+		parts, err := splitSearchTerms(rawGroup)
+		if err != nil {
+			return nil, err
+		}
+		if len(parts) == 0 {
+			return nil, errors.New("ERR unsupported search query")
 		}
 
-		return nil, errors.New("ERR unsupported search query")
+		group := make(searchQueryGroup, 0, len(parts))
+		for _, part := range parts {
+			clause, err := parseSearchClause(part, query)
+			if err != nil {
+				return nil, err
+			}
+			group = append(group, clause)
+		}
+		groups = append(groups, group)
 	}
 
-	return clauses, nil
+	return groups, nil
 }
 
 func parseSearchOptions(args [][]byte) (searchOptions, error) {
@@ -510,33 +628,70 @@ func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 
 	candidates := allKeys
 	if len(clauses) > 0 {
-		sets := make([][]string, 0, len(clauses))
-		for _, clause := range clauses {
-			switch {
-			case clause.tag != nil:
-				keys, ok := store.SearchTagKeys(indexName, clause.alias, *clause.tag)
-				if !ok {
-					return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
-				}
-				sets = append(sets, keys)
+		orMatches := make(map[string]struct{})
 
-			case clause.minimum != nil && clause.maximum != nil:
-				keys, ok := store.SearchNumericRangeKeys(
-					indexName,
-					clause.alias,
-					*clause.minimum,
-					*clause.maximum,
-				)
-				if !ok {
-					return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
-				}
-				sets = append(sets, keys)
+		for _, group := range clauses {
+			groupSet := make(map[string]struct{}, len(allKeys))
+			for _, key := range allKeys {
+				groupSet[key] = struct{}{}
+			}
 
-			default:
-				return nil, errors.New("ERR unsupported search query")
+			for _, clause := range group {
+				var keys []string
+				switch {
+				case clause.tag != nil:
+					var ok bool
+					keys, ok = store.SearchTagKeys(indexName, clause.alias, *clause.tag)
+					if !ok {
+						return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
+					}
+
+				case clause.minimum != nil && clause.maximum != nil:
+					var ok bool
+					keys, ok = store.SearchNumericRangeKeys(
+						indexName,
+						clause.alias,
+						*clause.minimum,
+						*clause.maximum,
+					)
+					if !ok {
+						return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
+					}
+
+				default:
+					return nil, errors.New("ERR unsupported search query")
+				}
+
+				matches := make(map[string]struct{}, len(keys))
+				for _, key := range keys {
+					matches[key] = struct{}{}
+				}
+
+				if clause.negated {
+					for key := range matches {
+						delete(groupSet, key)
+					}
+					continue
+				}
+
+				for key := range groupSet {
+					if _, ok := matches[key]; !ok {
+						delete(groupSet, key)
+					}
+				}
+			}
+
+			for key := range groupSet {
+				orMatches[key] = struct{}{}
 			}
 		}
-		candidates = intersectSortedSearchKeys(sets...)
+
+		candidates = candidates[:0]
+		for _, key := range allKeys {
+			if _, ok := orMatches[key]; ok {
+				candidates = append(candidates, key)
+			}
+		}
 	}
 
 	type hit struct {

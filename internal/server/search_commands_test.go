@@ -1047,3 +1047,75 @@ func TestFTSearchSortByRejectsDuplicateClause(t *testing.T) {
 		t.Fatal("duplicate SORTBY unexpectedly succeeded")
 	}
 }
+
+
+func TestFTSearchBooleanORAndNegation(t *testing.T) {
+	s := newSearchTestServer(t)
+	createProductSearchFixture(t, s)
+
+	tests := []struct {
+		name  string
+		query string
+		want  string
+	}{
+		{
+			name:  "or tag numeric",
+			query: "(@category:{games}) | (@price:[30 30])",
+			want:  "*3\r\n:2\r\n$9\r\nproduct:2\r\n$9\r\nproduct:3\r\n",
+		},
+		{
+			name:  "and with negation",
+			query: "@category:{books} -@price:[30 30]",
+			want:  "*2\r\n:1\r\n$9\r\nproduct:1\r\n",
+		},
+		{
+			name:  "pure negation",
+			query: "-@category:{games}",
+			want:  "*3\r\n:2\r\n$9\r\nproduct:1\r\n$9\r\nproduct:3\r\n",
+		},
+		{
+			name:  "or groups with implicit and",
+			query: "(@category:{books} @price:[10 10]) | (@category:{games})",
+			want:  "*3\r\n:2\r\n$9\r\nproduct:1\r\n$9\r\nproduct:2\r\n",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			reply, err := s.Execute([][]byte{
+				[]byte("FT.SEARCH"),
+				[]byte("products"),
+				[]byte(tc.query),
+				[]byte("NOCONTENT"),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := string(reply); got != tc.want {
+				t.Fatalf("reply=%q want=%q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFTSearchBooleanRejectsMalformedOperators(t *testing.T) {
+	s := newSearchTestServer(t)
+	createProductSearchFixture(t, s)
+
+	for _, query := range []string{
+		"|@category:{books}",
+		"@category:{books}|",
+		"@category:{books}||@category:{games}",
+		"@category:{games}|@price:[30 30]",
+		"@category:{games} | @price:[30 30]",
+		"-",
+	} {
+		if _, err := s.Execute([][]byte{
+			[]byte("FT.SEARCH"),
+			[]byte("products"),
+			[]byte(query),
+		}); err == nil {
+			t.Fatalf("query %q unexpectedly succeeded", query)
+		}
+	}
+}
