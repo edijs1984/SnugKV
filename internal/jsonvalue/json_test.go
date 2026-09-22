@@ -408,3 +408,63 @@ func TestJSONPathFilterRejectsInvalidExpressions(t *testing.T) {
 		}
 	}
 }
+
+
+func TestJSONPathLogicalFilters(t *testing.T) {
+	root, err := Parse([]byte(`{
+		"items":[
+			{"price":25,"active":true,"name":"a"},
+			{"price":75,"active":false,"name":"b"},
+			{"price":150,"active":true,"name":"c"},
+			{"price":700,"active":false,"name":"d"}
+		]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		path string
+		want []any
+	}{
+		{"$.items[?(@.price < 100 && @.active == true)].name", []any{"a"}},
+		{"$.items[?(@.price < 50 || @.price > 500)].name", []any{"a", "d"}},
+		{"$.items[?(!(@.active == true))].name", []any{"b", "d"}},
+		{"$.items[?((@.price < 100 && @.active == false) || @.price > 500)].name", []any{"b", "d"}},
+	}
+
+	for _, tc := range cases {
+		got, err := Matches(root, tc.path)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.path, err)
+		}
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Fatalf("%s got %#v want %#v", tc.path, got, tc.want)
+		}
+	}
+}
+
+func TestJSONPathLogicalFilterMutation(t *testing.T) {
+	root, err := Parse([]byte(`{"items":[{"price":25,"active":true},{"price":75,"active":false},{"price":700,"active":false}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	root, count, err := SetMatches(root, "$.items[?(@.price < 100 && @.active == false)].price", float64(999))
+	if err != nil || count != 1 {
+		t.Fatalf("set count=%d err=%v", count, err)
+	}
+
+	root, count, err = DeleteMatches(root, "$.items[?(@.price < 50 || @.price > 500)]")
+	if err != nil || count != 3 {
+		t.Fatalf("delete count=%d err=%v", count, err)
+	}
+
+	values, err := Matches(root, "$.items[*]")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(values) != 0 {
+		t.Fatalf("expected all matching items deleted, got %#v", values)
+	}
+}
