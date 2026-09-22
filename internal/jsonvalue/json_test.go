@@ -902,3 +902,36 @@ func TestJSONPathAppendFunction(t *testing.T) {
 		t.Fatalf("append mutated stored value: %#v", original)
 	}
 }
+
+
+func TestJSONPathKeysFunction(t *testing.T) {
+	root, err := Parse([]byte(`{
+		"items":[
+			{"meta":{"b":2,"a":1},"name":"x"},
+			{"meta":{"z":1},"name":"y"},
+			{"meta":[],"name":"bad"}
+		]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		path string
+		want []any
+	}{
+		{"$.items[?keys(@.meta).length() == 2].name", []any{"x"}},
+		{"$.items[?(@.meta.keys().length() == 1)].name", []any{"y"}},
+		{"$.items[?first(keys(@.meta)) == \"a\"].name", []any{"x"}},
+	}
+
+	for _, tc := range cases {
+		got, err := Matches(root, tc.path)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.path, err)
+		}
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Fatalf("%s got %#v want %#v", tc.path, got, tc.want)
+		}
+	}
+}
