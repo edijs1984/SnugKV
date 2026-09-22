@@ -128,8 +128,16 @@ but SnugKV needs deterministic tests and reproducible behavior.
 For the initial subset, results are returned in ascending binary key order unless
 an explicit future `SORTBY` is supplied.
 
-This is a documented SnugKV compatibility boundary until a Redis-compatible
-ordering contract is audited.
+Live Redis 8.10 Search differential testing confirmed that unsorted result order
+differs from SnugKV's deterministic ordering. Redis returned its internal index
+order, while SnugKV returned ascending binary key order. Because Redis Search does
+not provide a stable unsorted ordering contract, SnugKV keeps deterministic order
+as an intentional compatibility boundary. Consequently, `LIMIT` without an
+explicit sort can select a different key even when the total result set is
+identical.
+
+All audited search predicates, result counts, mutation visibility, deletion,
+expiry, and default JSON content shape matched Redis 8.10.
 
 ## Index catalog
 
