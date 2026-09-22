@@ -513,6 +513,32 @@ func (m *searchManager) textKeys(indexName, alias, token string) ([]string, bool
 	return sortedPostingKeys(field[strings.ToLower(token)]), true
 }
 
+func (m *searchManager) textPrefixKeys(indexName, alias, prefix string) ([]string, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	idx, ok := m.indexes[indexName]
+	if !ok {
+		return nil, false
+	}
+	field := idx.texts[alias]
+	if field == nil {
+		return []string{}, true
+	}
+
+	prefix = strings.ToLower(prefix)
+	seen := make(map[string]struct{})
+	for token, postings := range field {
+		if !strings.HasPrefix(token, prefix) {
+			continue
+		}
+		for key := range postings {
+			seen[key] = struct{}{}
+		}
+	}
+	return sortedPostingKeys(seen), true
+}
+
 func (idx *searchIndex) ensureNumericSorted(alias string) []numericPosting {
 	if !idx.numericDirty[alias] {
 		return idx.numericSorted[alias]
@@ -805,6 +831,14 @@ func (s *Store) SearchTextKeys(indexName, alias, token string) ([]string, bool) 
 		return nil, false
 	}
 	return manager.textKeys(indexName, alias, token)
+}
+
+func (s *Store) SearchTextPrefixKeys(indexName, alias, prefix string) ([]string, bool) {
+	manager := s.getSearchManager()
+	if manager == nil {
+		return nil, false
+	}
+	return manager.textPrefixKeys(indexName, alias, prefix)
 }
 
 func (s *Store) SearchNumericRangeKeys(indexName, alias string, min, max float64) ([]string, bool) {

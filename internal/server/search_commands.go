@@ -215,11 +215,12 @@ func executeFTInfo(store *engine.Store, args [][]byte) ([]byte, error) {
 
 
 type searchQueryClause struct {
-	alias   string
-	tag     *string
-	text    *string
-	minimum *float64
-	maximum *float64
+	alias      string
+	tag        *string
+	text       *string
+	textPrefix bool
+	minimum    *float64
+	maximum    *float64
 }
 
 type searchQueryNodeKind uint8
@@ -439,12 +440,22 @@ func (p *searchQueryParser) parseFieldTextGroup() (*searchQueryNode, bool, error
 		if strings.HasPrefix(term, "-") || term == "" {
 			return nil, true, errors.New("ERR unsupported search query")
 		}
+		prefix := strings.HasSuffix(term, "*")
+		if prefix {
+			if strings.Count(term, "*") != 1 || len(term) == 1 {
+				return nil, true, errors.New("ERR unsupported search query")
+			}
+			term = strings.TrimSuffix(term, "*")
+		} else if strings.Contains(term, "*") {
+			return nil, true, errors.New("ERR unsupported search query")
+		}
 		value := strings.ToLower(term)
 		clause := &searchQueryNode{
 			kind: searchQueryClauseNode,
 			clause: &searchQueryClause{
-				alias: alias,
-				text:  &value,
+				alias:      alias,
+				text:       &value,
+				textPrefix: prefix,
 			},
 		}
 		if node == nil {
@@ -596,8 +607,18 @@ func parseSearchClause(part, fullQuery string) (searchQueryClause, error) {
 	}
 
 	if expr != "" && !strings.ContainsAny(expr, "{}[]()|") {
+		prefix := strings.HasSuffix(expr, "*")
+		if prefix {
+			if strings.Count(expr, "*") != 1 || len(expr) == 1 {
+				return searchQueryClause{}, errors.New("ERR unsupported search query")
+			}
+			expr = strings.TrimSuffix(expr, "*")
+		} else if strings.Contains(expr, "*") {
+			return searchQueryClause{}, errors.New("ERR unsupported search query")
+		}
 		value := strings.ToLower(expr)
 		clause.text = &value
+		clause.textPrefix = prefix
 		return clause, nil
 	}
 
@@ -961,7 +982,15 @@ func evaluateSearchQuery(store *engine.Store, indexName string, node *searchQuer
 			return keys, nil
 
 		case node.clause.text != nil:
-			keys, ok := store.SearchTextKeys(indexName, node.clause.alias, *node.clause.text)
+			var (
+				keys []string
+				ok   bool
+			)
+			if node.clause.textPrefix {
+				keys, ok = store.SearchTextPrefixKeys(indexName, node.clause.alias, *node.clause.text)
+			} else {
+				keys, ok = store.SearchTextKeys(indexName, node.clause.alias, *node.clause.text)
+			}
 			if !ok {
 				return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
 			}
