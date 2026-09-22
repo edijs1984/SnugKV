@@ -22,7 +22,11 @@ run FT.DROPINDEX products
 
 echo
 echo "=== seed ==="
-run JSON.SET product:1 '
+run JSON.SET product:1 '$' '{"category":"books","price":10,"title":"A","description":"Memory Guide"}'
+run JSON.SET product:2 '$' '{"category":"games","price":20,"title":"B","description":"Game Server Design"}'
+run JSON.SET product:3 '$' '{"category":"books","price":30,"title":"C","description":"Memory-Search Engine"}'
+run JSON.SET ignored:1 '$' '{"category":"books","price":15,"title":"ignored","description":"Memory Ignored"}'
+
 echo
 echo "=== create ==="
 run FT.CREATE products ON JSON PREFIX 1 product: SCHEMA   '$.category' AS category TAG   '$.price' AS price NUMERIC   '$.description' AS description TEXT
