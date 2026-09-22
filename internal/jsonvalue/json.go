@@ -3,6 +3,7 @@ package jsonvalue
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,6 +17,7 @@ const (
 	pathWildcard
 	pathSlice
 	pathUnion
+	pathFilter
 	pathRecursiveMember
 	pathRecursiveWildcard
 )
@@ -28,6 +30,13 @@ type pathToken struct {
 	sliceStart *int
 	sliceEnd   *int
 	sliceStep  *int
+	filter     *filterExpr
+}
+
+type filterExpr struct {
+	path    []string
+	op      string
+	literal any
 }
 
 func Parse(raw []byte) (any, error) {
@@ -164,6 +173,47 @@ func parseBracketToken(path string, start int) (pathToken, int, error) {
 		return pathToken{}, 0, errors.New("ERR invalid JSON path")
 	}
 
+	if path[i] == '?' {
+		if i+1 >= len(path) || path[i+1] != '(' {
+			return pathToken{}, 0, errors.New("ERR invalid JSON path")
+		}
+		exprStart := i + 2
+		j := exprStart
+		inString := byte(0)
+		escaped := false
+		for j < len(path) {
+			ch := path[j]
+			if inString != 0 {
+				if escaped {
+					escaped = false
+				} else if ch == '\\' {
+					escaped = true
+				} else if ch == inString {
+					inString = 0
+				}
+				j++
+				continue
+			}
+			if ch == '"' || ch == '\'' {
+				inString = ch
+				j++
+				continue
+			}
+			if ch == ')' {
+				break
+			}
+			j++
+		}
+		if j >= len(path) || path[j] != ')' || j+1 >= len(path) || path[j+1] != ']' {
+			return pathToken{}, 0, errors.New("ERR invalid JSON path")
+		}
+		expr, err := parseFilterExpr(strings.TrimSpace(path[exprStart:j]))
+		if err != nil {
+			return pathToken{}, 0, err
+		}
+		return pathToken{kind: pathFilter, filter: expr}, j + 2, nil
+	}
+
 	if path[i] == '*' {
 		i++
 		if i >= len(path) || path[i] != ']' {
@@ -292,6 +342,149 @@ func parseBracketToken(path string, start int) (pathToken, int, error) {
 		return pathToken{}, 0, errors.New("ERR invalid JSON path")
 	}
 	return pathToken{kind: pathIndex, index: index}, i + 1, nil
+}
+
+func parseFilterExpr(raw string) (*filterExpr, error) {
+	operators := []string{"<=", ">=", "==", "!=", "<", ">"}
+	var op string
+	var opIndex int
+	inString := byte(0)
+	escaped := false
+
+	for i := 0; i < len(raw); i++ {
+		ch := raw[i]
+		if inString != 0 {
+			if escaped {
+				escaped = false
+			} else if ch == '\\' {
+				escaped = true
+			} else if ch == inString {
+				inString = 0
+			}
+			continue
+		}
+		if ch == '"' || ch == '\'' {
+			inString = ch
+			continue
+		}
+		for _, candidate := range operators {
+			if strings.HasPrefix(raw[i:], candidate) {
+				op = candidate
+				opIndex = i
+				break
+			}
+		}
+		if op != "" {
+			break
+		}
+	}
+	if op == "" {
+		return nil, errors.New("ERR invalid JSON path")
+	}
+
+	left := strings.TrimSpace(raw[:opIndex])
+	right := strings.TrimSpace(raw[opIndex+len(op):])
+	if left == "" || right == "" || (left != "@" && !strings.HasPrefix(left, "@.")) {
+		return nil, errors.New("ERR invalid JSON path")
+	}
+
+	var fields []string
+	if left != "@" {
+		parts := strings.Split(strings.TrimPrefix(left, "@."), ".")
+		for _, part := range parts {
+			if part == "" {
+				return nil, errors.New("ERR invalid JSON path")
+			}
+		}
+		fields = parts
+	}
+
+	var literal any
+	if len(right) >= 2 && right[0] == '\'' && right[len(right)-1] == '\'' {
+		literal = strings.ReplaceAll(right[1:len(right)-1], "\\'", "'")
+	} else {
+		if err := json.Unmarshal([]byte(right), &literal); err != nil {
+			return nil, errors.New("ERR invalid JSON path")
+		}
+	}
+
+	return &filterExpr{path: fields, op: op, literal: literal}, nil
+}
+
+func filterValue(current any, fields []string) (any, bool) {
+	value := current
+	for _, field := range fields {
+		object, ok := value.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		value, ok = object[field]
+		if !ok {
+			return nil, false
+		}
+	}
+	return value, true
+}
+
+func matchesFilter(current any, expr *filterExpr) bool {
+	if expr == nil {
+		return false
+	}
+	left, ok := filterValue(current, expr.path)
+	if !ok {
+		return false
+	}
+
+	switch expr.op {
+	case "==":
+		return reflect.DeepEqual(left, expr.literal)
+	case "!=":
+		return !reflect.DeepEqual(left, expr.literal)
+	}
+
+	switch l := left.(type) {
+	case float64:
+		r, ok := expr.literal.(float64)
+		if !ok {
+			return false
+		}
+		switch expr.op {
+		case "<":
+			return l < r
+		case "<=":
+			return l <= r
+		case ">":
+			return l > r
+		case ">=":
+			return l >= r
+		}
+	case string:
+		r, ok := expr.literal.(string)
+		if !ok {
+			return false
+		}
+		switch expr.op {
+		case "<":
+			return l < r
+		case "<=":
+			return l <= r
+		case ">":
+			return l > r
+		case ">=":
+			return l >= r
+		}
+	}
+	return false
+}
+
+func filteredArrayIndices(array []any, expr *filterExpr) []int {
+	out := make([]int, 0)
+	for i, value := range array {
+		if matchesFilter(value, expr) {
+			out = append(out, i)
+		}
+	}
+	return out
 }
 
 func resolveIndex(length, index int) (int, bool) {
@@ -647,6 +840,25 @@ func collectMatches(current any, tokens []pathToken, out *[]any) {
 			collectMatches(array[index], rest, out)
 		}
 
+	case pathFilter:
+		switch container := current.(type) {
+		case []any:
+			for _, index := range filteredArrayIndices(container, token.filter) {
+				collectMatches(container[index], rest, out)
+			}
+		case map[string]any:
+			keys := make([]string, 0, len(container))
+			for key := range container {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			for _, key := range keys {
+				if matchesFilter(container[key], token.filter) {
+					collectMatches(container[key], rest, out)
+				}
+			}
+		}
+
 	case pathWildcard:
 		switch value := current.(type) {
 		case []any:
@@ -814,6 +1026,49 @@ func setMatchesAt(current any, tokens []pathToken, value any) (any, int) {
 			}
 		}
 		return array, count
+
+	case pathFilter:
+		switch container := current.(type) {
+		case []any:
+			count := 0
+			for _, index := range filteredArrayIndices(container, token.filter) {
+				if last {
+					container[index] = value
+					count++
+					continue
+				}
+				updated, n := setMatchesAt(container[index], rest, value)
+				if n > 0 {
+					container[index] = updated
+					count += n
+				}
+			}
+			return container, count
+		case map[string]any:
+			keys := make([]string, 0, len(container))
+			for key := range container {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			count := 0
+			for _, key := range keys {
+				child := container[key]
+				if !matchesFilter(child, token.filter) {
+					continue
+				}
+				if last {
+					container[key] = value
+					count++
+					continue
+				}
+				updated, n := setMatchesAt(child, rest, value)
+				if n > 0 {
+					container[key] = updated
+					count += n
+				}
+			}
+			return container, count
+		}
 
 	case pathWildcard:
 		switch container := current.(type) {
@@ -1066,6 +1321,52 @@ func deleteMatchesAt(current any, tokens []pathToken) (any, int) {
 			}
 		}
 		return array, count
+
+	case pathFilter:
+		switch container := current.(type) {
+		case []any:
+			indices := filteredArrayIndices(container, token.filter)
+			if last {
+				sort.Sort(sort.Reverse(sort.IntSlice(indices)))
+				for _, index := range indices {
+					container = append(container[:index], container[index+1:]...)
+				}
+				return container, len(indices)
+			}
+			count := 0
+			for _, index := range indices {
+				updated, n := deleteMatchesAt(container[index], rest)
+				if n > 0 {
+					container[index] = updated
+					count += n
+				}
+			}
+			return container, count
+		case map[string]any:
+			keys := make([]string, 0, len(container))
+			for key := range container {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			count := 0
+			for _, key := range keys {
+				child := container[key]
+				if !matchesFilter(child, token.filter) {
+					continue
+				}
+				if last {
+					delete(container, key)
+					count++
+					continue
+				}
+				updated, n := deleteMatchesAt(child, rest)
+				if n > 0 {
+					container[key] = updated
+					count += n
+				}
+			}
+			return container, count
+		}
 
 	case pathWildcard:
 		switch container := current.(type) {
