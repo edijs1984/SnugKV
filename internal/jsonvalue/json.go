@@ -65,7 +65,21 @@ func normalizePath(path string) (string, error) {
 	if path == "" {
 		return "", errors.New("ERR invalid JSON path")
 	}
-	if path[0] != '
+	if path[0] != '$' {
+		return "$." + path, nil
+	}
+	return path, nil
+}
+
+func parsePath(path string) ([]pathToken, error) {
+	var err error
+	path, err = normalizePath(path)
+	if err != nil {
+		return nil, err
+	}
+	if path == "$" {
+		return nil, nil
+	}
 
 	var tokens []pathToken
 	for i := 1; i < len(path); {
