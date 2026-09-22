@@ -1578,3 +1578,109 @@ func TestFTSearchTextExactPhraseRejectsWrongFieldType(t *testing.T) {
 		t.Fatal("quoted phrase on TAG field unexpectedly succeeded")
 	}
 }
+
+
+func TestFTSearchTextEnglishStemming(t *testing.T) {
+	s := newSearchTestServer(t)
+
+	for _, doc := range []struct {
+		key  string
+		json string
+	}{
+		{"stem:1", `{"text":"hire"}`},
+		{"stem:2", `{"text":"hired"}`},
+		{"stem:3", `{"text":"hiring"}`},
+		{"stem:4", `{"text":"studies"}`},
+		{"stem:5", `{"text":"studied"}`},
+		{"stem:6", `{"text":"study"}`},
+		{"stem:7", `{"text":"running"}`},
+		{"stem:8", `{"text":"runs"}`},
+		{"stem:9", `{"text":"run"}`},
+	} {
+		if _, err := s.Execute([][]byte{
+			[]byte("JSON.SET"), []byte(doc.key), []byte("$"), []byte(doc.json),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := s.Execute([][]byte{
+		[]byte("FT.CREATE"), []byte("stemidx"),
+		[]byte("ON"), []byte("JSON"),
+		[]byte("PREFIX"), []byte("1"), []byte("stem:"),
+		[]byte("SCHEMA"),
+		[]byte("$.text"), []byte("AS"), []byte("text"), []byte("TEXT"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		query string
+		want  string
+	}{
+		{"@text:hire", "*4\r\n:3\r\n$6\r\nstem:1\r\n$6\r\nstem:2\r\n$6\r\nstem:3\r\n"},
+		{"@text:hiring", "*4\r\n:3\r\n$6\r\nstem:1\r\n$6\r\nstem:2\r\n$6\r\nstem:3\r\n"},
+		{"@text:study", "*4\r\n:3\r\n$6\r\nstem:4\r\n$6\r\nstem:5\r\n$6\r\nstem:6\r\n"},
+		{"@text:running", "*4\r\n:3\r\n$6\r\nstem:7\r\n$6\r\nstem:8\r\n$6\r\nstem:9\r\n"},
+	}
+
+	for _, tc := range tests {
+		reply, err := s.Execute([][]byte{
+			[]byte("FT.SEARCH"), []byte("stemidx"), []byte(tc.query), []byte("NOCONTENT"),
+		})
+		if err != nil {
+			t.Fatalf("query %q: %v", tc.query, err)
+		}
+		if got := string(reply); got != tc.want {
+			t.Fatalf("query %q reply=%q want=%q", tc.query, got, tc.want)
+		}
+	}
+}
+
+func TestFTSearchTextNoStem(t *testing.T) {
+	s := newSearchTestServer(t)
+
+	for _, doc := range []struct {
+		key  string
+		json string
+	}{
+		{"stem:1", `{"text":"hire"}`},
+		{"stem:2", `{"text":"hired"}`},
+		{"stem:3", `{"text":"hiring"}`},
+	} {
+		if _, err := s.Execute([][]byte{
+			[]byte("JSON.SET"), []byte(doc.key), []byte("$"), []byte(doc.json),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := s.Execute([][]byte{
+		[]byte("FT.CREATE"), []byte("stemnostem"),
+		[]byte("ON"), []byte("JSON"),
+		[]byte("PREFIX"), []byte("1"), []byte("stem:"),
+		[]byte("SCHEMA"),
+		[]byte("$.text"), []byte("AS"), []byte("text"), []byte("TEXT"), []byte("NOSTEM"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		query string
+		want  string
+	}{
+		{"@text:hire", "*2\r\n:1\r\n$6\r\nstem:1\r\n"},
+		{"@text:hired", "*2\r\n:1\r\n$6\r\nstem:2\r\n"},
+		{"@text:hiring", "*2\r\n:1\r\n$6\r\nstem:3\r\n"},
+	} {
+		reply, err := s.Execute([][]byte{
+			[]byte("FT.SEARCH"), []byte("stemnostem"), []byte(tc.query), []byte("NOCONTENT"),
+		})
+		if err != nil {
+			t.Fatalf("query %q: %v", tc.query, err)
+		}
+		if got := string(reply); got != tc.want {
+			t.Fatalf("query %q reply=%q want=%q", tc.query, got, tc.want)
+		}
+	}
+}
