@@ -69,6 +69,27 @@ func executeFTCreate(store *engine.Store, args [][]byte) ([]byte, error) {
 		pos += count
 	}
 
+	if pos < len(args) && strings.EqualFold(string(args[pos]), "STOPWORDS") {
+		def.StopwordsConfigured = true
+		pos++
+		if pos >= len(args) {
+			return nil, errors.New("ERR syntax error")
+		}
+		count, err := strconv.Atoi(string(args[pos]))
+		if err != nil || count < 0 {
+			return nil, errors.New("ERR invalid STOPWORDS count")
+		}
+		pos++
+		if len(args)-pos < count {
+			return nil, errors.New("ERR syntax error")
+		}
+		def.Stopwords = make([]string, count)
+		for i := 0; i < count; i++ {
+			def.Stopwords[i] = string(args[pos+i])
+		}
+		pos += count
+	}
+
 	if pos >= len(args) || !strings.EqualFold(string(args[pos]), "SCHEMA") {
 		return nil, errors.New("ERR FT.CREATE requires SCHEMA")
 	}
@@ -1141,6 +1162,72 @@ func validateSearchTextAliases(def engine.SearchDefinition, node *searchQueryNod
 	}
 }
 
+func stripSearchStopwords(def engine.SearchDefinition, node *searchQueryNode) (*searchQueryNode, bool) {
+	if node == nil {
+		return nil, true
+	}
+
+	switch node.kind {
+	case searchQueryClauseNode:
+		if node.clause == nil {
+			return node, true
+		}
+		if node.clause.text != nil && !node.clause.textPrefix &&
+			engine.SearchIsStopword(def, *node.clause.text) {
+			return nil, false
+		}
+		if node.clause.textPhrase != nil {
+			tokens := strings.Fields(*node.clause.textPhrase)
+			filtered := make([]string, 0, len(tokens))
+			for _, token := range tokens {
+				if engine.SearchIsStopword(def, token) {
+					continue
+				}
+				filtered = append(filtered, token)
+			}
+			if len(filtered) == 0 {
+				return nil, false
+			}
+			phrase := strings.Join(filtered, " ")
+			copyNode := *node
+			copyClause := *node.clause
+			copyClause.textPhrase = &phrase
+			copyNode.clause = &copyClause
+			return &copyNode, true
+		}
+		return node, true
+
+	case searchQueryAndNode, searchQueryOrNode:
+		left, leftOK := stripSearchStopwords(def, node.left)
+		right, rightOK := stripSearchStopwords(def, node.right)
+		switch {
+		case leftOK && rightOK:
+			copyNode := *node
+			copyNode.left = left
+			copyNode.right = right
+			return &copyNode, true
+		case leftOK:
+			return left, true
+		case rightOK:
+			return right, true
+		default:
+			return nil, false
+		}
+
+	case searchQueryNotNode:
+		child, ok := stripSearchStopwords(def, node.child)
+		if !ok {
+			return nil, false
+		}
+		copyNode := *node
+		copyNode.child = child
+		return &copyNode, true
+
+	default:
+		return node, true
+	}
+}
+
 func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 	if len(args) < 3 {
 		return nil, errors.New("ERR wrong number of arguments for 'ft.search' command")
@@ -1162,6 +1249,22 @@ func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 	}
 	if err := validateSearchTextAliases(def, queryNode); err != nil {
 		return nil, err
+	}
+	if queryNode != nil {
+		var keep bool
+		queryNode, keep = stripSearchStopwords(def, queryNode)
+		if !keep {
+			queryNode = &searchQueryNode{
+				kind: searchQueryClauseNode,
+				clause: &searchQueryClause{
+					alias: "__snugkv_stopword_only__",
+					text: func() *string {
+						value := "__snugkv_no_match__"
+						return &value
+					}(),
+				},
+			}
+		}
 	}
 
 	allKeys, ok := store.SearchAllKeys(indexName)
