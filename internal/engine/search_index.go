@@ -320,21 +320,28 @@ func (idx *searchIndex) addDocument(key string, state searchDocumentState) {
 	}
 }
 
+func (idx *searchIndex) replaceJSON(key string, raw []byte) error {
+	idx.removeDocument(key)
+	if !searchPrefixMatches(idx.def.Prefixes, key) {
+		return nil
+	}
+
+	state, err := extractSearchDocument(idx.def, raw)
+	if err != nil {
+		return err
+	}
+	idx.addDocument(key, state)
+	return nil
+}
+
 func (m *searchManager) replaceJSON(key string, raw []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	for _, idx := range m.indexes {
-		idx.removeDocument(key)
-		if !searchPrefixMatches(idx.def.Prefixes, key) {
-			continue
-		}
-
-		state, err := extractSearchDocument(idx.def, raw)
-		if err != nil {
+		if err := idx.replaceJSON(key, raw); err != nil {
 			return err
 		}
-		idx.addDocument(key, state)
 	}
 	return nil
 }
@@ -505,7 +512,46 @@ func (s *Store) ensureSearchManager() *searchManager {
 }
 
 func (s *Store) CreateSearchIndex(def SearchDefinition) error {
-	return s.ensureSearchManager().create(def)
+	manager := s.ensureSearchManager()
+	if err := manager.create(def); err != nil {
+		return err
+	}
+
+	// Backfill shard-by-shard. Primary mutations lock the owning shard before
+	// updating search state, so this shard -> search lock order ensures that a
+	// mutation either lands before this scan and is observed here, or lands
+	// after this scan and updates the index through the publish/remove hook.
+	for i := range s.shards {
+		sh := &s.shards[i]
+		sh.mu.RLock()
+		now := s.now()
+
+		for key, entry := range sh.all() {
+			if sh.expired(key, entry, now) || entry.valueType != TypeJSON {
+				continue
+			}
+
+			raw := s.decode(sh, entry)
+
+			manager.mu.Lock()
+			idx := manager.indexes[def.Name]
+			var err error
+			if idx != nil {
+				err = idx.replaceJSON(key, raw)
+			}
+			manager.mu.Unlock()
+
+			if err != nil {
+				sh.mu.RUnlock()
+				manager.drop(def.Name)
+				return err
+			}
+		}
+
+		sh.mu.RUnlock()
+	}
+
+	return nil
 }
 
 func (s *Store) DropSearchIndex(name string) bool {
