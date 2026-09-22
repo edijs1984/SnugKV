@@ -192,14 +192,14 @@ func parseBracketToken(path string, start int) (pathToken, int, error) {
 	}
 
 	if path[i] == '?' {
-		if i+1 >= len(path) || path[i+1] != '(' {
-			return pathToken{}, 0, errors.New("ERR invalid JSON path")
-		}
-		exprStart := i + 2
+		exprStart := i + 1
 		j := exprStart
-		depth := 1
+		parenDepth := 0
+		bracketDepth := 0
+		braceDepth := 0
 		inString := byte(0)
 		escaped := false
+
 		for j < len(path) {
 			ch := path[j]
 			if inString != 0 {
@@ -213,33 +213,49 @@ func parseBracketToken(path string, start int) (pathToken, int, error) {
 				j++
 				continue
 			}
+
 			if ch == '"' || ch == '\'' {
 				inString = ch
 				j++
 				continue
 			}
+
 			switch ch {
 			case '(':
-				depth++
+				parenDepth++
 			case ')':
-				depth--
-				if depth == 0 {
-					break
+				if parenDepth == 0 {
+					return pathToken{}, 0, errors.New("ERR invalid JSON path")
 				}
-			}
-			if depth == 0 {
-				break
+				parenDepth--
+			case '[':
+				bracketDepth++
+			case ']':
+				if bracketDepth > 0 {
+					bracketDepth--
+				} else if parenDepth == 0 && braceDepth == 0 {
+					raw := strings.TrimSpace(path[exprStart:j])
+					if raw == "" {
+						return pathToken{}, 0, errors.New("ERR invalid JSON path")
+					}
+					expr, err := parseFilterExpr(raw)
+					if err != nil {
+						return pathToken{}, 0, err
+					}
+					return pathToken{kind: pathFilter, filter: expr}, j + 1, nil
+				}
+			case '{':
+				braceDepth++
+			case '}':
+				if braceDepth == 0 {
+					return pathToken{}, 0, errors.New("ERR invalid JSON path")
+				}
+				braceDepth--
 			}
 			j++
 		}
-		if j >= len(path) || depth != 0 || path[j] != ')' || j+1 >= len(path) || path[j+1] != ']' {
-			return pathToken{}, 0, errors.New("ERR invalid JSON path")
-		}
-		expr, err := parseFilterExpr(strings.TrimSpace(path[exprStart:j]))
-		if err != nil {
-			return pathToken{}, 0, err
-		}
-		return pathToken{kind: pathFilter, filter: expr}, j + 2, nil
+
+		return pathToken{}, 0, errors.New("ERR invalid JSON path")
 	}
 
 	if path[i] == '*' {
