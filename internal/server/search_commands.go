@@ -402,22 +402,27 @@ func (p *searchQueryParser) parseFieldTextGroup() (*searchQueryNode, bool, error
 	pos := colon + 2
 	groupStart := pos
 	depth := 1
-	for pos < len(p.query) && depth > 0 {
+	closePos := -1
+	for pos < len(p.query) {
 		switch p.query[pos] {
 		case '(':
 			depth++
 		case ')':
 			depth--
 			if depth == 0 {
-				break
+				closePos = pos
 			}
+		}
+		if closePos >= 0 {
+			break
 		}
 		pos++
 	}
 
-	if depth != 0 || pos >= len(p.query) {
+	if depth != 0 || closePos < 0 {
 		return nil, true, errors.New("ERR unsupported search query")
 	}
+	pos = closePos
 
 	body := strings.TrimSpace(p.query[groupStart:pos])
 	if body == "" || strings.ContainsAny(body, "()|{}[]\"") {
