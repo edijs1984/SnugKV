@@ -95,7 +95,20 @@ Initial options:
 LIMIT offset count
 NOCONTENT
 RETURN count path [AS alias] ...
+SORTBY attribute [ASC | DESC]
 ```
+
+`SORTBY` is applied before `LIMIT`. The first SnugKV implementation supports
+indexed scalar TAG and NUMERIC attributes. It does not require the schema field
+to be declared `SORTABLE`; Redis likewise permits sorting non-SORTABLE fields,
+with `SORTABLE` acting as a latency/memory optimization rather than a
+correctness requirement.
+
+For equal sort values, SnugKV uses ascending binary key order as a deterministic
+tie-breaker. Redis Search does not expose a stable ordering contract for equal
+sort values, so tied documents can appear in a different order even when the
+primary SORTBY ordering is equivalent. Callers that paginate across tied values
+should not depend on Redis's incidental tie order.
 
 The first implementation may land `LIMIT` and `NOCONTENT` before `RETURN`,
 but result ordering and pagination semantics must be fixed before release.
@@ -556,7 +569,7 @@ Document all boundaries rather than silently diverging.
 Only after measured demand:
 
 - TEXT fields/tokenization;
-- SORTBY;
+- richer SORTBY optimization / sortable-value storage;
 - OR / negation query operators;
 - aggregation;
 - GEO;

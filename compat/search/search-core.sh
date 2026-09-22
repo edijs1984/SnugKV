@@ -60,6 +60,16 @@ echo
 echo "=== limit ==="
 run FT.SEARCH products '*' NOCONTENT LIMIT 1 1
 
+
+echo
+echo "=== sortby ==="
+run FT.SEARCH products '*' NOCONTENT SORTBY price
+run FT.SEARCH products '*' NOCONTENT SORTBY price ASC
+run FT.SEARCH products '*' NOCONTENT SORTBY price DESC
+run FT.SEARCH products '*' NOCONTENT SORTBY category ASC
+run FT.SEARCH products '*' NOCONTENT SORTBY price DESC LIMIT 1 1
+run FT.SEARCH products '*' NOCONTENT SORTBY missing
+
 echo
 echo "=== mutation visibility ==="
 run JSON.SET product:1 '$.category' '"games"'
