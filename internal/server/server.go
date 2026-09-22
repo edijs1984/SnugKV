@@ -130,7 +130,7 @@ var commandTable = map[string]commandInfo{
 	"JSON.ARRINDEX":  {4, 6, 1, 1, 1, false},
 	"JSON.CLEAR":     {2, 3, 1, 1, 1, true},
 	"JSON.ARRTRIM":   {5, 5, 1, 1, 1, true},
-	"JSON.MGET":      {3, 0, 1, -2, 1, false},
+	"JSON.MGET":      {3, 0, 1, 1, 1, false},
 	"JSON.MERGE":     {4, 4, 1, 1, 1, true},
 	"JSON.MSET":      {4, 0, 1, -3, 3, true},
 	"JSON.FORGET":    {2, 3, 1, 1, 1, true},
