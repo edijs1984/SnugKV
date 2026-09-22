@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -332,11 +333,13 @@ func parseSearchQuery(query string) ([]searchQueryClause, error) {
 
 			minimum, err := parseSearchBound(bounds[0])
 			if err != nil {
-				return nil, errors.New("ERR unsupported numeric range")
+				offset := strings.Index(query, bounds[0])
+				return nil, fmt.Errorf("SEARCH_SYNTAX Syntax error at offset %d near %s", offset, bounds[0])
 			}
 			maximum, err := parseSearchBound(bounds[1])
 			if err != nil {
-				return nil, errors.New("ERR unsupported numeric range")
+				offset := strings.Index(query, bounds[1])
+				return nil, fmt.Errorf("SEARCH_SYNTAX Syntax error at offset %d near %s", offset, bounds[1])
 			}
 
 			clauses = append(clauses, searchQueryClause{
@@ -481,19 +484,6 @@ func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 	allKeys, ok := store.SearchAllKeys(indexName)
 	if !ok {
 		return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
-	}
-
-	for _, clause := range clauses {
-		kind, exists := store.SearchFieldKind(indexName, clause.alias)
-		if !exists {
-			return nil, errors.New("ERR unknown search field: " + clause.alias)
-		}
-		switch {
-		case clause.tag != nil && kind != engine.SearchFieldTag:
-			return nil, errors.New("ERR search field is not TAG: " + clause.alias)
-		case clause.minimum != nil && clause.maximum != nil && kind != engine.SearchFieldNumeric:
-			return nil, errors.New("ERR search field is not NUMERIC: " + clause.alias)
-		}
 	}
 
 	candidates := allKeys
