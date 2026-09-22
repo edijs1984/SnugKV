@@ -703,3 +703,27 @@ func TestJSONPathArrayAccessFunctionCoreCommands(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+
+func TestJSONPathAggregationFunctionCoreCommands(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "JSON.SET", "doc", "$",
+		`{"items":[{"n":[3,1,2],"name":"a"},{"n":[5,6],"name":"b"},{"n":[],"name":"c"}]}`)
+
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[?sum(@.n) == 6].name"); got != "$5\r\n[\"a\"]\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[?(@.n.max() == 6)].name"); got != "$5\r\n[\"b\"]\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.SET", "doc", "$.items[?avg(@.n) >= 5].name", `"agg"`); got != "+OK\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[*].name"); got != "$13\r\n[\"a\",\"agg\",\"c\"]\r\n" {
+		t.Fatal(got)
+	}
+}
