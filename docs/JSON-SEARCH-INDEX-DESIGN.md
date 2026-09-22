@@ -297,23 +297,18 @@ Derived state follows logical key identity:
 
 Posting lists are derived state and are not written to AOF or snapshots.
 
-The index definitions themselves need durable persistence once the command
-surface is considered stable.
+Index definitions are persisted in a small versioned `.search` sidecar adjacent
+to the active AOF path, or the snapshot path when AOF is disabled. On startup the
+primary dataset is recovered first, then search definitions are loaded and all
+postings are rebuilt from live JSON.
 
-Initial persistence design:
+`FT.CREATE` and `FT.DROPINDEX` do not emit primary-key AOF records. Their
+durability is handled only by the definition sidecar, preventing metadata-only
+operations from serializing the full keyspace.
 
-- persist index definitions in a small versioned sidecar adjacent to the existing
-  persistence configuration;
-- load definitions at startup;
-- rebuild posting lists by scanning primary data before the server declares the
-  indexes ready.
-
-Alternative: journal `FT.CREATE` / `FT.DROPINDEX` as logical metadata records.
-Do not mix derived postings into the primary AOF.
-
-The first code milestone may intentionally keep index definitions runtime-only
-while the API is experimental, provided this boundary is explicit and covered by
-tests.
+Definition-sidecar writes are atomic. If a write fails after an in-memory
+definition mutation, SnugKV restores the previous definition set and rebuilds
+its derived postings before returning an error.
 
 ## Rebuild model
 
@@ -327,10 +322,13 @@ Rebuild is deterministic:
 6. populate per-field postings and reverse document state;
 7. atomically publish the rebuilt generation.
 
-Rebuild must not hold every shard lock for the whole scan.
+The first implementation performs a synchronous rebuild while holding the
+primary shard locks so the rebuilt generation has a single atomic publication
+boundary. This is acceptable during startup and rare definition rollback, but it
+is intentionally not the long-term online-rebuild design.
 
-A later optimization may rebuild incrementally in the background, but the first
-implementation can perform a synchronous rebuild at startup for correctness.
+A later optimization may build a new generation incrementally in the background
+and atomically swap it in after catching up concurrent mutations.
 
 ## Concurrency
 
