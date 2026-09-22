@@ -727,3 +727,23 @@ func TestJSONPathAggregationFunctionCoreCommands(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+
+func TestJSONPathAppendFunctionCoreCommands(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "JSON.SET", "doc", "$",
+		`{"items":[{"n":[1,2],"name":"a"},{"n":[5],"name":"b"}]}`)
+
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[?last(append(@.n, 9)) == 9].name"); got != "$9\r\n[\"a\",\"b\"]\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[?(@.n.append(7,8).length() == 4)].name"); got != "$5\r\n[\"a\"]\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[0].n"); got != "$7\r\n[[1,2]]\r\n" {
+		t.Fatal(got)
+	}
+}
