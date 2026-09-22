@@ -186,7 +186,10 @@ func extractSearchDocument(def SearchDefinition, raw []byte) (searchDocumentStat
 	for _, field := range def.Fields {
 		values, err := jsonvalue.Matches(root, field.Path)
 		if err != nil {
-			return searchDocumentState{}, err
+			// Redis accepts malformed JSONPath strings at FT.CREATE time.
+			// Treat an unusable schema path as producing no indexed values
+			// instead of failing backfill or later document mutations.
+			continue
 		}
 
 		switch field.Kind {
