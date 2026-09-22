@@ -1789,7 +1789,19 @@ func Matches(root any, path string) ([]any, error) {
 		return []any{value}, nil
 	}
 
-	tokens, err := parsePath(path)
+	plainPath := strings.TrimSpace(path)
+	for hasOuterParens(plainPath) {
+		inner := strings.TrimSpace(plainPath[1 : len(plainPath)-1])
+		if isProjectionExpression(inner) {
+			break
+		}
+		if _, err := parsePath(inner); err != nil {
+			break
+		}
+		plainPath = inner
+	}
+
+	tokens, err := parsePath(plainPath)
 	if err != nil {
 		return nil, err
 	}
