@@ -3,6 +3,7 @@ package jsonvalue
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"reflect"
 	"regexp"
 	"sort"
@@ -568,7 +569,7 @@ func parseFilterComparison(raw string) (*filterExpr, error) {
 
 	leftRaw := strings.TrimSpace(raw[:opIndex])
 	rightRaw := strings.TrimSpace(raw[opIndex+len(op):])
-	if leftRaw == "" || rightRaw == "" || (leftRaw != "@" && !strings.HasPrefix(leftRaw, "@.")) {
+	if leftRaw == "" || rightRaw == "" {
 		return nil, errors.New("ERR invalid JSON path")
 	}
 
@@ -744,12 +745,11 @@ func evalFilterValue(current any, expr *filterValueExpr) (any, bool) {
 			if rightNumber == 0 {
 				return nil, false
 			}
-			quotient := float64(int64(leftNumber / rightNumber))
-			result = leftNumber - quotient*rightNumber
+			result = math.Mod(leftNumber, rightNumber)
 		default:
 			return nil, false
 		}
-		if result != result || result > 1.7976931348623157e308 || result < -1.7976931348623157e308 {
+		if math.IsNaN(result) || math.IsInf(result, 0) {
 			return nil, false
 		}
 		return result, true
