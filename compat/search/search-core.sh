@@ -20,6 +20,8 @@ echo "=== reset ==="
 run FLUSHDB
 run FT.DROPINDEX products
 run FT.DROPINDEX badpath
+run FT.DROPINDEX stemidx
+run FT.DROPINDEX stemnostem
 
 echo
 echo "=== seed ==="
@@ -80,6 +82,30 @@ run FT.SEARCH products '@description:"memory search"' NOCONTENT
 run FT.SEARCH products '@description:"search engine"' NOCONTENT
 run FT.SEARCH products '@description:"memory engine"' NOCONTENT
 run FT.SEARCH products '@description:"search memory"' NOCONTENT
+
+echo
+echo "=== english stemming ==="
+run JSON.SET stem:1 '$' '{"text":"hire"}'
+run JSON.SET stem:2 '$' '{"text":"hired"}'
+run JSON.SET stem:3 '$' '{"text":"hiring"}'
+run JSON.SET stem:4 '$' '{"text":"studies"}'
+run JSON.SET stem:5 '$' '{"text":"studied"}'
+run JSON.SET stem:6 '$' '{"text":"study"}'
+run JSON.SET stem:7 '$' '{"text":"running"}'
+run JSON.SET stem:8 '$' '{"text":"runs"}'
+run JSON.SET stem:9 '$' '{"text":"run"}'
+run FT.CREATE stemidx ON JSON PREFIX 1 stem: SCHEMA '$.text' AS text TEXT
+run FT.SEARCH stemidx '@text:hire' NOCONTENT
+run FT.SEARCH stemidx '@text:hiring' NOCONTENT
+run FT.SEARCH stemidx '@text:study' NOCONTENT
+run FT.SEARCH stemidx '@text:running' NOCONTENT
+
+echo
+echo "=== nostem ==="
+run FT.CREATE stemnostem ON JSON PREFIX 1 stem: SCHEMA '$.text' AS text TEXT NOSTEM
+run FT.SEARCH stemnostem '@text:hire' NOCONTENT
+run FT.SEARCH stemnostem '@text:hired' NOCONTENT
+run FT.SEARCH stemnostem '@text:hiring' NOCONTENT
 
 echo
 echo "=== numeric infinities ==="
@@ -164,4 +190,6 @@ run FT.CREATE dupalias ON JSON SCHEMA '$.a' AS same TAG '$.b' AS same NUMERIC
 echo
 echo "=== drop ==="
 run FT.DROPINDEX products
+run FT.DROPINDEX stemidx
+run FT.DROPINDEX stemnostem
 run FT._LIST
