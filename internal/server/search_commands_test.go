@@ -1430,3 +1430,83 @@ func TestFTSearchTextMultiTermRejectsNonTextField(t *testing.T) {
 		t.Fatal("grouped TEXT syntax on NUMERIC field unexpectedly succeeded")
 	}
 }
+
+
+func TestFTSearchTextPrefix(t *testing.T) {
+	s := newSearchTestServer(t)
+
+	for _, doc := range []struct {
+		key  string
+		json string
+	}{
+		{"product:1", `{"title":"Memory Guide"}`},
+		{"product:2", `{"title":"Game Server Design"}`},
+		{"product:3", `{"title":"Memory-Search Engine"}`},
+	} {
+		if _, err := s.Execute([][]byte{
+			[]byte("JSON.SET"), []byte(doc.key), []byte("$"), []byte(doc.json),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := s.Execute([][]byte{
+		[]byte("FT.CREATE"), []byte("products"),
+		[]byte("ON"), []byte("JSON"),
+		[]byte("PREFIX"), []byte("1"), []byte("product:"),
+		[]byte("SCHEMA"),
+		[]byte("$.title"), []byte("AS"), []byte("title"), []byte("TEXT"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		query string
+		want  string
+	}{
+		{"@title:mem*", "*3\r\n:2\r\n$9\r\nproduct:1\r\n$9\r\nproduct:3\r\n"},
+		{"@title:ser*", "*2\r\n:1\r\n$9\r\nproduct:2\r\n"},
+		{"@title:eng*", "*2\r\n:1\r\n$9\r\nproduct:3\r\n"},
+		{"@title:(mem* gui*)", "*2\r\n:1\r\n$9\r\nproduct:1\r\n"},
+		{"@title:(mem* eng*)", "*2\r\n:1\r\n$9\r\nproduct:3\r\n"},
+		{"@title:(mem* ser*)", "*1\r\n:0\r\n"},
+	}
+
+	for _, tc := range tests {
+		reply, err := s.Execute([][]byte{
+			[]byte("FT.SEARCH"), []byte("products"), []byte(tc.query), []byte("NOCONTENT"),
+		})
+		if err != nil {
+			t.Fatalf("query %q: %v", tc.query, err)
+		}
+		if got := string(reply); got != tc.want {
+			t.Fatalf("query %q reply=%q want=%q", tc.query, got, tc.want)
+		}
+	}
+}
+
+func TestFTSearchTextPrefixRejectsUnsupportedWildcards(t *testing.T) {
+	s := newSearchTestServer(t)
+
+	if _, err := s.Execute([][]byte{
+		[]byte("FT.CREATE"), []byte("products"),
+		[]byte("ON"), []byte("JSON"),
+		[]byte("SCHEMA"),
+		[]byte("$.title"), []byte("AS"), []byte("title"), []byte("TEXT"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, query := range []string{
+		"@title:*",
+		"@title:me*m",
+		"@title:mem**",
+		"@title:(mem* *eng)",
+	} {
+		if _, err := s.Execute([][]byte{
+			[]byte("FT.SEARCH"), []byte("products"), []byte(query), []byte("NOCONTENT"),
+		}); err == nil {
+			t.Fatalf("query %q unexpectedly succeeded", query)
+		}
+	}
+}
