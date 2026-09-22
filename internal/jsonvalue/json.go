@@ -616,25 +616,29 @@ func parseFilterValueExpr(raw string) (*filterValueExpr, error) {
 		raw = strings.TrimSpace(raw[1 : len(raw)-1])
 	}
 
-	if strings.HasPrefix(raw, "length(") && strings.HasSuffix(raw, ")") {
-		inner := strings.TrimSpace(raw[len("length(") : len(raw)-1])
-		arg, err := parseFilterValueExpr(inner)
-		if err != nil {
-			return nil, err
+	for _, name := range []string{"length", "abs", "ceiling", "floor"} {
+		prefix := name + "("
+		if strings.HasPrefix(raw, prefix) && strings.HasSuffix(raw, ")") {
+			inner := strings.TrimSpace(raw[len(prefix) : len(raw)-1])
+			arg, err := parseFilterValueExpr(inner)
+			if err != nil {
+				return nil, err
+			}
+			return &filterValueExpr{kind: "func", op: name, left: arg}, nil
 		}
-		return &filterValueExpr{kind: "func", op: "length", left: arg}, nil
-	}
 
-	if strings.HasSuffix(raw, ".length()") {
-		base := strings.TrimSpace(raw[:len(raw)-len(".length()")])
-		if base == "" {
-			return nil, errors.New("ERR invalid JSON path")
+		suffix := "." + name + "()"
+		if strings.HasSuffix(raw, suffix) {
+			base := strings.TrimSpace(raw[:len(raw)-len(suffix)])
+			if base == "" {
+				return nil, errors.New("ERR invalid JSON path")
+			}
+			arg, err := parseFilterValueExpr(base)
+			if err != nil {
+				return nil, err
+			}
+			return &filterValueExpr{kind: "func", op: name, left: arg}, nil
 		}
-		arg, err := parseFilterValueExpr(base)
-		if err != nil {
-			return nil, err
-		}
-		return &filterValueExpr{kind: "func", op: "length", left: arg}, nil
 	}
 
 	if index, op := findTopLevelArithmetic(raw, []string{" + ", " - "}); index >= 0 {
@@ -753,6 +757,34 @@ func evalFilterValue(current any, expr *filterValueExpr) (any, bool) {
 				return nil, false
 			}
 			return float64(size), true
+
+		case "abs", "ceiling", "floor":
+			number, ok := value.(float64)
+			if !ok {
+				return nil, false
+			}
+
+			result := number
+			switch expr.op {
+			case "abs":
+				result = math.Abs(number)
+			case "ceiling":
+				result = math.Ceil(number)
+			case "floor":
+				result = math.Floor(number)
+			}
+
+			if math.IsNaN(result) || math.IsInf(result, 0) {
+				return nil, false
+			}
+			// JSON numeric values currently use float64 internally. Reject
+			// integral results that cannot be represented as signed int64,
+			// matching Redis' overflow-to-Nothing rule for these functions.
+			if result == math.Trunc(result) && (result < math.MinInt64 || result > math.MaxInt64) {
+				return nil, false
+			}
+			return result, true
+
 		default:
 			return nil, false
 		}
