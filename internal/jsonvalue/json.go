@@ -127,7 +127,7 @@ func parseBracketToken(path string, start int) (pathToken, int, error) {
 		raw := path[valueStart:i]
 		var member string
 		if quote == '"' {
-			decoded, err := strconv.Unquote("\\\"" + raw + "\\\"")
+			decoded, err := strconv.Unquote("\"" + raw + "\"")
 			if err != nil {
 				return pathToken{}, 0, errors.New("ERR invalid JSON path")
 			}
