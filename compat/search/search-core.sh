@@ -64,6 +64,15 @@ run FT.SEARCH products '@description:(MEMORY GUIDE)' NOCONTENT
 run FT.SEARCH products '@description:(memory server)' NOCONTENT
 
 echo
+echo "=== text prefixes ==="
+run FT.SEARCH products '@description:mem*' NOCONTENT
+run FT.SEARCH products '@description:ser*' NOCONTENT
+run FT.SEARCH products '@description:eng*' NOCONTENT
+run FT.SEARCH products '@description:(mem* gui*)' NOCONTENT
+run FT.SEARCH products '@description:(mem* eng*)' NOCONTENT
+run FT.SEARCH products '@description:(mem* ser*)' NOCONTENT
+
+echo
 echo "=== numeric infinities ==="
 run FT.SEARCH products '@price:[-inf 20]' NOCONTENT
 run FT.SEARCH products '@price:[20 +inf]' NOCONTENT
