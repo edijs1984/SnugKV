@@ -60,9 +60,17 @@ func newSearchManager() *searchManager {
 	return &searchManager{indexes: make(map[string]*searchIndex)}
 }
 
+func cloneSearchDefinition(def SearchDefinition) SearchDefinition {
+	return SearchDefinition{
+		Name:     def.Name,
+		Prefixes: append([]string(nil), def.Prefixes...),
+		Fields:   append([]SearchField(nil), def.Fields...),
+	}
+}
+
 func newSearchIndex(def SearchDefinition) *searchIndex {
 	return &searchIndex{
-		def:           def,
+		def:           cloneSearchDefinition(def),
 		docs:          make(map[string]searchDocumentState),
 		tags:          make(map[string]map[string]map[string]struct{}),
 		numerics:      make(map[string]map[string][]float64),
@@ -218,6 +226,7 @@ func (m *searchManager) create(def SearchDefinition) error {
 	if err := validateSearchDefinition(def); err != nil {
 		return err
 	}
+	def = cloneSearchDefinition(def)
 	def.Prefixes = normalizeSearchPrefixes(def.Prefixes)
 
 	m.mu.Lock()
@@ -251,6 +260,24 @@ func (m *searchManager) names() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+
+func (m *searchManager) definitions() []SearchDefinition {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	names := make([]string, 0, len(m.indexes))
+	for name := range m.indexes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	defs := make([]SearchDefinition, 0, len(names))
+	for _, name := range names {
+		defs = append(defs, cloneSearchDefinition(m.indexes[name].def))
+	}
+	return defs
 }
 
 func (idx *searchIndex) removeDocument(key string) {
@@ -531,45 +558,100 @@ func (s *Store) ensureSearchManager() *searchManager {
 }
 
 func (s *Store) CreateSearchIndex(def SearchDefinition) error {
-	manager := s.ensureSearchManager()
-	if err := manager.create(def); err != nil {
+	if err := validateSearchDefinition(def); err != nil {
 		return err
 	}
+	def = cloneSearchDefinition(def)
+	def.Prefixes = normalizeSearchPrefixes(def.Prefixes)
 
-	// Backfill shard-by-shard. Primary mutations lock the owning shard before
-	// updating search state, so this shard -> search lock order ensures that a
-	// mutation either lands before this scan and is observed here, or lands
-	// after this scan and updates the index through the publish/remove hook.
+	manager := s.ensureSearchManager()
+
+	// Build the new index while all primary shards are locked, then publish it
+	// into the manager only after backfill is complete. This prevents queries
+	// from observing a partially built index and gives mutations a clean
+	// before/after publication boundary.
+	unlock := s.lockAll()
+	defer unlock()
+
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	if _, exists := manager.indexes[def.Name]; exists {
+		return errors.New("ERR search index already exists")
+	}
+
+	idx := newSearchIndex(def)
+	now := s.now()
 	for i := range s.shards {
 		sh := &s.shards[i]
-		sh.mu.RLock()
-		now := s.now()
-
 		for key, entry := range sh.all() {
 			if sh.expired(key, entry, now) || entry.valueType != TypeJSON {
 				continue
 			}
-
-			raw := s.decode(sh, entry)
-
-			manager.mu.Lock()
-			idx := manager.indexes[def.Name]
-			var err error
-			if idx != nil {
-				err = idx.replaceJSON(key, raw)
-			}
-			manager.mu.Unlock()
-
-			if err != nil {
-				sh.mu.RUnlock()
-				manager.drop(def.Name)
+			if err := idx.replaceJSON(key, s.decode(sh, entry)); err != nil {
 				return err
 			}
 		}
-
-		sh.mu.RUnlock()
 	}
 
+	manager.indexes[def.Name] = idx
+	return nil
+}
+
+func (s *Store) SearchDefinitions() []SearchDefinition {
+	manager := s.getSearchManager()
+	if manager == nil {
+		return []SearchDefinition{}
+	}
+	return manager.definitions()
+}
+
+// RestoreSearchDefinitions atomically replaces the search definition registry
+// and rebuilds all derived postings from the current primary JSON keyspace.
+func (s *Store) RestoreSearchDefinitions(defs []SearchDefinition) error {
+	normalized := make([]SearchDefinition, len(defs))
+	seen := make(map[string]struct{}, len(defs))
+	for i, def := range defs {
+		if err := validateSearchDefinition(def); err != nil {
+			return err
+		}
+		if _, exists := seen[def.Name]; exists {
+			return errors.New("ERR duplicate search index name")
+		}
+		seen[def.Name] = struct{}{}
+		normalized[i] = cloneSearchDefinition(def)
+		normalized[i].Prefixes = normalizeSearchPrefixes(normalized[i].Prefixes)
+	}
+
+	next := newSearchManager()
+	for _, def := range normalized {
+		next.indexes[def.Name] = newSearchIndex(def)
+	}
+
+	unlock := s.lockAll()
+	defer unlock()
+
+	now := s.now()
+	for i := range s.shards {
+		sh := &s.shards[i]
+		for key, entry := range sh.all() {
+			if sh.expired(key, entry, now) || entry.valueType != TypeJSON {
+				continue
+			}
+			raw := s.decode(sh, entry)
+			for _, idx := range next.indexes {
+				if err := idx.replaceJSON(key, raw); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	if len(next.indexes) == 0 {
+		s.search.Store(nil)
+	} else {
+		s.search.Store(next)
+	}
 	return nil
 }
 
