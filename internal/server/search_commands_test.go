@@ -532,7 +532,7 @@ func TestFTSearchReturnMultipleJSONPaths(t *testing.T) {
 	}
 
 	got := string(reply)
-	if !strings.Contains(got, "$.title") || !strings.Contains(got, "\"B\"") {
+	if !strings.Contains(got, "$.title") || !strings.Contains(got, "$1\r\nB\r\n") {
 		t.Fatalf("missing title projection in reply=%q", reply)
 	}
 	if !strings.Contains(got, "cost") || !strings.Contains(got, "20") {
