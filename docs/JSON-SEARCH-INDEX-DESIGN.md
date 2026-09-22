@@ -85,16 +85,14 @@ FT.SEARCH index "*"
 FT.SEARCH index "@category:{books}"
 FT.SEARCH index "@price:[10 50]"
 FT.SEARCH index "@category:{books} @price:[10 50]"
-FT.SEARCH index "@category:{books} | @category:{games}"
+FT.SEARCH index "(@category:{books}) | (@category:{games})"
 FT.SEARCH index "@category:{books} -@price:[50 +inf]"
 FT.SEARCH index "-@category:{games}"
 ```
 
-Space-separated clauses are implicit AND. A top-level pipe operator (` | `) joins flat
-OR groups, and a leading dash (`-`) negates the adjacent field clause. The
-first boolean-query subset intentionally does not support parentheses or nested
-boolean expressions; those require a real expression tree and separate
-differential coverage.
+Space-separated clauses are implicit AND. A top-level pipe operator joins parenthesized flat OR groups, and a leading dash (`-`) negates the adjacent field clause. The first boolean-query subset uses parentheses only to delimit top-level OR
+arms. Nested boolean expressions inside those arms are not yet supported; those
+require a real expression tree and separate differential coverage.
 
 Initial options:
 
