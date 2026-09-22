@@ -383,10 +383,88 @@ func (p *searchQueryParser) parseUnary() (*searchQueryNode, error) {
 	return p.parsePrimary()
 }
 
+func (p *searchQueryParser) parseFieldTextGroup() (*searchQueryNode, bool, error) {
+	start := p.pos
+	if start >= len(p.query) || p.query[start] != '@' {
+		return nil, false, nil
+	}
+
+	colonRel := strings.IndexByte(p.query[start:], ':')
+	if colonRel <= 1 {
+		return nil, false, nil
+	}
+	colon := start + colonRel
+	if colon+1 >= len(p.query) || p.query[colon+1] != '(' {
+		return nil, false, nil
+	}
+
+	alias := p.query[start+1 : colon]
+	pos := colon + 2
+	groupStart := pos
+	depth := 1
+	for pos < len(p.query) && depth > 0 {
+		switch p.query[pos] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				break
+			}
+		}
+		pos++
+	}
+
+	if depth != 0 || pos >= len(p.query) {
+		return nil, true, errors.New("ERR unsupported search query")
+	}
+
+	body := strings.TrimSpace(p.query[groupStart:pos])
+	if body == "" || strings.ContainsAny(body, "()|{}[]\"") {
+		return nil, true, errors.New("ERR unsupported search query")
+	}
+
+	terms := strings.Fields(body)
+	if len(terms) == 0 {
+		return nil, true, errors.New("ERR unsupported search query")
+	}
+
+	var node *searchQueryNode
+	for _, term := range terms {
+		if strings.HasPrefix(term, "-") || term == "" {
+			return nil, true, errors.New("ERR unsupported search query")
+		}
+		value := strings.ToLower(term)
+		clause := &searchQueryNode{
+			kind: searchQueryClauseNode,
+			clause: &searchQueryClause{
+				alias: alias,
+				text:  &value,
+			},
+		}
+		if node == nil {
+			node = clause
+		} else {
+			node = &searchQueryNode{
+				kind:  searchQueryAndNode,
+				left:  node,
+				right: clause,
+			}
+		}
+	}
+
+	p.pos = pos + 1
+	return node, true, nil
+}
+
 func (p *searchQueryParser) parsePrimary() (*searchQueryNode, error) {
 	p.skipSpace()
 	if p.pos >= len(p.query) {
 		return nil, errors.New("ERR unsupported search query")
+	}
+
+	if node, matched, err := p.parseFieldTextGroup(); matched {
+		return node, err
 	}
 
 	if p.query[p.pos] == '(' {
