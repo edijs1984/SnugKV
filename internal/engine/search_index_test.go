@@ -3,6 +3,8 @@ package engine
 import (
 	"reflect"
 	"testing"
+
+	"snugkv/internal/persistence"
 )
 
 func testSearchDefinition() SearchDefinition {
@@ -249,6 +251,224 @@ func mustTagKeys(t *testing.T, m *searchManager, indexName, alias, value string)
 func mustNumericKeys(t *testing.T, m *searchManager, indexName, alias string, min, max float64) []string {
 	t.Helper()
 	keys, ok := m.numericRangeKeys(indexName, alias, min, max)
+	if !ok {
+		t.Fatalf("missing index %q", indexName)
+	}
+	return keys
+}
+
+
+func TestStoreSearchIndexBackfillsExistingJSON(t *testing.T) {
+	store, err := NewWithShards(4)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.JSONSet(
+		"product:1",
+		"$",
+		[]byte(`{"category":"books","price":10}`),
+		false,
+		false,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.JSONSet(
+		"ignored:1",
+		"$",
+		[]byte(`{"category":"books","price":15}`),
+		false,
+		false,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.CreateSearchIndex(testSearchDefinition()); err != nil {
+		t.Fatal(err)
+	}
+
+	keys, ok := store.SearchTagKeys("products", "category", "books")
+	if !ok {
+		t.Fatal("index missing")
+	}
+	if got, want := keys, []string{"product:1"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("backfill=%v want=%v", got, want)
+	}
+}
+
+func TestStoreSearchIndexTracksJSONMutationAndDelete(t *testing.T) {
+	store, err := NewWithShards(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateSearchIndex(testSearchDefinition()); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.JSONSet(
+		"product:1",
+		"$",
+		[]byte(`{"category":"books","price":10}`),
+		false,
+		false,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.JSONSet(
+		"product:1",
+		"$.category",
+		[]byte(`"games"`),
+		false,
+		false,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := mustStoreTagKeys(t, store, "products", "category", "books"); len(got) != 0 {
+		t.Fatalf("stale category posting=%v", got)
+	}
+	if got, want := mustStoreTagKeys(t, store, "products", "category", "games"), []string{"product:1"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("updated category posting=%v want=%v", got, want)
+	}
+
+	deleted, err := store.JSONDel("product:1", "$")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 1 {
+		t.Fatalf("deleted=%d want=1", deleted)
+	}
+
+	if got := mustStoreTagKeys(t, store, "products", "category", "games"); len(got) != 0 {
+		t.Fatalf("posting remained after JSON.DEL=%v", got)
+	}
+}
+
+func TestStoreSearchIndexRemovesJSONWhenOverwrittenByString(t *testing.T) {
+	store, err := NewWithShards(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateSearchIndex(testSearchDefinition()); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.JSONSet(
+		"product:1",
+		"$",
+		[]byte(`{"category":"books","price":10}`),
+		false,
+		false,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.Set("product:1", []byte("plain"), 0); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := mustStoreTagKeys(t, store, "products", "category", "books"); len(got) != 0 {
+		t.Fatalf("posting remained after string overwrite=%v", got)
+	}
+}
+
+func TestStoreSearchIndexTracksGenericDelete(t *testing.T) {
+	store, err := NewWithShards(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateSearchIndex(testSearchDefinition()); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.JSONSet(
+		"product:1",
+		"$",
+		[]byte(`{"category":"books","price":10}`),
+		false,
+		false,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if !store.Delete("product:1") {
+		t.Fatal("delete returned false")
+	}
+
+	if got := mustStoreTagKeys(t, store, "products", "category", "books"); len(got) != 0 {
+		t.Fatalf("posting remained after DEL=%v", got)
+	}
+}
+
+func TestStoreSearchIndexTracksRestore(t *testing.T) {
+	store, err := NewWithShards(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateSearchIndex(testSearchDefinition()); err != nil {
+		t.Fatal(err)
+	}
+
+	err = store.Restore([]persistence.Record{
+		{
+			Key:       []byte("product:1"),
+			Value:     []byte(`{"category":"books","price":22}`),
+			ValueType: uint8(TypeJSON),
+		},
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := mustStoreTagKeys(t, store, "products", "category", "books"), []string{"product:1"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("restore tag posting=%v want=%v", got, want)
+	}
+	if got, want := mustStoreNumericKeys(t, store, "products", "price", 22, 22), []string{"product:1"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("restore numeric posting=%v want=%v", got, want)
+	}
+}
+
+func TestStoreMemoryIncludesSearchBytes(t *testing.T) {
+	store, err := NewWithShards(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := store.Memory()
+
+	if err := store.CreateSearchIndex(testSearchDefinition()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.JSONSet(
+		"product:1",
+		"$",
+		[]byte(`{"category":"books","price":10}`),
+		false,
+		false,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	after := store.Memory()
+	if after.SearchBytes == 0 {
+		t.Fatal("search bytes were not reported")
+	}
+	if after.AccountedBytes <= before.AccountedBytes {
+		t.Fatalf("accounted bytes did not increase: before=%d after=%d", before.AccountedBytes, after.AccountedBytes)
+	}
+}
+
+func mustStoreTagKeys(t *testing.T, store *Store, indexName, alias, value string) []string {
+	t.Helper()
+	keys, ok := store.SearchTagKeys(indexName, alias, value)
+	if !ok {
+		t.Fatalf("missing index %q", indexName)
+	}
+	return keys
+}
+
+func mustStoreNumericKeys(t *testing.T, store *Store, indexName, alias string, min, max float64) []string {
+	t.Helper()
+	keys, ok := store.SearchNumericRangeKeys(indexName, alias, min, max)
 	if !ok {
 		t.Fatalf("missing index %q", indexName)
 	}
