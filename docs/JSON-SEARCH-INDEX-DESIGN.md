@@ -91,10 +91,12 @@ FT.SEARCH index "-@category:{games}"
 ```
 
 Space-separated expressions are implicit AND, pipe (`|`) is OR, and leading
-dash (`-`) is unary NOT. Boolean queries are parsed into an expression tree
-with precedence `NOT > AND > OR`. Parentheses can override precedence and may
-be nested. The implemented predicate leaves remain the current TAG equality and
-NUMERIC range subset.
+dash (`-`) is unary NOT. Nested boolean queries use `DIALECT 2`, matching
+Redis's modern precedence rules: `NOT > AND > OR`. Parentheses can override
+precedence and may be nested. Redis 8 still defaults to DIALECT 1, so callers
+that depend on the AST semantics should pass `DIALECT 2` explicitly. The
+implemented predicate leaves remain the current TAG equality and NUMERIC range
+subset.
 
 Initial options:
 
