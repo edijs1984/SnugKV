@@ -1060,7 +1060,7 @@ func TestFTSearchBooleanORAndNegation(t *testing.T) {
 	}{
 		{
 			name:  "or tag numeric",
-			query: "@category:{games}|@price:[30 30]",
+			query: "@category:{games} | @price:[30 30]",
 			want:  "*3\r\n:2\r\n$9\r\nproduct:2\r\n$9\r\nproduct:3\r\n",
 		},
 		{
@@ -1075,7 +1075,7 @@ func TestFTSearchBooleanORAndNegation(t *testing.T) {
 		},
 		{
 			name:  "or groups with implicit and",
-			query: "@category:{books} @price:[10 10]|@category:{games}",
+			query: "@category:{books} @price:[10 10] | @category:{games}",
 			want:  "*3\r\n:2\r\n$9\r\nproduct:1\r\n$9\r\nproduct:2\r\n",
 		},
 	}
@@ -1106,6 +1106,7 @@ func TestFTSearchBooleanRejectsMalformedOperators(t *testing.T) {
 		"|@category:{books}",
 		"@category:{books}|",
 		"@category:{books}||@category:{games}",
+		"@category:{games}|@price:[30 30]",
 		"-",
 	} {
 		if _, err := s.Execute([][]byte{
