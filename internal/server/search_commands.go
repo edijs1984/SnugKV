@@ -509,7 +509,7 @@ func parseSearchClause(part, fullQuery string) (searchQueryClause, error) {
 	return searchQueryClause{}, errors.New("ERR unsupported search query")
 }
 
-func parseSearchQuery(query string) (*searchQueryNode, error) {
+func parseSearchQuery(query string, dialect int) (*searchQueryNode, error) {
 	query = strings.TrimSpace(query)
 	if query == "*" {
 		return nil, nil
@@ -518,8 +518,83 @@ func parseSearchQuery(query string) (*searchQueryNode, error) {
 		return nil, errors.New("ERR invalid search query")
 	}
 
+	if dialect == 1 {
+		if err := validateSearchDialect1BooleanSyntax(query); err != nil {
+			return nil, err
+		}
+	}
+
 	parser := searchQueryParser{query: query}
 	return parser.parse()
+}
+
+func validateSearchDialect1BooleanSyntax(query string) error {
+	depth := 0
+	segmentStart := 0
+	topLevelOR := false
+
+	for i := 0; i < len(query); i++ {
+		switch query[i] {
+		case '{', '[':
+			depth++
+		case '}', ']':
+			if depth == 0 {
+				return errors.New("ERR unsupported search query")
+			}
+			depth--
+		case '(':
+			depth++
+		case ')':
+			if depth == 0 {
+				return errors.New("ERR unsupported search query")
+			}
+			depth--
+		case '|':
+			if depth != 0 {
+				continue
+			}
+			topLevelOR = true
+			if i == 0 || i+1 >= len(query) ||
+				!isSearchSpace(query[i-1]) || !isSearchSpace(query[i+1]) {
+				return errors.New("ERR unsupported search query")
+			}
+			if !isFullyParenthesizedSearchExpression(strings.TrimSpace(query[segmentStart:i])) {
+				return errors.New("ERR unsupported search query")
+			}
+			segmentStart = i + 1
+		}
+	}
+
+	if depth != 0 {
+		return errors.New("ERR unsupported search query")
+	}
+	if topLevelOR && !isFullyParenthesizedSearchExpression(strings.TrimSpace(query[segmentStart:])) {
+		return errors.New("ERR unsupported search query")
+	}
+	return nil
+}
+
+func isFullyParenthesizedSearchExpression(expr string) bool {
+	if len(expr) < 2 || expr[0] != '(' || expr[len(expr)-1] != ')' {
+		return false
+	}
+
+	depth := 0
+	for i := 0; i < len(expr); i++ {
+		switch expr[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth < 0 {
+				return false
+			}
+			if depth == 0 && i != len(expr)-1 {
+				return false
+			}
+		}
+	}
+	return depth == 0
 }
 
 func parseSearchOptions(args [][]byte) (searchOptions, error) {
@@ -775,11 +850,11 @@ func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 	}
 
 	indexName := string(args[1])
-	queryNode, err := parseSearchQuery(string(args[2]))
+	options, err := parseSearchOptions(args)
 	if err != nil {
 		return nil, err
 	}
-	options, err := parseSearchOptions(args)
+	queryNode, err := parseSearchQuery(string(args[2]), options.dialect)
 	if err != nil {
 		return nil, err
 	}
