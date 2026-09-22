@@ -512,8 +512,8 @@ func findTopLevelLogical(raw, op string) int {
 
 func parseFilterComparison(raw string) (*filterExpr, error) {
 	type candidate struct {
-		op      string
-		isWord  bool
+		op     string
+		isWord bool
 	}
 	operators := []candidate{
 		{op: "<="}, {op: ">="}, {op: "=="}, {op: "!="}, {op: "=~"},
@@ -1210,7 +1210,6 @@ func isFilterSpace(ch byte) bool {
 		return false
 	}
 }
-
 
 func evalFilterNodeList(current any, expr *filterValueExpr) ([]any, bool) {
 	if expr == nil || expr.kind != "path" {
