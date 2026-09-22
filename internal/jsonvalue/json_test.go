@@ -978,7 +978,8 @@ func TestJSONPathValueRequiresExactlyOneNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 0 {
-		t.Fatalf("value() should produce Nothing for multi-node input: %#v", got)
+	want := []any{map[string]any{"a": float64(1)}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("value() should skip multi-node input and accept exactly-one-node input: got %#v want %#v", got, want)
 	}
 }
