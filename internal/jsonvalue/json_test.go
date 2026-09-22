@@ -118,7 +118,7 @@ func TestExactJSONPathInvalidSyntax(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, path := range []string{"", "$.", "$..a", "$[", "$.a[", "$.a[]", "$.a[x]"} {
+	for _, path := range []string{"", "$.", "$..", "$...[a]", "$[", "$.a[", "$.a[]", "$.a[x]"} {
 		if _, _, err := Get(root, path); err == nil {
 			t.Fatalf("accepted invalid path %q", path)
 		}
