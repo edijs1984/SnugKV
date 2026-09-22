@@ -165,3 +165,32 @@ func TestSearchDefinitionMutationsDoNotJournalKeyspace(t *testing.T) {
 		t.Fatalf("search metadata reached keyspace journal: appends=%d records=%d", journal.appends, journal.records)
 	}
 }
+
+
+func TestSearchPersistenceFailureRollsBackDefinitionMutation(t *testing.T) {
+	srv := New(engine.New())
+
+	// Point the sidecar at an existing directory. Atomic rename over a
+	// directory must fail after the in-memory mutation, exercising rollback.
+	badPath := t.TempDir()
+	searchPersistencePaths.Store(srv, badPath)
+	t.Cleanup(func() { searchPersistencePaths.Delete(srv) })
+
+	_, err := srv.Execute([][]byte{
+		[]byte("FT.CREATE"),
+		[]byte("products"),
+		[]byte("ON"),
+		[]byte("JSON"),
+		[]byte("SCHEMA"),
+		[]byte("$.category"),
+		[]byte("AS"),
+		[]byte("category"),
+		[]byte("TAG"),
+	})
+	if err == nil {
+		t.Fatal("FT.CREATE unexpectedly succeeded with unwritable search state")
+	}
+	if names := srv.store.SearchIndexNames(); len(names) != 0 {
+		t.Fatalf("failed persistence left index behind: %v", names)
+	}
+}
