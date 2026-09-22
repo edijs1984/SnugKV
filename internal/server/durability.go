@@ -318,6 +318,14 @@ func (s *Server) executeDurableLocked(args [][]byte) ([]byte, error) {
 		return s.executePressure(args)
 	}
 
+	// Search index definitions have their own compact durable sidecar. They
+	// mutate no primary keys, so routing them through the generic AOF path would
+	// otherwise export the entire DB because their command metadata has no key
+	// positions.
+	if cmd == "FT.CREATE" || cmd == "FT.DROPINDEX" {
+		return s.executePressure(args)
+	}
+
 	// SORT is only mutating when STORE is present. Keep ordinary SORT usable as
 	// a read even if the journal has failed, and avoid writing redundant AOF
 	// records for read-only invocations.
