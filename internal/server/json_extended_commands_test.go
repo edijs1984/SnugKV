@@ -767,3 +767,27 @@ func TestJSONPathKeysFunctionCoreCommands(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+
+func TestJSONPathNodeListFunctionCoreCommands(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "JSON.SET", "doc", "$",
+		`[{"a":1,"b":2,"c":3},{"a":1},{"x":9}]`)
+
+	if got := execute(t, s, "JSON.GET", "doc", "$[?count(@.*) == 3].a"); got != "$3\r\n[1]\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.GET", "doc", "$[?value(@.a) == 1].a"); got != "$5\r\n[1,1]\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.SET", "doc", "$[?count(@.missing) == 0].flag", `true`); got != "+OK\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.GET", "doc", "$[?(@.flag == true)].x"); got != "$3\r\n[9]\r\n" {
+		t.Fatal(got)
+	}
+}
