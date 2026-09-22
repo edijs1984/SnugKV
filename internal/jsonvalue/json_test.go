@@ -246,3 +246,76 @@ func TestJSONPathRecursiveSetAndDelete(t *testing.T) {
 		t.Fatalf("scores remain: %#v", values)
 	}
 }
+
+
+func TestJSONPathSlicesAndUnions(t *testing.T) {
+	root, err := Parse([]byte(`{"items":[0,1,2,3,4,5]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		path string
+		want []any
+	}{
+		{"$.items[1:4]", []any{float64(1), float64(2), float64(3)}},
+		{"$.items[:3]", []any{float64(0), float64(1), float64(2)}},
+		{"$.items[::2]", []any{float64(0), float64(2), float64(4)}},
+		{"$.items[-3:]", []any{float64(3), float64(4), float64(5)}},
+		{"$.items[0,2,4]", []any{float64(0), float64(2), float64(4)}},
+		{"$.items[-1,0,-1]", []any{float64(5), float64(0)}},
+	}
+
+	for _, tc := range cases {
+		got, err := Matches(root, tc.path)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.path, err)
+		}
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Fatalf("%s got %#v want %#v", tc.path, got, tc.want)
+		}
+	}
+}
+
+func TestJSONPathSliceAndUnionMutation(t *testing.T) {
+	root, err := Parse([]byte(`{"items":[0,1,2,3,4,5]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	root, count, err := SetMatches(root, "$.items[1:5:2]", float64(9))
+	if err != nil || count != 2 {
+		t.Fatalf("set count=%d err=%v", count, err)
+	}
+	values, err := Matches(root, "$.items[*]")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []any{float64(0), float64(9), float64(2), float64(9), float64(4), float64(5)}
+	if !reflect.DeepEqual(values, want) {
+		t.Fatalf("after set got %#v want %#v", values, want)
+	}
+
+	root, count, err = DeleteMatches(root, "$.items[0,2,4]")
+	if err != nil || count != 3 {
+		t.Fatalf("delete count=%d err=%v", count, err)
+	}
+	values, err = Matches(root, "$.items[*]")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = []any{float64(9), float64(9), float64(5)}
+	if !reflect.DeepEqual(values, want) {
+		t.Fatalf("after delete got %#v want %#v", values, want)
+	}
+}
+
+func TestJSONPathSliceRejectsZeroStep(t *testing.T) {
+	root, err := Parse([]byte(`{"items":[0,1,2]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Matches(root, "$.items[::0]"); err == nil {
+		t.Fatal("expected zero-step slice to fail")
+	}
+}
