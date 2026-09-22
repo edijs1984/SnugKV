@@ -112,6 +112,7 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Hardened
 
+- JSON ACL compatibility now matches Redis 8.10 for `@json`/read/write category enforcement, JSON key-pattern checks, and Redis's first-key-only `JSON.MGET` ACL visibility; `JSON.MSET` continues to authorize every referenced key.
 - Dynamic ACL enforcement for nested Lua/Function command execution, including
   caller ACL propagation through EVAL/EVALSHA, EVAL_RO/EVALSHA_RO, FCALL, and
   FCALL_RO. Wildcard external SORT BY/GET now matches Redis 8.2 by requiring
