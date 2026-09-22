@@ -797,3 +797,66 @@ func TestJSONPathArrayAccessFunctionMutation(t *testing.T) {
 		t.Fatalf("got %#v want %#v", got, want)
 	}
 }
+
+
+func TestJSONPathAggregationFunctions(t *testing.T) {
+	root, err := Parse([]byte(`{
+		"items":[
+			{"n":[3,1,2],"name":"a"},
+			{"n":[5,6],"name":"b"},
+			{"n":[],"name":"empty"},
+			{"n":[1,"x"],"name":"mixed"}
+		]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		path string
+		want []any
+	}{
+		{"$.items[?min(@.n) == 1].name", []any{"a"}},
+		{"$.items[?(@.n.max() == 6)].name", []any{"b"}},
+		{"$.items[?sum(@.n) == 6].name", []any{"a"}},
+		{"$.items[?(@.n.avg() == 2)].name", []any{"a"}},
+		{"$.items[?stddev(@.n) > 0.8 && stddev(@.n) < 0.82].name", []any{"a"}},
+	}
+
+	for _, tc := range cases {
+		got, err := Matches(root, tc.path)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.path, err)
+		}
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Fatalf("%s got %#v want %#v", tc.path, got, tc.want)
+		}
+	}
+
+	if got, err := Matches(root, "$.items[?sum(@.n) > 0].name"); err != nil {
+		t.Fatal(err)
+	} else if !reflect.DeepEqual(got, []any{"a", "b"}) {
+		t.Fatalf("strict sum got %#v", got)
+	}
+}
+
+func TestJSONPathAggregationFunctionMutation(t *testing.T) {
+	root, err := Parse([]byte(`{"items":[{"n":[3,1,2]},{"n":[5,6]},{"n":[]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	root, count, err := SetMatches(root, "$.items[?avg(@.n) >= 5].hit", true)
+	if err != nil || count != 1 {
+		t.Fatalf("set count=%d err=%v", count, err)
+	}
+
+	got, err := Matches(root, "$.items[?(@.hit == true)].n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []any{[]any{float64(5), float64(6)}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v want %#v", got, want)
+	}
+}
