@@ -617,7 +617,7 @@ func TestJSONPathArithmeticFilters(t *testing.T) {
 		{"$.items[?(+@.a == 9)].name", []any{"z"}},
 		{"$.items[?(@.a / @.b > 2)].name", []any{"y"}},
 		{"$.items[?(@.a % 2 == 1)].name", []any{"y", "z"}},
-		{"$.items[?(@.a / @.b > 0)].name", []any{"y"}},
+		{"$.items[?(@.a / @.b > 0)].name", []any{"x", "y"}},
 	}
 
 	for _, tc := range cases {
