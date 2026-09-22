@@ -770,3 +770,168 @@ func (s *Store) JSONClear(key, path string) (int64, error) {
 	}
 	return 1, nil
 }
+
+
+func (s *Store) JSONArrTrim(key, path string, start, stop int) (int64, bool, error) {
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	now := s.now()
+	e, exists := sh.get(key)
+	if !exists {
+		return 0, false, nil
+	}
+	if sh.expired(key, e, now) {
+		s.remove(sh, key)
+		return 0, false, nil
+	}
+	if e.valueType != TypeJSON {
+		return 0, false, errors.New("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+
+	root, err := jsonvalue.Parse(s.decode(sh, e))
+	if err != nil {
+		return 0, false, errors.New("WRONGTYPE value is not valid JSON")
+	}
+	current, found, err := jsonvalue.Get(root, path)
+	if err != nil || !found {
+		return 0, found, err
+	}
+	arr, ok := current.([]any)
+	if !ok {
+		return 0, false, nil
+	}
+
+	n := len(arr)
+	if start < 0 {
+		start = n + start
+	}
+	if stop < 0 {
+		stop = n + stop
+	}
+	if start < 0 {
+		start = 0
+	}
+	if stop >= n {
+		stop = n - 1
+	}
+
+	var trimmed []any
+	if n == 0 || start >= n || start > stop || stop < 0 {
+		trimmed = []any{}
+	} else {
+		trimmed = append([]any(nil), arr[start:stop+1]...)
+	}
+
+	updatedRoot, err := jsonvalue.Set(root, path, trimmed)
+	if err != nil {
+		return 0, false, err
+	}
+	if err := s.publishJSONMutationLocked(sh, key, e, updatedRoot); err != nil {
+		return 0, false, err
+	}
+	return int64(len(trimmed)), true, nil
+}
+
+func (s *Store) JSONMGet(keys []string, path string) ([][]byte, []bool) {
+	values := make([][]byte, len(keys))
+	found := make([]bool, len(keys))
+
+	for i, key := range keys {
+		value, ok, err := s.JSONGet(key, path)
+		if err != nil || !ok {
+			continue
+		}
+		values[i] = value
+		found[i] = true
+	}
+	return values, found
+}
+
+func (s *Store) JSONMerge(key, path string, raw []byte) (bool, error) {
+	patch, err := jsonvalue.Parse(raw)
+	if err != nil {
+		return false, err
+	}
+
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	now := s.now()
+	e, exists := sh.get(key)
+	if exists && sh.expired(key, e, now) {
+		s.remove(sh, key)
+		exists = false
+	}
+
+	if !exists {
+		if path != "$" && path != "." {
+			return false, errors.New("ERR new objects must be created at the root")
+		}
+
+		encoded, err := jsonvalue.Encode(mergeJSONPatch(nil, patch))
+		if err != nil {
+			return false, err
+		}
+		entry := s.makeEntry(encoded)
+		entry.valueType = TypeJSON
+		if err := s.publish(sh, key, entry); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+
+	if e.valueType != TypeJSON {
+		return false, errors.New("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+
+	root, err := jsonvalue.Parse(s.decode(sh, e))
+	if err != nil {
+		return false, errors.New("WRONGTYPE value is not valid JSON")
+	}
+
+	current, found, err := jsonvalue.Get(root, path)
+	if err != nil {
+		return false, err
+	}
+
+	var merged any
+	if found {
+		merged = mergeJSONPatch(current, patch)
+	} else {
+		merged = mergeJSONPatch(nil, patch)
+	}
+
+	updatedRoot, err := jsonvalue.Set(root, path, merged)
+	if err != nil {
+		return false, err
+	}
+	if err := s.publishJSONMutationLocked(sh, key, e, updatedRoot); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func mergeJSONPatch(target, patch any) any {
+	patchObject, ok := patch.(map[string]any)
+	if !ok {
+		return patch
+	}
+
+	targetObject, ok := target.(map[string]any)
+	if !ok {
+		targetObject = make(map[string]any)
+	}
+
+	for key, patchValue := range patchObject {
+		if patchValue == nil {
+			delete(targetObject, key)
+			continue
+		}
+		targetObject[key] = mergeJSONPatch(targetObject[key], patchValue)
+	}
+
+	return targetObject
+}
