@@ -209,7 +209,7 @@ func (s *Store) JSONDel(key, path string) (int64, error) {
 		return 0, errors.New("WRONGTYPE Operation against a key holding the wrong kind of value")
 	}
 
-	if path == "$" {
+	if path == "$" || path == "." {
 		s.remove(sh, key)
 		return 1, nil
 	}
