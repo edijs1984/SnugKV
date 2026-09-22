@@ -482,7 +482,7 @@ func TestFTSearchReturnJSONPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := "*3\r\n:1\r\n$9\r\nproduct:2\r\n*2\r\n$7\r\n$.title\r\n$3\r\n\"B\"\r\n"
+	want := "*3\r\n:1\r\n$9\r\nproduct:2\r\n*2\r\n$7\r\n$.title\r\n$1\r\nB\r\n"
 	if string(reply) != want {
 		t.Fatalf("reply=%q want=%q", reply, want)
 	}
@@ -506,7 +506,7 @@ func TestFTSearchReturnJSONPathAsAlias(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := "*3\r\n:1\r\n$9\r\nproduct:2\r\n*2\r\n$5\r\ntitle\r\n$3\r\n\"B\"\r\n"
+	want := "*3\r\n:1\r\n$9\r\nproduct:2\r\n*2\r\n$5\r\ntitle\r\n$1\r\nB\r\n"
 	if string(reply) != want {
 		t.Fatalf("reply=%q want=%q", reply, want)
 	}
@@ -600,5 +600,67 @@ func TestFTSearchReturnRejectsNonJSONPathForNow(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("non-JSONPath RETURN unexpectedly succeeded")
+	}
+}
+
+
+func TestFTSearchReturnScalarShapes(t *testing.T) {
+	s := newSearchTestServer(t)
+
+	if _, err := s.Execute([][]byte{
+		[]byte("JSON.SET"),
+		[]byte("product:1"),
+		[]byte("$"),
+		[]byte("{\"s\":\"A\",\"n\":10,\"b\":true,\"z\":null,\"o\":{\"x\":1},\"a\":[1,2]}"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.Execute([][]byte{
+		[]byte("FT.CREATE"),
+		[]byte("products"),
+		[]byte("ON"),
+		[]byte("JSON"),
+		[]byte("PREFIX"),
+		[]byte("1"),
+		[]byte("product:"),
+		[]byte("SCHEMA"),
+		[]byte("$.n"),
+		[]byte("AS"),
+		[]byte("n"),
+		[]byte("NUMERIC"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	reply, err := s.Execute([][]byte{
+		[]byte("FT.SEARCH"),
+		[]byte("products"),
+		[]byte("*"),
+		[]byte("RETURN"),
+		[]byte("6"),
+		[]byte("$.s"),
+		[]byte("$.n"),
+		[]byte("$.b"),
+		[]byte("$.z"),
+		[]byte("$.o"),
+		[]byte("$.a"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := string(reply)
+	for _, want := range []string{
+		"$.s\r\n$1\r\nA\r\n",
+		"$.n\r\n$2\r\n10\r\n",
+		"$.b\r\n$4\r\ntrue\r\n",
+		"$.z\r\n$4\r\nnull\r\n",
+		"{\"x\":1}",
+		"[1,2]",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("reply=%q missing %q", reply, want)
+		}
 	}
 }
