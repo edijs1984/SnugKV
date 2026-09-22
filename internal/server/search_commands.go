@@ -121,7 +121,7 @@ func executeFTDropIndex(store *engine.Store, args [][]byte) ([]byte, error) {
 	}
 
 	if !store.DropSearchIndex(string(args[1])) {
-		return nil, errors.New("Unknown Index name")
+		return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + string(args[1]))
 	}
 
 	return []byte("+OK\r\n"), nil
