@@ -116,8 +116,25 @@ var commandTable = map[string]commandInfo{
 	"JSON.SET":  {4, 5, 1, 1, 1, true},
 	"JSON.GET":  {2, 3, 1, 1, 1, false},
 	"JSON.TYPE": {2, 3, 1, 1, 1, false},
-	"JSON.DEL":  {2, 3, 1, 1, 1, true},
-	"MEMORY":    {2, 5, 0, 0, 0, false},
+	"JSON.DEL":       {2, 3, 1, 1, 1, true},
+	"JSON.NUMINCRBY": {4, 4, 1, 1, 1, true},
+	"JSON.STRLEN":    {2, 3, 1, 1, 1, false},
+	"JSON.ARRLEN":    {2, 3, 1, 1, 1, false},
+	"JSON.OBJLEN":    {2, 3, 1, 1, 1, false},
+	"JSON.ARRAPPEND": {4, 0, 1, 1, 1, true},
+	"JSON.STRAPPEND": {3, 4, 1, 1, 1, true},
+	"JSON.OBJKEYS":   {2, 3, 1, 1, 1, false},
+	"JSON.TOGGLE":    {3, 3, 1, 1, 1, true},
+	"JSON.ARRPOP":    {2, 4, 1, 1, 1, true},
+	"JSON.ARRINSERT": {5, 0, 1, 1, 1, true},
+	"JSON.ARRINDEX":  {4, 6, 1, 1, 1, false},
+	"JSON.CLEAR":     {2, 3, 1, 1, 1, true},
+	"JSON.ARRTRIM":   {5, 5, 1, 1, 1, true},
+	"JSON.MGET":      {3, 0, 1, -2, 1, false},
+	"JSON.MERGE":     {4, 4, 1, 1, 1, true},
+	"JSON.MSET":      {4, 0, 1, -3, 3, true},
+	"JSON.FORGET":    {2, 3, 1, 1, 1, true},
+	"MEMORY":         {2, 5, 0, 0, 0, false},
 }
 
 func (s *Server) execute(args [][]byte) ([]byte, error) {
@@ -175,7 +192,7 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		default:
 			return nil, errors.New("ERR unknown subcommand")
 		}
-	case "JSON.DEL":
+	case "JSON.DEL", "JSON.FORGET":
 		path := "$"
 
 		if len(args) == 3 {
@@ -189,23 +206,312 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 
 		return integer(deleted), nil
 
-	case "JSON.TYPE":
+	case "JSON.NUMINCRBY":
+		increment, err := strconv.ParseFloat(string(args[3]), 64)
+		if err != nil || math.IsNaN(increment) || math.IsInf(increment, 0) {
+			return nil, errors.New("ERR value is not a valid number")
+		}
+
+		value, found, err := s.store.JSONNumIncrBy(key, string(args[2]), increment)
+		if err != nil {
+			return nil, err
+		}
+		return optionalBulk(value, found), nil
+
+	case "JSON.STRLEN", "JSON.ARRLEN", "JSON.OBJLEN":
 		path := "$"
+		if len(args) == 3 {
+			path = string(args[2])
+		}
+
+		var (
+			length int64
+			found  bool
+			err    error
+		)
+
+		switch cmd {
+		case "JSON.STRLEN":
+			length, found, err = s.store.JSONStrLen(key, path)
+		case "JSON.ARRLEN":
+			length, found, err = s.store.JSONArrLen(key, path)
+		default:
+			length, found, err = s.store.JSONObjLen(key, path)
+		}
+
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nullBulk(), nil
+		}
+		return integer(length), nil
+
+	case "JSON.TYPE":
+		path := "."
 
 		if len(args) == 3 {
 			path = string(args[2])
+		}
+
+		if strings.HasPrefix(path, "$") {
+			types, found, err := s.store.JSONTypes(key, path)
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				return nullBulk(), nil
+			}
+
+			items := make([][]byte, 0, len(types))
+			for _, jsonType := range types {
+				items = append(items, formatBulkString([]byte(jsonType)))
+			}
+			return array(items...), nil
 		}
 
 		jsonType, found, err := s.store.JSONType(key, path)
 		if err != nil {
 			return nil, err
 		}
+		if !found {
+			return nullBulk(), nil
+		}
+		return formatBulkString([]byte(jsonType)), nil
 
+	case "JSON.ARRAPPEND":
+		length, found, err := s.store.JSONArrAppend(key, string(args[2]), args[3:])
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nullBulk(), nil
+		}
+		return integer(length), nil
+
+	case "JSON.STRAPPEND":
+		path := "$"
+		valueIndex := 2
+		if len(args) == 4 {
+			path = string(args[2])
+			valueIndex = 3
+		}
+
+		length, found, err := s.store.JSONStrAppend(key, path, args[valueIndex])
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nullBulk(), nil
+		}
+		return integer(length), nil
+
+	case "JSON.OBJKEYS":
+		path := "$"
+		if len(args) == 3 {
+			path = string(args[2])
+		}
+
+		keys, found, err := s.store.JSONObjKeys(key, path)
+		if err != nil {
+			return nil, err
+		}
 		if !found {
 			return nullBulk(), nil
 		}
 
-		return formatBulkString([]byte(jsonType)), nil
+		items := make([][]byte, 0, len(keys))
+		for _, name := range keys {
+			items = append(items, formatBulkString([]byte(name)))
+		}
+		return array(items...), nil
+
+	case "JSON.TOGGLE":
+		value, found, err := s.store.JSONToggle(key, string(args[2]))
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nullBulk(), nil
+		}
+		return boolean(value), nil
+
+	case "JSON.ARRPOP":
+		path := "$"
+		index := -1
+
+		if len(args) >= 3 {
+			path = string(args[2])
+		}
+		if len(args) == 4 {
+			parsed, err := strconv.Atoi(string(args[3]))
+			if err != nil {
+				return nil, errors.New("ERR value is not an integer or out of range")
+			}
+			index = parsed
+		}
+
+		value, found, err := s.store.JSONArrPop(key, path, index)
+		if err != nil {
+			return nil, err
+		}
+		if !found || value == nil {
+			return nullBulk(), nil
+		}
+		return formatBulkString(value), nil
+
+	case "JSON.ARRINSERT":
+		index, err := strconv.Atoi(string(args[3]))
+		if err != nil {
+			return nil, errors.New("ERR value is not an integer or out of range")
+		}
+
+		length, found, err := s.store.JSONArrInsert(
+			key,
+			string(args[2]),
+			index,
+			args[4:],
+		)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nullBulk(), nil
+		}
+		return integer(length), nil
+
+	case "JSON.ARRINDEX":
+		var start *int
+		var stop *int
+
+		if len(args) >= 5 {
+			v, err := strconv.Atoi(string(args[4]))
+			if err != nil {
+				return nil, errors.New("ERR value is not an integer or out of range")
+			}
+			start = &v
+		}
+		if len(args) == 6 {
+			v, err := strconv.Atoi(string(args[5]))
+			if err != nil {
+				return nil, errors.New("ERR value is not an integer or out of range")
+			}
+			stop = &v
+		}
+
+		index, found, err := s.store.JSONArrIndex(
+			key,
+			string(args[2]),
+			args[3],
+			start,
+			stop,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nullBulk(), nil
+		}
+		return integer(index), nil
+
+	case "JSON.CLEAR":
+		path := "$"
+		if len(args) == 3 {
+			path = string(args[2])
+		}
+
+		cleared, err := s.store.JSONClear(key, path)
+		if err != nil {
+			return nil, err
+		}
+		return integer(cleared), nil
+
+	case "JSON.ARRTRIM":
+		start, err := strconv.Atoi(string(args[3]))
+		if err != nil {
+			return nil, errors.New("ERR value is not an integer or out of range")
+		}
+		stop, err := strconv.Atoi(string(args[4]))
+		if err != nil {
+			return nil, errors.New("ERR value is not an integer or out of range")
+		}
+
+		length, found, err := s.store.JSONArrTrim(
+			key,
+			string(args[2]),
+			start,
+			stop,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nullBulk(), nil
+		}
+		return integer(length), nil
+
+	case "JSON.MGET":
+		path := string(args[len(args)-1])
+		keyArgs := args[1 : len(args)-1]
+		keyNames := make([]string, len(keyArgs))
+		for i, arg := range keyArgs {
+			keyNames[i] = string(arg)
+		}
+
+		values, found := s.store.JSONMGet(keyNames, path)
+		items := make([][]byte, len(values))
+		for i := range values {
+			items[i] = optionalBulk(values[i], found[i])
+		}
+		return array(items...), nil
+
+	case "JSON.MERGE":
+		applied, err := s.store.JSONMerge(key, string(args[2]), args[3])
+		if err != nil {
+			return nil, err
+		}
+		if !applied {
+			return nullBulk(), nil
+		}
+		return []byte("+OK\r\n"), nil
+
+	case "JSON.MSET":
+		if (len(args)-1)%3 != 0 {
+			return nil, errors.New("ERR wrong number of arguments for 'json.mset' command")
+		}
+
+		keys := make([]string, 0, (len(args)-1)/3)
+		seen := make(map[string]struct{}, cap(keys))
+		for i := 1; i < len(args); i += 3 {
+			k := string(args[i])
+			if _, ok := seen[k]; !ok {
+				seen[k] = struct{}{}
+				keys = append(keys, k)
+			}
+		}
+
+		before := s.store.Export(keys)
+
+		for i := 1; i < len(args); i += 3 {
+			applied, err := s.store.JSONSet(
+				string(args[i]),
+				string(args[i+1]),
+				args[i+2],
+				false,
+				false,
+			)
+			if err != nil || !applied {
+				if rollbackErr := s.store.Restore(before, true); rollbackErr != nil {
+					return nil, errors.New("ERR JSON.MSET failed and rollback failed")
+				}
+				if err != nil {
+					return nil, err
+				}
+				return nil, errors.New("ERR JSON.MSET failed")
+			}
+		}
+
+		return []byte("+OK\r\n"), nil
 	case "JSON.SET":
 		path := string(args[2])
 
@@ -235,7 +541,7 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		return []byte("+OK\r\n"), nil
 
 	case "JSON.GET":
-		path := "$"
+		path := "."
 
 		if len(args) == 3 {
 			path = string(args[2])

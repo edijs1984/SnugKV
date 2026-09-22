@@ -64,7 +64,7 @@ for current boundaries, [PLAN.md](PLAN.md) for the remaining roadmap, and
 - Transactions: `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH` with cross-client optimistic locking and EXEC error semantics.
 - Scripting: `EVAL`, `EVALSHA`, `EVAL_RO`, `EVALSHA_RO`, `SCRIPT LOAD`, `SCRIPT EXISTS`, `SCRIPT FLUSH`, `SCRIPT KILL`; Lua `KEYS`/`ARGV`, `redis.call`, `redis.pcall`, `redis.error_reply`, `redis.status_reply`, and `redis.sha1hex` are available.
 - Functions: `FUNCTION LOAD [REPLACE]`, `FUNCTION LIST [LIBRARYNAME pattern] [WITHCODE]`, `FUNCTION DELETE`, `FUNCTION FLUSH [SYNC|ASYNC]`, `FUNCTION DUMP`, `FUNCTION RESTORE <payload> [APPEND|REPLACE|FLUSH]`, `FUNCTION STATS`, `FUNCTION KILL`, `FUNCTION HELP`, `FCALL`, and `FCALL_RO`; table-form registration supports the currently safe standalone flags `no-writes`, `allow-stale`, `no-cluster`, and `allow-cross-slot-keys`.
-- JSON: `JSON.SET`, `JSON.GET`, `JSON.TYPE`, `JSON.DEL`.
+- JSON: first-class JSON commands including `JSON.SET`, `JSON.GET`, `JSON.TYPE`, `JSON.DEL`, numeric/string/array/object mutations and inspection, plus Redis 8.10-audited JSONPath selectors, filters, arithmetic, membership/set operators, and functions. See [docs/JSONPATH-COMPATIBILITY.md](docs/JSONPATH-COMPATIBILITY.md).
 - Administration: `FLUSHDB`, `FLUSHALL`, `MEMORY`, `SNUG.ENCODING`, `SNUG.MEMORY`, `SNUG.STATS`, `SNUG.COMPACT`, `SNUG.POLICY`, `SNUG.AOFREWRITE`, `SNUG.SHAPES`, `SNUG.CANDIDATES`, `SNUG.TYPE`.
 
 Blocking LIST, ZSET, `XREAD`, and `XREADGROUP` commands use waiter/wakeup paths

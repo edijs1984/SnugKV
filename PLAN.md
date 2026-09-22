@@ -340,8 +340,8 @@ Performance/memory tuning is intentionally paused after the realistic-workload
 milestone. Resume only for measured regressions or after the next capability work
 lands.
 
-- [ ] Expand first-class JSON operations beyond the current SET/GET/TYPE/DEL core.
-- [ ] Add JSONPath support with explicit compatibility tests and persistence coverage.
+- [x] Expand first-class JSON operations beyond the SET/GET/TYPE/DEL core.
+- [x] Add JSONPath support with Redis 8.10 differential tests and AOF/restart persistence coverage. See `docs/JSONPATH-COMPATIBILITY.md`.
 - [ ] Add secondary-index/search design after the JSON model is stable.
 - [ ] Add probabilistic/time-series structures only after the JSON/search storage
   boundaries are settled.

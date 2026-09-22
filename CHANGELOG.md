@@ -7,6 +7,7 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Added
 
+- Redis 8.10-audited JSONPath support across member/index selectors, wildcards, recursive descent, slices/unions, scalar/logical/regex filters, membership/set operators, size/empty predicates, arithmetic and function expressions, multi-match updates/deletes, and AOF restart recovery. Object insertion order and exact error wording remain documented compatibility boundaries.
 - Redis-compatible legacy `GEORADIUS` and `GEORADIUSBYMEMBER` aliases, including COUNT/ANY, WITHDIST/WITHHASH/WITHCOORD, STORE/STOREDIST, Redis 8.2 error compatibility, and dynamic source/destination key discovery.
 - Redis-compatible `SCRIPT DEBUG YES|SYNC|NO` connection state with LDB continue/end-session wire framing, async debug execution on a disposable logical store clone, and SYNC persistence on the real dataset. Full line stepping/breakpoints remain explicitly deferred because GopherLua lacks debug hooks.
 - Redis 8.2 Lua eviction-policy parity for `allkeys-lru` and `volatile-lru`, including policy-preserving nested eviction/retry, persistent-key protection for volatile eviction, and `allow-oom` fallback only after eligible victims are exhausted.

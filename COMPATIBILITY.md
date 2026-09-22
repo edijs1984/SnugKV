@@ -76,7 +76,7 @@ client-library-specific parity are not yet claimed.
 | ZSET | Broad support | Native packed datatype, ranges, algebra, blocking pops/multipops |
 | SORT | Supported | `SORT`, `SORT_RO`, BY/LIMIT/GET/ASC/DESC/ALPHA, external string/hash patterns, STORE-to-LIST semantics |
 | STREAM | Broad support | Core stream reads/writes, consumer groups, PEL, claims, XINFO, trimming/reference policies |
-| JSON | Partial | `JSON.SET`, `JSON.GET`, `JSON.TYPE`, `JSON.DEL` only |
+| JSON | Broad audited support | First-class JSON command family plus Redis 8.10-audited JSONPath selectors, recursive descent, slices/unions, filters, arithmetic, membership/set operators, functions, multi-match delete/update behavior, and AOF restart coverage. Object insertion order and exact error text remain documented boundaries. |
 | Pub/Sub | Broad support | Classic and sharded Pub/Sub, pattern subscriptions, introspection, RESP2 subscribed-mode behavior |
 | Transactions | Broad support | `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH`, queue/runtime error semantics, AOF transaction frames |
 | HyperLogLog | Supported | `PFADD`, `PFCOUNT`, `PFMERGE`; Redis-compatible serialized HLL strings |
@@ -89,6 +89,18 @@ client-library-specific parity are not yet claimed.
 | RESP3 | Broad audited support | `HELLO 3`, protocol switching, audited null/map/set/double/verbatim reply shapes, Streams/tooling maps, GEO/ZSET numeric forms, and Pub/Sub push semantics; optional client/attribute hardening remains |
 | Key migration / transfer | Supported | Redis 8.2-compatible `DUMP` / `RESTORE` plus `MIGRATE` with COPY/REPLACE/KEYS/AUTH/AUTH2 and live two-way interoperability; STREAM tombstone byte-for-byte re-emission after XDEL remains a documented storage-model boundary |
 | Replication / Sentinel / Cluster | Not implemented | Outside current single-node scope |
+
+## JSON compatibility
+
+SnugKV implements a broad first-class JSON surface with Redis 8.10-audited JSONPath behavior. Differential coverage includes member/index paths, wildcards, recursive descent, slices, unions, scalar/logical/regex filters, membership and set operators, size/empty predicates, arithmetic filters, and multi-match mutation/delete behavior.
+
+Known boundaries:
+
+- JSON objects are decoded into Go maps, so source member insertion order is not preserved. This can change serialized object member order and the result ordering of wildcard/recursive-wildcard queries such as `$.*` and `$..*`.
+- JSONPath parse and static-path errors are semantically compatible for the audited cases but are not byte-for-byte identical to Redis 8.10 error wording.
+- Redis-visible `TYPE` reports JSON values as `string`; `SNUG.TYPE` exposes SnugKV's semantic `JSON` type.
+
+See [docs/JSONPATH-COMPATIBILITY.md](docs/JSONPATH-COMPATIBILITY.md) for the audited surface and oracle details.
 
 ## HASH
 
