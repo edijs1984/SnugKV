@@ -10,23 +10,23 @@ import (
 	"snugkv/internal/jsonvalue"
 )
 
-type searchFieldKind uint8
+type SearchFieldKind uint8
 
 const (
-	searchFieldTag searchFieldKind = iota
-	searchFieldNumeric
+	SearchFieldTag SearchFieldKind = iota
+	SearchFieldNumeric
 )
 
-type searchField struct {
+type SearchField struct {
 	Path  string
 	Alias string
-	Kind  searchFieldKind
+	Kind  SearchFieldKind
 }
 
-type searchDefinition struct {
+type SearchDefinition struct {
 	Name     string
 	Prefixes []string
-	Fields   []searchField
+	Fields   []SearchField
 }
 
 type numericPosting struct {
@@ -40,7 +40,7 @@ type searchDocumentState struct {
 }
 
 type searchIndex struct {
-	def searchDefinition
+	def SearchDefinition
 
 	docs map[string]searchDocumentState
 
@@ -60,7 +60,7 @@ func newSearchManager() *searchManager {
 	return &searchManager{indexes: make(map[string]*searchIndex)}
 }
 
-func newSearchIndex(def searchDefinition) *searchIndex {
+func newSearchIndex(def SearchDefinition) *searchIndex {
 	return &searchIndex{
 		def:           def,
 		docs:          make(map[string]searchDocumentState),
@@ -71,7 +71,7 @@ func newSearchIndex(def searchDefinition) *searchIndex {
 	}
 }
 
-func validateSearchDefinition(def searchDefinition) error {
+func validateSearchDefinition(def SearchDefinition) error {
 	if def.Name == "" {
 		return errors.New("ERR search index name is required")
 	}
@@ -93,7 +93,7 @@ func validateSearchDefinition(def searchDefinition) error {
 		aliases[field.Alias] = struct{}{}
 
 		switch field.Kind {
-		case searchFieldTag, searchFieldNumeric:
+		case SearchFieldTag, SearchFieldNumeric:
 		default:
 			return errors.New("ERR unsupported search field type")
 		}
@@ -167,7 +167,7 @@ func uniqueFloat64s(values []float64) []float64 {
 	return out
 }
 
-func extractSearchDocument(def searchDefinition, raw []byte) (searchDocumentState, error) {
+func extractSearchDocument(def SearchDefinition, raw []byte) (searchDocumentState, error) {
 	root, err := jsonvalue.Parse(raw)
 	if err != nil {
 		return searchDocumentState{}, err
@@ -185,7 +185,7 @@ func extractSearchDocument(def searchDefinition, raw []byte) (searchDocumentStat
 		}
 
 		switch field.Kind {
-		case searchFieldTag:
+		case SearchFieldTag:
 			tags := make([]string, 0, len(values))
 			for _, value := range values {
 				if canonical, ok := canonicalSearchTag(value); ok {
@@ -196,7 +196,7 @@ func extractSearchDocument(def searchDefinition, raw []byte) (searchDocumentStat
 				state.Tags[field.Alias] = uniqueStrings(tags)
 			}
 
-		case searchFieldNumeric:
+		case SearchFieldNumeric:
 			numbers := make([]float64, 0, len(values))
 			for _, value := range values {
 				number, ok := value.(float64)
@@ -214,7 +214,7 @@ func extractSearchDocument(def searchDefinition, raw []byte) (searchDocumentStat
 	return state, nil
 }
 
-func (m *searchManager) create(def searchDefinition) error {
+func (m *searchManager) create(def SearchDefinition) error {
 	if err := validateSearchDefinition(def); err != nil {
 		return err
 	}
@@ -485,4 +485,81 @@ func (m *searchManager) memoryBytes() uint64 {
 		}
 	}
 	return bytes
+}
+
+
+func (s *Store) getSearchManager() *searchManager {
+	return s.search.Load()
+}
+
+func (s *Store) ensureSearchManager() *searchManager {
+	if current := s.search.Load(); current != nil {
+		return current
+	}
+
+	created := newSearchManager()
+	if s.search.CompareAndSwap(nil, created) {
+		return created
+	}
+	return s.search.Load()
+}
+
+func (s *Store) CreateSearchIndex(def SearchDefinition) error {
+	return s.ensureSearchManager().create(def)
+}
+
+func (s *Store) DropSearchIndex(name string) bool {
+	manager := s.getSearchManager()
+	if manager == nil {
+		return false
+	}
+	return manager.drop(name)
+}
+
+func (s *Store) SearchIndexNames() []string {
+	manager := s.getSearchManager()
+	if manager == nil {
+		return []string{}
+	}
+	return manager.names()
+}
+
+func (s *Store) SearchTagKeys(indexName, alias, value string) ([]string, bool) {
+	manager := s.getSearchManager()
+	if manager == nil {
+		return nil, false
+	}
+	return manager.tagKeys(indexName, alias, value)
+}
+
+func (s *Store) SearchNumericRangeKeys(indexName, alias string, min, max float64) ([]string, bool) {
+	manager := s.getSearchManager()
+	if manager == nil {
+		return nil, false
+	}
+	return manager.numericRangeKeys(indexName, alias, min, max)
+}
+
+func (s *Store) SearchMemoryBytes() uint64 {
+	manager := s.getSearchManager()
+	if manager == nil {
+		return 0
+	}
+	return manager.memoryBytes()
+}
+
+func (s *Store) searchReplaceJSON(key string, raw []byte) error {
+	manager := s.getSearchManager()
+	if manager == nil {
+		return nil
+	}
+	return manager.replaceJSON(key, raw)
+}
+
+func (s *Store) searchRemoveKey(key string) {
+	manager := s.getSearchManager()
+	if manager == nil {
+		return
+	}
+	manager.removeKey(key)
 }
