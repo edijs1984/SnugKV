@@ -446,15 +446,15 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 					authSession,
 					msg,
 				); handled {
-			if errors.Is(debugErr, errScriptDebugCloseAfterReply) {
-				if writer.write(debugResponse) != nil {
+				if errors.Is(debugErr, errScriptDebugCloseAfterReply) {
+					if writer.write(debugResponse) != nil {
+						return
+					}
 					return
 				}
-				return
-			}
-			if debugErr != nil {
-				debugResponse = errorResponse(debugErr)
-			}
+				if debugErr != nil {
+					debugResponse = errorResponse(debugErr)
+				}
 				if writer.write(debugResponse) != nil {
 					return
 				}

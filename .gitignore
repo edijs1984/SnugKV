@@ -55,4 +55,6 @@ tmp/
 venv/
 /startingScripts.md
 /SNUGKV_DEVELOPMENT_WORKFLOW.md
+/benchmark-results/
+edijs.md
 

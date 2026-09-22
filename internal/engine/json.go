@@ -3,10 +3,10 @@ package engine
 import (
 	"errors"
 	"math"
-	"sort"
-	"strconv"
 	"reflect"
 	"snugkv/internal/jsonvalue"
+	"sort"
+	"strconv"
 )
 
 func (s *Store) JSONSet(
@@ -172,8 +172,6 @@ func (s *Store) JSONGet(key, path string) ([]byte, bool, error) {
 	}
 	return encoded, true, nil
 }
-
-
 
 func (s *Store) JSONProjection(key, path string) ([]byte, bool, error) {
 	sh := s.shardFor(key)
@@ -371,7 +369,6 @@ func (s *Store) JSONDel(key, path string) (int64, error) {
 	return int64(deletedCount), nil
 }
 
-
 func (s *Store) JSONNumIncrBy(key, path string, increment float64) ([]byte, bool, error) {
 	sh := s.shardFor(key)
 	sh.mu.Lock()
@@ -498,7 +495,6 @@ func (s *Store) jsonValueAtPath(key, path string) (any, bool, error) {
 	}
 	return jsonvalue.Get(root, path)
 }
-
 
 func (s *Store) JSONArrAppend(key, path string, rawValues [][]byte) (int64, bool, error) {
 	values := make([]any, 0, len(rawValues))
@@ -673,7 +669,6 @@ func (s *Store) publishJSONMutationLocked(sh *shard, key string, previous entry,
 	updated.expiresAt = sh.expirationAt(key, previous)
 	return s.publish(sh, key, updated)
 }
-
 
 func (s *Store) JSONArrPop(key, path string, index int) ([]byte, bool, error) {
 	sh := s.shardFor(key)
@@ -897,7 +892,6 @@ func (s *Store) JSONClear(key, path string) (int64, error) {
 	}
 	return 1, nil
 }
-
 
 func (s *Store) JSONArrTrim(key, path string, start, stop int) (int64, bool, error) {
 	sh := s.shardFor(key)
