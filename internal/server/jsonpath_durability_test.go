@@ -24,7 +24,7 @@ func TestJSONPathAOFRestartRecovery(t *testing.T) {
 	srv.SetJournal(journal)
 
 	if got := execute(t, srv, "JSON.SET", "doc", "$",
-		`{"items":[{"name":"a","score":1},{"name":"b","score":2},{"name":"c","score":3}]}`); got != "+OK\r\n" {
+		`{"items":[{"name":"a","score":1,"active":false},{"name":"b","score":2,"active":false},{"name":"c","score":3,"active":false}]}`); got != "+OK\r\n" {
 		t.Fatalf("JSON.SET root=%q", got)
 	}
 	if got := execute(t, srv, "JSON.SET", "doc", "$.items[?(@.score >= 2)].active", "true"); got != "+OK\r\n" {
