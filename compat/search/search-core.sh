@@ -73,6 +73,15 @@ run FT.SEARCH products '@description:(mem* eng*)' NOCONTENT
 run FT.SEARCH products '@description:(mem* ser*)' NOCONTENT
 
 echo
+echo "=== exact text phrases ==="
+run FT.SEARCH products '@description:"memory guide"' NOCONTENT
+run FT.SEARCH products '@description:"MEMORY GUIDE"' NOCONTENT
+run FT.SEARCH products '@description:"memory search"' NOCONTENT
+run FT.SEARCH products '@description:"search engine"' NOCONTENT
+run FT.SEARCH products '@description:"memory engine"' NOCONTENT
+run FT.SEARCH products '@description:"search memory"' NOCONTENT
+
+echo
 echo "=== numeric infinities ==="
 run FT.SEARCH products '@price:[-inf 20]' NOCONTENT
 run FT.SEARCH products '@price:[20 +inf]' NOCONTENT
