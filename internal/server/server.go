@@ -132,6 +132,8 @@ var commandTable = map[string]commandInfo{
 	"JSON.ARRTRIM":   {5, 5, 1, 1, 1, true},
 	"JSON.MGET":      {3, 0, 1, -2, 1, false},
 	"JSON.MERGE":     {4, 4, 1, 1, 1, true},
+	"JSON.MSET":      {4, 0, 1, -3, 3, true},
+	"JSON.FORGET":    {2, 3, 1, 1, 1, true},
 	"MEMORY":         {2, 5, 0, 0, 0, false},
 }
 
@@ -190,7 +192,7 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		default:
 			return nil, errors.New("ERR unknown subcommand")
 		}
-	case "JSON.DEL":
+	case "JSON.DEL", "JSON.FORGET":
 		path := "$"
 
 		if len(args) == 3 {
@@ -457,6 +459,44 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		if !applied {
 			return nullBulk(), nil
 		}
+		return []byte("+OK\r\n"), nil
+
+	case "JSON.MSET":
+		if (len(args)-1)%3 != 0 {
+			return nil, errors.New("ERR wrong number of arguments for 'json.mset' command")
+		}
+
+		keys := make([]string, 0, (len(args)-1)/3)
+		seen := make(map[string]struct{}, cap(keys))
+		for i := 1; i < len(args); i += 3 {
+			k := string(args[i])
+			if _, ok := seen[k]; !ok {
+				seen[k] = struct{}{}
+				keys = append(keys, k)
+			}
+		}
+
+		before := s.store.Export(keys)
+
+		for i := 1; i < len(args); i += 3 {
+			applied, err := s.store.JSONSet(
+				string(args[i]),
+				string(args[i+1]),
+				args[i+2],
+				false,
+				false,
+			)
+			if err != nil || !applied {
+				if rollbackErr := s.store.Restore(before, true); rollbackErr != nil {
+					return nil, errors.New("ERR JSON.MSET failed and rollback failed")
+				}
+				if err != nil {
+					return nil, err
+				}
+				return nil, errors.New("ERR JSON.MSET failed")
+			}
+		}
+
 		return []byte("+OK\r\n"), nil
 	case "JSON.SET":
 		path := string(args[2])
