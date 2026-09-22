@@ -812,3 +812,104 @@ func TestFTInfoMissingMatchesRedisSearchError(t *testing.T) {
 		t.Fatalf("error=%q want=%q", got, want)
 	}
 }
+
+
+func TestFTSearchRejectsUnknownOrWrongTypeField(t *testing.T) {
+	s := newSearchTestServer(t)
+	createProductSearchFixture(t, s)
+
+	tests := []struct {
+		name  string
+		query string
+		want  string
+	}{
+		{
+			name:  "unknown field",
+			query: "@missing:{books}",
+			want:  "ERR unknown search field: missing",
+		},
+		{
+			name:  "tag syntax on numeric field",
+			query: "@price:{10}",
+			want:  "ERR search field is not TAG: price",
+		},
+		{
+			name:  "numeric syntax on tag field",
+			query: "@category:[1 2]",
+			want:  "ERR search field is not NUMERIC: category",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := s.Execute([][]byte{
+				[]byte("FT.SEARCH"),
+				[]byte("products"),
+				[]byte(tc.query),
+			})
+			if err == nil {
+				t.Fatalf("query %q unexpectedly succeeded", tc.query)
+			}
+			if got := err.Error(); got != tc.want {
+				t.Fatalf("error=%q want=%q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFTSearchRejectsNonFiniteNumericBounds(t *testing.T) {
+	s := newSearchTestServer(t)
+	createProductSearchFixture(t, s)
+
+	for _, query := range []string{
+		"@price:[NaN 20]",
+		"@price:[10 NaN]",
+		"@price:[-Infinity 20]",
+		"@price:[10 Infinity]",
+	} {
+		if _, err := s.Execute([][]byte{
+			[]byte("FT.SEARCH"),
+			[]byte("products"),
+			[]byte(query),
+		}); err == nil {
+			t.Fatalf("query %q unexpectedly succeeded", query)
+		}
+	}
+}
+
+func TestFTSearchMissingIndexMatchesSearchError(t *testing.T) {
+	s := newSearchTestServer(t)
+
+	_, err := s.Execute([][]byte{
+		[]byte("FT.SEARCH"),
+		[]byte("missing"),
+		[]byte("*"),
+	})
+	if err == nil {
+		t.Fatal("unknown index unexpectedly succeeded")
+	}
+
+	want := "SEARCH_INDEX_NOT_FOUND Index not found: missing"
+	if err.Error() != want {
+		t.Fatalf("error=%q want=%q", err.Error(), want)
+	}
+}
+
+func TestFTCreateRejectsMalformedJSONPath(t *testing.T) {
+	s := newSearchTestServer(t)
+
+	_, err := s.Execute([][]byte{
+		[]byte("FT.CREATE"),
+		[]byte("badpath"),
+		[]byte("ON"),
+		[]byte("JSON"),
+		[]byte("SCHEMA"),
+		[]byte("$["),
+		[]byte("AS"),
+		[]byte("broken"),
+		[]byte("TAG"),
+	})
+	if err == nil {
+		t.Fatal("malformed JSONPath unexpectedly succeeded")
+	}
+}
