@@ -245,6 +245,7 @@ type searchOptions struct {
 	returnFields []searchReturnField
 	sortBy       string
 	sortDesc     bool
+	dialect      int
 }
 
 
@@ -298,12 +299,12 @@ func (p *searchQueryParser) parseOr() (*searchQueryNode, error) {
 	}
 
 	for {
-		beforeSpace := p.pos
 		p.skipSpace()
 		if p.pos >= len(p.query) || p.query[p.pos] != '|' {
 			return left, nil
 		}
-		if beforeSpace == p.pos || p.pos+1 >= len(p.query) || !isSearchSpace(p.query[p.pos+1]) {
+		if p.pos == 0 || p.pos+1 >= len(p.query) ||
+			!isSearchSpace(p.query[p.pos-1]) || !isSearchSpace(p.query[p.pos+1]) {
 			return nil, errors.New("ERR unsupported search query")
 		}
 		p.pos++
@@ -523,8 +524,9 @@ func parseSearchQuery(query string) (*searchQueryNode, error) {
 
 func parseSearchOptions(args [][]byte) (searchOptions, error) {
 	options := searchOptions{
-		offset: 0,
-		count:  10,
+		offset:  0,
+		count:   10,
+		dialect: 1,
 	}
 
 	for pos := 3; pos < len(args); {
@@ -567,6 +569,17 @@ func parseSearchOptions(args [][]byte) (searchOptions, error) {
 					pos++
 				}
 			}
+
+		case "DIALECT":
+			if pos+1 >= len(args) {
+				return searchOptions{}, errors.New("ERR syntax error")
+			}
+			dialect, err := strconv.Atoi(string(args[pos+1]))
+			if err != nil || (dialect != 1 && dialect != 2) {
+				return searchOptions{}, errors.New("ERR unsupported search dialect")
+			}
+			options.dialect = dialect
+			pos += 2
 
 		case "RETURN":
 			if pos+1 >= len(args) {
