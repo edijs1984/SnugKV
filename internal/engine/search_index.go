@@ -20,9 +20,10 @@ const (
 )
 
 type SearchField struct {
-	Path  string
-	Alias string
-	Kind  SearchFieldKind
+	Path   string
+	Alias  string
+	Kind   SearchFieldKind
+	NoStem bool
 }
 
 type SearchDefinition struct {
@@ -40,6 +41,7 @@ type searchDocumentState struct {
 	Tags          map[string][]string
 	Numerics      map[string][]float64
 	Texts         map[string][]string
+	TextStems     map[string][]string
 	TextSequences map[string][][]string
 }
 
@@ -48,8 +50,9 @@ type searchIndex struct {
 
 	docs map[string]searchDocumentState
 
-	tags  map[string]map[string]map[string]struct{}
-	texts map[string]map[string]map[string]struct{}
+	tags      map[string]map[string]map[string]struct{}
+	texts     map[string]map[string]map[string]struct{}
+	textStems map[string]map[string]map[string]struct{}
 
 	numerics      map[string]map[string][]float64
 	numericSorted map[string][]numericPosting
@@ -79,6 +82,7 @@ func newSearchIndex(def SearchDefinition) *searchIndex {
 		docs:          make(map[string]searchDocumentState),
 		tags:          make(map[string]map[string]map[string]struct{}),
 		texts:         make(map[string]map[string]map[string]struct{}),
+		textStems:     make(map[string]map[string]map[string]struct{}),
 		numerics:      make(map[string]map[string][]float64),
 		numericSorted: make(map[string][]numericPosting),
 		numericDirty:  make(map[string]bool),
@@ -216,6 +220,7 @@ func extractSearchDocument(def SearchDefinition, raw []byte) (searchDocumentStat
 		Tags:          make(map[string][]string),
 		Numerics:      make(map[string][]float64),
 		Texts:         make(map[string][]string),
+		TextStems:     make(map[string][]string),
 		TextSequences: make(map[string][][]string),
 	}
 
@@ -242,6 +247,7 @@ func extractSearchDocument(def SearchDefinition, raw []byte) (searchDocumentStat
 
 		case SearchFieldText:
 			tokens := make([]string, 0)
+			stems := make([]string, 0)
 			sequences := make([][]string, 0, len(values))
 			for _, value := range values {
 				text, ok := value.(string)
@@ -254,9 +260,17 @@ func extractSearchDocument(def SearchDefinition, raw []byte) (searchDocumentStat
 				}
 				sequences = append(sequences, sequence)
 				tokens = append(tokens, sequence...)
+				if !field.NoStem {
+					for _, token := range sequence {
+						stems = append(stems, stemSearchEnglish(token))
+					}
+				}
 			}
 			if len(tokens) > 0 {
 				state.Texts[field.Alias] = uniqueStrings(tokens)
+				if len(stems) > 0 {
+					state.TextStems[field.Alias] = uniqueStrings(stems)
+				}
 				state.TextSequences[field.Alias] = sequences
 			}
 
@@ -370,6 +384,20 @@ func (idx *searchIndex) removeDocument(key string) {
 		}
 	}
 
+	for alias, values := range old.TextStems {
+		field := idx.textStems[alias]
+		for _, value := range values {
+			postings := field[value]
+			delete(postings, key)
+			if len(postings) == 0 {
+				delete(field, value)
+			}
+		}
+		if len(field) == 0 {
+			delete(idx.textStems, alias)
+		}
+	}
+
 	for alias := range old.Numerics {
 		if field := idx.numerics[alias]; field != nil {
 			delete(field, key)
@@ -411,6 +439,22 @@ func (idx *searchIndex) addDocument(key string, state searchDocumentState) {
 		if field == nil {
 			field = make(map[string]map[string]struct{})
 			idx.texts[alias] = field
+		}
+		for _, value := range values {
+			postings := field[value]
+			if postings == nil {
+				postings = make(map[string]struct{})
+				field[value] = postings
+			}
+			postings[key] = struct{}{}
+		}
+	}
+
+	for alias, values := range state.TextStems {
+		field := idx.textStems[alias]
+		if field == nil {
+			field = make(map[string]map[string]struct{})
+			idx.textStems[alias] = field
 		}
 		for _, value := range values {
 			postings := field[value]
@@ -511,6 +555,15 @@ func (m *searchManager) tagKeys(indexName, alias, value string) ([]string, bool)
 	return sortedPostingKeys(field[value]), true
 }
 
+func searchTextField(def SearchDefinition, alias string) (SearchField, bool) {
+	for _, field := range def.Fields {
+		if field.Alias == alias && field.Kind == SearchFieldText {
+			return field, true
+		}
+	}
+	return SearchField{}, false
+}
+
 func (m *searchManager) textKeys(indexName, alias, token string) ([]string, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -523,7 +576,21 @@ func (m *searchManager) textKeys(indexName, alias, token string) ([]string, bool
 	if field == nil {
 		return []string{}, true
 	}
-	return sortedPostingKeys(field[strings.ToLower(token)]), true
+
+	token = strings.ToLower(token)
+	seen := make(map[string]struct{})
+	for key := range field[token] {
+		seen[key] = struct{}{}
+	}
+
+	defField, found := searchTextField(idx.def, alias)
+	if found && !defField.NoStem {
+		stem := stemSearchEnglish(token)
+		for key := range idx.textStems[alias][stem] {
+			seen[key] = struct{}{}
+		}
+	}
+	return sortedPostingKeys(seen), true
 }
 
 func (m *searchManager) textPrefixKeys(indexName, alias, prefix string) ([]string, bool) {
@@ -571,6 +638,14 @@ func containsSearchPhrase(sequence, phrase []string) bool {
 	return false
 }
 
+func stemSearchSequence(tokens []string) []string {
+	out := make([]string, len(tokens))
+	for i, token := range tokens {
+		out[i] = stemSearchEnglish(token)
+	}
+	return out
+}
+
 func (m *searchManager) textPhraseKeys(indexName, alias, phrase string) ([]string, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -585,10 +660,20 @@ func (m *searchManager) textPhraseKeys(indexName, alias, phrase string) ([]strin
 		return []string{}, true
 	}
 
+	defField, found := searchTextField(idx.def, alias)
+	useStems := found && !defField.NoStem
+	if useStems {
+		tokens = stemSearchSequence(tokens)
+	}
+
 	matches := make(map[string]struct{})
 	for key, state := range idx.docs {
 		for _, sequence := range state.TextSequences[alias] {
-			if containsSearchPhrase(sequence, tokens) {
+			candidate := sequence
+			if useStems {
+				candidate = stemSearchSequence(sequence)
+			}
+			if containsSearchPhrase(candidate, tokens) {
 				matches[key] = struct{}{}
 				break
 			}
@@ -704,6 +789,12 @@ func (m *searchManager) memoryBytes() uint64 {
 				}
 			}
 			for alias, values := range state.Texts {
+				bytes += uint64(len(alias))
+				for _, value := range values {
+					bytes += uint64(len(value) + len(key))
+				}
+			}
+			for alias, values := range state.TextStems {
 				bytes += uint64(len(alias))
 				for _, value := range values {
 					bytes += uint64(len(value) + len(key))
