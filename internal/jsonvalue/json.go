@@ -41,8 +41,19 @@ type filterExpr struct {
 	literal     any
 	rightPath   []string
 	rightIsPath bool
+	leftValue   *filterValueExpr
+	rightValue  *filterValueExpr
 	left        *filterExpr
 	right       *filterExpr
+}
+
+type filterValueExpr struct {
+	kind    string
+	path    []string
+	literal any
+	op      string
+	left    *filterValueExpr
+	right   *filterValueExpr
 }
 
 func Parse(raw []byte) (any, error) {
@@ -561,32 +572,190 @@ func parseFilterComparison(raw string) (*filterExpr, error) {
 		return nil, errors.New("ERR invalid JSON path")
 	}
 
-	leftPath, err := parseFilterPath(leftRaw)
+	leftValue, err := parseFilterValueExpr(leftRaw)
+	if err != nil {
+		return nil, err
+	}
+	rightValue, err := parseFilterValueExpr(rightRaw)
 	if err != nil {
 		return nil, err
 	}
 
-	expr := &filterExpr{kind: "compare", path: leftPath, op: op}
+	return &filterExpr{
+		kind:       "compare",
+		op:         op,
+		leftValue:  leftValue,
+		rightValue: rightValue,
+	}, nil
+}
 
-	if rightRaw == "@" || strings.HasPrefix(rightRaw, "@.") {
-		rightPath, err := parseFilterPath(rightRaw)
+func parseFilterValueExpr(raw string) (*filterValueExpr, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, errors.New("ERR invalid JSON path")
+	}
+
+	for hasOuterParens(raw) {
+		raw = strings.TrimSpace(raw[1 : len(raw)-1])
+	}
+
+	if index, op := findTopLevelArithmetic(raw, []string{" + ", " - "}); index >= 0 {
+		left, err := parseFilterValueExpr(raw[:index])
 		if err != nil {
 			return nil, err
 		}
-		expr.rightPath = rightPath
-		expr.rightIsPath = true
-		return expr, nil
+		right, err := parseFilterValueExpr(raw[index+len(op):])
+		if err != nil {
+			return nil, err
+		}
+		return &filterValueExpr{kind: "binary", op: strings.TrimSpace(op), left: left, right: right}, nil
 	}
 
-	if len(rightRaw) >= 2 && rightRaw[0] == '\'' && rightRaw[len(rightRaw)-1] == '\'' {
-		expr.literal = strings.ReplaceAll(rightRaw[1:len(rightRaw)-1], "\\'", "'")
-		return expr, nil
+	if index, op := findTopLevelArithmetic(raw, []string{" * ", " / ", " % "}); index >= 0 {
+		left, err := parseFilterValueExpr(raw[:index])
+		if err != nil {
+			return nil, err
+		}
+		right, err := parseFilterValueExpr(raw[index+len(op):])
+		if err != nil {
+			return nil, err
+		}
+		return &filterValueExpr{kind: "binary", op: strings.TrimSpace(op), left: left, right: right}, nil
 	}
 
-	if err := json.Unmarshal([]byte(rightRaw), &expr.literal); err != nil {
+	if strings.HasPrefix(raw, "+") || strings.HasPrefix(raw, "-") {
+		op := raw[:1]
+		child, err := parseFilterValueExpr(strings.TrimSpace(raw[1:]))
+		if err != nil {
+			return nil, err
+		}
+		return &filterValueExpr{kind: "unary", op: op, left: child}, nil
+	}
+
+	if raw == "@" || strings.HasPrefix(raw, "@.") {
+		path, err := parseFilterPath(raw)
+		if err != nil {
+			return nil, err
+		}
+		return &filterValueExpr{kind: "path", path: path}, nil
+	}
+
+	var literal any
+	if len(raw) >= 2 && raw[0] == '\'' && raw[len(raw)-1] == '\'' {
+		literal = strings.ReplaceAll(raw[1:len(raw)-1], "\\'", "'")
+		return &filterValueExpr{kind: "literal", literal: literal}, nil
+	}
+	if err := json.Unmarshal([]byte(raw), &literal); err != nil {
 		return nil, errors.New("ERR invalid JSON path")
 	}
-	return expr, nil
+	return &filterValueExpr{kind: "literal", literal: literal}, nil
+}
+
+func findTopLevelArithmetic(raw string, operators []string) (int, string) {
+	depth := 0
+	inString := byte(0)
+	escaped := false
+	for i := len(raw) - 1; i >= 0; i-- {
+		ch := raw[i]
+		if inString != 0 {
+			if escaped {
+				escaped = false
+			} else if ch == '\\' {
+				escaped = true
+			} else if ch == inString {
+				inString = 0
+			}
+			continue
+		}
+		if ch == '"' || ch == '\'' {
+			inString = ch
+			continue
+		}
+		switch ch {
+		case ')', ']', '}':
+			depth++
+			continue
+		case '(', '[', '{':
+			if depth > 0 {
+				depth--
+			}
+			continue
+		}
+		if depth != 0 {
+			continue
+		}
+		for _, op := range operators {
+			start := i - len(op) + 1
+			if start >= 0 && raw[start:i+1] == op {
+				return start, op
+			}
+		}
+	}
+	return -1, ""
+}
+
+func evalFilterValue(current any, expr *filterValueExpr) (any, bool) {
+	if expr == nil {
+		return nil, false
+	}
+	switch expr.kind {
+	case "path":
+		return filterValue(current, expr.path)
+	case "literal":
+		return expr.literal, true
+	case "unary":
+		value, ok := evalFilterValue(current, expr.left)
+		if !ok {
+			return nil, false
+		}
+		number, ok := value.(float64)
+		if !ok {
+			return nil, false
+		}
+		if expr.op == "-" {
+			number = -number
+		}
+		return number, true
+	case "binary":
+		leftValue, leftOK := evalFilterValue(current, expr.left)
+		rightValue, rightOK := evalFilterValue(current, expr.right)
+		if !leftOK || !rightOK {
+			return nil, false
+		}
+		leftNumber, leftOK := leftValue.(float64)
+		rightNumber, rightOK := rightValue.(float64)
+		if !leftOK || !rightOK {
+			return nil, false
+		}
+		var result float64
+		switch expr.op {
+		case "+":
+			result = leftNumber + rightNumber
+		case "-":
+			result = leftNumber - rightNumber
+		case "*":
+			result = leftNumber * rightNumber
+		case "/":
+			if rightNumber == 0 {
+				return nil, false
+			}
+			result = leftNumber / rightNumber
+		case "%":
+			if rightNumber == 0 {
+				return nil, false
+			}
+			quotient := float64(int64(leftNumber / rightNumber))
+			result = leftNumber - quotient*rightNumber
+		default:
+			return nil, false
+		}
+		if result != result || result > 1.7976931348623157e308 || result < -1.7976931348623157e308 {
+			return nil, false
+		}
+		return result, true
+	default:
+		return nil, false
+	}
 }
 
 func parseFilterPath(raw string) ([]string, error) {
@@ -647,17 +816,31 @@ func matchesFilter(current any, expr *filterExpr) bool {
 		return false
 	}
 
-	leftValue, ok := filterValue(current, expr.path)
-	if !ok {
-		return false
-	}
+	var leftValue any
+	var rightValue any
+	var ok bool
 
-	rightValue := expr.literal
-	if expr.rightIsPath {
-		var found bool
-		rightValue, found = filterValue(current, expr.rightPath)
-		if !found {
+	if expr.leftValue != nil {
+		leftValue, ok = evalFilterValue(current, expr.leftValue)
+		if !ok {
 			return false
+		}
+		rightValue, ok = evalFilterValue(current, expr.rightValue)
+		if !ok {
+			return false
+		}
+	} else {
+		// Backward-compatible fallback for expressions built by older code.
+		leftValue, ok = filterValue(current, expr.path)
+		if !ok {
+			return false
+		}
+		rightValue = expr.literal
+		if expr.rightIsPath {
+			rightValue, ok = filterValue(current, expr.rightPath)
+			if !ok {
+				return false
+			}
 		}
 	}
 
