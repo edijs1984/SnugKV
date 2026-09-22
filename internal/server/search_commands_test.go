@@ -446,3 +446,21 @@ func TestACLSearchCategoryAndReadIncludeFTSearch(t *testing.T) {
 		t.Fatal("ft.search missing from @read")
 	}
 }
+
+
+func TestFTDropIndexMissingMatchesRedisError(t *testing.T) {
+	s := newSearchTestServer(t)
+
+	_, err := s.Execute([][]byte{
+		[]byte("FT.DROPINDEX"),
+		[]byte("products"),
+	})
+	if err == nil {
+		t.Fatal("missing index unexpectedly succeeded")
+	}
+
+	want := "SEARCH_INDEX_NOT_FOUND Index not found: products"
+	if err.Error() != want {
+		t.Fatalf("error=%q want=%q", err.Error(), want)
+	}
+}
