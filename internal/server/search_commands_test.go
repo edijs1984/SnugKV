@@ -664,3 +664,151 @@ func TestFTSearchReturnScalarShapes(t *testing.T) {
 		}
 	}
 }
+
+
+func TestFTInfoReportsJSONIndex(t *testing.T) {
+	s := newSearchTestServer(t)
+
+	if _, err := s.Execute([][]byte{
+		[]byte("JSON.SET"),
+		[]byte("product:1"),
+		[]byte("$"),
+		[]byte(`{"category":"books","price":12}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.Execute([][]byte{
+		[]byte("FT.CREATE"),
+		[]byte("products"),
+		[]byte("ON"),
+		[]byte("JSON"),
+		[]byte("PREFIX"),
+		[]byte("1"),
+		[]byte("product:"),
+		[]byte("SCHEMA"),
+		[]byte("$.category"),
+		[]byte("AS"),
+		[]byte("category"),
+		[]byte("TAG"),
+		[]byte("$.price"),
+		[]byte("AS"),
+		[]byte("price"),
+		[]byte("NUMERIC"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	reply, err := s.Execute([][]byte{
+		[]byte("FT.INFO"),
+		[]byte("products"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := string(reply)
+	for _, want := range []string{
+		"index_name",
+		"products",
+		"index_options",
+		"index_definition",
+		"key_type",
+		"JSON",
+		"prefixes",
+		"product:",
+		"default_score",
+		"attributes",
+		"identifier",
+		"$.category",
+		"attribute",
+		"category",
+		"TAG",
+		"$.price",
+		"price",
+		"NUMERIC",
+		"num_docs",
+		"indexing",
+		"percent_indexed",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("FT.INFO reply=%q missing %q", reply, want)
+		}
+	}
+}
+
+func TestFTInfoDocumentCountTracksMutations(t *testing.T) {
+	s := newSearchTestServer(t)
+
+	if _, err := s.Execute([][]byte{
+		[]byte("FT.CREATE"),
+		[]byte("products"),
+		[]byte("ON"),
+		[]byte("JSON"),
+		[]byte("PREFIX"),
+		[]byte("1"),
+		[]byte("product:"),
+		[]byte("SCHEMA"),
+		[]byte("$.category"),
+		[]byte("AS"),
+		[]byte("category"),
+		[]byte("TAG"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, key := range []string{"product:1", "product:2"} {
+		if _, err := s.Execute([][]byte{
+			[]byte("JSON.SET"),
+			[]byte(key),
+			[]byte("$"),
+			[]byte(`{"category":"books"}`),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	reply, err := s.Execute([][]byte{
+		[]byte("FT.INFO"),
+		[]byte("products"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(reply), "$8\r\nnum_docs\r\n:2\r\n") {
+		t.Fatalf("FT.INFO before delete=%q", reply)
+	}
+
+	if _, err := s.Execute([][]byte{
+		[]byte("DEL"),
+		[]byte("product:2"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	reply, err = s.Execute([][]byte{
+		[]byte("FT.INFO"),
+		[]byte("products"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(reply), "$8\r\nnum_docs\r\n:1\r\n") {
+		t.Fatalf("FT.INFO after delete=%q", reply)
+	}
+}
+
+func TestFTInfoMissingMatchesRedisSearchError(t *testing.T) {
+	s := newSearchTestServer(t)
+
+	_, err := s.Execute([][]byte{
+		[]byte("FT.INFO"),
+		[]byte("missing"),
+	})
+	if err == nil {
+		t.Fatal("FT.INFO missing index unexpectedly succeeded")
+	}
+	if got, want := err.Error(), "SEARCH_INDEX_NOT_FOUND Index not found: missing"; got != want {
+		t.Fatalf("error=%q want=%q", got, want)
+	}
+}
