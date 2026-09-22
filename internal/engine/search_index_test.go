@@ -5,15 +5,15 @@ import (
 	"testing"
 )
 
-func testSearchDefinition() searchDefinition {
-	return searchDefinition{
+func testSearchDefinition() SearchDefinition {
+	return SearchDefinition{
 		Name:     "products",
 		Prefixes: []string{"product:"},
-		Fields: []searchField{
-			{Path: "$.category", Alias: "category", Kind: searchFieldTag},
-			{Path: "$.price", Alias: "price", Kind: searchFieldNumeric},
-			{Path: "$.tags[*]", Alias: "tags", Kind: searchFieldTag},
-			{Path: "$.variants[*].price", Alias: "variant_price", Kind: searchFieldNumeric},
+		Fields: []SearchField{
+			{Path: "$.category", Alias: "category", Kind: SearchFieldTag},
+			{Path: "$.price", Alias: "price", Kind: SearchFieldNumeric},
+			{Path: "$.tags[*]", Alias: "tags", Kind: SearchFieldTag},
+			{Path: "$.variants[*].price", Alias: "variant_price", Kind: SearchFieldNumeric},
 		},
 	}
 }
@@ -25,7 +25,7 @@ func TestSearchDefinitionValidation(t *testing.T) {
 
 	duplicate := testSearchDefinition()
 	duplicate.Fields = append(duplicate.Fields,
-		searchField{Path: "$.other", Alias: "price", Kind: searchFieldTag},
+		SearchField{Path: "$.other", Alias: "price", Kind: SearchFieldTag},
 	)
 	if err := validateSearchDefinition(duplicate); err == nil {
 		t.Fatal("expected duplicate alias error")
@@ -189,6 +189,29 @@ func TestSearchIntersectionDeterministic(t *testing.T) {
 	want := []string{"product:1"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("intersection=%v want=%v", got, want)
+	}
+}
+
+func TestStoreSearchManagerIsLazy(t *testing.T) {
+	store, err := NewWithShards(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.getSearchManager() != nil {
+		t.Fatal("search manager should be nil before first index")
+	}
+	if got := store.SearchMemoryBytes(); got != 0 {
+		t.Fatalf("search memory=%d want=0", got)
+	}
+
+	if err := store.CreateSearchIndex(testSearchDefinition()); err != nil {
+		t.Fatal(err)
+	}
+	if store.getSearchManager() == nil {
+		t.Fatal("search manager was not initialized")
+	}
+	if got, want := store.SearchIndexNames(), []string{"products"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("names=%v want=%v", got, want)
 	}
 }
 
