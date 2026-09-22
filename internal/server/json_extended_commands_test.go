@@ -452,3 +452,37 @@ func TestJSONLegacyRootAliasDelete(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+
+func TestJSONPathRecursiveCoreCommands(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "JSON.SET", "doc", "$",
+		`{"name":"root","nested":{"name":"child","deep":{"name":"leaf"}},"users":[{"id":1,"profile":{"id":10}},{"id":2}]}`)
+
+	if got := execute(t, s, "JSON.GET", "doc", "$..name"); got != "$23\r\n[\"root\",\"child\",\"leaf\"]\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.GET", "doc", "$.users..id"); got != "$8\r\n[1,10,2]\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.TYPE", "doc", "$..name"); got != "*3\r\n$6\r\nstring\r\n$6\r\nstring\r\n$6\r\nstring\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.SET", "doc", "$..name", `"changed"`); got != "+OK\r\n" {
+		t.Fatal(got)
+	}
+	if got := execute(t, s, "JSON.GET", "doc", "$..name"); got != "$31\r\n[\"changed\",\"changed\",\"changed\"]\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.DEL", "doc", "$.users..id"); got != ":3\r\n" {
+		t.Fatal(got)
+	}
+	if got := execute(t, s, "JSON.GET", "doc", "$.users..id"); got != "$2\r\n[]\r\n" {
+		t.Fatal(got)
+	}
+}
