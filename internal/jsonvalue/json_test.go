@@ -118,9 +118,64 @@ func TestExactJSONPathInvalidSyntax(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, path := range []string{"", "a", "$.", "$..a", "$[", "$.a[", "$.a[]", "$.a[x]"} {
+	for _, path := range []string{"", "$.", "$..a", "$[", "$.a[", "$.a[]", "$.a[x]"} {
 		if _, _, err := Get(root, path); err == nil {
 			t.Fatalf("accepted invalid path %q", path)
 		}
+	}
+}
+
+
+func TestJSONPathWildcardMatchesAndMutates(t *testing.T) {
+	root, err := Parse([]byte(`{"items":[{"score":1},{"score":2},{"score":3}],"obj":{"a":1,"b":2}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	values, err := Matches(root, "$.items[*].score")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []any{float64(1), float64(2), float64(3)}
+	if !reflect.DeepEqual(values, want) {
+		t.Fatalf("matches got %#v want %#v", values, want)
+	}
+
+	root, count, err := SetMatches(root, "$.items[*].score", float64(9))
+	if err != nil || count != 3 {
+		t.Fatalf("set count=%d err=%v", count, err)
+	}
+
+	values, err = Matches(root, "$.items[*].score")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = []any{float64(9), float64(9), float64(9)}
+	if !reflect.DeepEqual(values, want) {
+		t.Fatalf("updated matches got %#v want %#v", values, want)
+	}
+
+	root, count, err = DeleteMatches(root, "$.obj.*")
+	if err != nil || count != 2 {
+		t.Fatalf("delete count=%d err=%v", count, err)
+	}
+	value, found, err := Get(root, ".obj")
+	if err != nil || !found {
+		t.Fatalf("legacy get found=%v err=%v", found, err)
+	}
+	if !reflect.DeepEqual(value, map[string]any{}) {
+		t.Fatalf("object after wildcard delete: %#v", value)
+	}
+}
+
+func TestLegacyPathWithoutLeadingDot(t *testing.T) {
+	root, err := Parse([]byte(`{"a":{"b":2}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	value, found, err := Get(root, "a.b")
+	if err != nil || !found || value != float64(2) {
+		t.Fatalf("got %#v found=%v err=%v", value, found, err)
 	}
 }
