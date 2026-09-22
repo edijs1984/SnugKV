@@ -675,7 +675,7 @@ func TestJSONPathNumericFunctionCoreCommands(t *testing.T) {
 		t.Fatal(got)
 	}
 
-	if got := execute(t, s, "JSON.GET", "doc", "$.items[*].name"); got != "$27\r\n[\"a\",\"b\",\"rounded\",\"rounded\"]\r\n" {
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[*].name"); got != "$29\r\n[\"a\",\"b\",\"rounded\",\"rounded\"]\r\n" {
 		t.Fatal(got)
 	}
 }
