@@ -19,6 +19,7 @@ echo
 echo "=== reset ==="
 run FLUSHDB
 run FT.DROPINDEX products
+run FT.DROPINDEX badpath
 
 echo
 echo "=== seed ==="
@@ -95,7 +96,7 @@ run FT.SEARCH products '*' NOCONTENT SORTBY missing
 
 echo
 echo "=== mutation visibility ==="
-run JSON.SET product:1 '$' '{"category":"books","price":10,"title":"A","description":"Memory Guide"}'
+run JSON.SET product:1 '$.category' '"games"'
 run FT.SEARCH products '@category:{books}' NOCONTENT
 run FT.SEARCH products '@category:{games}' NOCONTENT
 
