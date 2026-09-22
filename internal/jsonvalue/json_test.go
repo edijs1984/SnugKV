@@ -179,3 +179,70 @@ func TestLegacyPathWithoutLeadingDot(t *testing.T) {
 		t.Fatalf("got %#v found=%v err=%v", value, found, err)
 	}
 }
+
+
+func TestJSONPathRecursiveDescent(t *testing.T) {
+	root, err := Parse([]byte(`{
+		"name":"root",
+		"nested":{"name":"child","deep":{"name":"leaf"}},
+		"users":[{"id":1,"profile":{"id":10}},{"id":2}]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	values, err := Matches(root, "$..name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []any{"root", "child", "leaf"}
+	if !reflect.DeepEqual(values, want) {
+		t.Fatalf("$..name got %#v want %#v", values, want)
+	}
+
+	values, err = Matches(root, "$.users..id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = []any{float64(1), float64(10), float64(2)}
+	if !reflect.DeepEqual(values, want) {
+		t.Fatalf("$.users..id got %#v want %#v", values, want)
+	}
+}
+
+func TestJSONPathRecursiveSetAndDelete(t *testing.T) {
+	root, err := Parse([]byte(`{
+		"a":{"score":1,"nested":{"score":2}},
+		"b":[{"score":3},{"x":1}]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	root, count, err := SetMatches(root, "$..score", float64(9))
+	if err != nil || count != 3 {
+		t.Fatalf("set count=%d err=%v", count, err)
+	}
+
+	values, err := Matches(root, "$..score")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []any{float64(9), float64(9), float64(9)}
+	if !reflect.DeepEqual(values, want) {
+		t.Fatalf("scores got %#v want %#v", values, want)
+	}
+
+	root, count, err = DeleteMatches(root, "$..score")
+	if err != nil || count != 3 {
+		t.Fatalf("delete count=%d err=%v", count, err)
+	}
+
+	values, err = Matches(root, "$..score")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(values) != 0 {
+		t.Fatalf("scores remain: %#v", values)
+	}
+}
