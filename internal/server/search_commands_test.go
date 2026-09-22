@@ -1132,7 +1132,7 @@ func TestFTSearchNestedBooleanExpressions(t *testing.T) {
 	}{
 		{
 			name:  "nested or then and",
-			query: "(@category:{books} | @category:{games}) @price:[20 30]",
+			query: "((@category:{books}) | (@category:{games})) @price:[20 30]",
 			want:  "*3\r\n:2\r\n$9\r\nproduct:2\r\n$9\r\nproduct:3\r\n",
 		},
 		{
@@ -1142,7 +1142,7 @@ func TestFTSearchNestedBooleanExpressions(t *testing.T) {
 		},
 		{
 			name:  "negated group",
-			query: "-(@category:{games} | @price:[30 30])",
+			query: "-((@category:{games}) | (@price:[30 30]))",
 			want:  "*2\r\n:1\r\n$9\r\nproduct:1\r\n",
 		},
 		{
@@ -1169,6 +1169,27 @@ func TestFTSearchNestedBooleanExpressions(t *testing.T) {
 				t.Fatalf("reply=%q want=%q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestFTSearchNestedBooleanRejectsRedisInvalidGrouping(t *testing.T) {
+	s := newSearchTestServer(t)
+	createProductSearchFixture(t, s)
+
+	for _, query := range []string{
+		"(@category:{books} | @category:{games}) @price:[20 30]",
+		"-(@category:{games} | @price:[30 30])",
+	} {
+		if _, err := s.Execute([][]byte{
+			[]byte("FT.SEARCH"),
+			[]byte("products"),
+			[]byte(query),
+			[]byte("NOCONTENT"),
+			[]byte("DIALECT"),
+			[]byte("2"),
+		}); err == nil {
+			t.Fatalf("query %q unexpectedly succeeded", query)
+		}
 	}
 }
 
