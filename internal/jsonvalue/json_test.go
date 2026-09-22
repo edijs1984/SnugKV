@@ -592,3 +592,62 @@ func TestJSONPathSetRelationAndSizeMutation(t *testing.T) {
 		t.Fatalf("remaining values=%#v", values)
 	}
 }
+
+
+func TestJSONPathArithmeticFilters(t *testing.T) {
+	root, err := Parse([]byte(`{
+		"items":[
+			{"a":2,"b":3,"name":"x"},
+			{"a":5,"b":2,"name":"y"},
+			{"a":9,"b":0,"name":"z"}
+		]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		path string
+		want []any
+	}{
+		{"$.items[?(@.a + 1 == 3)].name", []any{"x"}},
+		{"$.items[?(@.a + @.b * 2 == 8)].name", []any{"x"}},
+		{"$.items[?((@.a + @.b) * 2 == 10)].name", []any{"x"}},
+		{"$.items[?(-@.a == -5)].name", []any{"y"}},
+		{"$.items[?(+@.a == 9)].name", []any{"z"}},
+		{"$.items[?(@.a / @.b > 2)].name", []any{"y"}},
+		{"$.items[?(@.a % 2 == 1)].name", []any{"y", "z"}},
+		{"$.items[?(@.a / @.b > 0)].name", []any{"y"}},
+	}
+
+	for _, tc := range cases {
+		got, err := Matches(root, tc.path)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.path, err)
+		}
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Fatalf("%s got %#v want %#v", tc.path, got, tc.want)
+		}
+	}
+}
+
+func TestJSONPathArithmeticFilterMutation(t *testing.T) {
+	root, err := Parse([]byte(`{"items":[{"price":10,"qty":2},{"price":30,"qty":4},{"price":5,"qty":50}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	root, count, err := SetMatches(root, "$.items[?(@.price * @.qty >= 100)].selected", true)
+	if err != nil || count != 2 {
+		t.Fatalf("set count=%d err=%v", count, err)
+	}
+
+	got, err := Matches(root, "$.items[?(@.selected == true)].price")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []any{float64(30), float64(5)}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v want %#v", got, want)
+	}
+}
