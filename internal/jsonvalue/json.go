@@ -620,7 +620,7 @@ func parseFilterValueExpr(raw string) (*filterValueExpr, error) {
 	// Parse zero-argument postfix functions before argument-taking postfix
 	// functions so chained expressions are resolved from the outside inward.
 	// Example: @.n.append(7,8).length() => length(append(@.n,7,8)).
-	for _, name := range []string{"length", "abs", "ceiling", "floor", "min", "max", "sum", "avg", "stddev", "keys", "first", "last"} {
+	for _, name := range []string{"length", "abs", "ceiling", "floor", "min", "max", "sum", "avg", "stddev", "keys", "count", "value", "first", "last"} {
 		suffix := "." + name + "()"
 		if strings.HasSuffix(raw, suffix) {
 			base := strings.TrimSpace(raw[:len(raw)-len(suffix)])
@@ -744,7 +744,7 @@ func parseFilterValueExpr(raw string) (*filterValueExpr, error) {
 		}
 	}
 
-	for _, name := range []string{"length", "abs", "ceiling", "floor", "min", "max", "sum", "avg", "stddev", "keys"} {
+	for _, name := range []string{"length", "abs", "ceiling", "floor", "min", "max", "sum", "avg", "stddev", "keys", "count", "value"} {
 		prefix := name + "("
 		if strings.HasPrefix(raw, prefix) && strings.HasSuffix(raw, ")") {
 			inner := strings.TrimSpace(raw[len(prefix) : len(raw)-1])
@@ -874,6 +874,20 @@ func evalFilterValue(current any, expr *filterValueExpr) (any, bool) {
 	case "literal":
 		return expr.literal, true
 	case "func":
+		if expr.op == "count" || expr.op == "value" {
+			nodes, ok := evalFilterNodeList(current, expr.left)
+			if !ok {
+				return nil, false
+			}
+			if expr.op == "count" {
+				return float64(len(nodes)), true
+			}
+			if len(nodes) != 1 {
+				return nil, false
+			}
+			return nodes[0], true
+		}
+
 		value, ok := evalFilterValue(current, expr.left)
 		if !ok {
 			return nil, false
@@ -1197,6 +1211,49 @@ func isFilterSpace(ch byte) bool {
 	}
 }
 
+
+func evalFilterNodeList(current any, expr *filterValueExpr) ([]any, bool) {
+	if expr == nil || expr.kind != "path" {
+		return nil, false
+	}
+
+	nodes := []any{current}
+	for _, field := range expr.path {
+		next := make([]any, 0)
+		for _, node := range nodes {
+			if field == "*" {
+				switch value := node.(type) {
+				case []any:
+					next = append(next, value...)
+				case map[string]any:
+					keys := make([]string, 0, len(value))
+					for key := range value {
+						keys = append(keys, key)
+					}
+					sort.Strings(keys)
+					for _, key := range keys {
+						next = append(next, value[key])
+					}
+				}
+				continue
+			}
+
+			object, ok := node.(map[string]any)
+			if !ok {
+				continue
+			}
+			value, ok := object[field]
+			if ok {
+				next = append(next, value)
+			}
+		}
+		nodes = next
+		if len(nodes) == 0 {
+			break
+		}
+	}
+	return nodes, true
+}
 
 func filterValue(current any, fields []string) (any, bool) {
 	value := current
