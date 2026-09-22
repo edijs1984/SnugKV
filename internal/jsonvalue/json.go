@@ -14,14 +14,20 @@ const (
 	pathMember pathTokenKind = iota
 	pathIndex
 	pathWildcard
+	pathSlice
+	pathUnion
 	pathRecursiveMember
 	pathRecursiveWildcard
 )
 
 type pathToken struct {
-	kind   pathTokenKind
-	member string
-	index  int
+	kind       pathTokenKind
+	member     string
+	index      int
+	indices    []int
+	sliceStart *int
+	sliceEnd   *int
+	sliceStep  *int
 }
 
 func Parse(raw []byte) (any, error) {
@@ -211,19 +217,77 @@ func parseBracketToken(path string, start int) (pathToken, int, error) {
 		return pathToken{kind: pathMember, member: member}, i + 1, nil
 	}
 
-	indexStart := i
-	if path[i] == '-' {
+	contentStart := i
+	for i < len(path) && path[i] != ']' {
 		i++
 	}
-	digitStart := i
-	for i < len(path) && path[i] >= '0' && path[i] <= '9' {
-		i++
+	if i >= len(path) || path[i] != ']' {
+		return pathToken{}, 0, errors.New("ERR invalid JSON path")
 	}
-	if digitStart == i || i >= len(path) || path[i] != ']' {
+	content := path[contentStart:i]
+	if content == "" {
 		return pathToken{}, 0, errors.New("ERR invalid JSON path")
 	}
 
-	index, err := strconv.Atoi(path[indexStart:i])
+	if strings.Contains(content, ":") {
+		parts := strings.Split(content, ":")
+		if len(parts) < 2 || len(parts) > 3 {
+			return pathToken{}, 0, errors.New("ERR invalid JSON path")
+		}
+		parseOptional := func(raw string) (*int, error) {
+			if raw == "" {
+				return nil, nil
+			}
+			value, err := strconv.Atoi(raw)
+			if err != nil {
+				return nil, errors.New("ERR invalid JSON path")
+			}
+			return &value, nil
+		}
+
+		sliceStart, err := parseOptional(parts[0])
+		if err != nil {
+			return pathToken{}, 0, err
+		}
+		sliceEnd, err := parseOptional(parts[1])
+		if err != nil {
+			return pathToken{}, 0, err
+		}
+		var sliceStep *int
+		if len(parts) == 3 {
+			sliceStep, err = parseOptional(parts[2])
+			if err != nil {
+				return pathToken{}, 0, err
+			}
+			if sliceStep != nil && *sliceStep == 0 {
+				return pathToken{}, 0, errors.New("ERR invalid JSON path")
+			}
+		}
+		return pathToken{
+			kind:       pathSlice,
+			sliceStart: sliceStart,
+			sliceEnd:   sliceEnd,
+			sliceStep:  sliceStep,
+		}, i + 1, nil
+	}
+
+	if strings.Contains(content, ",") {
+		parts := strings.Split(content, ",")
+		indices := make([]int, 0, len(parts))
+		for _, part := range parts {
+			if part == "" {
+				return pathToken{}, 0, errors.New("ERR invalid JSON path")
+			}
+			index, err := strconv.Atoi(part)
+			if err != nil {
+				return pathToken{}, 0, errors.New("ERR invalid JSON path")
+			}
+			indices = append(indices, index)
+		}
+		return pathToken{kind: pathUnion, indices: indices}, i + 1, nil
+	}
+
+	index, err := strconv.Atoi(content)
 	if err != nil {
 		return pathToken{}, 0, errors.New("ERR invalid JSON path")
 	}
@@ -238,6 +302,98 @@ func resolveIndex(length, index int) (int, bool) {
 		return 0, false
 	}
 	return index, true
+}
+
+func sliceIndices(length int, start, end, step *int) []int {
+	stride := 1
+	if step != nil {
+		stride = *step
+	}
+
+	if stride > 0 {
+		first := 0
+		last := length
+		if start != nil {
+			first = *start
+			if first < 0 {
+				first += length
+			}
+		}
+		if end != nil {
+			last = *end
+			if last < 0 {
+				last += length
+			}
+		}
+		if first < 0 {
+			first = 0
+		}
+		if first > length {
+			first = length
+		}
+		if last < 0 {
+			last = 0
+		}
+		if last > length {
+			last = length
+		}
+		out := make([]int, 0)
+		for i := first; i < last; i += stride {
+			out = append(out, i)
+		}
+		return out
+	}
+
+	first := length - 1
+	last := -1
+	if start != nil {
+		first = *start
+		if first < 0 {
+			first += length
+		}
+	}
+	if end != nil {
+		last = *end
+		if last < 0 {
+			last += length
+		}
+	}
+	if first >= length {
+		first = length - 1
+	}
+	if first < -1 {
+		first = -1
+	}
+	if last >= length {
+		last = length - 1
+	}
+	if last < -1 {
+		last = -1
+	}
+	out := make([]int, 0)
+	for i := first; i > last; i += stride {
+		if i >= 0 && i < length {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+func unionIndices(length int, raw []int) []int {
+	out := make([]int, 0, len(raw))
+	seen := make(map[int]struct{}, len(raw))
+	for _, index := range raw {
+		resolved, ok := resolveIndex(length, index)
+		if !ok {
+			continue
+		}
+		if _, exists := seen[resolved]; exists {
+			continue
+		}
+		seen[resolved] = struct{}{}
+		out = append(out, resolved)
+	}
+	return out
 }
 
 func Get(root any, path string) (any, bool, error) {
@@ -473,6 +629,24 @@ func collectMatches(current any, tokens []pathToken, out *[]any) {
 			collectMatches(array[index], rest, out)
 		}
 
+	case pathSlice:
+		array, ok := current.([]any)
+		if !ok {
+			return
+		}
+		for _, index := range sliceIndices(len(array), token.sliceStart, token.sliceEnd, token.sliceStep) {
+			collectMatches(array[index], rest, out)
+		}
+
+	case pathUnion:
+		array, ok := current.([]any)
+		if !ok {
+			return
+		}
+		for _, index := range unionIndices(len(array), token.indices) {
+			collectMatches(array[index], rest, out)
+		}
+
 	case pathWildcard:
 		switch value := current.(type) {
 		case []any:
@@ -597,6 +771,47 @@ func setMatchesAt(current any, tokens []pathToken, value any) (any, int) {
 		updated, count := setMatchesAt(array[index], tokens[1:], value)
 		if count > 0 {
 			array[index] = updated
+		}
+		return array, count
+
+	case pathSlice:
+		array, ok := current.([]any)
+		if !ok {
+			return current, 0
+		}
+		indices := sliceIndices(len(array), token.sliceStart, token.sliceEnd, token.sliceStep)
+		count := 0
+		for _, index := range indices {
+			if last {
+				array[index] = value
+				count++
+				continue
+			}
+			updated, n := setMatchesAt(array[index], rest, value)
+			if n > 0 {
+				array[index] = updated
+				count += n
+			}
+		}
+		return array, count
+
+	case pathUnion:
+		array, ok := current.([]any)
+		if !ok {
+			return current, 0
+		}
+		count := 0
+		for _, index := range unionIndices(len(array), token.indices) {
+			if last {
+				array[index] = value
+				count++
+				continue
+			}
+			updated, n := setMatchesAt(array[index], rest, value)
+			if n > 0 {
+				array[index] = updated
+				count += n
+			}
 		}
 		return array, count
 
@@ -803,6 +1018,52 @@ func deleteMatchesAt(current any, tokens []pathToken) (any, int) {
 		updated, count := deleteMatchesAt(array[index], tokens[1:])
 		if count > 0 {
 			array[index] = updated
+		}
+		return array, count
+
+	case pathSlice:
+		array, ok := current.([]any)
+		if !ok {
+			return current, 0
+		}
+		indices := sliceIndices(len(array), token.sliceStart, token.sliceEnd, token.sliceStep)
+		if last {
+			sort.Sort(sort.Reverse(sort.IntSlice(indices)))
+			for _, index := range indices {
+				array = append(array[:index], array[index+1:]...)
+			}
+			return array, len(indices)
+		}
+		count := 0
+		for _, index := range indices {
+			updated, n := deleteMatchesAt(array[index], rest)
+			if n > 0 {
+				array[index] = updated
+				count += n
+			}
+		}
+		return array, count
+
+	case pathUnion:
+		array, ok := current.([]any)
+		if !ok {
+			return current, 0
+		}
+		indices := unionIndices(len(array), token.indices)
+		if last {
+			sort.Sort(sort.Reverse(sort.IntSlice(indices)))
+			for _, index := range indices {
+				array = append(array[:index], array[index+1:]...)
+			}
+			return array, len(indices)
+		}
+		count := 0
+		for _, index := range indices {
+			updated, n := deleteMatchesAt(array[index], rest)
+			if n > 0 {
+				array[index] = updated
+				count += n
+			}
 		}
 		return array, count
 
