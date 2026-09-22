@@ -606,6 +606,23 @@ func (s *Store) SearchDefinitions() []SearchDefinition {
 	return manager.definitions()
 }
 
+
+func (s *Store) SearchDefinition(name string) (SearchDefinition, bool) {
+	manager := s.getSearchManager()
+	if manager == nil {
+		return SearchDefinition{}, false
+	}
+
+	manager.mu.RLock()
+	defer manager.mu.RUnlock()
+
+	idx, ok := manager.indexes[name]
+	if !ok {
+		return SearchDefinition{}, false
+	}
+	return cloneSearchDefinition(idx.def), true
+}
+
 // RestoreSearchDefinitions atomically replaces the search definition registry
 // and rebuilds all derived postings from the current primary JSON keyspace.
 func (s *Store) RestoreSearchDefinitions(defs []SearchDefinition) error {

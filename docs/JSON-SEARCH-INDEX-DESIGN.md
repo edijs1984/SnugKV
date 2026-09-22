@@ -120,6 +120,20 @@ FT._LIST
 
 This is useful for tooling and restart/rebuild verification.
 
+
+### FT.INFO
+
+Expose the implemented index definition and live document count:
+
+```text
+FT.INFO index
+```
+
+The first subset reports the index name, JSON definition, prefixes, schema
+attributes, indexed document count, and synchronous indexing status. It does not
+invent RediSearch statistics for features SnugKV does not implement, such as
+TEXT term counts, scoring records, or tokenizer memory.
+
 ## Result ordering
 
 Redis Search does not promise a simple lexical key order for unsorted searches,
