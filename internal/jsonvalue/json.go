@@ -14,6 +14,8 @@ const (
 	pathMember pathTokenKind = iota
 	pathIndex
 	pathWildcard
+	pathRecursiveMember
+	pathRecursiveWildcard
 )
 
 type pathToken struct {
@@ -86,7 +88,35 @@ func parsePath(path string) ([]pathToken, error) {
 		switch path[i] {
 		case '.':
 			i++
-			if i >= len(path) || path[i] == '.' || path[i] == '[' {
+			if i >= len(path) {
+				return nil, errors.New("ERR invalid JSON path")
+			}
+
+			if path[i] == '.' {
+				i++
+				if i >= len(path) || path[i] == '[' {
+					return nil, errors.New("ERR invalid JSON path")
+				}
+				if path[i] == '*' {
+					tokens = append(tokens, pathToken{kind: pathRecursiveWildcard})
+					i++
+					continue
+				}
+				start := i
+				for i < len(path) && path[i] != '.' && path[i] != '[' {
+					i++
+				}
+				if start == i {
+					return nil, errors.New("ERR invalid JSON path")
+				}
+				tokens = append(tokens, pathToken{
+					kind:   pathRecursiveMember,
+					member: path[start:i],
+				})
+				continue
+			}
+
+			if path[i] == '[' {
 				return nil, errors.New("ERR invalid JSON path")
 			}
 			if path[i] == '*' {
@@ -459,6 +489,55 @@ func collectMatches(current any, tokens []pathToken, out *[]any) {
 				collectMatches(value[key], rest, out)
 			}
 		}
+
+	case pathRecursiveMember:
+		collectRecursiveMember(current, token.member, rest, out)
+
+	case pathRecursiveWildcard:
+		collectRecursiveWildcard(current, rest, out)
+	}
+}
+
+func collectRecursiveMember(current any, member string, rest []pathToken, out *[]any) {
+	switch value := current.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(value))
+		for key := range value {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			child := value[key]
+			if key == member {
+				collectMatches(child, rest, out)
+			}
+			collectRecursiveMember(child, member, rest, out)
+		}
+	case []any:
+		for _, child := range value {
+			collectRecursiveMember(child, member, rest, out)
+		}
+	}
+}
+
+func collectRecursiveWildcard(current any, rest []pathToken, out *[]any) {
+	switch value := current.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(value))
+		for key := range value {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			child := value[key]
+			collectMatches(child, rest, out)
+			collectRecursiveWildcard(child, rest, out)
+		}
+	case []any:
+		for _, child := range value {
+			collectMatches(child, rest, out)
+			collectRecursiveWildcard(child, rest, out)
+		}
 	}
 }
 
@@ -559,9 +638,109 @@ func setMatchesAt(current any, tokens []pathToken, value any) (any, int) {
 			}
 			return container, count
 		}
+
+	case pathRecursiveMember:
+		return setRecursiveMember(current, token.member, rest, value)
+
+	case pathRecursiveWildcard:
+		return setRecursiveWildcard(current, rest, value)
 	}
 
 	return current, 0
+}
+
+func setRecursiveMember(current any, member string, rest []pathToken, value any) (any, int) {
+	count := 0
+	switch container := current.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(container))
+		for key := range container {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			child := container[key]
+			if key == member {
+				if len(rest) == 0 {
+					container[key] = value
+					count++
+					continue
+				}
+				updated, n := setMatchesAt(child, rest, value)
+				if n > 0 {
+					container[key] = updated
+					count += n
+					child = updated
+				}
+			}
+			updated, n := setRecursiveMember(child, member, rest, value)
+			if n > 0 {
+				container[key] = updated
+				count += n
+			}
+		}
+	case []any:
+		for i := range container {
+			updated, n := setRecursiveMember(container[i], member, rest, value)
+			if n > 0 {
+				container[i] = updated
+				count += n
+			}
+		}
+	}
+	return current, count
+}
+
+func setRecursiveWildcard(current any, rest []pathToken, value any) (any, int) {
+	count := 0
+	switch container := current.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(container))
+		for key := range container {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			child := container[key]
+			if len(rest) == 0 {
+				container[key] = value
+				count++
+				continue
+			}
+			updated, n := setMatchesAt(child, rest, value)
+			if n > 0 {
+				container[key] = updated
+				count += n
+				child = updated
+			}
+			updated, n = setRecursiveWildcard(child, rest, value)
+			if n > 0 {
+				container[key] = updated
+				count += n
+			}
+		}
+	case []any:
+		for i := range container {
+			child := container[i]
+			if len(rest) == 0 {
+				container[i] = value
+				count++
+				continue
+			}
+			updated, n := setMatchesAt(child, rest, value)
+			if n > 0 {
+				container[i] = updated
+				count += n
+				child = updated
+			}
+			updated, n = setRecursiveWildcard(child, rest, value)
+			if n > 0 {
+				container[i] = updated
+				count += n
+			}
+		}
+	}
+	return current, count
 }
 
 func DeleteMatches(root any, path string) (any, int, error) {
@@ -661,7 +840,109 @@ func deleteMatchesAt(current any, tokens []pathToken) (any, int) {
 			}
 			return container, count
 		}
+
+	case pathRecursiveMember:
+		return deleteRecursiveMember(current, token.member, rest)
+
+	case pathRecursiveWildcard:
+		return deleteRecursiveWildcard(current, rest)
 	}
 
 	return current, 0
+}
+
+func deleteRecursiveMember(current any, member string, rest []pathToken) (any, int) {
+	count := 0
+	switch container := current.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(container))
+		for key := range container {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+
+		for _, key := range keys {
+			child := container[key]
+			if key == member {
+				if len(rest) == 0 {
+					delete(container, key)
+					count++
+					continue
+				}
+				updated, n := deleteMatchesAt(child, rest)
+				if n > 0 {
+					container[key] = updated
+					count += n
+					child = updated
+				}
+			}
+			updated, n := deleteRecursiveMember(child, member, rest)
+			if n > 0 {
+				container[key] = updated
+				count += n
+			}
+		}
+
+	case []any:
+		for i := range container {
+			updated, n := deleteRecursiveMember(container[i], member, rest)
+			if n > 0 {
+				container[i] = updated
+				count += n
+			}
+		}
+	}
+	return current, count
+}
+
+func deleteRecursiveWildcard(current any, rest []pathToken) (any, int) {
+	count := 0
+	switch container := current.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(container))
+		for key := range container {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		if len(rest) == 0 {
+			for _, key := range keys {
+				delete(container, key)
+			}
+			return container, len(keys)
+		}
+		for _, key := range keys {
+			child := container[key]
+			updated, n := deleteMatchesAt(child, rest)
+			if n > 0 {
+				container[key] = updated
+				count += n
+				child = updated
+			}
+			updated, n = deleteRecursiveWildcard(child, rest)
+			if n > 0 {
+				container[key] = updated
+				count += n
+			}
+		}
+
+	case []any:
+		if len(rest) == 0 {
+			return []any{}, len(container)
+		}
+		for i := range container {
+			child := container[i]
+			updated, n := deleteMatchesAt(child, rest)
+			if n > 0 {
+				container[i] = updated
+				count += n
+				child = updated
+			}
+			updated, n = deleteRecursiveWildcard(child, rest)
+			if n > 0 {
+				container[i] = updated
+				count += n
+			}
+		}
+	}
+	return current, count
 }
