@@ -36,8 +36,8 @@ func TestSearchDefinitionValidation(t *testing.T) {
 
 	invalidPath := testSearchDefinition()
 	invalidPath.Fields[0].Path = "$["
-	if err := validateSearchDefinition(invalidPath); err == nil {
-		t.Fatal("expected invalid path error")
+	if err := validateSearchDefinition(invalidPath); err != nil {
+		t.Fatalf("malformed JSONPath definition should be accepted like Redis: %v", err)
 	}
 }
 

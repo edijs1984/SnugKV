@@ -92,11 +92,8 @@ func validateSearchDefinition(def SearchDefinition) error {
 		if field.Path == "" || field.Alias == "" {
 			return errors.New("ERR search field path and alias are required")
 		}
-		if _, err := jsonvalue.Matches(map[string]any{}, field.Path); err != nil {
-			return err
-		}
 		if _, exists := aliases[field.Alias]; exists {
-			return errors.New("ERR duplicate search field alias")
+			return errors.New("SEARCH_QUERY_BAD Duplicate field in schema - " + field.Alias)
 		}
 		aliases[field.Alias] = struct{}{}
 
@@ -623,8 +620,7 @@ func (s *Store) SearchDefinition(name string) (SearchDefinition, bool) {
 	return cloneSearchDefinition(idx.def), true
 }
 
-// RestoreSearchDefinitions atomically replaces the search definition registry
-// and rebuilds all derived postings from the current primary JSON keyspace.
+
 func (s *Store) RestoreSearchDefinitions(defs []SearchDefinition) error {
 	normalized := make([]SearchDefinition, len(defs))
 	seen := make(map[string]struct{}, len(defs))

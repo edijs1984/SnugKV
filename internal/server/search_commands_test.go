@@ -189,6 +189,8 @@ func TestFTCreateRejectsDuplicateIndexAndAlias(t *testing.T) {
 		[]byte("$.b"), []byte("AS"), []byte("same"), []byte("NUMERIC"),
 	}); err == nil {
 		t.Fatal("duplicate alias unexpectedly succeeded")
+	} else if got, want := err.Error(), "SEARCH_QUERY_BAD Duplicate field in schema - same"; got != want {
+		t.Fatalf("duplicate alias error=%q want=%q", got, want)
 	}
 }
 
@@ -810,5 +812,97 @@ func TestFTInfoMissingMatchesRedisSearchError(t *testing.T) {
 	}
 	if got, want := err.Error(), "SEARCH_INDEX_NOT_FOUND Index not found: missing"; got != want {
 		t.Fatalf("error=%q want=%q", got, want)
+	}
+}
+
+
+func TestFTSearchUnknownOrWrongTypeFieldReturnsZero(t *testing.T) {
+	s := newSearchTestServer(t)
+	createProductSearchFixture(t, s)
+
+	for _, query := range []string{
+		"@missing:{books}",
+		"@price:{10}",
+		"@category:[1 2]",
+	} {
+		reply, err := s.Execute([][]byte{
+			[]byte("FT.SEARCH"),
+			[]byte("products"),
+			[]byte(query),
+			[]byte("NOCONTENT"),
+		})
+		if err != nil {
+			t.Fatalf("query %q: %v", query, err)
+		}
+		if got, want := string(reply), "*1\r\n:0\r\n"; got != want {
+			t.Fatalf("query %q reply=%q want=%q", query, got, want)
+		}
+	}
+}
+
+func TestFTSearchRejectsNonFiniteNumericBounds(t *testing.T) {
+	s := newSearchTestServer(t)
+	createProductSearchFixture(t, s)
+
+	tests := []struct {
+		query string
+		want  string
+	}{
+		{"@price:[NaN 20]", "SEARCH_SYNTAX Syntax error at offset 8 near NaN"},
+		{"@price:[10 NaN]", "SEARCH_SYNTAX Syntax error at offset 11 near NaN"},
+	}
+
+	for _, tc := range tests {
+		_, err := s.Execute([][]byte{
+			[]byte("FT.SEARCH"),
+			[]byte("products"),
+			[]byte(tc.query),
+		})
+		if err == nil {
+			t.Fatalf("query %q unexpectedly succeeded", tc.query)
+		}
+		if got := err.Error(); got != tc.want {
+			t.Fatalf("query %q error=%q want=%q", tc.query, got, tc.want)
+		}
+	}
+}
+
+func TestFTSearchMissingIndexMatchesSearchError(t *testing.T) {
+	s := newSearchTestServer(t)
+
+	_, err := s.Execute([][]byte{
+		[]byte("FT.SEARCH"),
+		[]byte("missing"),
+		[]byte("*"),
+	})
+	if err == nil {
+		t.Fatal("unknown index unexpectedly succeeded")
+	}
+
+	want := "SEARCH_INDEX_NOT_FOUND Index not found: missing"
+	if err.Error() != want {
+		t.Fatalf("error=%q want=%q", err.Error(), want)
+	}
+}
+
+func TestFTCreateAllowsMalformedJSONPathDefinitionLikeRedis(t *testing.T) {
+	s := newSearchTestServer(t)
+
+	reply, err := s.Execute([][]byte{
+		[]byte("FT.CREATE"),
+		[]byte("badpath"),
+		[]byte("ON"),
+		[]byte("JSON"),
+		[]byte("SCHEMA"),
+		[]byte("$["),
+		[]byte("AS"),
+		[]byte("broken"),
+		[]byte("TAG"),
+	})
+	if err != nil {
+		t.Fatalf("FT.CREATE malformed path: %v", err)
+	}
+	if got, want := string(reply), "+OK\r\n"; got != want {
+		t.Fatalf("reply=%q want=%q", got, want)
 	}
 }

@@ -910,7 +910,9 @@ func errorResponse(err error) []byte {
 		!strings.HasPrefix(message, "BUSYGROUP ") &&
 		!strings.HasPrefix(message, "BUSYKEY ") &&
 		!strings.HasPrefix(message, "NOGROUP ") &&
-		!strings.HasPrefix(message, "SEARCH_INDEX_NOT_FOUND ") {
+		!strings.HasPrefix(message, "SEARCH_INDEX_NOT_FOUND ") &&
+		!strings.HasPrefix(message, "SEARCH_SYNTAX ") &&
+		!strings.HasPrefix(message, "SEARCH_QUERY_BAD ") {
 		message = "ERR " + message
 	}
 	return []byte("-" + message + "\r\n")

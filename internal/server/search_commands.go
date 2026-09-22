@@ -2,6 +2,8 @@ package server
 
 import (
 	"errors"
+	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -270,11 +272,15 @@ func splitSearchTerms(query string) ([]string, error) {
 func parseSearchBound(value string) (float64, error) {
 	switch strings.ToLower(value) {
 	case "-inf":
-		return -1.7976931348623157e+308, nil
+		return -math.MaxFloat64, nil
 	case "+inf", "inf":
-		return 1.7976931348623157e+308, nil
+		return math.MaxFloat64, nil
 	default:
-		return strconv.ParseFloat(value, 64)
+		parsed, err := strconv.ParseFloat(value, 64)
+		if err != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) {
+			return 0, errors.New("invalid numeric bound")
+		}
+		return parsed, nil
 	}
 }
 
@@ -327,11 +333,13 @@ func parseSearchQuery(query string) ([]searchQueryClause, error) {
 
 			minimum, err := parseSearchBound(bounds[0])
 			if err != nil {
-				return nil, errors.New("ERR unsupported numeric range")
+				offset := strings.Index(query, bounds[0])
+				return nil, fmt.Errorf("SEARCH_SYNTAX Syntax error at offset %d near %s", offset, bounds[0])
 			}
 			maximum, err := parseSearchBound(bounds[1])
 			if err != nil {
-				return nil, errors.New("ERR unsupported numeric range")
+				offset := strings.Index(query, bounds[1])
+				return nil, fmt.Errorf("SEARCH_SYNTAX Syntax error at offset %d near %s", offset, bounds[1])
 			}
 
 			clauses = append(clauses, searchQueryClause{
@@ -475,7 +483,7 @@ func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 
 	allKeys, ok := store.SearchAllKeys(indexName)
 	if !ok {
-		return nil, errors.New("Unknown Index name")
+		return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
 	}
 
 	candidates := allKeys
@@ -486,7 +494,7 @@ func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 			case clause.tag != nil:
 				keys, ok := store.SearchTagKeys(indexName, clause.alias, *clause.tag)
 				if !ok {
-					return nil, errors.New("Unknown Index name")
+					return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
 				}
 				sets = append(sets, keys)
 
@@ -498,7 +506,7 @@ func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 					*clause.maximum,
 				)
 				if !ok {
-					return nil, errors.New("Unknown Index name")
+					return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
 				}
 				sets = append(sets, keys)
 

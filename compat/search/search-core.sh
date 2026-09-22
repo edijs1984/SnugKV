@@ -89,6 +89,18 @@ run FT.SEARCH products '@category:{games}' RETURN 4 '$.title' '$.price' AS cost
 run FT.SEARCH products '@category:{games}' RETURN 1 '$.missing'
 run FT.SEARCH products '*' RETURN 0 LIMIT 0 1
 
+
+echo
+echo "=== validation errors ==="
+run FT.SEARCH products '@missing:{books}' NOCONTENT
+run FT.SEARCH products '@price:{10}' NOCONTENT
+run FT.SEARCH products '@category:[1 2]' NOCONTENT
+run FT.SEARCH products '@price:[NaN 20]' NOCONTENT
+run FT.SEARCH products '@price:[10 NaN]' NOCONTENT
+run FT.SEARCH missing '*' NOCONTENT
+run FT.CREATE badpath ON JSON SCHEMA '$[' AS broken TAG
+run FT.CREATE dupalias ON JSON SCHEMA '$.a' AS same TAG '$.b' AS same NUMERIC
+
 echo
 echo "=== drop ==="
 run FT.DROPINDEX products
