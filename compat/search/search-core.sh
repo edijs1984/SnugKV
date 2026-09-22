@@ -82,6 +82,14 @@ echo "=== default content shape ==="
 run FT.SEARCH products '@category:{games}' LIMIT 0 1
 
 echo
+echo "=== return projections ==="
+run FT.SEARCH products '@category:{games}' RETURN 1 '$.title'
+run FT.SEARCH products '@category:{games}' RETURN 3 '$.title' AS title
+run FT.SEARCH products '@category:{games}' RETURN 4 '$.title' '$.price' AS cost
+run FT.SEARCH products '@category:{games}' RETURN 1 '$.missing'
+run FT.SEARCH products '*' RETURN 0 LIMIT 0 1
+
+echo
 echo "=== drop ==="
 run FT.DROPINDEX products
 run FT._LIST
