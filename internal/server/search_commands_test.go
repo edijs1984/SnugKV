@@ -1348,3 +1348,85 @@ func TestFTInfoReportsTextField(t *testing.T) {
 		t.Fatalf("FT.INFO reply=%q missing TEXT type", reply)
 	}
 }
+
+
+func TestFTSearchTextMultiTermGroup(t *testing.T) {
+	s := newSearchTestServer(t)
+
+	for _, doc := range []struct {
+		key  string
+		json string
+	}{
+		{"product:1", `{"title":"Memory Guide"}`},
+		{"product:2", `{"title":"Game Server Design"}`},
+		{"product:3", `{"title":"Memory-Search Engine"}`},
+	} {
+		if _, err := s.Execute([][]byte{
+			[]byte("JSON.SET"), []byte(doc.key), []byte("$"), []byte(doc.json),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := s.Execute([][]byte{
+		[]byte("FT.CREATE"), []byte("products"),
+		[]byte("ON"), []byte("JSON"),
+		[]byte("PREFIX"), []byte("1"), []byte("product:"),
+		[]byte("SCHEMA"),
+		[]byte("$.title"), []byte("AS"), []byte("title"), []byte("TEXT"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		query string
+		want  string
+	}{
+		{
+			query: "@title:(memory guide)",
+			want:  "*2\r\n:1\r\n$9\r\nproduct:1\r\n",
+		},
+		{
+			query: "@title:(memory search)",
+			want:  "*2\r\n:1\r\n$9\r\nproduct:3\r\n",
+		},
+		{
+			query: "@title:(memory engine)",
+			want:  "*2\r\n:1\r\n$9\r\nproduct:3\r\n",
+		},
+		{
+			query: "@title:(MEMORY GUIDE)",
+			want:  "*2\r\n:1\r\n$9\r\nproduct:1\r\n",
+		},
+		{
+			query: "@title:(memory server)",
+			want:  "*1\r\n:0\r\n",
+		},
+	}
+
+	for _, tc := range tests {
+		reply, err := s.Execute([][]byte{
+			[]byte("FT.SEARCH"), []byte("products"), []byte(tc.query), []byte("NOCONTENT"),
+		})
+		if err != nil {
+			t.Fatalf("query %q: %v", tc.query, err)
+		}
+		if got := string(reply); got != tc.want {
+			t.Fatalf("query %q reply=%q want=%q", tc.query, got, tc.want)
+		}
+	}
+}
+
+func TestFTSearchTextMultiTermRejectsNonTextField(t *testing.T) {
+	s := newSearchTestServer(t)
+	createProductSearchFixture(t, s)
+
+	if _, err := s.Execute([][]byte{
+		[]byte("FT.SEARCH"),
+		[]byte("products"),
+		[]byte("@price:(10 20)"),
+		[]byte("NOCONTENT"),
+	}); err == nil {
+		t.Fatal("grouped TEXT syntax on NUMERIC field unexpectedly succeeded")
+	}
+}
