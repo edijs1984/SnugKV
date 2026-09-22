@@ -572,3 +572,26 @@ func TestJSONPathLogicalFilterCoreCommands(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+
+func TestJSONPathRegexAndMembershipCoreCommands(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "JSON.SET", "doc", "$",
+		`{"items":[{"name":"alpha","kind":"a","allowed":["a","b"]},{"name":"beta","kind":"c","allowed":["a","b"]},{"name":"ALLOY","kind":"b","allowed":["b","c"]}]}`)
+
+	if got := execute(t, s, "JSON.GET", "doc", `$.items[?(@.name =~ "(?i)al")].name`); got != "$17\r\n[\"alpha\",\"ALLOY\"]\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.GET", "doc", `$.items[?(@.kind in ["a","b"])].name`); got != "$17\r\n[\"alpha\",\"ALLOY\"]\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.SET", "doc", `$.items[?(@.kind in @.allowed)].name`, `"matched"`); got != "+OK\r\n" {
+		t.Fatal(got)
+	}
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[*].name"); got != "$29\r\n[\"matched\",\"beta\",\"matched\"]\r\n" {
+		t.Fatal(got)
+	}
+}
