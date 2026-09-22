@@ -218,6 +218,7 @@ type searchQueryClause struct {
 	alias      string
 	tag        *string
 	text       *string
+	textPhrase *string
 	textPrefix bool
 	minimum    *float64
 	maximum    *float64
@@ -514,20 +515,30 @@ func (p *searchQueryParser) parsePrimary() (*searchQueryNode, error) {
 func (p *searchQueryParser) readClause() (string, error) {
 	start := p.pos
 	depth := 0
+	quoted := false
 
 	for p.pos < len(p.query) {
 		switch p.query[p.pos] {
+		case '"':
+			quoted = !quoted
+			p.pos++
 		case '{', '[':
-			depth++
+			if !quoted {
+				depth++
+			}
 			p.pos++
 		case '}', ']':
+			if quoted {
+				p.pos++
+				continue
+			}
 			if depth == 0 {
 				return "", errors.New("ERR unsupported search query")
 			}
 			depth--
 			p.pos++
 		case ' ', '\t', '\n', '\r', '|', ')', '(':
-			if depth == 0 {
+			if !quoted && depth == 0 {
 				if p.pos == start {
 					return "", errors.New("ERR unsupported search query")
 				}
@@ -539,7 +550,7 @@ func (p *searchQueryParser) readClause() (string, error) {
 		}
 	}
 
-	if depth != 0 || p.pos == start {
+	if depth != 0 || quoted || p.pos == start {
 		return "", errors.New("ERR unsupported search query")
 	}
 	return strings.TrimSpace(p.query[start:p.pos]), nil
@@ -573,6 +584,15 @@ func parseSearchClause(part, fullQuery string) (searchQueryClause, error) {
 
 	clause.alias = part[1:colon]
 	expr := part[colon+1:]
+
+	if strings.HasPrefix(expr, "\"") && strings.HasSuffix(expr, "\"") {
+		phrase := expr[1 : len(expr)-1]
+		if strings.TrimSpace(phrase) == "" || strings.Contains(phrase, "\"") {
+			return searchQueryClause{}, errors.New("ERR unsupported search query")
+		}
+		clause.textPhrase = &phrase
+		return clause, nil
+	}
 
 	if strings.HasPrefix(expr, "{") && strings.HasSuffix(expr, "}") {
 		value := expr[1 : len(expr)-1]
@@ -981,6 +1001,13 @@ func evaluateSearchQuery(store *engine.Store, indexName string, node *searchQuer
 			}
 			return keys, nil
 
+		case node.clause.textPhrase != nil:
+			keys, ok := store.SearchTextPhraseKeys(indexName, node.clause.alias, *node.clause.textPhrase)
+			if !ok {
+				return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
+			}
+			return keys, nil
+
 		case node.clause.text != nil:
 			var (
 				keys []string
@@ -1073,7 +1100,7 @@ func validateSearchTextAliases(def engine.SearchDefinition, node *searchQueryNod
 
 	switch node.kind {
 	case searchQueryClauseNode:
-		if node.clause == nil || node.clause.text == nil {
+		if node.clause == nil || (node.clause.text == nil && node.clause.textPhrase == nil) {
 			return nil
 		}
 		for _, field := range def.Fields {
