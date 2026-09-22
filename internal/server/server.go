@@ -254,15 +254,29 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			path = string(args[2])
 		}
 
+		if strings.HasPrefix(path, "$") {
+			types, found, err := s.store.JSONTypes(key, path)
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				return nullBulk(), nil
+			}
+
+			items := make([][]byte, 0, len(types))
+			for _, jsonType := range types {
+				items = append(items, formatBulkString([]byte(jsonType)))
+			}
+			return array(items...), nil
+		}
+
 		jsonType, found, err := s.store.JSONType(key, path)
 		if err != nil {
 			return nil, err
 		}
-
 		if !found {
 			return nullBulk(), nil
 		}
-
 		return formatBulkString([]byte(jsonType)), nil
 
 	case "JSON.ARRAPPEND":
