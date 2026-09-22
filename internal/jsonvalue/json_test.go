@@ -738,3 +738,62 @@ func TestJSONPathNumericFunctionMutation(t *testing.T) {
 		t.Fatalf("got %#v want %#v", got, want)
 	}
 }
+
+
+func TestJSONPathArrayAccessFunctions(t *testing.T) {
+	root, err := Parse([]byte(`{
+		"items":[
+			{"n":[1,2,3],"name":"a"},
+			{"n":[9,8],"name":"b"},
+			{"n":[],"name":"c"},
+			{"n":"no","name":"d"}
+		]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		path string
+		want []any
+	}{
+		{"$.items[?first(@.n) == 1].name", []any{"a"}},
+		{"$.items[?(@.n.first() == 9)].name", []any{"b"}},
+		{"$.items[?last(@.n) == 3].name", []any{"a"}},
+		{"$.items[?(@.n.last() == 8)].name", []any{"b"}},
+		{"$.items[?index(@.n, -1) == 2].name", []any{"a"}},
+		{"$.items[?(@.n.index(-1) == 8)].name", []any{"b"}},
+		{"$.items[?index(@.n, 1.9) == 2].name", []any{"a"}},
+	}
+
+	for _, tc := range cases {
+		got, err := Matches(root, tc.path)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.path, err)
+		}
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Fatalf("%s got %#v want %#v", tc.path, got, tc.want)
+		}
+	}
+}
+
+func TestJSONPathArrayAccessFunctionMutation(t *testing.T) {
+	root, err := Parse([]byte(`{"items":[{"n":[1,2]},{"n":[9,8]},{"n":[]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	root, count, err := SetMatches(root, "$.items[?last(@.n) == 8].hit", true)
+	if err != nil || count != 1 {
+		t.Fatalf("set count=%d err=%v", count, err)
+	}
+
+	got, err := Matches(root, "$.items[?(@.hit == true)].n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []any{[]any{float64(9), float64(8)}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v want %#v", got, want)
+	}
+}
