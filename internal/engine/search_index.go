@@ -364,6 +364,25 @@ func sortedPostingKeys(postings map[string]struct{}) []string {
 	return keys
 }
 
+
+
+func (m *searchManager) allKeys(indexName string) ([]string, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	idx, ok := m.indexes[indexName]
+	if !ok {
+		return nil, false
+	}
+
+	keys := make([]string, 0, len(idx.docs))
+	for key := range idx.docs {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys, true
+}
+
 func (m *searchManager) tagKeys(indexName, alias, value string) ([]string, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -568,6 +587,16 @@ func (s *Store) SearchIndexNames() []string {
 		return []string{}
 	}
 	return manager.names()
+}
+
+
+
+func (s *Store) SearchAllKeys(indexName string) ([]string, bool) {
+	manager := s.getSearchManager()
+	if manager == nil {
+		return nil, false
+	}
+	return manager.allKeys(indexName)
 }
 
 func (s *Store) SearchTagKeys(indexName, alias, value string) ([]string, bool) {
