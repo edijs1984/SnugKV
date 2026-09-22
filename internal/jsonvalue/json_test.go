@@ -761,7 +761,7 @@ func TestJSONPathArrayAccessFunctions(t *testing.T) {
 		{"$.items[?(@.n.first() == 9)].name", []any{"b"}},
 		{"$.items[?last(@.n) == 3].name", []any{"a"}},
 		{"$.items[?(@.n.last() == 8)].name", []any{"b"}},
-		{"$.items[?index(@.n, -1) == 2].name", []any{"a"}},
+		{"$.items[?index(@.n, -1) == 3].name", []any{"a"}},
 		{"$.items[?(@.n.index(-1) == 8)].name", []any{"b"}},
 		{"$.items[?index(@.n, 1.9) == 2].name", []any{"a"}},
 	}
