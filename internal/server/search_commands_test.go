@@ -150,7 +150,7 @@ func TestFTCreateValidation(t *testing.T) {
 				[]byte("FT.CREATE"), []byte("idx"),
 				[]byte("ON"), []byte("JSON"),
 				[]byte("SCHEMA"),
-				[]byte("$.x"), []byte("AS"), []byte("x"), []byte("TEXT"),
+				[]byte("$.x"), []byte("AS"), []byte("x"), []byte("GEO"),
 			},
 		},
 	}
@@ -1210,5 +1210,141 @@ func TestFTSearchNestedBooleanRejectsUnbalancedParentheses(t *testing.T) {
 		}); err == nil {
 			t.Fatalf("query %q unexpectedly succeeded", query)
 		}
+	}
+}
+
+
+func TestFTSearchTextBasic(t *testing.T) {
+	s := newSearchTestServer(t)
+
+	for _, doc := range []struct {
+		key  string
+		json string
+	}{
+		{"product:1", `{"title":"Memory Guide"}`},
+		{"product:2", `{"title":"Game Server Design"}`},
+		{"product:3", `{"title":"Memory-Search Engine"}`},
+	} {
+		if _, err := s.Execute([][]byte{
+			[]byte("JSON.SET"), []byte(doc.key), []byte("$"), []byte(doc.json),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := s.Execute([][]byte{
+		[]byte("FT.CREATE"), []byte("products"),
+		[]byte("ON"), []byte("JSON"),
+		[]byte("PREFIX"), []byte("1"), []byte("product:"),
+		[]byte("SCHEMA"),
+		[]byte("$.title"), []byte("AS"), []byte("title"), []byte("TEXT"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		query string
+		want  string
+	}{
+		{
+			query: "@title:memory",
+			want:  "*3\r\n:2\r\n$9\r\nproduct:1\r\n$9\r\nproduct:3\r\n",
+		},
+		{
+			query: "@title:MEMORY",
+			want:  "*3\r\n:2\r\n$9\r\nproduct:1\r\n$9\r\nproduct:3\r\n",
+		},
+		{
+			query: "@title:search",
+			want:  "*2\r\n:1\r\n$9\r\nproduct:3\r\n",
+		},
+		{
+			query: "@title:server",
+			want:  "*2\r\n:1\r\n$9\r\nproduct:2\r\n",
+		},
+	}
+
+	for _, tc := range tests {
+		reply, err := s.Execute([][]byte{
+			[]byte("FT.SEARCH"), []byte("products"), []byte(tc.query), []byte("NOCONTENT"),
+		})
+		if err != nil {
+			t.Fatalf("query %q: %v", tc.query, err)
+		}
+		if got := string(reply); got != tc.want {
+			t.Fatalf("query %q reply=%q want=%q", tc.query, got, tc.want)
+		}
+	}
+}
+
+func TestFTSearchTextMutationVisibility(t *testing.T) {
+	s := newSearchTestServer(t)
+
+	if _, err := s.Execute([][]byte{
+		[]byte("FT.CREATE"), []byte("products"),
+		[]byte("ON"), []byte("JSON"),
+		[]byte("PREFIX"), []byte("1"), []byte("product:"),
+		[]byte("SCHEMA"),
+		[]byte("$.title"), []byte("AS"), []byte("title"), []byte("TEXT"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.Execute([][]byte{
+		[]byte("JSON.SET"), []byte("product:1"), []byte("$"),
+		[]byte(`{"title":"Memory Guide"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	reply, err := s.Execute([][]byte{
+		[]byte("FT.SEARCH"), []byte("products"), []byte("@title:memory"), []byte("NOCONTENT"),
+	})
+	if err != nil || string(reply) != "*2\r\n:1\r\n$9\r\nproduct:1\r\n" {
+		t.Fatalf("initial reply=%q err=%v", reply, err)
+	}
+
+	if _, err := s.Execute([][]byte{
+		[]byte("JSON.SET"), []byte("product:1"), []byte("$.title"),
+		[]byte(`"Storage Engine"`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	reply, err = s.Execute([][]byte{
+		[]byte("FT.SEARCH"), []byte("products"), []byte("@title:memory"), []byte("NOCONTENT"),
+	})
+	if err != nil || string(reply) != "*1\r\n:0\r\n" {
+		t.Fatalf("old token reply=%q err=%v", reply, err)
+	}
+
+	reply, err = s.Execute([][]byte{
+		[]byte("FT.SEARCH"), []byte("products"), []byte("@title:engine"), []byte("NOCONTENT"),
+	})
+	if err != nil || string(reply) != "*2\r\n:1\r\n$9\r\nproduct:1\r\n" {
+		t.Fatalf("new token reply=%q err=%v", reply, err)
+	}
+}
+
+func TestFTInfoReportsTextField(t *testing.T) {
+	s := newSearchTestServer(t)
+
+	if _, err := s.Execute([][]byte{
+		[]byte("FT.CREATE"), []byte("products"),
+		[]byte("ON"), []byte("JSON"),
+		[]byte("SCHEMA"),
+		[]byte("$.title"), []byte("AS"), []byte("title"), []byte("TEXT"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	reply, err := s.Execute([][]byte{
+		[]byte("FT.INFO"), []byte("products"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(reply); !strings.Contains(got, "$4\r\nTEXT\r\n") {
+		t.Fatalf("FT.INFO reply=%q missing TEXT type", reply)
 	}
 }
