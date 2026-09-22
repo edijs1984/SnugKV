@@ -677,6 +677,9 @@ func (s *Store) Rename(source, destination string, nx bool) (bool, error) {
 	value := s.decode(sourceShard, sourceEntry)
 
 	replacement := s.makeEntry(value)
+	// Preserve the logical type. In particular, first-class JSON must remain
+	// TypeJSON after RENAME rather than being reclassified as a plain string.
+	replacement.valueType = sourceEntry.valueType
 
 	// RENAME preserves TTL.
 	replacement.expiresAt = sourceShard.expirationAt(source, sourceEntry)

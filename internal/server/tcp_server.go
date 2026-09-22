@@ -446,15 +446,15 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 					authSession,
 					msg,
 				); handled {
-			if errors.Is(debugErr, errScriptDebugCloseAfterReply) {
-				if writer.write(debugResponse) != nil {
+				if errors.Is(debugErr, errScriptDebugCloseAfterReply) {
+					if writer.write(debugResponse) != nil {
+						return
+					}
 					return
 				}
-				return
-			}
-			if debugErr != nil {
-				debugResponse = errorResponse(debugErr)
-			}
+				if debugErr != nil {
+					debugResponse = errorResponse(debugErr)
+				}
 				if writer.write(debugResponse) != nil {
 					return
 				}
@@ -909,7 +909,8 @@ func errorResponse(err error) []byte {
 		!strings.HasPrefix(message, "NOPERM ") &&
 		!strings.HasPrefix(message, "BUSYGROUP ") &&
 		!strings.HasPrefix(message, "BUSYKEY ") &&
-		!strings.HasPrefix(message, "NOGROUP ") {
+		!strings.HasPrefix(message, "NOGROUP ") &&
+		!strings.HasPrefix(message, "SEARCH_INDEX_NOT_FOUND ") {
 		message = "ERR " + message
 	}
 	return []byte("-" + message + "\r\n")

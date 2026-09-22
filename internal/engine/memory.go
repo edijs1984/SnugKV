@@ -48,7 +48,8 @@ type MemoryStats struct {
 	ArenaPayloadBytes,
 	ArenaLiveBlockBytes,
 	SchemaBytes,
-	MetaBytes uint64
+	MetaBytes,
+	SearchBytes uint64
 }
 
 type LayoutStats struct {
@@ -98,10 +99,12 @@ type accounting struct {
 }
 
 func (s *Store) Memory() MemoryStats {
+	searchBytes := s.SearchMemoryBytes()
+
 	s.memory.mu.Lock()
 	defer s.memory.mu.Unlock()
 	return MemoryStats{
-		AccountedBytes:      s.memory.used,
+		AccountedBytes:      s.memory.used + searchBytes,
 		MaxBytes:            s.memory.max.Load(),
 		IndexReservedBytes:  s.memory.index,
 		EntryBytes:          s.memory.entries,
@@ -110,6 +113,7 @@ func (s *Store) Memory() MemoryStats {
 		ArenaLiveBlockBytes: s.memory.arenaLiveBlocks,
 		SchemaBytes:         s.memory.schemas,
 		MetaBytes:           s.memory.metas,
+		SearchBytes:         searchBytes,
 	}
 }
 
@@ -444,6 +448,20 @@ func (s *Store) publishRecordKnownWithHash(
 
 	sh.schedule(key, e.expiresAt)
 
+	// Secondary search indexes are derived from the committed logical value.
+	// All primary mutation paths converge here, so keep index synchronization
+	// centralized rather than duplicating hooks across command implementations.
+	//
+	// Lock order is shard -> search manager. Search query code must not hold the
+	// search-manager lock while acquiring shard locks.
+	if e.valueType == TypeJSON {
+		if err := s.searchReplaceJSON(key, s.decode(sh, e.entry)); err != nil {
+			panic("search index invariant: " + err.Error())
+		}
+	} else {
+		s.searchRemoveKey(key)
+	}
+
 	return nil
 }
 
@@ -477,6 +495,7 @@ func (s *Store) remove(sh *shard, key string) {
 		sh.delete(key)
 		sh.arena.Free(e.ref)
 		sh.schedule(key, 0)
+		s.searchRemoveKey(key)
 	}
 }
 func (s *Store) Encoding(key string) (string, int, int, bool) {

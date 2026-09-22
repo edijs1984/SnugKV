@@ -7,6 +7,7 @@ import (
 	"snugkv/internal/codec"
 	"snugkv/internal/index"
 	"strconv"
+	"sync/atomic"
 	"time"
 )
 
@@ -114,6 +115,7 @@ type Store struct {
 	sampleCursor     uint64
 	shapeCatalog     globalShapeCatalog
 	hashShapes       hashShapeCatalog
+	search           atomic.Pointer[searchManager]
 }
 
 func New() *Store                             { s, _ := NewWithShards(256); return s }

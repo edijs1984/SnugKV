@@ -154,6 +154,9 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		key = string(args[1])
 	}
 	switch cmd {
+	case "FT.CREATE", "FT.DROPINDEX", "FT._LIST", "FT.SEARCH":
+		return s.executeSearchCommand(args)
+
 	case "CONFIG":
 		return s.executeConfig(args)
 
