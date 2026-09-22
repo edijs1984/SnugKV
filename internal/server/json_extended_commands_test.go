@@ -659,3 +659,23 @@ func TestJSONPathLengthFunctionCoreCommands(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+
+func TestJSONPathNumericFunctionCoreCommands(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "JSON.SET", "doc", "$",
+		`{"items":[{"n":-5,"name":"a"},{"n":5,"name":"b"},{"n":2.1,"name":"c"},{"n":2.9,"name":"d"}]}`)
+
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[?abs(@.n) == 5].name"); got != "$9\r\n[\"a\",\"b\"]\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.SET", "doc", "$.items[?ceiling(@.n) == 3].name", `"rounded"`); got != "+OK\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[*].name"); got != "$27\r\n[\"a\",\"b\",\"rounded\",\"rounded\"]\r\n" {
+		t.Fatal(got)
+	}
+}
