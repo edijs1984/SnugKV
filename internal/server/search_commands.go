@@ -305,14 +305,25 @@ func splitSearchOrGroups(query string) ([]string, error) {
 			}
 			depth--
 		case '|':
-			if depth == 0 {
-				group := strings.TrimSpace(query[start:i])
-				if group == "" {
-					return nil, errors.New("ERR unsupported search query")
-				}
-				groups = append(groups, group)
-				start = i + 1
+			if depth != 0 {
+				continue
 			}
+
+			// Redis Search treats top-level OR as an operator between
+			// expressions. For this flat subset, require whitespace around the
+			// pipe so forms such as "@a:{x}|@b:{y}" remain a syntax error like
+			// the Redis 8.10 reference.
+			if i == 0 || i+1 >= len(query) ||
+				!isSearchSpace(query[i-1]) || !isSearchSpace(query[i+1]) {
+				return nil, errors.New("ERR unsupported search query")
+			}
+
+			group := strings.TrimSpace(query[start:i])
+			if group == "" {
+				return nil, errors.New("ERR unsupported search query")
+			}
+			groups = append(groups, group)
+			start = i + 1
 		}
 	}
 
@@ -326,6 +337,15 @@ func splitSearchOrGroups(query string) ([]string, error) {
 	}
 	groups = append(groups, group)
 	return groups, nil
+}
+
+func isSearchSpace(b byte) bool {
+	switch b {
+	case ' ', '\t', '\n', '\r':
+		return true
+	default:
+		return false
+	}
 }
 
 func parseSearchClause(part, fullQuery string) (searchQueryClause, error) {
