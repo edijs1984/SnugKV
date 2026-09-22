@@ -677,7 +677,7 @@ func parseFilterValueExpr(raw string) (*filterValueExpr, error) {
 		}
 	}
 
-	for _, name := range []string{"length", "abs", "ceiling", "floor"} {
+	for _, name := range []string{"length", "abs", "ceiling", "floor", "min", "max", "sum", "avg", "stddev"} {
 		prefix := name + "("
 		if strings.HasPrefix(raw, prefix) && strings.HasSuffix(raw, ")") {
 			inner := strings.TrimSpace(raw[len(prefix) : len(raw)-1])
@@ -850,6 +850,76 @@ func evalFilterValue(current any, expr *filterValueExpr) (any, bool) {
 				return nil, false
 			}
 			return array[index], true
+
+		case "min", "max", "sum", "avg", "stddev":
+			array, ok := value.([]any)
+			if !ok || len(array) == 0 {
+				return nil, false
+			}
+
+			numbers := make([]float64, len(array))
+			for i, item := range array {
+				number, ok := item.(float64)
+				if !ok || math.IsNaN(number) || math.IsInf(number, 0) {
+					return nil, false
+				}
+				numbers[i] = number
+			}
+
+			switch expr.op {
+			case "min":
+				result := numbers[0]
+				for _, number := range numbers[1:] {
+					if number < result {
+						result = number
+					}
+				}
+				return result, true
+			case "max":
+				result := numbers[0]
+				for _, number := range numbers[1:] {
+					if number > result {
+						result = number
+					}
+				}
+				return result, true
+			case "sum":
+				total := 0.0
+				for _, number := range numbers {
+					total += number
+				}
+				if math.IsNaN(total) || math.IsInf(total, 0) {
+					return nil, false
+				}
+				return total, true
+			case "avg":
+				total := 0.0
+				for _, number := range numbers {
+					total += number
+				}
+				result := total / float64(len(numbers))
+				if math.IsNaN(result) || math.IsInf(result, 0) {
+					return nil, false
+				}
+				return result, true
+			case "stddev":
+				total := 0.0
+				for _, number := range numbers {
+					total += number
+				}
+				mean := total / float64(len(numbers))
+				variance := 0.0
+				for _, number := range numbers {
+					delta := number - mean
+					variance += delta * delta
+				}
+				result := math.Sqrt(variance / float64(len(numbers)))
+				if math.IsNaN(result) || math.IsInf(result, 0) {
+					return nil, false
+				}
+				return result, true
+			}
+			return nil, false
 
 		case "abs", "ceiling", "floor":
 			number, ok := value.(float64)
