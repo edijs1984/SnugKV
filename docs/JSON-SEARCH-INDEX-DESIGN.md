@@ -90,9 +90,11 @@ FT.SEARCH index "@category:{books} -@price:[50 +inf]"
 FT.SEARCH index "-@category:{games}"
 ```
 
-Space-separated clauses are implicit AND. A top-level pipe operator joins parenthesized flat OR groups, and a leading dash (`-`) negates the adjacent field clause. The first boolean-query subset uses parentheses only to delimit top-level OR
-arms. Nested boolean expressions inside those arms are not yet supported; those
-require a real expression tree and separate differential coverage.
+Space-separated expressions are implicit AND, pipe (`|`) is OR, and leading
+dash (`-`) is unary NOT. Boolean queries are parsed into an expression tree
+with precedence `NOT > AND > OR`. Parentheses can override precedence and may
+be nested. The implemented predicate leaves remain the current TAG equality and
+NUMERIC range subset.
 
 Initial options:
 
@@ -575,7 +577,7 @@ Only after measured demand:
 
 - TEXT fields/tokenization;
 - richer SORTBY optimization / sortable-value storage;
-- parenthesized / nested boolean query expressions;
+- broader Redis Search query grammar beyond TAG/NUMERIC predicates;
 - aggregation;
 - GEO;
 - vector search;
