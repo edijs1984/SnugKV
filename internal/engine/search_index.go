@@ -37,9 +37,10 @@ type numericPosting struct {
 }
 
 type searchDocumentState struct {
-	Tags     map[string][]string
-	Numerics map[string][]float64
-	Texts    map[string][]string
+	Tags          map[string][]string
+	Numerics      map[string][]float64
+	Texts         map[string][]string
+	TextSequences map[string][][]string
 }
 
 type searchIndex struct {
@@ -145,7 +146,7 @@ func canonicalSearchTag(value any) (string, bool) {
 	}
 }
 
-func tokenizeSearchText(value string) []string {
+func tokenizeSearchTextSequence(value string) []string {
 	tokens := make([]string, 0, 8)
 	var current []rune
 
@@ -166,7 +167,11 @@ func tokenizeSearchText(value string) []string {
 	}
 	flush()
 
-	return uniqueStrings(tokens)
+	return tokens
+}
+
+func tokenizeSearchText(value string) []string {
+	return uniqueStrings(tokenizeSearchTextSequence(value))
 }
 
 func uniqueStrings(values []string) []string {
@@ -208,9 +213,10 @@ func extractSearchDocument(def SearchDefinition, raw []byte) (searchDocumentStat
 	}
 
 	state := searchDocumentState{
-		Tags:     make(map[string][]string),
-		Numerics: make(map[string][]float64),
-		Texts:    make(map[string][]string),
+		Tags:          make(map[string][]string),
+		Numerics:      make(map[string][]float64),
+		Texts:         make(map[string][]string),
+		TextSequences: make(map[string][][]string),
 	}
 
 	for _, field := range def.Fields {
@@ -236,15 +242,22 @@ func extractSearchDocument(def SearchDefinition, raw []byte) (searchDocumentStat
 
 		case SearchFieldText:
 			tokens := make([]string, 0)
+			sequences := make([][]string, 0, len(values))
 			for _, value := range values {
 				text, ok := value.(string)
 				if !ok {
 					continue
 				}
-				tokens = append(tokens, tokenizeSearchText(text)...)
+				sequence := tokenizeSearchTextSequence(text)
+				if len(sequence) == 0 {
+					continue
+				}
+				sequences = append(sequences, sequence)
+				tokens = append(tokens, sequence...)
 			}
 			if len(tokens) > 0 {
 				state.Texts[field.Alias] = uniqueStrings(tokens)
+				state.TextSequences[field.Alias] = sequences
 			}
 
 		case SearchFieldNumeric:
@@ -539,6 +552,51 @@ func (m *searchManager) textPrefixKeys(indexName, alias, prefix string) ([]strin
 	return sortedPostingKeys(seen), true
 }
 
+func containsSearchPhrase(sequence, phrase []string) bool {
+	if len(phrase) == 0 || len(sequence) < len(phrase) {
+		return false
+	}
+	for start := 0; start+len(phrase) <= len(sequence); start++ {
+		matched := true
+		for i := range phrase {
+			if sequence[start+i] != phrase[i] {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *searchManager) textPhraseKeys(indexName, alias, phrase string) ([]string, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	idx, ok := m.indexes[indexName]
+	if !ok {
+		return nil, false
+	}
+
+	tokens := tokenizeSearchTextSequence(phrase)
+	if len(tokens) == 0 {
+		return []string{}, true
+	}
+
+	matches := make(map[string]struct{})
+	for key, state := range idx.docs {
+		for _, sequence := range state.TextSequences[alias] {
+			if containsSearchPhrase(sequence, tokens) {
+				matches[key] = struct{}{}
+				break
+			}
+		}
+	}
+	return sortedPostingKeys(matches), true
+}
+
 func (idx *searchIndex) ensureNumericSorted(alias string) []numericPosting {
 	if !idx.numericDirty[alias] {
 		return idx.numericSorted[alias]
@@ -649,6 +707,14 @@ func (m *searchManager) memoryBytes() uint64 {
 				bytes += uint64(len(alias))
 				for _, value := range values {
 					bytes += uint64(len(value) + len(key))
+				}
+			}
+			for alias, sequences := range state.TextSequences {
+				bytes += uint64(len(alias))
+				for _, sequence := range sequences {
+					for _, token := range sequence {
+						bytes += uint64(len(token))
+					}
 				}
 			}
 			for alias, values := range state.Numerics {
@@ -839,6 +905,14 @@ func (s *Store) SearchTextPrefixKeys(indexName, alias, prefix string) ([]string,
 		return nil, false
 	}
 	return manager.textPrefixKeys(indexName, alias, prefix)
+}
+
+func (s *Store) SearchTextPhraseKeys(indexName, alias, phrase string) ([]string, bool) {
+	manager := s.getSearchManager()
+	if manager == nil {
+		return nil, false
+	}
+	return manager.textPhraseKeys(indexName, alias, phrase)
 }
 
 func (s *Store) SearchNumericRangeKeys(indexName, alias string, min, max float64) ([]string, bool) {
