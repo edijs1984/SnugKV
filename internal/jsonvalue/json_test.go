@@ -651,3 +651,40 @@ func TestJSONPathArithmeticFilterMutation(t *testing.T) {
 		t.Fatalf("got %#v want %#v", got, want)
 	}
 }
+
+
+func TestJSONPathLengthFunctionFilters(t *testing.T) {
+	root, err := Parse([]byte(`{
+		"items":[
+			{"name":"a","tags":["x","y","z"],"meta":{"x":1,"y":2}},
+			{"name":"bb","tags":["x"],"meta":{"x":1}},
+			{"name":"ccc","tags":[],"meta":{}},
+			{"name":"åä","tags":[1,2],"meta":{"x":1,"y":2,"z":3}},
+			{"name":"skip","tags":42,"meta":null}
+		]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		path string
+		want []any
+	}{
+		{"$.items[?length(@.tags) > 1].name", []any{"a", "åä"}},
+		{"$.items[?(@.tags.length() == 1)].name", []any{"bb"}},
+		{"$.items[?length(@.meta) == 0].name", []any{"ccc"}},
+		{"$.items[?(@.name.length() == 2)].name", []any{"bb", "åä"}},
+		{"$.items[?(length(@.tags) + 1 == 4)].name", []any{"a"}},
+	}
+
+	for _, tc := range cases {
+		got, err := Matches(root, tc.path)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.path, err)
+		}
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Fatalf("%s got %#v want %#v", tc.path, got, tc.want)
+		}
+	}
+}
