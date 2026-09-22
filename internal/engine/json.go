@@ -84,6 +84,16 @@ func (s *Store) JSONSet(
 		return false, nil
 	}
 
+	if !pathExists {
+		staticPath, err := jsonvalue.IsStaticPath(path)
+		if err != nil {
+			return false, err
+		}
+		if !staticPath {
+			return false, errors.New("ERR wrong static path")
+		}
+	}
+
 	updatedRoot, updatedCount, err := jsonvalue.SetMatches(root, path, newValue)
 	if err != nil {
 		return false, err
