@@ -617,6 +617,24 @@ func parseFilterValueExpr(raw string) (*filterValueExpr, error) {
 		raw = strings.TrimSpace(raw[1 : len(raw)-1])
 	}
 
+	// Parse zero-argument postfix functions before argument-taking postfix
+	// functions so chained expressions are resolved from the outside inward.
+	// Example: @.n.append(7,8).length() => length(append(@.n,7,8)).
+	for _, name := range []string{"length", "abs", "ceiling", "floor", "min", "max", "sum", "avg", "stddev", "first", "last"} {
+		suffix := "." + name + "()"
+		if strings.HasSuffix(raw, suffix) {
+			base := strings.TrimSpace(raw[:len(raw)-len(suffix)])
+			if base == "" {
+				return nil, errors.New("ERR invalid JSON path")
+			}
+			arg, err := parseFilterValueExpr(base)
+			if err != nil {
+				return nil, err
+			}
+			return &filterValueExpr{kind: "func", op: name, left: arg}, nil
+		}
+	}
+
 	for _, name := range []string{"first", "last"} {
 		prefix := name + "("
 		if strings.HasPrefix(raw, prefix) && strings.HasSuffix(raw, ")") {
