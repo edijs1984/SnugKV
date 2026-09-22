@@ -639,3 +639,23 @@ func TestJSONPathArithmeticFilterCoreCommands(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+
+func TestJSONPathLengthFunctionCoreCommands(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "JSON.SET", "doc", "$",
+		`{"items":[{"name":"a","tags":["x","y","z"]},{"name":"bb","tags":["x"]},{"name":"åä","tags":[1,2]}]}`)
+
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[?length(@.tags) > 1].name"); got != "$12\r\n[\"a\",\"åä\"]\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.SET", "doc", "$.items[?(@.name.length() == 2)].name", `"two"`); got != "+OK\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[*].name"); got != "$17\r\n[\"a\",\"two\",\"two\"]\r\n" {
+		t.Fatal(got)
+	}
+}
