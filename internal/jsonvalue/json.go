@@ -501,18 +501,21 @@ func collectMatches(current any, tokens []pathToken, out *[]any) {
 func collectRecursiveMember(current any, member string, rest []pathToken, out *[]any) {
 	switch value := current.(type) {
 	case map[string]any:
+		// Recursive descent uses preorder semantics: a matching member on the
+		// current object is emitted before matches found deeper below it.
+		if child, ok := value[member]; ok {
+			collectMatches(child, rest, out)
+		}
+
 		keys := make([]string, 0, len(value))
 		for key := range value {
 			keys = append(keys, key)
 		}
 		sort.Strings(keys)
 		for _, key := range keys {
-			child := value[key]
-			if key == member {
-				collectMatches(child, rest, out)
-			}
-			collectRecursiveMember(child, member, rest, out)
+			collectRecursiveMember(value[key], member, rest, out)
 		}
+
 	case []any:
 		for _, child := range value {
 			collectRecursiveMember(child, member, rest, out)
