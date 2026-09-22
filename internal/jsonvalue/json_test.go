@@ -468,3 +468,55 @@ func TestJSONPathLogicalFilterMutation(t *testing.T) {
 		t.Fatalf("expected all matching items deleted, got %#v", values)
 	}
 }
+
+
+func TestJSONPathRegexAndMembershipFilters(t *testing.T) {
+	root, err := Parse([]byte(`{
+		"items":[
+			{"name":"alpha","kind":"a","tags":["x","y"],"allowed":["a","b"]},
+			{"name":"beta","kind":"c","tags":["z"],"allowed":["a","b"]},
+			{"name":"ALLOY","kind":"b","tags":["x"],"allowed":["b","c"]}
+		]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		path string
+		want []any
+	}{
+		{"$.items[?(@.name =~ \"^a\")].name", []any{"alpha"}},
+		{"$.items[?(@.name =~ \"(?i)al\")].name", []any{"alpha", "ALLOY"}},
+		{"$.items[?(@.kind in [\"a\",\"b\"])].name", []any{"alpha", "ALLOY"}},
+		{"$.items[?(@.kind nin [\"a\",\"b\"])].name", []any{"beta"}},
+		{"$.items[?(@.kind in @.allowed)].name", []any{"alpha", "ALLOY"}},
+		{"$.items[?(@.kind nin @.allowed)].name", []any{"beta"}},
+	}
+
+	for _, tc := range cases {
+		got, err := Matches(root, tc.path)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.path, err)
+		}
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Fatalf("%s got %#v want %#v", tc.path, got, tc.want)
+		}
+	}
+}
+
+func TestJSONPathRegexAndMembershipComposeWithLogic(t *testing.T) {
+	root, err := Parse([]byte(`{"items":[{"name":"alpha","kind":"a"},{"name":"beta","kind":"c"},{"name":"ALLOY","kind":"b"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Matches(root, `$.items[?(@.name =~ "(?i)^a" && @.kind in ["a","b"])].name`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []any{"alpha", "ALLOY"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v want %#v", got, want)
+	}
+}
