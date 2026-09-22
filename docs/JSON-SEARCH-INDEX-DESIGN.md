@@ -107,6 +107,7 @@ The first TEXT implementation is intentionally small:
 
 - field-scoped terms such as `@title:memory`;
 - grouped same-field multi-term AND queries such as `@title:(memory engine)`;
+- trailing-wildcard TEXT prefix queries such as `@title:mem*` and `@title:(mem* eng*)`;
 - string JSON values only;
 - case-insensitive token lookup;
 - whitespace and punctuation separate tokens;
@@ -114,8 +115,11 @@ The first TEXT implementation is intentionally small:
 - exact token postings only.
 
 Not yet implemented: unqualified full-text terms, exact phrase queries,
-stemming, stopwords, fuzzy matching, phonetics, prefix/suffix expansion,
+stemming, stopwords, fuzzy matching, phonetics, suffix/infix wildcard expansion,
 relevance scoring, TEXT weights, or language-specific tokenization.
+
+TEXT prefix search currently supports only a single trailing `*`. Bare `*`,
+leading wildcards, infix wildcards, and multiple `*` characters are rejected.
 
 For multi-term field scoping, SnugKV currently requires the explicit grouped
 form `@field:(term1 term2)`. This matches Redis's unambiguous same-field
