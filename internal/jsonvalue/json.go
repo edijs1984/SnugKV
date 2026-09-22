@@ -354,7 +354,7 @@ func parseBracketToken(path string, start int) (pathToken, int, error) {
 			if err != nil {
 				return pathToken{}, 0, err
 			}
-			if sliceStep != nil && *sliceStep == 0 {
+			if sliceStep != nil && *sliceStep <= 0 {
 				return pathToken{}, 0, errors.New("ERR invalid JSON path")
 			}
 		}
@@ -1564,17 +1564,25 @@ func sliceIndices(length int, start, end, step *int) []int {
 
 func unionIndices(length int, raw []int) []int {
 	out := make([]int, 0, len(raw))
-	seen := make(map[int]struct{}, len(raw))
 	for _, index := range raw {
 		resolved, ok := resolveIndex(length, index)
 		if !ok {
 			continue
 		}
-		if _, exists := seen[resolved]; exists {
+		out = append(out, resolved)
+	}
+	return out
+}
+
+func uniqueIndices(raw []int) []int {
+	out := make([]int, 0, len(raw))
+	seen := make(map[int]struct{}, len(raw))
+	for _, index := range raw {
+		if _, exists := seen[index]; exists {
 			continue
 		}
-		seen[resolved] = struct{}{}
-		out = append(out, resolved)
+		seen[index] = struct{}{}
+		out = append(out, index)
 	}
 	return out
 }
@@ -2003,7 +2011,7 @@ func setMatchesAt(current any, tokens []pathToken, value any) (any, int) {
 			return current, 0
 		}
 		count := 0
-		for _, index := range unionIndices(len(array), token.indices) {
+		for _, index := range uniqueIndices(unionIndices(len(array), token.indices)) {
 			if last {
 				array[index] = value
 				count++
@@ -2294,7 +2302,7 @@ func deleteMatchesAt(current any, tokens []pathToken) (any, int) {
 		if !ok {
 			return current, 0
 		}
-		indices := unionIndices(len(array), token.indices)
+		indices := uniqueIndices(unionIndices(len(array), token.indices))
 		if last {
 			sort.Sort(sort.Reverse(sort.IntSlice(indices)))
 			for _, index := range indices {
