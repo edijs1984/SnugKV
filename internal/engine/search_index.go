@@ -92,11 +92,8 @@ func validateSearchDefinition(def SearchDefinition) error {
 		if field.Path == "" || field.Alias == "" {
 			return errors.New("ERR search field path and alias are required")
 		}
-		if _, err := jsonvalue.Matches(map[string]any{}, field.Path); err != nil {
-			return err
-		}
 		if _, exists := aliases[field.Alias]; exists {
-			return errors.New("ERR duplicate search field alias")
+			return errors.New("SEARCH_QUERY_BAD Duplicate field in schema - " + field.Alias)
 		}
 		aliases[field.Alias] = struct{}{}
 
