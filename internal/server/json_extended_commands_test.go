@@ -791,3 +791,30 @@ func TestJSONPathNodeListFunctionCoreCommands(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+
+func TestJSONPathTopLevelProjectionCoreCommands(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "JSON.SET", "doc", "$", `{"a":2,"b":4,"arr":[1,2,3]}`)
+
+	if got := execute(t, s, "JSON.GET", "doc", "$.a + 1"); got != "$3\r\n[3]\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.GET", "doc", "$.a * $.b"); got != "$3\r\n[8]\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.GET", "doc", "($.a + $.b) / 2"); got != "$3\r\n[3]\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.GET", "doc", "$.arr.length()"); got != "$3\r\n[3]\r\n" {
+		t.Fatal(got)
+	}
+
+	if got := execute(t, s, "JSON.GET", "doc", "$.a / 0"); got != "$2\r\n[]\r\n" {
+		t.Fatal(got)
+	}
+}
