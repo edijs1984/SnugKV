@@ -591,7 +591,7 @@ func TestJSONPathRegexAndMembershipCoreCommands(t *testing.T) {
 	if got := execute(t, s, "JSON.SET", "doc", `$.items[?(@.kind in @.allowed)].name`, `"matched"`); got != "+OK\r\n" {
 		t.Fatal(got)
 	}
-	if got := execute(t, s, "JSON.GET", "doc", "$.items[*].name"); got != "$29\r\n[\"matched\",\"beta\",\"matched\"]\r\n" {
+	if got := execute(t, s, "JSON.GET", "doc", "$.items[*].name"); got != "$28\r\n[\"matched\",\"beta\",\"matched\"]\r\n" {
 		t.Fatal(got)
 	}
 }
