@@ -55,6 +55,7 @@ type filterValueExpr struct {
 	op      string
 	left    *filterValueExpr
 	right   *filterValueExpr
+	args    []*filterValueExpr
 }
 
 func Parse(raw []byte) (any, error) {
@@ -641,6 +642,54 @@ func parseFilterValueExpr(raw string) (*filterValueExpr, error) {
 		}
 	}
 
+	if strings.HasPrefix(raw, "append(") && strings.HasSuffix(raw, ")") {
+		parts, err := splitFunctionArgs(raw[len("append(") : len(raw)-1])
+		if err != nil || len(parts) < 2 {
+			return nil, errors.New("ERR invalid JSON path")
+		}
+		base, err := parseFilterValueExpr(parts[0])
+		if err != nil {
+			return nil, err
+		}
+		args := make([]*filterValueExpr, 0, len(parts)-1)
+		for _, part := range parts[1:] {
+			arg, err := parseFilterValueExpr(part)
+			if err != nil {
+				return nil, err
+			}
+			args = append(args, arg)
+		}
+		return &filterValueExpr{kind: "func", op: "append", left: base, args: args}, nil
+	}
+
+	if strings.Contains(raw, ".append(") && strings.HasSuffix(raw, ")") {
+		call := strings.LastIndex(raw, ".append(")
+		if call > 0 {
+			baseRaw := strings.TrimSpace(raw[:call])
+			argsRaw := strings.TrimSpace(raw[call+len(".append(") : len(raw)-1])
+			if baseRaw == "" || argsRaw == "" {
+				return nil, errors.New("ERR invalid JSON path")
+			}
+			base, err := parseFilterValueExpr(baseRaw)
+			if err != nil {
+				return nil, err
+			}
+			parts, err := splitFunctionArgs(argsRaw)
+			if err != nil || len(parts) == 0 {
+				return nil, errors.New("ERR invalid JSON path")
+			}
+			args := make([]*filterValueExpr, 0, len(parts))
+			for _, part := range parts {
+				arg, err := parseFilterValueExpr(part)
+				if err != nil {
+					return nil, err
+				}
+				args = append(args, arg)
+			}
+			return &filterValueExpr{kind: "func", op: "append", left: base, args: args}, nil
+		}
+	}
+
 	if strings.HasPrefix(raw, "index(") && strings.HasSuffix(raw, ")") {
 		args, err := splitFunctionArgs(raw[len("index(") : len(raw)-1])
 		if err != nil || len(args) != 2 {
@@ -818,6 +867,21 @@ func evalFilterValue(current any, expr *filterValueExpr) (any, bool) {
 				return nil, false
 			}
 			return float64(size), true
+
+		case "append":
+			array, ok := value.([]any)
+			if !ok {
+				return nil, false
+			}
+			projected := append([]any(nil), array...)
+			for _, argExpr := range expr.args {
+				arg, ok := evalFilterValue(current, argExpr)
+				if !ok {
+					return nil, false
+				}
+				projected = append(projected, arg)
+			}
+			return projected, true
 
 		case "first", "last":
 			array, ok := value.([]any)
