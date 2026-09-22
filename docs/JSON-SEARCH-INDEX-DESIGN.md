@@ -16,14 +16,14 @@ The first implementation target is:
 - explicit indexes created with `FT.CREATE ... ON JSON`;
 - JSON key-prefix filtering;
 - scalar JSONPath fields declared in a schema;
-- `TAG` and `NUMERIC` fields first;
-- `FT.SEARCH` for match-all, tag equality and numeric ranges;
+- `TAG`, `NUMERIC`, and basic `TEXT` fields;
+- `FT.SEARCH` for match-all, tag equality, numeric ranges, and field-scoped text tokens;
 - deterministic result ordering;
 - synchronous index maintenance for JSON writes/deletes;
 - index rebuild from the primary dataset after restart.
 
-Full-text tokenization, stemming, scoring, vector search, GEO fields and broad
-RediSearch query grammar are later phases.
+Advanced full-text features such as stemming, scoring, phrases, fuzzy matching,
+plus vector search, GEO fields and broader RediSearch query grammar are later phases.
 
 ## Non-goals for v1
 
@@ -53,6 +53,7 @@ FT.CREATE index
   SCHEMA
     path AS alias TAG
     path AS alias NUMERIC
+    path AS alias TEXT
     ...
 ```
 
@@ -62,7 +63,8 @@ Initial constraints:
 - `PREFIX` defaults to one empty prefix, meaning every JSON key.
 - `AS alias` is required in the first implementation.
 - Schema paths must be valid JSONPath expressions.
-- Only scalar results are indexed initially.
+- TAG/NUMERIC index scalar results.
+- TEXT indexes string values into normalized tokens.
 - A schema path producing multiple scalar matches indexes all distinct values for
   that document.
 - Duplicate index names are rejected.
@@ -84,6 +86,7 @@ Initial query subset:
 FT.SEARCH index "*"
 FT.SEARCH index "@category:{books}"
 FT.SEARCH index "@price:[10 50]"
+FT.SEARCH index "@title:memory"
 FT.SEARCH index "@category:{books} @price:[10 50]"
 FT.SEARCH index "(@category:{books}) | (@category:{games})"
 FT.SEARCH index "@category:{books} -@price:[50 +inf]"
@@ -95,8 +98,24 @@ dash (`-`) is unary NOT. Nested boolean queries use `DIALECT 2`, matching
 Redis's modern precedence rules: `NOT > AND > OR`. Parentheses can override
 precedence and may be nested. Redis 8 still defaults to DIALECT 1, so callers
 that depend on the AST semantics should pass `DIALECT 2` explicitly. The
-implemented predicate leaves remain the current TAG equality and NUMERIC range
-subset.
+implemented predicate leaves include TAG equality, NUMERIC ranges, and
+field-scoped TEXT token matching.
+
+### TEXT v1
+
+The first TEXT implementation is intentionally small:
+
+- field-scoped terms such as `@title:memory`;
+- string JSON values only;
+- case-insensitive token lookup;
+- whitespace and punctuation separate tokens;
+- underscore remains part of a token;
+- exact token postings only.
+
+Not yet implemented: unqualified full-text terms, stemming, stopwords, phrase
+search, fuzzy matching, phonetics, prefix/suffix expansion, relevance scoring,
+TEXT weights, or language-specific tokenization. Those remain explicit
+compatibility boundaries until individually audited against Redis.
 
 Initial options:
 
@@ -577,7 +596,7 @@ Document all boundaries rather than silently diverging.
 
 Only after measured demand:
 
-- TEXT fields/tokenization;
+- richer TEXT semantics: stemming, phrases, scoring, fuzzy/prefix search;
 - richer SORTBY optimization / sortable-value storage;
 - broader Redis Search query grammar beyond TAG/NUMERIC predicates;
 - aggregation;
