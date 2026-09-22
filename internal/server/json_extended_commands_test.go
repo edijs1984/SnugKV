@@ -202,3 +202,74 @@ func TestJSONArrayInsertOutOfBoundsDoesNotMutate(t *testing.T) {
 		t.Fatalf("out-of-bounds insert mutated value: %q", got)
 	}
 }
+
+
+func TestJSONArrTrimMGetAndMerge(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "JSON.SET", "doc1", "$", `{"arr":[1,2,3,4],"obj":{"a":1,"b":2},"name":"one"}`)
+	execute(t, s, "JSON.SET", "doc2", "$", `{"arr":[5,6],"obj":{"a":9},"name":"two"}`)
+
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"JSON.ARRTRIM", "doc1", "$.arr", "1", "2"}, ":2\r\n"},
+		{[]string{"JSON.GET", "doc1", "$.arr"}, "$5\r\n[2,3]\r\n"},
+		{[]string{"JSON.MGET", "doc1", "doc2", "missing", "$.name"}, "*3\r\n$5\r\n\"one\"\r\n$5\r\n\"two\"\r\n$-1\r\n"},
+		{[]string{"JSON.MERGE", "doc1", "$.obj", `{"b":null,"c":3}`}, "+OK\r\n"},
+		{[]string{"JSON.GET", "doc1", "$.obj"}, "$13\r\n{\"a\":1,\"c\":3}\r\n"},
+		{[]string{"JSON.MERGE", "doc1", "$.newField", `{"x":1}`}, "+OK\r\n"},
+		{[]string{"JSON.GET", "doc1", "$.newField"}, "$7\r\n{\"x\":1}\r\n"},
+		{[]string{"JSON.MERGE", "doc1", "$.arr", `[8,9]`}, "+OK\r\n"},
+		{[]string{"JSON.GET", "doc1", "$.arr"}, "$5\r\n[8,9]\r\n"},
+	} {
+		if got := execute(t, s, tc.args...); got != tc.want {
+			t.Fatalf("%q got %q want %q", tc.args, got, tc.want)
+		}
+	}
+}
+
+func TestJSONArrTrimForgivingBounds(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "JSON.SET", "doc", "$", `{"arr":[1,2,3,4]}`)
+
+	if got := execute(t, s, "JSON.ARRTRIM", "doc", "$.arr", "-2", "99"); got != ":2\r\n" {
+		t.Fatal(got)
+	}
+	if got := execute(t, s, "JSON.GET", "doc", "$.arr"); got != "$5\r\n[3,4]\r\n" {
+		t.Fatal(got)
+	}
+
+	execute(t, s, "JSON.SET", "doc", "$", `{"arr":[1,2,3]}`)
+	if got := execute(t, s, "JSON.ARRTRIM", "doc", "$.arr", "9", "10"); got != ":0\r\n" {
+		t.Fatal(got)
+	}
+	if got := execute(t, s, "JSON.GET", "doc", "$.arr"); got != "$2\r\n[]\r\n" {
+		t.Fatal(got)
+	}
+}
+
+func TestJSONMergePreservesTTL(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "JSON.SET", "doc", "$", `{"obj":{"a":1}}`)
+	execute(t, s, "PEXPIRE", "doc", "60000")
+	execute(t, s, "JSON.MERGE", "doc", "$.obj", `{"b":2}`)
+
+	if got := execute(t, s, "PTTL", "doc"); strings.HasPrefix(got, ":-") {
+		t.Fatalf("JSON.MERGE lost TTL: %q", got)
+	}
+}
+
+func TestJSONMergeCreatesMissingRootKey(t *testing.T) {
+	s := New(engine.New())
+
+	if got := execute(t, s, "JSON.MERGE", "newdoc", "$", `{"a":1}`); got != "+OK\r\n" {
+		t.Fatal(got)
+	}
+	if got := execute(t, s, "JSON.GET", "newdoc", "$"); got != "$7\r\n{\"a\":1}\r\n" {
+		t.Fatal(got)
+	}
+}
