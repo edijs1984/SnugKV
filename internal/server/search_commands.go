@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -225,6 +226,8 @@ type searchOptions struct {
 	count        int
 	noContent    bool
 	returnFields []searchReturnField
+	sortBy       string
+	sortDesc     bool
 }
 
 
@@ -384,6 +387,25 @@ func parseSearchOptions(args [][]byte) (searchOptions, error) {
 			options.count = count
 			pos += 3
 
+		case "SORTBY":
+			if pos+1 >= len(args) {
+				return searchOptions{}, errors.New("ERR syntax error")
+			}
+			if options.sortBy != "" {
+				return searchOptions{}, errors.New("ERR SORTBY specified more than once")
+			}
+			options.sortBy = string(args[pos+1])
+			pos += 2
+			if pos < len(args) {
+				switch strings.ToUpper(string(args[pos])) {
+				case "ASC":
+					pos++
+				case "DESC":
+					options.sortDesc = true
+					pos++
+				}
+			}
+
 		case "RETURN":
 			if pos+1 >= len(args) {
 				return searchOptions{}, errors.New("ERR syntax error")
@@ -518,8 +540,29 @@ func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 	}
 
 	type hit struct {
-		key string
-		raw []byte
+		key        string
+		raw        []byte
+		sortFound  bool
+		sortText   string
+		sortNumber float64
+	}
+
+	var sortField *engine.SearchField
+	if options.sortBy != "" {
+		def, ok := store.SearchDefinition(indexName)
+		if !ok {
+			return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
+		}
+		for i := range def.Fields {
+			if def.Fields[i].Alias == options.sortBy {
+				field := def.Fields[i]
+				sortField = &field
+				break
+			}
+		}
+		if sortField == nil {
+			return nil, errors.New("ERR unknown sort field: " + options.sortBy)
+		}
 	}
 
 	hits := make([]hit, 0, len(candidates))
@@ -531,7 +574,62 @@ func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 		if !found {
 			continue
 		}
-		hits = append(hits, hit{key: key, raw: raw})
+
+		item := hit{key: key, raw: raw}
+		if sortField != nil {
+			value, found, projectionErr := store.JSONProjection(key, sortField.Path)
+			if projectionErr != nil {
+				return nil, projectionErr
+			}
+			if found {
+				item.sortFound = true
+				switch sortField.Kind {
+				case engine.SearchFieldNumeric:
+					number, parseErr := strconv.ParseFloat(string(value), 64)
+					if parseErr != nil || math.IsNaN(number) || math.IsInf(number, 0) {
+						item.sortFound = false
+					} else {
+						item.sortNumber = number
+					}
+				case engine.SearchFieldTag:
+					item.sortText = string(value)
+				}
+			}
+		}
+		hits = append(hits, item)
+	}
+
+	if sortField != nil {
+		sort.SliceStable(hits, func(i, j int) bool {
+			left, right := hits[i], hits[j]
+
+			// Keep documents with missing/unusable sort values after documents
+			// with values in both directions. Redis's exact missing-value
+			// placement is covered by the differential harness before merge.
+			if left.sortFound != right.sortFound {
+				return left.sortFound
+			}
+
+			var less bool
+			var equal bool
+			if !left.sortFound {
+				equal = true
+			} else if sortField.Kind == engine.SearchFieldNumeric {
+				less = left.sortNumber < right.sortNumber
+				equal = left.sortNumber == right.sortNumber
+			} else {
+				less = left.sortText < right.sortText
+				equal = left.sortText == right.sortText
+			}
+
+			if equal {
+				return left.key < right.key
+			}
+			if options.sortDesc {
+				return !less
+			}
+			return less
+		})
 	}
 
 	total := len(hits)
