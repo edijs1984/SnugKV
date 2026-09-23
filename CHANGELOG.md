@@ -147,6 +147,8 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Verified
 
+- Redis Search fuzzy TEXT compatibility for `%term%`, `%%term%%`, and `%%%term%%%`, including grouped fuzzy terms, stem interaction, and parser error classes.
+
 - Redis Search differential coverage for grouped TEXT `SLOP`/`INORDER` semantics, quoted-phrase exactness under those options, and compatible parse/argument errors.
 
 - Redis Search language differential coverage for `LANGUAGE`, query `LANGUAGE`, and `LANGUAGE_FIELD` with English/German stemming and Redis-compatible invalid-language error classes.

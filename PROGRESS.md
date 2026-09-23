@@ -565,6 +565,14 @@ Live differential validation used Redis Search on port 6392 and SnugKV on port 6
 
 Focused tests, engine/server tests, race tests, and `go vet ./...` all passed after the live differential.
 
+## Search fuzzy milestone — 2026-09-23
+
+SnugKV Search now supports the audited Redis fuzzy TEXT syntax `%term%`, `%%term%%`, and `%%%term%%%`. Fuzzy matching applies edit distance to indexed surface terms, while exact stem-token hits are also considered; fuzzy distance is not applied across the entire stem dictionary. This matches the measured Redis behavior for `memory/memori/memry` and `run/running` cases.
+
+The live differential harness `compat/search/search-fuzzy.sh` was run against Redis Search on port 6392 and SnugKV on port 6383. Result sets, grouped fuzzy queries, prefix/fuzzy rejection, malformed marker errors, and unknown-field behavior matched Redis. Remaining textual differences are only the existing non-contractual unsorted result ordering.
+
+Focused fuzzy tests, full engine/server tests, race tests, and `go vet ./...` all passed before the live differential.
+
 ## Native datatype benchmark snapshot
 
 The existing 100k-key benchmark tables remain in `benchmarks/README.md`. Recorded
