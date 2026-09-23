@@ -120,3 +120,65 @@ for idx in score weight phrase phon fuzzy sortidx; do
   run FT.DROPINDEX "$idx"
 done
 run FT._LIST
+
+
+echo
+echo "=== controlled scorer isolation ==="
+run FT.DROPINDEX iso1
+run FT.DROPINDEX iso2
+run FT.DROPINDEX isow
+run FLUSHDB
+
+run JSON.SET iso:1 '$' '{"title":"memory"}'
+run JSON.SET iso:2 '$' '{"title":"memory memory"}'
+run JSON.SET iso:3 '$' '{"title":"memory alpha beta gamma"}'
+run JSON.SET iso:4 '$' '{"title":"alpha memory"}'
+run JSON.SET iso:5 '$' '{"title":"alpha beta gamma delta"}'
+run FT.CREATE iso1 ON JSON PREFIX 1 iso: SCHEMA '$.title' AS title TEXT
+
+run FT.SEARCH iso1 '*' WITHSCORES NOCONTENT
+run FT.SEARCH iso1 '@title:memory' WITHSCORES NOCONTENT
+run FT.SEARCH iso1 '@title:alpha' WITHSCORES NOCONTENT
+run FT.SEARCH iso1 '@title:memory @title:alpha' WITHSCORES NOCONTENT
+
+echo
+echo "=== controlled two fields ==="
+run FLUSHDB
+run JSON.SET iso:1 '$' '{"title":"memory","body":"alpha"}'
+run JSON.SET iso:2 '$' '{"title":"alpha","body":"memory"}'
+run JSON.SET iso:3 '$' '{"title":"memory","body":"memory"}'
+run JSON.SET iso:4 '$' '{"title":"memory memory","body":"alpha"}'
+run JSON.SET iso:5 '$' '{"title":"alpha","body":"alpha"}'
+run FT.CREATE iso2 ON JSON PREFIX 1 iso: SCHEMA '$.title' AS title TEXT '$.body' AS body TEXT
+
+run FT.SEARCH iso2 'memory' WITHSCORES NOCONTENT
+run FT.SEARCH iso2 '@title:memory' WITHSCORES NOCONTENT
+run FT.SEARCH iso2 '@body:memory' WITHSCORES NOCONTENT
+run FT.SEARCH iso2 '@title:memory @body:memory' WITHSCORES NOCONTENT
+
+echo
+echo "=== controlled field weights ==="
+run FT.CREATE isow ON JSON PREFIX 1 iso: SCHEMA '$.title' AS title TEXT WEIGHT 5 '$.body' AS body TEXT WEIGHT 1
+run FT.SEARCH isow 'memory' WITHSCORES NOCONTENT
+run FT.SEARCH isow '@title:memory' WITHSCORES NOCONTENT
+run FT.SEARCH isow '@body:memory' WITHSCORES NOCONTENT
+
+echo
+echo "=== controlled stemming multiplier ==="
+run FLUSHDB
+run JSON.SET iso:1 '$' '{"title":"run"}'
+run JSON.SET iso:2 '$' '{"title":"running"}'
+run JSON.SET iso:3 '$' '{"title":"runs"}'
+run JSON.SET iso:4 '$' '{"title":"runner"}'
+run FT.DROPINDEX stemiso
+run FT.CREATE stemiso ON JSON PREFIX 1 iso: SCHEMA '$.title' AS title TEXT
+run FT.SEARCH stemiso '@title:run' WITHSCORES NOCONTENT
+run FT.SEARCH stemiso '@title:running' WITHSCORES NOCONTENT
+run FT.SEARCH stemiso '@title:runs' WITHSCORES NOCONTENT
+
+echo
+echo "=== controlled cleanup ==="
+for idx in iso1 iso2 isow stemiso; do
+  run FT.DROPINDEX "$idx"
+done
+run FLUSHDB
