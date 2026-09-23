@@ -147,19 +147,64 @@ func executeFTCreate(store *engine.Store, args [][]byte) ([]byte, error) {
 		pos++
 
 		var kind engine.SearchFieldKind
+		vectorAlgorithm := ""
+		vectorType := ""
+		vectorDim := 0
+		vectorMetric := ""
 		switch strings.ToUpper(string(args[pos])) {
 		case "TAG":
 			kind = engine.SearchFieldTag
+			pos++
 		case "NUMERIC":
 			kind = engine.SearchFieldNumeric
+			pos++
 		case "TEXT":
 			kind = engine.SearchFieldText
+			pos++
 		case "GEO":
 			kind = engine.SearchFieldGeo
+			pos++
+		case "VECTOR":
+			kind = engine.SearchFieldVector
+			pos++
+			if pos+1 >= len(args) {
+				return nil, errors.New("SEARCH_PARSE_ARGS Bad arguments for VECTOR")
+			}
+			vectorAlgorithm = strings.ToUpper(string(args[pos]))
+			if vectorAlgorithm != "FLAT" {
+				return nil, errors.New("ERR unsupported vector algorithm")
+			}
+			pos++
+			attrCount, err := strconv.Atoi(string(args[pos]))
+			if err != nil || attrCount < 0 || pos+attrCount >= len(args) {
+				return nil, errors.New("SEARCH_PARSE_ARGS Bad arguments for VECTOR")
+			}
+			pos++
+			end := pos + attrCount
+			for pos+1 < end {
+				name := strings.ToUpper(string(args[pos]))
+				value := string(args[pos+1])
+				switch name {
+				case "TYPE":
+					vectorType = strings.ToUpper(value)
+				case "DIM":
+					vectorDim, err = strconv.Atoi(value)
+					if err != nil || vectorDim <= 0 {
+						return nil, errors.New("SEARCH_PARSE_ARGS Bad arguments for VECTOR")
+					}
+				case "DISTANCE_METRIC":
+					vectorMetric = strings.ToUpper(value)
+				default:
+					return nil, fmt.Errorf("SEARCH_ARG_UNRECOGNIZED Unknown argument `%s`", string(args[pos]))
+				}
+				pos += 2
+			}
+			if pos != end || vectorType != "FLOAT32" || vectorDim <= 0 || vectorMetric != "COSINE" {
+				return nil, errors.New("ERR unsupported vector field configuration")
+			}
 		default:
 			return nil, errors.New("ERR unsupported search field type")
 		}
-		pos++
 
 		noStem := false
 		phonetic := ""
@@ -244,8 +289,12 @@ func executeFTCreate(store *engine.Store, args [][]byte) ([]byte, error) {
 			Phonetic: phonetic,
 			Weight:   weight,
 			WeightSet: weightSet,
-			Sortable: sortable,
-			NoIndex:  noIndex,
+			Sortable:        sortable,
+			NoIndex:         noIndex,
+			VectorAlgorithm: vectorAlgorithm,
+			VectorType:      vectorType,
+			VectorDim:       vectorDim,
+			VectorMetric:    vectorMetric,
 		})
 	}
 
@@ -313,6 +362,8 @@ func executeFTInfo(store *engine.Store, args [][]byte) ([]byte, error) {
 			fieldType = "TEXT"
 		case engine.SearchFieldGeo:
 			fieldType = "GEO"
+		case engine.SearchFieldVector:
+			fieldType = "VECTOR"
 		}
 		fieldItems := [][]byte{
 			formatBulkString([]byte("identifier")),
@@ -321,6 +372,18 @@ func executeFTInfo(store *engine.Store, args [][]byte) ([]byte, error) {
 			formatBulkString([]byte(field.Alias)),
 			formatBulkString([]byte("type")),
 			formatBulkString([]byte(fieldType)),
+		}
+		if field.Kind == engine.SearchFieldVector {
+			fieldItems = append(fieldItems,
+				formatBulkString([]byte("algorithm")),
+				formatBulkString([]byte(field.VectorAlgorithm)),
+				formatBulkString([]byte("data_type")),
+				formatBulkString([]byte(field.VectorType)),
+				formatBulkString([]byte("dim")),
+				integer(int64(field.VectorDim)),
+				formatBulkString([]byte("distance_metric")),
+				formatBulkString([]byte(field.VectorMetric)),
+			)
 		}
 		if field.Kind == engine.SearchFieldText {
 			weight := field.Weight
