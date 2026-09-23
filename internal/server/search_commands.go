@@ -129,6 +129,10 @@ func executeFTCreate(store *engine.Store, args [][]byte) ([]byte, error) {
 		if len(args)-pos < 4 {
 			return nil, errors.New("ERR syntax error")
 		}
+		switch strings.ToUpper(string(args[pos])) {
+		case "WEIGHT", "SORTABLE", "NOINDEX", "NOSTEM":
+			return nil, fmt.Errorf("SEARCH_PARSE_ARGS Invalid field type for field `%s`", string(args[pos]))
+		}
 
 		path := string(args[pos])
 		pos++
@@ -155,16 +159,66 @@ func executeFTCreate(store *engine.Store, args [][]byte) ([]byte, error) {
 		pos++
 
 		noStem := false
-		if kind == engine.SearchFieldText && pos < len(args) && strings.EqualFold(string(args[pos]), "NOSTEM") {
-			noStem = true
-			pos++
+		weight := float64(0)
+		if kind == engine.SearchFieldText {
+			weight = 1
+		}
+		sortable := false
+		noIndex := false
+		allowWeight := kind == engine.SearchFieldText
+
+		for pos < len(args) {
+			switch strings.ToUpper(string(args[pos])) {
+			case "NOSTEM":
+				if kind != engine.SearchFieldText {
+					goto modifiersDone
+				}
+				noStem = true
+				pos++
+
+			case "WEIGHT":
+				if kind != engine.SearchFieldText || !allowWeight {
+					goto modifiersDone
+				}
+				if pos+1 >= len(args) {
+					weight = 0
+					pos++
+					goto modifiersDone
+				}
+				parsed, err := strconv.ParseFloat(string(args[pos+1]), 64)
+				if err != nil {
+					return nil, errors.New("SEARCH_PARSE_ARGS Bad arguments for weight: Could not convert argument to expected type")
+				}
+				weight = parsed
+				pos += 2
+
+			case "SORTABLE":
+				sortable = true
+				allowWeight = false
+				pos++
+				if pos < len(args) && strings.EqualFold(string(args[pos]), "UNF") {
+					pos++
+				}
+
+			case "NOINDEX":
+				noIndex = true
+				allowWeight = false
+				pos++
+
+			default:
+				goto modifiersDone
+			}
 		}
 
+	modifiersDone:
 		def.Fields = append(def.Fields, engine.SearchField{
-			Path:   path,
-			Alias:  alias,
-			Kind:   kind,
-			NoStem: noStem,
+			Path:     path,
+			Alias:    alias,
+			Kind:     kind,
+			NoStem:   noStem,
+			Weight:   weight,
+			Sortable: sortable,
+			NoIndex:  noIndex,
 		})
 	}
 
@@ -239,8 +293,29 @@ func executeFTInfo(store *engine.Store, args [][]byte) ([]byte, error) {
 			formatBulkString([]byte("type")),
 			formatBulkString([]byte(fieldType)),
 		}
-		if field.Kind == engine.SearchFieldText && field.NoStem {
-			fieldItems = append(fieldItems, formatBulkString([]byte("NOSTEM")))
+		if field.Kind == engine.SearchFieldText {
+			weight := field.Weight
+			if weight == 0 && !field.NoIndex && !field.Sortable && !field.NoStem {
+				// Definitions created before WEIGHT support deserialize with zero.
+				// Preserve the historical/default Redis-visible weight.
+				weight = 1
+			}
+			fieldItems = append(fieldItems,
+				formatBulkString([]byte("WEIGHT")),
+				formatBulkString([]byte(strconv.FormatFloat(weight, 'g', -1, 64))),
+			)
+			if field.NoStem {
+				fieldItems = append(fieldItems, formatBulkString([]byte("NOSTEM")))
+			}
+		}
+		if field.Sortable {
+			fieldItems = append(fieldItems,
+				formatBulkString([]byte("SORTABLE")),
+				formatBulkString([]byte("UNF")),
+			)
+		}
+		if field.NoIndex {
+			fieldItems = append(fieldItems, formatBulkString([]byte("NOINDEX")))
 		}
 		attributes = append(attributes, array(fieldItems...))
 	}
