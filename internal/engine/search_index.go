@@ -19,6 +19,7 @@ const (
 	SearchFieldNumeric
 	SearchFieldText
 	SearchFieldGeo
+	SearchFieldVector
 )
 
 type SearchField struct {
@@ -29,8 +30,12 @@ type SearchField struct {
 	Phonetic string
 	Weight   float64
 	WeightSet bool
-	Sortable bool
-	NoIndex  bool
+	Sortable       bool
+	NoIndex        bool
+	VectorAlgorithm string
+	VectorType      string
+	VectorDim       int
+	VectorMetric    string
 }
 
 type SearchDefinition struct {
@@ -179,6 +184,10 @@ func validateSearchDefinition(def SearchDefinition) error {
 
 		switch field.Kind {
 		case SearchFieldTag, SearchFieldNumeric, SearchFieldText, SearchFieldGeo:
+		case SearchFieldVector:
+			if field.VectorAlgorithm != "FLAT" || field.VectorType != "FLOAT32" || field.VectorDim <= 0 || field.VectorMetric != "COSINE" {
+				return errors.New("ERR unsupported vector field configuration")
+			}
 		default:
 			return errors.New("ERR unsupported search field type")
 		}
