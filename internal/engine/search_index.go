@@ -765,13 +765,11 @@ func (m *searchManager) textFuzzyKeys(indexName, alias, token string, distance i
 
 	defField, found := searchTextField(idx.def, alias)
 	if found && !defField.NoStem {
-		for candidate, postings := range idx.textStems[alias] {
-			if !searchEditDistanceWithin(token, candidate, distance) {
-				continue
-			}
-			for key := range postings {
-				seen[key] = struct{}{}
-			}
+		// Redis fuzzy matching applies edit distance to surface terms, but a
+		// fuzzy token may also hit an indexed stem when the stem exactly equals
+		// the query token. Do not apply fuzzy distance across the stem dictionary.
+		for key := range idx.textStems[alias][token] {
+			seen[key] = struct{}{}
 		}
 	}
 	return sortedPostingKeys(seen), true
