@@ -639,3 +639,13 @@ A key compatibility detail discovered during the live audit is that field qualif
 The differential harness `compat/search/search-scoring.sh` was run against Redis Search on port 6392 and SnugKV on port 6383. Query result sets, score ordering, field weights, stemming/fuzzy/phonetic behavior, phrase/proximity behavior, `SORTBY`, `LIMIT`, DIALECT 1/2, and option framing matched semantically. Remaining textual differences are limited to tiny floating-point rounding, JSON object key serialization order, and Redis-vs-SnugKV equal-score tie ordering.
 
 Focused scoring tests, full engine/server tests, race tests, `go vet ./...`, live process startup, and the final differential all passed.
+
+## Search GEO milestone — 2026-09-23
+
+SnugKV Search now supports Redis-audited JSON `GEO` fields. The supported JSON representation is the Redis Search string form `"longitude,latitude"`; array/object coordinate shapes are ignored for this field type. Radius filters use `@field:[lon lat radius unit]` with `m`, `km`, `mi`, and `ft`, and compose with the existing boolean query AST, `SORTBY`, `LIMIT`, and DIALECT 1/2.
+
+Malformed GEO strings are treated as document indexing failures, including on `GEO NOINDEX` fields, while missing or non-string values are non-errors. Valid prefix-matching documents still count toward `num_docs` even when a GEO field is missing or `NOINDEX`. Coordinate bounds and query-side radius/unit/parser errors were matched to the live Redis oracle.
+
+The differential harness `compat/search/search-geo.sh` was run against Redis Search on port 6392 and SnugKV on port 6383. GEO result sets, unit conversion, mutation/removal visibility, boolean composition, explicit `SORTBY`, schema modifiers, parser errors, and DIALECT behavior matched semantically. Remaining textual differences are the intentionally smaller SnugKV `FT.INFO` statistics payload and deterministic unsorted ordering; consequently, `LIMIT` without an explicit sort may select different members from the same result set.
+
+Focused GEO tests, full engine/server tests, race tests, `go vet ./...`, live process startup, and the final differential all passed.

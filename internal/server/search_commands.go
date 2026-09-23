@@ -153,6 +153,8 @@ func executeFTCreate(store *engine.Store, args [][]byte) ([]byte, error) {
 			kind = engine.SearchFieldNumeric
 		case "TEXT":
 			kind = engine.SearchFieldText
+		case "GEO":
+			kind = engine.SearchFieldGeo
 		default:
 			return nil, errors.New("ERR unsupported search field type")
 		}
@@ -308,6 +310,8 @@ func executeFTInfo(store *engine.Store, args [][]byte) ([]byte, error) {
 			fieldType = "NUMERIC"
 		case engine.SearchFieldText:
 			fieldType = "TEXT"
+		case engine.SearchFieldGeo:
+			fieldType = "GEO"
 		}
 		fieldItems := [][]byte{
 			formatBulkString([]byte("identifier")),
@@ -382,6 +386,12 @@ func executeFTInfo(store *engine.Store, args [][]byte) ([]byte, error) {
 
 
 
+type searchGeoFilter struct {
+	longitude    float64
+	latitude     float64
+	radiusMeters float64
+}
+
 type searchQueryClause struct {
 	alias         string
 	noMatch       bool
@@ -394,6 +404,7 @@ type searchQueryClause struct {
 	textFuzzy     int
 	minimum       *float64
 	maximum       *float64
+	geo           *searchGeoFilter
 }
 
 type searchQueryNodeKind uint8
@@ -907,6 +918,60 @@ func parseMeasuredSearchWildcard(expr, fullQuery string, fielded bool) (value st
 	return strings.ToLower(expr), false, false, true, true, nil
 }
 
+func parseSearchGeoQuery(bounds []string, fullQuery string) (*searchGeoFilter, error) {
+	if len(bounds) != 4 {
+		return nil, nil
+	}
+
+	parseValue := func(value string) (float64, error) {
+		parsed, err := strconv.ParseFloat(value, 64)
+		if err != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) {
+			offset := strings.Index(fullQuery, value)
+			if offset < 0 {
+				offset = 0
+			}
+			return 0, fmt.Errorf("SEARCH_SYNTAX Syntax error at offset %d near %s", offset, value)
+		}
+		return parsed, nil
+	}
+
+	longitude, err := parseValue(bounds[0])
+	if err != nil {
+		return nil, err
+	}
+	latitude, err := parseValue(bounds[1])
+	if err != nil {
+		return nil, err
+	}
+	radius, err := parseValue(bounds[2])
+	if err != nil {
+		return nil, err
+	}
+	if radius < 0 {
+		return nil, errors.New("SEARCH_SYNTAX Invalid GeoFilter radius")
+	}
+
+	factor := 0.0
+	switch strings.ToLower(bounds[3]) {
+	case "m":
+		factor = 1
+	case "km":
+		factor = 1000
+	case "mi":
+		factor = 1609.344
+	case "ft":
+		factor = 0.3048
+	default:
+		return nil, errors.New("SEARCH_SYNTAX Invalid GeoFilter unit")
+	}
+
+	return &searchGeoFilter{
+		longitude: longitude,
+		latitude: latitude,
+		radiusMeters: radius * factor,
+	}, nil
+}
+
 func parseSearchClause(part, fullQuery string) (searchQueryClause, error) {
 	clause := searchQueryClause{}
 	if !strings.HasPrefix(part, "@") {
@@ -1025,6 +1090,26 @@ func parseSearchClause(part, fullQuery string) (searchQueryClause, error) {
 	if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") {
 		rangeBody := strings.TrimSpace(expr[1 : len(expr)-1])
 		bounds := strings.Fields(rangeBody)
+
+		if len(bounds) == 4 {
+			geo, err := parseSearchGeoQuery(bounds, fullQuery)
+			if err != nil {
+				return searchQueryClause{}, err
+			}
+			clause.geo = geo
+			return clause, nil
+		}
+
+		if len(bounds) == 3 {
+			offset := strings.Index(fullQuery, bounds[2])
+			if offset < 0 {
+				offset = 0
+			}
+			// Redis reports the missing-unit GEO error at the parser position
+			// after consuming the radius token, not at the token's first byte.
+			offset += len(bounds[2])
+			return searchQueryClause{}, fmt.Errorf("SEARCH_SYNTAX Syntax error at offset %d near %s", offset, bounds[2])
+		}
 		if len(bounds) != 2 {
 			return searchQueryClause{}, errors.New("ERR unsupported numeric range")
 		}
@@ -1544,6 +1629,19 @@ func evaluateSearchQuery(store *engine.Store, indexName string, def engine.Searc
 			} else {
 				keys, ok = store.SearchTextKeys(indexName, node.clause.alias, *node.clause.text, language)
 			}
+			if !ok {
+				return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
+			}
+			return keys, nil
+
+		case node.clause.geo != nil:
+			keys, ok := store.SearchGeoRadiusKeys(
+				indexName,
+				node.clause.alias,
+				node.clause.geo.longitude,
+				node.clause.geo.latitude,
+				node.clause.geo.radiusMeters,
+			)
 			if !ok {
 				return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
 			}

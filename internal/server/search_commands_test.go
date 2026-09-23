@@ -150,7 +150,7 @@ func TestFTCreateValidation(t *testing.T) {
 				[]byte("FT.CREATE"), []byte("idx"),
 				[]byte("ON"), []byte("JSON"),
 				[]byte("SCHEMA"),
-				[]byte("$.x"), []byte("AS"), []byte("x"), []byte("GEO"),
+				[]byte("$.x"), []byte("AS"), []byte("x"), []byte("VECTOR"),
 			},
 		},
 	}

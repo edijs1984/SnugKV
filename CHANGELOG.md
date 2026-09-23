@@ -147,6 +147,9 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Verified
 
+- Redis Search GEO fields on JSON, including `"lon,lat"` string indexing, `m`/`km`/`mi`/`ft` radius filters, boolean composition, mutation visibility, `SORTBY`, `LIMIT`, `SORTABLE`, `NOINDEX`, coordinate validation, parser errors, and DIALECT 1/2 behavior. Remaining live-diff noise is the known narrow `FT.INFO` surface plus deterministic unsorted ordering/`LIMIT` selection.
+
+
 - Redis Search BM25STD-style relevance scoring and `WITHSCORES`, including field weights, stemming/fuzzy/phonetic expansion scoring, phrase/proximity scoring, wildcard `*` normalization, `SORTBY` precedence, `LIMIT`, `RETURN`, duplicate option handling, and shared-posting field-mask semantics. Live Redis differential differences are limited to tiny floating-point rounding, JSON object key order, and equal-score tie ordering.
 
 
