@@ -322,3 +322,5 @@ TopK heavy-hitter tracking is supported as a native persistent probabilistic val
 t-digest sketches are supported as native persistent probabilistic values with RedisBloom-audited `TDIGEST.CREATE`, `TDIGEST.ADD`, `TDIGEST.MERGE`, `TDIGEST.RESET`, `TDIGEST.MIN`, `TDIGEST.MAX`, `TDIGEST.QUANTILE`, `TDIGEST.CDF`, `TDIGEST.RANK`, `TDIGEST.REVRANK`, `TDIGEST.BYRANK`, `TDIGEST.BYREVRANK`, `TDIGEST.TRIMMED_MEAN`, and `TDIGEST.INFO` behavior.
 
 TimeSeries values are supported as native persistent series with RedisTimeSeries-audited `TS.CREATE`, `TS.ADD`, `TS.GET`, `TS.RANGE`, `TS.REVRANGE`, `TS.INCRBY`, `TS.DECRBY`, `TS.DEL`, and `TS.INFO` behavior, including retention, labels, duplicate policies, NaN, and out-of-order samples.
+
+Replication Phase 1 supports SnugKV primary/replica topologies with `REPLICAOF`, `ROLE`, `INFO replication`, Redis-shaped `PSYNC` full-resync control flow, full logical snapshot transfer, live mutation propagation, TTL preservation, read-only replicas, and promotion via `REPLICAOF NO ONE`. The Phase-1 data stream is SnugKV logical-frame format; Redis RDB full-sync interoperability and partial resynchronization are deferred.
