@@ -173,7 +173,14 @@ func (s *Server) replicationRoleReply() []byte {
 		)
 	}
 
-	replicas := make([][]byte, 0)
+	replicas := make([][]byte, 0, state.connectedReplicas)
+	for i := 0; i < state.connectedReplicas; i++ {
+		replicas = append(replicas, array(
+			formatBulkString([]byte("127.0.0.1")),
+			integer(0),
+			integer(state.offset),
+		))
+	}
 	return array(
 		formatBulkString([]byte("master")),
 		integer(state.offset),
