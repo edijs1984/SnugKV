@@ -530,7 +530,39 @@ func readReplicationSnapshot(reader *bufio.Reader) ([]byte, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	if p != '	p, err := reader.ReadByte()
+	if p != '$' {
+		line, _ := reader.ReadString('\n')
+		return nil, false, fmt.Errorf("unexpected replication snapshot %q", string(p)+line)
+	}
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return nil, false, err
+	}
+	if strings.HasPrefix(strings.TrimSpace(line), "EOF:") {
+		return nil, false, errors.New("Redis EOF-framed full sync is not supported yet")
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(line))
+	if err != nil || n < 0 || n > persistence.MaxFrameBytes {
+		return nil, false, errors.New("invalid replication snapshot length")
+	}
+	payload := make([]byte, n)
+	if _, err := io.ReadFull(reader, payload); err != nil {
+		return nil, false, err
+	}
+	if isRedisRDBPayload(payload) {
+		// Redis replication's length-prefixed RDB transfer ends exactly after
+		// the advertised bytes; the command stream begins immediately.
+		return payload, true, nil
+	}
+	var crlf [2]byte
+	if _, err := io.ReadFull(reader, crlf[:]); err != nil || crlf != [2]byte{'\r', '\n'} {
+		return nil, false, errors.New("invalid replication snapshot terminator")
+	}
+	return payload, false, nil
+}
+
+func readReplicationRESP(reader *bufio.Reader) ([]byte, error) {
+	p, err := reader.ReadByte()
 	if err != nil {
 		return nil, err
 	}
