@@ -368,6 +368,8 @@ type searchQueryClause struct {
 	text          *string
 	textPhrase    *string
 	textPrefix    bool
+	textWildcardLeading  bool
+	textWildcardTrailing bool
 	textFuzzy     int
 	minimum       *float64
 	maximum       *float64
@@ -609,25 +611,32 @@ func (p *searchQueryParser) parseFieldTextGroup() (*searchQueryNode, bool, error
 		}
 
 		prefix := false
-		if fuzzyDistance == 0 {
-			prefix = strings.HasSuffix(term, "*")
-			if prefix {
-				if strings.Count(term, "*") != 1 || len(term) == 1 {
-					return nil, true, errors.New("ERR unsupported search query")
-				}
-				value = strings.ToLower(strings.TrimSuffix(term, "*"))
-			} else if strings.Contains(term, "*") {
+		wildLeading := false
+		wildTrailing := false
+		noMatch := false
+		if fuzzyDistance == 0 && strings.Contains(term, "*") {
+			var matched bool
+			var parseErr error
+			value, wildLeading, wildTrailing, matched, noMatch, parseErr = parseMeasuredSearchWildcard(term, p.query, true)
+			if parseErr != nil {
+				return nil, true, parseErr
+			}
+			if !matched {
 				return nil, true, errors.New("ERR unsupported search query")
 			}
+			prefix = wildTrailing && !wildLeading && !noMatch
 		}
 
 		clause := &searchQueryNode{
 			kind: searchQueryClauseNode,
 			clause: &searchQueryClause{
-				alias:      alias,
-				text:       &value,
-				textPrefix: prefix,
-				textFuzzy:  fuzzyDistance,
+				alias:                alias,
+				text:                 &value,
+				textPrefix:           prefix,
+				textWildcardLeading:  wildLeading,
+				textWildcardTrailing: wildTrailing,
+				textFuzzy:            fuzzyDistance,
+				noMatch:              noMatch,
 			},
 		}
 		if node == nil {
@@ -810,6 +819,71 @@ func parseSearchFuzzyExpr(expr, fullQuery string) (string, int, bool, error) {
 	return strings.ToLower(token), leading, true, nil
 }
 
+func parseMeasuredSearchWildcard(expr, fullQuery string, fielded bool) (value string, leading, trailing, matched bool, noMatch bool, err error) {
+	if !strings.Contains(expr, "*") {
+		return "", false, false, false, false, nil
+	}
+
+	// Redis treats a single backslash before '*' as escaping the wildcard.
+	// Two backslashes leave the wildcard active after escape processing.
+	if strings.Contains(expr, "\\*") && !strings.Contains(expr, "\\\\*") {
+		return strings.ToLower(strings.ReplaceAll(expr, "\\*", "*")), false, false, true, true, nil
+	}
+	expr = strings.ReplaceAll(expr, "\\\\", "\\")
+
+	count := strings.Count(expr, "*")
+	if expr == "*" {
+		offset := strings.Index(fullQuery, "*")
+		if fielded {
+			near := "text"
+			if offset >= 0 {
+				offset++
+			}
+			return "", false, false, true, false, fmt.Errorf("SEARCH_SYNTAX Syntax error at offset %d near %s", offset, near)
+		}
+		return "", false, false, false, false, nil
+	}
+
+	if strings.HasPrefix(expr, "**") || strings.HasSuffix(expr, "**") {
+		offset := strings.Index(fullQuery, expr)
+		if offset < 0 {
+			offset = 0
+		}
+		if fielded {
+			colon := strings.Index(fullQuery, ":")
+			if colon >= 0 {
+				offset = colon + 1
+			}
+			return "", false, false, true, false, fmt.Errorf("SEARCH_SYNTAX Syntax error at offset %d near text", offset)
+		}
+		if strings.HasPrefix(expr, "**") {
+			offset++
+		}
+		near := strings.Trim(expr, "*")
+		return "", false, false, true, false, fmt.Errorf("SEARCH_SYNTAX Syntax error at offset %d near %s", offset, near)
+	}
+
+	leading = strings.HasPrefix(expr, "*")
+	trailing = strings.HasSuffix(expr, "*")
+	if count == 1 && (leading || trailing) {
+		value = strings.Trim(expr, "*")
+		if value == "" {
+			return "", false, false, true, false, errors.New("ERR unsupported search query")
+		}
+		return strings.ToLower(value), leading, trailing, true, false, nil
+	}
+	if count == 2 && leading && trailing {
+		value = strings.Trim(expr, "*")
+		if value == "" {
+			return "", false, false, true, false, errors.New("ERR unsupported search query")
+		}
+		return strings.ToLower(value), true, true, true, false, nil
+	}
+
+	// Measured Redis behavior for internal/multi-part glob forms is zero matches.
+	return strings.ToLower(expr), false, false, true, true, nil
+}
+
 func parseSearchClause(part, fullQuery string) (searchQueryClause, error) {
 	clause := searchQueryClause{}
 	if !strings.HasPrefix(part, "@") {
@@ -841,11 +915,19 @@ func parseSearchClause(part, fullQuery string) (searchQueryClause, error) {
 			}
 		}
 
-		if strings.HasSuffix(part, "*") && strings.Count(part, "*") == 1 && len(part) > 1 {
-			value := strings.ToLower(strings.TrimSuffix(part, "*"))
-			clause.text = &value
-			clause.textPrefix = true
-			return clause, nil
+		if strings.Contains(part, "*") {
+			value, leading, trailing, matched, noMatch, parseErr := parseMeasuredSearchWildcard(part, fullQuery, false)
+			if parseErr != nil {
+				return searchQueryClause{}, parseErr
+			}
+			if matched {
+				clause.text = &value
+				clause.textWildcardLeading = leading
+				clause.textWildcardTrailing = trailing
+				clause.textPrefix = trailing && !leading && !noMatch
+				clause.noMatch = noMatch
+				return clause, nil
+			}
 		}
 
 		value := strings.ToLower(part)
@@ -912,18 +994,22 @@ func parseSearchClause(part, fullQuery string) (searchQueryClause, error) {
 	}
 
 	if expr != "" && !strings.ContainsAny(expr, "{}[]()|") {
-		prefix := strings.HasSuffix(expr, "*")
-		if prefix {
-			if strings.Count(expr, "*") != 1 || len(expr) == 1 {
-				return searchQueryClause{}, errors.New("ERR unsupported search query")
+		if strings.Contains(expr, "*") {
+			value, leading, trailing, matched, noMatch, parseErr := parseMeasuredSearchWildcard(expr, fullQuery, true)
+			if parseErr != nil {
+				return searchQueryClause{}, parseErr
 			}
-			expr = strings.TrimSuffix(expr, "*")
-		} else if strings.Contains(expr, "*") {
-			return searchQueryClause{}, errors.New("ERR unsupported search query")
+			if matched {
+				clause.text = &value
+				clause.textWildcardLeading = leading
+				clause.textWildcardTrailing = trailing
+				clause.textPrefix = trailing && !leading && !noMatch
+				clause.noMatch = noMatch
+				return clause, nil
+			}
 		}
 		value := strings.ToLower(expr)
 		clause.text = &value
-		clause.textPrefix = prefix
 		return clause, nil
 	}
 
@@ -1377,6 +1463,8 @@ func evaluateSearchQuery(store *engine.Store, indexName string, def engine.Searc
 					}
 					if node.clause.textFuzzy > 0 {
 						keys, ok = store.SearchTextFuzzyKeys(indexName, field.Alias, *node.clause.text, node.clause.textFuzzy)
+					} else if node.clause.textWildcardLeading || node.clause.textWildcardTrailing {
+						keys, ok = store.SearchTextWildcardKeys(indexName, field.Alias, *node.clause.text, node.clause.textWildcardLeading, node.clause.textWildcardTrailing)
 					} else if node.clause.textPrefix {
 						keys, ok = store.SearchTextPrefixKeys(indexName, field.Alias, *node.clause.text)
 					} else {
@@ -1393,6 +1481,8 @@ func evaluateSearchQuery(store *engine.Store, indexName string, def engine.Searc
 			}
 			if node.clause.textFuzzy > 0 {
 				keys, ok = store.SearchTextFuzzyKeys(indexName, node.clause.alias, *node.clause.text, node.clause.textFuzzy)
+			} else if node.clause.textWildcardLeading || node.clause.textWildcardTrailing {
+				keys, ok = store.SearchTextWildcardKeys(indexName, node.clause.alias, *node.clause.text, node.clause.textWildcardLeading, node.clause.textWildcardTrailing)
 			} else if node.clause.textPrefix {
 				keys, ok = store.SearchTextPrefixKeys(indexName, node.clause.alias, *node.clause.text)
 			} else {
@@ -1558,7 +1648,7 @@ func stripSearchStopwords(def engine.SearchDefinition, node *searchQueryNode) (*
 		if node.clause == nil {
 			return node, true
 		}
-		if node.clause.text != nil && !node.clause.textPrefix && node.clause.textFuzzy == 0 &&
+		if node.clause.text != nil && !node.clause.textPrefix && !node.clause.textWildcardLeading && !node.clause.textWildcardTrailing && node.clause.textFuzzy == 0 &&
 			engine.SearchIsStopword(def, *node.clause.text) {
 			return nil, false
 		}
