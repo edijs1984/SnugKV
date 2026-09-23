@@ -224,7 +224,7 @@ try:
     print("offset_advanced=" + repr(current_offset > base_offset))
 
     print("\n=== partial resynchronization ===")
-    kind = partial_sync_probe(replid, base_offset)
+    kind = partial_sync_probe(replid, base_offset + 1)
     print("partial_sync_accepted=" + repr(kind == "CONTINUE"))
 
     print("\n=== invalid future offset fallback ===")
