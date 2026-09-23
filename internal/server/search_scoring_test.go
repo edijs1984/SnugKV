@@ -211,3 +211,45 @@ func TestFTSearchWithScoresDuplicateOption(t *testing.T) {
 		t.Fatalf("reply=%q", reply)
 	}
 }
+
+
+func TestFTSearchWithScoresFieldMaskUsesSharedPostingStats(t *testing.T) {
+	s := newSearchTestServer(t)
+
+	for _, doc := range []struct{ key, value string }{
+		{"iso:1", `{"title":"memory","body":"alpha"}`},
+		{"iso:2", `{"title":"alpha","body":"memory"}`},
+		{"iso:3", `{"title":"memory","body":"memory"}`},
+		{"iso:4", `{"title":"memory memory","body":"alpha"}`},
+		{"iso:5", `{"title":"alpha","body":"alpha"}`},
+	} {
+		if _, err := s.Execute([][]byte{
+			[]byte("JSON.SET"), []byte(doc.key), []byte("$"), []byte(doc.value),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.Execute([][]byte{
+		[]byte("FT.CREATE"), []byte("iso2"),
+		[]byte("ON"), []byte("JSON"), []byte("PREFIX"), []byte("1"), []byte("iso:"),
+		[]byte("SCHEMA"),
+		[]byte("$.title"), []byte("AS"), []byte("title"), []byte("TEXT"),
+		[]byte("$.body"), []byte("AS"), []byte("body"), []byte("TEXT"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, all := searchScores(t, s, "iso2", "memory")
+	titleKeys, title := searchScores(t, s, "iso2", "@title:memory")
+	bodyKeys, body := searchScores(t, s, "iso2", "@body:memory")
+
+	requireSearchKeys(t, titleKeys, "iso:3", "iso:4", "iso:1")
+	requireSearchKeys(t, bodyKeys, "iso:3", "iso:2")
+
+	for _, key := range titleKeys {
+		requireScoreClose(t, title[key], all[key])
+	}
+	for _, key := range bodyKeys {
+		requireScoreClose(t, body[key], all[key])
+	}
+}
