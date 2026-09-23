@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -127,5 +128,15 @@ func TestCuckooOracleAutoCreateInsertAndWrongType(t *testing.T) {
 	}
 	if _, err := s.Execute(cuckooArgs("CF.DEL","plain","x")); err == nil || err.Error() != "Not found" {
 		t.Fatalf("plain del=%v", err)
+	}
+}
+
+
+func TestCuckooWireErrorClasses(t *testing.T) {
+	if got := string(errorResponse(errors.New("Capacity must be in the range [2 * BUCKETSIZE, 1073741824]"))); got != "-Capacity must be in the range [2 * BUCKETSIZE, 1073741824]\r\n" {
+		t.Fatalf("capacity wire error = %q", got)
+	}
+	if got := string(errorResponse(errors.New("Not found"))); got != "-Not found\r\n" {
+		t.Fatalf("not found wire error = %q", got)
 	}
 }
