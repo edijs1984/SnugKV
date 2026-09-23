@@ -1274,7 +1274,22 @@ func searchBM25FilterStem(idx *searchIndex, alias, term string, scores map[strin
 	if alias == "" {
 		return scores
 	}
-	return searchBM25FilterByPosting(scores, idx.textStems[alias][term])
+	eligible := make(map[string]struct{})
+	for key, state := range idx.docs {
+		language := normalizeSearchLanguage(idx.def.Language)
+		for _, sequence := range state.TextSequences[alias] {
+			for _, token := range sequence {
+				stem := stemSearchLanguage(language, token)
+				// RediSearch writes a distinct stem posting only when the
+				// stem differs from the surface token. A token such as
+				// "memori" therefore qualifies via its surface posting only.
+				if stem != token && stem == term {
+					eligible[key] = struct{}{}
+				}
+			}
+		}
+	}
+	return searchBM25FilterByPosting(scores, eligible)
 }
 
 func searchBM25FilterPhonetic(idx *searchIndex, alias, term string, scores map[string]float64) map[string]float64 {
