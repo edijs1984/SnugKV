@@ -745,3 +745,15 @@ The live oracle established important observable behavior: default reserve uses 
 TTL preservation, persistence/restore, OOM routing, and @topk ACL metadata are included.
 
 A live differential against RedisBloom on port 6392 and SnugKV on port 6383 matched line-for-line for the audited TopK surface. The only difference was the expected target/port label.
+
+## t-digest Phase 1 — 2026-09-23
+
+SnugKV now includes a native persistent t-digest implementation ported from RedisBloom's centroid model rather than approximated from raw samples. It preserves merged and unmerged centroid state, read-triggered compression, merge accumulation, override semantics, compression selection, and INFO-visible counters.
+
+The audited command surface includes TDIGEST.CREATE, TDIGEST.ADD, TDIGEST.RESET, TDIGEST.MERGE, TDIGEST.MIN, TDIGEST.MAX, TDIGEST.QUANTILE, TDIGEST.CDF, TDIGEST.RANK, TDIGEST.REVRANK, TDIGEST.BYRANK, TDIGEST.BYREVRANK, TDIGEST.TRIMMED_MEAN, and TDIGEST.INFO.
+
+The live oracle established key compatibility points: default compression 100 gives capacity 610 and memory usage 9840; compression 200 gives capacity 1210 and memory usage 19440; empty sketches return nan and empty ranks -2; out-of-range rank lookups return +/-inf; merge into a missing destination creates it with max source compression; existing destinations accumulate unless OVERRIDE is specified.
+
+TTL preservation, persistence/restore, OOM routing, @tdigest ACL metadata, and dynamic merge-key extraction are included.
+
+A live differential against RedisBloom on port 6392 and SnugKV on port 6383 matched line-for-line for the audited t-digest surface. The only difference was the expected target/port label.
