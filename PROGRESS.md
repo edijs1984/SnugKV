@@ -725,3 +725,13 @@ The audited command surface includes CF.RESERVE, CF.ADD, CF.ADDNX, CF.EXISTS, CF
 The differential harness intentionally checks collision-sensitive behavior rather than only command syntax. In particular, the tiny-capacity oracle reproduces RedisBloom's approximate counts where CF.INSERT of a,a,b,c yields CF.COUNT a = 4 and CF.INSERTNX yields CF.COUNT a = 2 because both candidate hashes can resolve to the same bucket.
 
 A live differential against RedisBloom on port 6392 and SnugKV on port 6383 matched line-for-line for the audited surface. The only difference was the expected target/port label.
+
+## Count-Min Sketch Phase 1 — 2026-09-23
+
+SnugKV now includes a native persistent Count-Min Sketch implementation using packed 32-bit counters and MurmurHash2 row hashing. The audited command surface includes CMS.INITBYDIM, CMS.INITBYPROB, CMS.INCRBY, CMS.QUERY, CMS.MERGE, and CMS.INFO.
+
+The live oracle established the compatibility target for the installed RedisBloom version: INITBYPROB 0.01 0.01 resolves to width 200 and depth 7; negative CMS.INCRBY values are rejected with `CMS: Number cannot be negative`; MERGE requires an already-existing destination with matching dimensions; weighted merges are cellwise/count-weighted; and CMS errors use raw `CMS:` RESP error classes.
+
+Persistence/restore, TTL preservation, OOM routing, ACL metadata, and dynamic merge key extraction are included.
+
+A live differential against RedisBloom on port 6392 and SnugKV on port 6383 matched line-for-line for the audited CMS surface. The only difference was the expected target/port label.
