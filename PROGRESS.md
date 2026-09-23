@@ -659,3 +659,15 @@ Implemented reducers are `COUNT`, `SUM`, `MIN`, `MAX`, and `AVG`. `LOAD` support
 The live harness `compat/search/search-aggregate.sh` was run against Redis Search on port 6392 and SnugKV on port 6383. Query selection, loaded values, filter behavior, reducer outputs, explicit sorting, limit behavior, DIALECT 1/2, and parser/error classes matched the audited Redis surface. Remaining textual differences are limited to Redis's incidental unsorted row/group ordering and empty-row whitespace formatting, which are not treated as compatibility requirements.
 
 Focused aggregate tests, full engine/server tests, race tests, and `go vet ./...` passed.
+
+## Search vector Phase 1 — 2026-09-23
+
+SnugKV Search now supports a first audited vector-search slice for JSON indexes. The schema accepts `VECTOR FLAT` fields configured with `TYPE FLOAT32`, a fixed `DIM`, and `DISTANCE_METRIC COSINE`.
+
+The current query surface supports binary vector parameters through `PARAMS`, KNN queries, `VECTOR_RANGE`, score aliases, vector-aware `RETURN`, `NOCONTENT`, and explicit `SORTBY score ASC|DESC`. `KNN 0` returns an empty result set, and missing parameters, unknown vector fields, and wrong query-vector blob sizes match the audited Redis error classes and messages.
+
+The initial implementation intentionally uses a FLAT scan over the current JSON documents instead of duplicating vectors into a separate resident index. This preserves mutation visibility automatically and avoids additional Search memory until profiling shows a need for a dedicated vector structure. The schema metadata still persists algorithm/type/dimension/metric so a future optimized store can be added without changing the public definition.
+
+The live differential probe in `compat/search/search-vector.py` was run against Redis Search on port 6392 and SnugKV on port 6383. Explicit `SORTBY score ASC` matched exactly, including Redis's measured FLOAT32 cosine score formatting. Remaining differences are limited to Redis's richer `FT.INFO` implementation statistics and unsorted/tied KNN/range result ordering; equal-distance tie selection is not treated as a compatibility requirement.
+
+Focused vector tests, full engine/server tests, race tests, and `go vet ./...` passed.
