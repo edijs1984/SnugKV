@@ -147,6 +147,8 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Verified
 
+- Redis Search unqualified TEXT queries across all indexed TEXT fields, including multi-term AND, phrases, prefix/fuzzy queries, stopwords, stemming/NOSTEM, and mixed fielded clauses.
+
 - Redis Search schema modifiers: `WEIGHT`, `SORTABLE`, and `NOINDEX`, including audited ordering/duplicate behavior and TEXT sorting.
 
 - Redis Search fuzzy TEXT compatibility for `%term%`, `%%term%%`, and `%%%term%%%`, including grouped fuzzy terms, stem interaction, and parser error classes.
