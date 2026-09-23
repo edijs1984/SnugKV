@@ -557,6 +557,14 @@ Live differential validation used Redis Search on port 6392 and SnugKV on port 6
 
 Focused tests, engine/server tests, race tests, and `go vet ./...` all passed after the differential.
 
+## Search SLOP/INORDER milestone — 2026-09-23
+
+SnugKV Search now supports the audited Redis behavior for grouped TEXT proximity modifiers. `SLOP 0` requires adjacent grouped terms in either order; larger `SLOP` values allow the corresponding number of intervening tokens; `INORDER` additionally enforces query-term order. Quoted exact phrases remain exact even when `SLOP` or `INORDER` options are present.
+
+Live differential validation used Redis Search on port 6392 and SnugKV on port 6383 with `compat/search/search-phrase-modifiers.sh`. The result sets and validation errors matched Redis. The only textual diff was the existing non-contractual unsorted result ordering.
+
+Focused tests, engine/server tests, race tests, and `go vet ./...` all passed after the live differential.
+
 ## Native datatype benchmark snapshot
 
 The existing 100k-key benchmark tables remain in `benchmarks/README.md`. Recorded
