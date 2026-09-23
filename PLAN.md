@@ -346,6 +346,7 @@ lands.
 - [x] Implement search Phase 1: opt-in JSON index catalog, TAG/NUMERIC/TEXT indexing, reverse document state, memory accounting, and Redis 8.2 differential coverage.
 - [x] Add TEXT query support for multi-term groups, prefixes, exact phrases, English stemming/NOSTEM, and Redis-compatible default/disabled/custom stopword modes.
 - [x] Add audited Search language semantics for index `LANGUAGE`, query `LANGUAGE`, and JSON `LANGUAGE_FIELD` with English/German stemming.
+- [x] Add audited grouped TEXT proximity modifiers with `SLOP` and `INORDER` while preserving exact quoted-phrase behavior.
 - [ ] Add probabilistic/time-series structures only after the JSON/search storage
   boundaries are settled.
 - [ ] Return to optimizer convergence so dense-entry compaction is reached
