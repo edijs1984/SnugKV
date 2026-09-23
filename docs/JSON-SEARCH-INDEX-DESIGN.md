@@ -118,7 +118,7 @@ The first TEXT implementation is intentionally small:
 - underscore remains part of a token;
 - exact token postings only.
 
-Not yet implemented: unqualified full-text terms, phrase slop/inorder controls,
+Not yet implemented: unqualified full-text terms,
 fuzzy matching, phonetics, suffix/infix wildcard expansion,
 relevance scoring, TEXT weights, or broader language-specific tokenization beyond the audited English/German subset.
 
@@ -126,7 +126,9 @@ TEXT prefix search currently supports only a single trailing `*`. Bare `*`,
 leading wildcards, infix wildcards, and multiple `*` characters are rejected.
 
 Exact phrase search uses `@field:"phrase"` and requires the normalized tokens to
-appear adjacent and in order within the same indexed JSON string value. With the
+appear adjacent and in order within the same indexed JSON string value. Grouped
+TEXT queries support audited `SLOP` and `INORDER` options: proximity is applied to
+grouped terms, while quoted exact phrases remain exact under those options. With the
 default TEXT behavior, phrase tokens are compared through the English stemmer;
 `TEXT NOSTEM` keeps exact normalized tokens instead. SnugKV does not yet expose
 Redis phrase `SLOP`/`INORDER` controls.

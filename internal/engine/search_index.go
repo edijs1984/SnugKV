@@ -777,6 +777,94 @@ func (m *searchManager) textPhraseKeys(indexName, alias, phrase, language string
 	return sortedPostingKeys(matches), true
 }
 
+
+func searchTermsWithinSlop(sequence, terms []string, slop int, inOrder bool) bool {
+	if len(terms) < 2 || len(sequence) < len(terms) {
+		return false
+	}
+	positions := make([]int, len(terms))
+	used := make([]bool, len(sequence))
+
+	var visit func(int) bool
+	visit = func(termIndex int) bool {
+		if termIndex == len(terms) {
+			minPos, maxPos := positions[0], positions[0]
+			for _, pos := range positions[1:] {
+				if pos < minPos {
+					minPos = pos
+				}
+				if pos > maxPos {
+					maxPos = pos
+				}
+			}
+			if maxPos-minPos-(len(terms)-1) > slop {
+				return false
+			}
+			if inOrder {
+				for j := 1; j < len(positions); j++ {
+					if positions[j] <= positions[j-1] {
+						return false
+					}
+				}
+			}
+			return true
+		}
+
+		for pos, token := range sequence {
+			if used[pos] || token != terms[termIndex] {
+				continue
+			}
+			used[pos] = true
+			positions[termIndex] = pos
+			if visit(termIndex + 1) {
+				return true
+			}
+			used[pos] = false
+		}
+		return false
+	}
+	return visit(0)
+}
+
+func (m *searchManager) textProximityKeys(indexName, alias string, terms []string, slop int, inOrder bool, language string) ([]string, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	idx, ok := m.indexes[indexName]
+	if !ok {
+		return nil, false
+	}
+	if slop < 0 {
+		slop = 0
+	}
+
+	filtered := filterSearchStopwords(idx.def, terms)
+	if len(filtered) < 2 {
+		return []string{}, true
+	}
+
+	defField, found := searchTextField(idx.def, alias)
+	useStems := found && !defField.NoStem
+	if useStems {
+		filtered = stemSearchSequence(filtered, language)
+	}
+
+	matches := make(map[string]struct{})
+	for key, state := range idx.docs {
+		for _, sequence := range state.TextSequences[alias] {
+			candidate := sequence
+			if useStems {
+				candidate = stemSearchSequence(sequence, language)
+			}
+			if searchTermsWithinSlop(candidate, filtered, slop, inOrder) {
+				matches[key] = struct{}{}
+				break
+			}
+		}
+	}
+	return sortedPostingKeys(matches), true
+}
+
 func (idx *searchIndex) ensureNumericSorted(alias string) []numericPosting {
 	if !idx.numericDirty[alias] {
 		return idx.numericSorted[alias]
@@ -1103,6 +1191,14 @@ func (s *Store) SearchTextPhraseKeys(indexName, alias, phrase, language string) 
 		return nil, false
 	}
 	return manager.textPhraseKeys(indexName, alias, phrase, language)
+}
+
+func (s *Store) SearchTextProximityKeys(indexName, alias string, terms []string, slop int, inOrder bool, language string) ([]string, bool) {
+	manager := s.getSearchManager()
+	if manager == nil {
+		return nil, false
+	}
+	return manager.textProximityKeys(indexName, alias, terms, slop, inOrder, language)
 }
 
 func (s *Store) SearchNumericRangeKeys(indexName, alias string, min, max float64) ([]string, bool) {
