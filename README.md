@@ -316,3 +316,5 @@ SnugKV includes an initial native Bloom filter implementation with persistent st
 Cuckoo filters are supported as native persistent probabilistic values with RedisBloom-audited `CF.RESERVE`, `CF.ADD`, `CF.ADDNX`, `CF.EXISTS`, `CF.MEXISTS`, `CF.COUNT`, `CF.DEL`, `CF.INSERT`, `CF.INSERTNX`, and `CF.INFO` behavior.
 
 Count-Min Sketches are supported as native persistent probabilistic values with RedisBloom-audited `CMS.INITBYDIM`, `CMS.INITBYPROB`, `CMS.INCRBY`, `CMS.QUERY`, `CMS.MERGE`, and `CMS.INFO` behavior, including weighted merges.
+
+TopK heavy-hitter tracking is supported as a native persistent probabilistic value with RedisBloom-audited `TOPK.RESERVE`, `TOPK.ADD`, `TOPK.INCRBY`, `TOPK.QUERY`, `TOPK.COUNT`, `TOPK.LIST`, and `TOPK.INFO` behavior.
