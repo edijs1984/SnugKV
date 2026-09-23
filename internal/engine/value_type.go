@@ -33,6 +33,7 @@ const (
 	TypeBloom
 	TypeCuckoo
 	TypeCMS
+	TypeTopK
 )
 
 func (t ValueType) String() string {
@@ -67,6 +68,8 @@ func (t ValueType) String() string {
 		return "CUCKOO"
 	case TypeCMS:
 		return "CMS"
+	case TypeTopK:
+		return "TOPK"
 	default:
 		return "UNKNOWN"
 	}
