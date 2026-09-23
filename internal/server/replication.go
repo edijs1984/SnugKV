@@ -96,6 +96,10 @@ func (r *replicationState) snapshot() replicationSnapshot {
 
 func (r *replicationState) setReplica(host string, port int) {
 	r.mu.Lock()
+	if r.masterHost != host || r.masterPort != port {
+		r.masterRunID = ""
+		r.offset = 0
+	}
 	r.role = replicationReplica
 	r.masterHost = host
 	r.masterPort = port
@@ -129,6 +133,7 @@ func (r *replicationState) promote() {
 	r.masterPort = 0
 	r.masterLinkStatus = ""
 	r.masterSyncInProgress = false
+	r.masterRunID = ""
 	r.mu.Unlock()
 }
 
@@ -570,41 +575,56 @@ func (s *Server) runReplicaFollow(host string, port int, cancel <-chan struct{})
 }
 
 func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struct{}) error {
-	if err := writeReplicationRESPCommand(conn, "PSYNC", "?", "-1"); err != nil {
+	s.replication.mu.RLock()
+	requestedRunID := s.replication.masterRunID
+	requestedOffset := s.replication.offset
+	s.replication.mu.RUnlock()
+	if requestedRunID == "" {
+		requestedRunID = "?"
+		requestedOffset = -1
+	}
+	if err := writeReplicationRESPCommand(conn, "PSYNC", requestedRunID, strconv.FormatInt(requestedOffset, 10)); err != nil {
 		return err
 	}
+
 	reader := bufio.NewReader(conn)
 	line, err := reader.ReadString('\n')
 	if err != nil {
 		return err
 	}
-	if !strings.HasPrefix(line, "+FULLRESYNC ") {
-		return errors.New("master did not provide FULLRESYNC")
-	}
-	parts := strings.Fields(line)
-	if len(parts) >= 3 {
-		if off, parseErr := strconv.ParseInt(parts[2], 10, 64); parseErr == nil {
-			s.replication.mu.Lock()
-			s.replication.offset = off
-			s.replication.mu.Unlock()
+
+	if strings.HasPrefix(line, "+FULLRESYNC ") {
+		parts := strings.Fields(line)
+		if len(parts) < 3 {
+			return errors.New("invalid FULLRESYNC response")
 		}
+		off, parseErr := strconv.ParseInt(parts[2], 10, 64)
+		if parseErr != nil {
+			return errors.New("invalid FULLRESYNC offset")
+		}
+		s.replication.mu.Lock()
+		s.replication.masterRunID = parts[1]
+		s.replication.offset = off
+		s.replication.mu.Unlock()
+
+		frame, err := readReplicationRESP(reader)
+		if err != nil {
+			return err
+		}
+		records, err := decodeReplicationFrame(frame)
+		if err != nil {
+			return err
+		}
+		s.durableMu.Lock()
+		err = s.store.Restore(records, true)
+		s.durableMu.Unlock()
+		if err != nil {
+			return err
+		}
+	} else if !strings.HasPrefix(line, "+CONTINUE") {
+		return errors.New("master did not provide FULLRESYNC or CONTINUE")
 	}
 
-	frame, err := readReplicationRESP(reader)
-	if err != nil {
-		return err
-	}
-	records, err := decodeReplicationFrame(frame)
-	if err != nil {
-		return err
-	}
-
-	s.durableMu.Lock()
-	err = s.store.Restore(records, true)
-	s.durableMu.Unlock()
-	if err != nil {
-		return err
-	}
 	s.replication.setReplicaConnected()
 
 	for {
