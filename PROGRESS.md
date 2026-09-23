@@ -598,3 +598,10 @@ when evaluating CPU tradeoffs.
 7. Distributed features only after the single-node target is mature.
 
 See `PLAN.md`, `COMPATIBILITY.md`, `KNOWN-LIMITATIONS.md`, and GitHub issue #55.
+## Search schema-modifier milestone — 2026-09-23
+
+SnugKV Search now supports the audited Redis schema modifiers `WEIGHT`, `SORTABLE`, and `NOINDEX` for JSON Search fields. The parser preserves the measured Redis ordering behavior: TEXT `WEIGHT` must appear before modifiers that end the weight-accepting portion of the field grammar, duplicate boolean modifiers are tolerated, and repeated `WEIGHT` uses the last value. Missing `WEIGHT` values are accepted as zero, while non-numeric values return Redis-compatible parse errors.
+
+`NOINDEX` suppresses posting-list construction for the field. `SORTABLE` is retained as schema metadata, while SnugKV continues to allow `SORTBY` on non-SORTABLE fields because Redis treats SORTABLE as an optimization rather than a correctness requirement. TEXT sorting now uses the projected JSON string value, matching the live Redis differential for the audited cases.
+
+The live harness `compat/search/search-schema-modifiers.sh` was run against Redis Search on port 6392 and SnugKV on port 6383. Remaining textual differences are the already documented narrow `FT.INFO` statistics surface, deterministic unsorted/tie ordering, and a pre-existing RETURN-parser error-shape difference outside this milestone.
