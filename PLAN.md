@@ -370,7 +370,8 @@ lands.
 
 ### P4 — distributed features (outside current single-node target)
 
-- [ ] Replication.
+- [x] Replication Phase 1: primary/replica control plane, full sync, live propagation, read-only replicas, promotion, and Redis-shaped audited behavior.
+- [ ] Replication Phase 2: partial resynchronization/backlog, ACK offsets, reconnect continuation, diskless-transfer hardening, authentication/TLS topology support.
 - [ ] Automatic failover / Sentinel-like behavior.
 - [ ] Cluster/sharding protocol.
 - [ ] Multi-node consistency and recovery model.
