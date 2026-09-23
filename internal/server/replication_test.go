@@ -253,7 +253,6 @@ func TestReplicationACKMonotonicAndInfo(t *testing.T) {
 	}
 }
 
-
 func TestDecodeRedisFullSyncRDB(t *testing.T) {
 	appendDumpObject := func(dst []byte, key string, dump []byte) []byte {
 		if len(dump) < 11 {
