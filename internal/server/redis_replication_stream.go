@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 )
@@ -49,11 +50,8 @@ func readRedisReplicationCommand(reader *bufio.Reader) ([][]byte, int64, error) 
 			return nil, 0, errors.New("invalid Redis replication bulk length")
 		}
 		arg := make([]byte, n)
-		if _, err := reader.Read(arg); err != nil {
+		if _, err := io.ReadFull(reader, arg); err != nil {
 			return nil, 0, err
-		}
-		if len(arg) != n {
-			return nil, 0, errors.New("short Redis replication bulk payload")
 		}
 		count += int64(n)
 		var crlf [2]byte
