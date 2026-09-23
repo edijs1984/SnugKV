@@ -120,7 +120,9 @@ The first TEXT implementation is intentionally small:
 
 Not yet implemented: unqualified full-text terms,
 phonetics, suffix/infix wildcard expansion,
-relevance scoring, TEXT weights, or broader language-specific tokenization beyond the audited English/German subset.
+relevance scoring or broader language-specific tokenization beyond the audited English/German subset.
+
+Schema modifiers now include audited Redis-compatible `WEIGHT`, `SORTABLE`, and `NOINDEX`. `WEIGHT` is retained for future scoring, `NOINDEX` suppresses posting construction, and `SORTABLE` is represented in the schema without making sorting correctness depend on precomputed sortable storage.
 
 TEXT prefix search currently supports only a single trailing `*`. Bare `*`,
 leading wildcards, infix wildcards, and multiple `*` characters are rejected.
