@@ -49,7 +49,8 @@ func tDigestCapacity(compression int64) (int, error) {
 	if compression <= 0 {
 		return 0, errors.New("ERR T-Digest: compression parameter needs to be a positive integer")
 	}
-	if compression > (math.MaxInt-10)/6 {
+	maxInt := int64(^uint(0) >> 1)
+	if compression > (maxInt-10)/6 {
 		return 0, errors.New("ERR T-Digest: allocation failed")
 	}
 	return int(6*compression + 10), nil
