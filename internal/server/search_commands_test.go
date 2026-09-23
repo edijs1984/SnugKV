@@ -1684,3 +1684,177 @@ func TestFTSearchTextNoStem(t *testing.T) {
 		}
 	}
 }
+
+
+func TestFTSearchDefaultStopwords(t *testing.T) {
+	s := newSearchTestServer(t)
+
+	for _, doc := range []struct {
+		key  string
+		json string
+	}{
+		{"stop:1", `{"text":"memory and guide"}`},
+		{"stop:2", `{"text":"memory guide"}`},
+		{"stop:3", `{"text":"the memory server"}`},
+	} {
+		if _, err := s.Execute([][]byte{
+			[]byte("JSON.SET"), []byte(doc.key), []byte("$"), []byte(doc.json),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := s.Execute([][]byte{
+		[]byte("FT.CREATE"), []byte("stopdefault"),
+		[]byte("ON"), []byte("JSON"),
+		[]byte("PREFIX"), []byte("1"), []byte("stop:"),
+		[]byte("SCHEMA"),
+		[]byte("$.text"), []byte("AS"), []byte("text"), []byte("TEXT"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		query string
+		want  string
+	}{
+		{"@text:(memory and guide)", "*3\r\n:2\r\n$6\r\nstop:1\r\n$6\r\nstop:2\r\n"},
+		{"@text:the", "*1\r\n:0\r\n"},
+	} {
+		reply, err := s.Execute([][]byte{
+			[]byte("FT.SEARCH"), []byte("stopdefault"), []byte(tc.query), []byte("NOCONTENT"),
+		})
+		if err != nil {
+			t.Fatalf("query %q: %v", tc.query, err)
+		}
+		if got := string(reply); got != tc.want {
+			t.Fatalf("query %q reply=%q want=%q", tc.query, got, tc.want)
+		}
+	}
+
+	_, err := s.Execute([][]byte{
+		[]byte("FT.SEARCH"), []byte("stopdefault"), []byte(`@text:"memory and guide"`), []byte("NOCONTENT"),
+	})
+	if err == nil || err.Error() != "SEARCH_SYNTAX Syntax error at offset 14 near and" {
+		t.Fatalf("quoted phrase stopword error=%v", err)
+	}
+}
+
+func TestFTSearchStopwordsDisabled(t *testing.T) {
+	s := newSearchTestServer(t)
+
+	for _, doc := range []struct {
+		key  string
+		json string
+	}{
+		{"stop:1", `{"text":"memory and guide"}`},
+		{"stop:2", `{"text":"memory guide"}`},
+	} {
+		if _, err := s.Execute([][]byte{
+			[]byte("JSON.SET"), []byte(doc.key), []byte("$"), []byte(doc.json),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := s.Execute([][]byte{
+		[]byte("FT.CREATE"), []byte("stopnone"),
+		[]byte("ON"), []byte("JSON"),
+		[]byte("PREFIX"), []byte("1"), []byte("stop:"),
+		[]byte("STOPWORDS"), []byte("0"),
+		[]byte("SCHEMA"),
+		[]byte("$.text"), []byte("AS"), []byte("text"), []byte("TEXT"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		query string
+		want  string
+	}{
+		{"@text:and", "*2\r\n:1\r\n$6\r\nstop:1\r\n"},
+		{`@text:"memory and guide"`, "*2\r\n:1\r\n$6\r\nstop:1\r\n"},
+	} {
+		reply, err := s.Execute([][]byte{
+			[]byte("FT.SEARCH"), []byte("stopnone"), []byte(tc.query), []byte("NOCONTENT"),
+		})
+		if err != nil {
+			t.Fatalf("query %q: %v", tc.query, err)
+		}
+		if got := string(reply); got != tc.want {
+			t.Fatalf("query %q reply=%q want=%q", tc.query, got, tc.want)
+		}
+	}
+}
+
+func TestFTSearchCustomStopwords(t *testing.T) {
+	s := newSearchTestServer(t)
+
+	for _, doc := range []struct {
+		key  string
+		json string
+	}{
+		{"stop:1", `{"text":"memory blue guide"}`},
+		{"stop:2", `{"text":"memory guide"}`},
+		{"stop:3", `{"text":"the guide"}`},
+	} {
+		if _, err := s.Execute([][]byte{
+			[]byte("JSON.SET"), []byte(doc.key), []byte("$"), []byte(doc.json),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := s.Execute([][]byte{
+		[]byte("FT.CREATE"), []byte("stopcustom"),
+		[]byte("ON"), []byte("JSON"),
+		[]byte("PREFIX"), []byte("1"), []byte("stop:"),
+		[]byte("STOPWORDS"), []byte("1"), []byte("blue"),
+		[]byte("SCHEMA"),
+		[]byte("$.text"), []byte("AS"), []byte("text"), []byte("TEXT"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		query string
+		want  string
+	}{
+		{"@text:(memory blue guide)", "*3\r\n:2\r\n$6\r\nstop:1\r\n$6\r\nstop:2\r\n"},
+		{"@text:the", "*2\r\n:1\r\n$6\r\nstop:3\r\n"},
+		{"@text:blue", "*1\r\n:0\r\n"},
+	} {
+		reply, err := s.Execute([][]byte{
+			[]byte("FT.SEARCH"), []byte("stopcustom"), []byte(tc.query), []byte("NOCONTENT"),
+		})
+		if err != nil {
+			t.Fatalf("query %q: %v", tc.query, err)
+		}
+		if got := string(reply); got != tc.want {
+			t.Fatalf("query %q reply=%q want=%q", tc.query, got, tc.want)
+		}
+	}
+}
+
+func TestFTCreateRejectsInvalidStopwordCount(t *testing.T) {
+	s := newSearchTestServer(t)
+
+	for _, args := range [][][]byte{
+		{
+			[]byte("FT.CREATE"), []byte("badstop1"),
+			[]byte("ON"), []byte("JSON"),
+			[]byte("STOPWORDS"), []byte("-1"),
+			[]byte("SCHEMA"), []byte("$.text"), []byte("AS"), []byte("text"), []byte("TEXT"),
+		},
+		{
+			[]byte("FT.CREATE"), []byte("badstop2"),
+			[]byte("ON"), []byte("JSON"),
+			[]byte("STOPWORDS"), []byte("2"), []byte("one"),
+			[]byte("SCHEMA"), []byte("$.text"), []byte("AS"), []byte("text"), []byte("TEXT"),
+		},
+	} {
+		if _, err := s.Execute(args); err == nil {
+			t.Fatal("invalid STOPWORDS unexpectedly succeeded")
+		}
+	}
+}

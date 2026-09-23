@@ -22,6 +22,9 @@ run FT.DROPINDEX products
 run FT.DROPINDEX badpath
 run FT.DROPINDEX stemidx
 run FT.DROPINDEX stemnostem
+run FT.DROPINDEX stopdefault
+run FT.DROPINDEX stopnone
+run FT.DROPINDEX stopcustom
 
 echo
 echo "=== seed ==="
@@ -108,6 +111,30 @@ run FT.SEARCH stemnostem '@text:hired' NOCONTENT
 run FT.SEARCH stemnostem '@text:hiring' NOCONTENT
 
 echo
+echo "=== default stopwords ==="
+run JSON.SET stop:1 '$' '{"text":"memory and guide"}'
+run JSON.SET stop:2 '$' '{"text":"memory guide"}'
+run JSON.SET stop:3 '$' '{"text":"the memory server"}'
+run FT.CREATE stopdefault ON JSON PREFIX 1 stop: SCHEMA '$.text' AS text TEXT
+run FT.SEARCH stopdefault '@text:(memory and guide)' NOCONTENT
+run FT.SEARCH stopdefault '@text:"memory and guide"' NOCONTENT
+run FT.SEARCH stopdefault '@text:the' NOCONTENT
+
+echo
+echo "=== stopwords disabled ==="
+run FT.CREATE stopnone ON JSON PREFIX 1 stop: STOPWORDS 0 SCHEMA '$.text' AS text TEXT
+run FT.SEARCH stopnone '@text:and' NOCONTENT
+run FT.SEARCH stopnone '@text:"memory and guide"' NOCONTENT
+
+echo
+echo "=== custom stopwords ==="
+run JSON.SET stop:4 '$' '{"text":"memory blue guide"}'
+run FT.CREATE stopcustom ON JSON PREFIX 1 stop: STOPWORDS 1 blue SCHEMA '$.text' AS text TEXT
+run FT.SEARCH stopcustom '@text:(memory blue guide)' NOCONTENT
+run FT.SEARCH stopcustom '@text:the' NOCONTENT
+run FT.SEARCH stopcustom '@text:blue' NOCONTENT
+
+echo
 echo "=== numeric infinities ==="
 run FT.SEARCH products '@price:[-inf 20]' NOCONTENT
 run FT.SEARCH products '@price:[20 +inf]' NOCONTENT
@@ -192,4 +219,7 @@ echo "=== drop ==="
 run FT.DROPINDEX products
 run FT.DROPINDEX stemidx
 run FT.DROPINDEX stemnostem
+run FT.DROPINDEX stopdefault
+run FT.DROPINDEX stopnone
+run FT.DROPINDEX stopcustom
 run FT._LIST

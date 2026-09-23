@@ -541,6 +541,14 @@ feature disabling.
 
 See `benchmarks/README.md` for exact runs, caveats, and reproduction details.
 
+## Search TEXT + stopwords milestone — 2026-09-23
+
+SnugKV Search now supports JSON TEXT fields with case-insensitive token lookup, multi-term field groups, token prefixes, exact phrases, English stemming, NOSTEM, and Redis-compatible stopword modes. FT.CREATE accepts the Redis default stopword set, STOPWORDS 0 to disable filtering, and custom stopword lists that replace the defaults.
+
+Live differential validation used Redis Stack/Search on port 6392 and SnugKV on port 6383 with the shared compat/search/search-core.sh harness. Stopword behavior matched Redis, including Redis's syntax error for a default stopword embedded in an exact quoted phrase. Remaining textual diffs are non-semantic ordering differences for unsorted FT.SEARCH result sets and JSON object field serialization order.
+
+Focused tests, internal engine/server tests, race tests, and go vet all passed after the live differential.
+
 ## Native datatype benchmark snapshot
 
 The existing 100k-key benchmark tables remain in `benchmarks/README.md`. Recorded

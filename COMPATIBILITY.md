@@ -543,6 +543,14 @@ JSON.SET JSON.GET JSON.TYPE JSON.DEL
 
 It is not a complete RedisJSON implementation.
 
+## Search
+
+SnugKV implements an opt-in JSON search index surface including `FT.CREATE`, `FT.DROPINDEX`, `FT._LIST`, `FT.INFO`, and `FT.SEARCH` for supported TAG, NUMERIC, and TEXT fields.
+
+TEXT support includes case-insensitive token matching, multi-term field groups, token prefixes, exact phrases, English stemming, `NOSTEM`, and stopword modes compatible with the audited Redis Search behavior: the Redis default stopword list, `STOPWORDS 0` to disable filtering, and custom stopword lists that replace the defaults. Live Redis differential testing also covers quoted-phrase stopword syntax behavior.
+
+For queries without `SORTBY`, SnugKV does not promise Redis's incidental result ordering. JSON object field serialization order may also differ while preserving the same document content. The current Search implementation is intentionally narrower than the complete Redis Search feature set.
+
 ## Major remaining Redis compatibility work
 
 Prioritized backlog:
