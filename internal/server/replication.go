@@ -26,6 +26,12 @@ const (
 	replicationReplica
 )
 
+type replicationBacklogEntry struct {
+	startOffset int64
+	endOffset   int64
+	payload     []byte
+}
+
 type replicationState struct {
 	mu sync.RWMutex
 
@@ -40,11 +46,18 @@ type replicationState struct {
 	runID string
 	offset int64
 
+	backlogActive bool
+	backlogSize int64
+	backlogBytes int64
+	backlogFirstOffset int64
+	backlog []replicationBacklogEntry
+
 	nextReplicaID uint64
 	replicas map[uint64]func([]byte) error
 
 	followCancel chan struct{}
 	followDone chan struct{}
+	masterRunID string
 }
 
 type replicationSnapshot struct {
@@ -56,6 +69,10 @@ type replicationSnapshot struct {
 	connectedReplicas int
 	runID string
 	offset int64
+	backlogActive bool
+	backlogSize int64
+	backlogBytes int64
+	backlogFirstOffset int64
 }
 
 func (r *replicationState) snapshot() replicationSnapshot {
@@ -70,6 +87,10 @@ func (r *replicationState) snapshot() replicationSnapshot {
 		connectedReplicas: r.connectedReplicas,
 		runID: r.runID,
 		offset: r.offset,
+		backlogActive: r.backlogActive,
+		backlogSize: r.backlogSize,
+		backlogBytes: r.backlogBytes,
+		backlogFirstOffset: r.backlogFirstOffset,
 	}
 }
 
