@@ -147,6 +147,8 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Verified
 
+- Redis 8.2 Search differential coverage for JSON TEXT indexing, multi-term groups, prefixes, exact phrases, English stemming/NOSTEM, and default/disabled/custom stopword modes; remaining diffs are unsorted result ordering and JSON object field order.
+
 - Redis 8.2 Function allow-oom differential audit covering plain FCALL rejection
   while already OOM, allow-oom reads/writes, no-writes entry behavior,
   FCALL_RO behavior, deletion while OOM, and post-invocation bypass restoration.
