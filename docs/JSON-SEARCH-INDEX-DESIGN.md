@@ -120,7 +120,7 @@ The first TEXT implementation is intentionally small:
 
 Not yet implemented: unqualified full-text terms, phrase slop/inorder controls,
 fuzzy matching, phonetics, suffix/infix wildcard expansion,
-relevance scoring, TEXT weights, non-English stemming, or language-specific tokenization.
+relevance scoring, TEXT weights, or broader language-specific tokenization beyond the audited English/German subset.
 
 TEXT prefix search currently supports only a single trailing `*`. Bare `*`,
 leading wildcards, infix wildcards, and multiple `*` characters are rejected.
@@ -131,9 +131,10 @@ default TEXT behavior, phrase tokens are compared through the English stemmer;
 `TEXT NOSTEM` keeps exact normalized tokens instead. SnugKV does not yet expose
 Redis phrase `SLOP`/`INORDER` controls.
 
-The first stemming milestone is intentionally English-only. Redis defaults indexes
-to English stemming unless another index language is selected; SnugKV does not yet
-implement `LANGUAGE`, `LANGUAGE_FIELD`, or query `LANGUAGE`.
+The first language milestone supports Redis-compatible `LANGUAGE english|german`,
+query `LANGUAGE english|german`, and JSON `LANGUAGE_FIELD`. English uses the
+existing stemmer. German stemming is currently limited to the behavior directly
+audited against Redis and should be expanded only with additional differential cases.
 
 Stopwords are index-wide. Omitting `STOPWORDS` uses Redis's 33-word default list.
 `STOPWORDS 0` disables filtering completely, and `STOPWORDS N ...` replaces the

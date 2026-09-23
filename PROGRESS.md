@@ -549,6 +549,14 @@ Live differential validation used Redis Stack/Search on port 6392 and SnugKV on 
 
 Focused tests, internal engine/server tests, race tests, and go vet all passed after the live differential.
 
+## Search language milestone — 2026-09-23
+
+Search now supports an audited first language slice: `FT.CREATE ... LANGUAGE english|german`, JSON `LANGUAGE_FIELD`, and `FT.SEARCH ... LANGUAGE <name>`. English keeps the existing stemmer; German indexing/query stemming covers the Redis-verified `haus / hauses / häuser / häusern` family. Invalid index/query language names preserve Redis Search error classes on the wire.
+
+Live differential validation used Redis Search on port 6392 and SnugKV on port 6383 with `compat/search/search-language.sh`. English, German, per-document language-field behavior, query-language overrides, and validation errors matched Redis semantically. Remaining diffs are only non-contractual unsorted result ordering and SnugKV's intentionally smaller `FT.INFO` statistics surface.
+
+Focused tests, engine/server tests, race tests, and `go vet ./...` all passed after the differential.
+
 ## Native datatype benchmark snapshot
 
 The existing 100k-key benchmark tables remain in `benchmarks/README.md`. Recorded
