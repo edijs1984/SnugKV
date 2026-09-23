@@ -395,7 +395,7 @@ func TestFTSearchRejectsUnsupportedGrammar(t *testing.T) {
 	createProductSearchFixture(t, s)
 
 	for _, query := range []string{
-		"books",
+		"@title:",
 		"@price:10",
 		"@price:[10]",
 		"@category:(books)",
