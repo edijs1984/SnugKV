@@ -209,4 +209,14 @@ func TestFTSearchGeoParserErrorsAndSchema(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	for _, index := range []string{"geo-sort", "geo-noindex"} {
+		info, err := s.Execute([][]byte{[]byte("FT.INFO"), []byte(index)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(info), "$8\r\nnum_docs\r\n:5\r\n") {
+			t.Fatalf("%s FT.INFO num_docs mismatch: %q", index, info)
+		}
+	}
 }
