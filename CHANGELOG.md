@@ -147,6 +147,9 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Verified
 
+- Redis Search `FT.AGGREGATE` core pipeline over JSON indexes, including base queries, `LOAD`, `FILTER`, `GROUPBY`, `REDUCE COUNT|SUM|MIN|MAX|AVG`, aggregate `SORTBY`, `LIMIT`, DIALECT 1/2, and audited parser/error behavior. Remaining live-diff noise is limited to Redis's incidental unsorted row/group ordering and empty-row formatting.
+
+
 - Redis Search GEO fields on JSON, including `"lon,lat"` string indexing, `m`/`km`/`mi`/`ft` radius filters, boolean composition, mutation visibility, `SORTBY`, `LIMIT`, `SORTABLE`, `NOINDEX`, coordinate validation, parser errors, and DIALECT 1/2 behavior. Remaining live-diff noise is the known narrow `FT.INFO` surface plus deterministic unsorted ordering/`LIMIT` selection.
 
 
