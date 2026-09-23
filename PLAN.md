@@ -359,7 +359,7 @@ lands.
 - [x] Add online Search index rebuild generations so `FT.CREATE` backfills without holding all primary shards locked for the full build, while concurrent updates/deletes/creates are journaled and replayed before atomic publication.
 - [ ] Add probabilistic/time-series structures only after the JSON/search storage boundaries are settled.
   - [x] Bloom filter Phase 1: native persistent Bloom values, reserve/add/exists, multi operations, cardinality/info, audited insert options, TTL/persistence, OOM/ACL metadata, and RedisBloom live differential parity for the audited slice.
-  - [ ] Audit and add scalable Bloom expansion/overflow semantics before claiming full RedisBloom compatibility.
+  - [x] Audit and add scalable Bloom expansion/overflow semantics, including geometric filter generations, `EXPANSION`, `NONSCALING`, overflow errors, and `BF.INFO` parity.
   - [ ] Add additional probabilistic families (Cuckoo, CMS, TopK, t-digest) and TimeSeries in separate audited slices.
 - [x] Return to optimizer convergence so dropped/missed optimization candidates are periodically revisited and dense-entry compaction is reached automatically without an explicit `SNUG.COMPACT`.
 
