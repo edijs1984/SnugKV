@@ -123,8 +123,11 @@ func TestTimeSeriesOracleIncrDeleteNaNAndErrors(t *testing.T){
 		}
 	}
 	if _,err:=s.Execute(tsArgs("SET","plain","value"));err!=nil{t.Fatal(err)}
-	if _,err:=s.Execute(tsArgs("TS.GET","plain"));err==nil || !strings.HasPrefix(err.Error(),"WRONGTYPE "){
+	if _,err:=s.Execute(tsArgs("TS.GET","plain"));err==nil || err.Error()!="ERR WRONGTYPE Operation against a key holding the wrong kind of value"{
 		t.Fatalf("get plain err=%v",err)
+	}
+	if _,err:=s.Execute(tsArgs("TS.INFO","plain"));err==nil || err.Error()!="ERR WRONGTYPE Operation against a key holding the wrong kind of value"{
+		t.Fatalf("info plain err=%v",err)
 	}
 	if _,err:=s.Execute(tsArgs("TS.ADD","plain","1000","1"));err==nil || err.Error()!="ERR TSDB: the key is not a TSDB key"{
 		t.Fatalf("add plain err=%v",err)
