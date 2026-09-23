@@ -1250,35 +1250,75 @@ func (idx *searchIndex) bm25TermScores(fields []SearchField, term, language stri
 	return scores
 }
 
+func searchBM25FilterByPosting(scores map[string]float64, postings map[string]struct{}) map[string]float64 {
+	if postings == nil {
+		return map[string]float64{}
+	}
+	out := make(map[string]float64)
+	for key, score := range scores {
+		if _, ok := postings[key]; ok {
+			out[key] = score
+		}
+	}
+	return out
+}
+
+func searchBM25FilterSurface(idx *searchIndex, alias, term string, scores map[string]float64) map[string]float64 {
+	if alias == "" {
+		return scores
+	}
+	return searchBM25FilterByPosting(scores, idx.texts[alias][term])
+}
+
+func searchBM25FilterStem(idx *searchIndex, alias, term string, scores map[string]float64) map[string]float64 {
+	if alias == "" {
+		return scores
+	}
+	return searchBM25FilterByPosting(scores, idx.textStems[alias][term])
+}
+
+func searchBM25FilterPhonetic(idx *searchIndex, alias, term string, scores map[string]float64) map[string]float64 {
+	if alias == "" {
+		return scores
+	}
+	return searchBM25FilterByPosting(scores, idx.textPhonetics[alias][term])
+}
+
 func (idx *searchIndex) bm25ExpandedTextScores(alias, token, language string) map[string]float64 {
 	token = strings.ToLower(token)
 	out := make(map[string]float64)
 
-	baseFields := searchBM25Fields(idx.def, alias, false, false)
-	searchBM25Add(out, idx.bm25TermScores(baseFields, token, language, searchBM25Surface))
+	// Redis field masks gate whether a posting child applies, but the posting's
+	// frequency and IDF remain index-wide across all TEXT fields.
+	allFields := searchBM25Fields(idx.def, "", false, false)
+	base := idx.bm25TermScores(allFields, token, language, searchBM25Surface)
+	searchBM25Add(out, searchBM25FilterSurface(idx, alias, token, base))
 
-	stemFields := searchBM25Fields(idx.def, alias, true, false)
+	stemFields := searchBM25Fields(idx.def, "", true, false)
 	if len(stemFields) > 0 {
 		stem := stemSearchLanguage(language, token)
-		searchBM25Add(out, idx.bm25TermScores(stemFields, stem, language, searchBM25Stem))
+		stemScore := idx.bm25TermScores(stemFields, stem, language, searchBM25Stem)
+		searchBM25Add(out, searchBM25FilterStem(idx, alias, stem, stemScore))
 		if stem != token {
-			searchBM25Add(out, idx.bm25TermScores(stemFields, stem, language, searchBM25Surface))
+			surfaceStem := idx.bm25TermScores(allFields, stem, language, searchBM25Surface)
+			searchBM25Add(out, searchBM25FilterSurface(idx, alias, stem, surfaceStem))
 		}
 	}
 
-	phoneticFields := searchBM25Fields(idx.def, alias, false, true)
+	phoneticFields := searchBM25Fields(idx.def, "", false, true)
 	if len(phoneticFields) > 0 {
 		if code := searchPhoneticEnglish(token); code != "" {
-			searchBM25Add(out, idx.bm25TermScores(phoneticFields, code, language, searchBM25Phonetic))
+			phonScore := idx.bm25TermScores(phoneticFields, code, language, searchBM25Phonetic)
+			searchBM25Add(out, searchBM25FilterPhonetic(idx, alias, code, phonScore))
 		}
 	}
 	return out
 }
 
 func (idx *searchIndex) bm25SurfaceExpansionScores(alias, pattern, language string, match func(string) bool) map[string]float64 {
-	fields := searchBM25Fields(idx.def, alias, false, false)
+	allFields := searchBM25Fields(idx.def, "", false, false)
 	terms := make(map[string]struct{})
-	for _, field := range fields {
+	for _, field := range allFields {
 		for term := range idx.texts[field.Alias] {
 			if match(term) {
 				terms[term] = struct{}{}
@@ -1287,10 +1327,11 @@ func (idx *searchIndex) bm25SurfaceExpansionScores(alias, pattern, language stri
 	}
 	out := make(map[string]float64)
 	for term := range terms {
-		// Prefix/fuzzy/wildcard expansions are unions of concrete surface terms.
-		// A document that reaches several expansion children is represented by
-		// the strongest child in the measured default-scorer behavior.
-		searchBM25Max(out, idx.bm25TermScores(fields, term, language, searchBM25Surface))
+		child := idx.bm25TermScores(allFields, term, language, searchBM25Surface)
+		child = searchBM25FilterSurface(idx, alias, term, child)
+		// Fuzzy/prefix/wildcard expansion is a quick-exit union in Redis.
+		// One concrete expansion child contributes to each matched document.
+		searchBM25Max(out, child)
 	}
 	return out
 }
@@ -1360,9 +1401,11 @@ func (m *searchManager) bm25PhraseScores(indexName, alias, phrase, language stri
 	}
 	tokens := filterSearchStopwords(idx.def, tokenizeSearchTextSequence(phrase))
 	out := make(map[string]float64)
+	allFields := searchBM25Fields(idx.def, "", false, false)
 	for _, token := range tokens {
-		fields := searchBM25Fields(idx.def, alias, false, false)
-		searchBM25Add(out, idx.bm25TermScores(fields, token, language, searchBM25Surface))
+		child := idx.bm25TermScores(allFields, token, language, searchBM25Surface)
+		child = searchBM25FilterSurface(idx, alias, token, child)
+		searchBM25Add(out, child)
 	}
 	return out, true
 }
