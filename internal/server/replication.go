@@ -137,7 +137,7 @@ func (s *Server) replicationInfo() string {
 			state.masterHost,
 			state.masterPort,
 			state.masterLinkStatus,
-			boolInt(state.masterSyncInProgress),
+			replicationBoolInt(state.masterSyncInProgress),
 		)
 	}
 	return fmt.Sprintf(
@@ -152,7 +152,7 @@ func (s *Server) replicationInfo() string {
 	)
 }
 
-func boolInt(v bool) int {
+func replicationBoolInt(v bool) int {
 	if v { return 1 }
 	return 0
 }
@@ -377,7 +377,7 @@ func readReplicationRESP(reader *bufio.Reader) ([]byte, error) {
 	return payload, nil
 }
 
-func writeRESPCommand(conn net.Conn, args ...string) error {
+func writeReplicationRESPCommand(conn net.Conn, args ...string) error {
 	var buf bytes.Buffer
 	fmt.Fprintf(&buf, "*%d\r\n", len(args))
 	for _, arg := range args {
@@ -457,7 +457,7 @@ func (s *Server) runReplicaFollow(host string, port int, cancel <-chan struct{})
 }
 
 func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struct{}) error {
-	if err := writeRESPCommand(conn, "PSYNC", "?", "-1"); err != nil {
+	if err := writeReplicationRESPCommand(conn, "PSYNC", "?", "-1"); err != nil {
 		return err
 	}
 	reader := bufio.NewReader(conn)
