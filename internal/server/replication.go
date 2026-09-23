@@ -38,62 +38,62 @@ type replicationState struct {
 
 	role replicationRole
 
-	masterHost string
-	masterPort int
-	masterLinkStatus string
+	masterHost           string
+	masterPort           int
+	masterLinkStatus     string
 	masterSyncInProgress bool
 
 	connectedReplicas int
-	runID string
-	offset int64
+	runID             string
+	offset            int64
 
-	backlogActive bool
-	backlogSize int64
-	backlogBytes int64
+	backlogActive      bool
+	backlogSize        int64
+	backlogBytes       int64
 	backlogFirstOffset int64
-	backlog []replicationBacklogEntry
+	backlog            []replicationBacklogEntry
 
-	nextReplicaID uint64
-	replicas map[uint64]func([]byte) error
+	nextReplicaID     uint64
+	replicas          map[uint64]func([]byte) error
 	replicaAckOffsets map[uint64]int64
-	replicaAckTimes map[uint64]time.Time
+	replicaAckTimes   map[uint64]time.Time
 
 	followCancel chan struct{}
-	followDone chan struct{}
-	masterRunID string
+	followDone   chan struct{}
+	masterRunID  string
 }
 
 type replicationSnapshot struct {
-	role replicationRole
-	masterHost string
-	masterPort int
-	masterLinkStatus string
+	role                 replicationRole
+	masterHost           string
+	masterPort           int
+	masterLinkStatus     string
 	masterSyncInProgress bool
-	connectedReplicas int
-	runID string
-	offset int64
-	backlogActive bool
-	backlogSize int64
-	backlogBytes int64
-	backlogFirstOffset int64
+	connectedReplicas    int
+	runID                string
+	offset               int64
+	backlogActive        bool
+	backlogSize          int64
+	backlogBytes         int64
+	backlogFirstOffset   int64
 }
 
 func (r *replicationState) snapshot() replicationSnapshot {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return replicationSnapshot{
-		role: r.role,
-		masterHost: r.masterHost,
-		masterPort: r.masterPort,
-		masterLinkStatus: r.masterLinkStatus,
+		role:                 r.role,
+		masterHost:           r.masterHost,
+		masterPort:           r.masterPort,
+		masterLinkStatus:     r.masterLinkStatus,
 		masterSyncInProgress: r.masterSyncInProgress,
-		connectedReplicas: r.connectedReplicas,
-		runID: r.runID,
-		offset: r.offset,
-		backlogActive: r.backlogActive,
-		backlogSize: r.backlogSize,
-		backlogBytes: r.backlogBytes,
-		backlogFirstOffset: r.backlogFirstOffset,
+		connectedReplicas:    r.connectedReplicas,
+		runID:                r.runID,
+		offset:               r.offset,
+		backlogActive:        r.backlogActive,
+		backlogSize:          r.backlogSize,
+		backlogBytes:         r.backlogBytes,
+		backlogFirstOffset:   r.backlogFirstOffset,
 	}
 }
 
@@ -293,8 +293,8 @@ func (r *replicationState) appendBacklogLocked(frame []byte, payload []byte) {
 	end := r.offset + int64(len(frame))
 	entry := replicationBacklogEntry{
 		startOffset: start,
-		endOffset: end,
-		payload: append([]byte(nil), payload...),
+		endOffset:   end,
+		payload:     append([]byte(nil), payload...),
 	}
 	r.backlog = append(r.backlog, entry)
 	r.backlogBytes += int64(len(frame))
@@ -547,7 +547,7 @@ func readReplicationRESP(reader *bufio.Reader) ([]byte, error) {
 		return nil, err
 	}
 	var crlf [2]byte
-	if _, err := io.ReadFull(reader, crlf[:]); err != nil || crlf != [2]byte{'\r','\n'} {
+	if _, err := io.ReadFull(reader, crlf[:]); err != nil || crlf != [2]byte{'\r', '\n'} {
 		return nil, errors.New("invalid replication bulk terminator")
 	}
 	return payload, nil
