@@ -149,6 +149,7 @@ func ListenWithJournal(c config.Config, store *engine.Store, journal Journal) (*
 }
 func (s *TCPServer) Close() error {
 	s.closeOnce.Do(func() {
+		s.server.stopReplicaFollow()
 		s.mu.Lock()
 		s.closing = true
 		child := s.admin
