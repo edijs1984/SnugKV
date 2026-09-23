@@ -769,3 +769,15 @@ The audited INFO surface includes totalSamples, memoryUsage, firstTimestamp, las
 TTL preservation, persistence/restore, OOM routing, and @timeseries ACL metadata are included.
 
 A live differential against RedisTimeSeries on port 6392 and SnugKV on port 6383 matched line-for-line for the audited TimeSeries surface. The only difference was the expected target/port label.
+
+## Replication Phase 1 — 2026-09-23
+
+SnugKV now supports primary/replica operation with Redis-shaped `REPLICAOF`, `ROLE`, `INFO replication`, and `PSYNC ? -1` control behavior.
+
+The Phase-1 transport uses SnugKV's existing checksummed logical persistence-record frames rather than Redis RDB payloads. Full synchronization is gap-free: the primary holds `durableMu`, exports the complete logical snapshot, registers the replica stream, sends `FULLRESYNC` plus the snapshot, then releases the lock so subsequent committed writes enter the live stream in order.
+
+Live replication propagates logical committed changes, preserving native datatypes and absolute TTLs. Transactions publish one logical diff after EXEC. Replica instances reject ordinary writes with the Redis `READONLY` error class and become writable after `REPLICAOF NO ONE`.
+
+The live two-process SnugKV oracle matched the previously captured Redis primary/replica oracle with an empty diff for the audited surface, including standalone ROLE state, full-resync handshake shape, initial dataset synchronization, TTL synchronization, live SET/INCR/HSET propagation, read-only behavior, and promotion.
+
+Deferred to Replication Phase 2: partial resynchronization/backlog, ACK accounting, reconnect continuation without full sync, Redis RDB full-sync interoperability, topology authentication/TLS, and failover orchestration.
