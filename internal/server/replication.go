@@ -4,20 +4,20 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/crc32"
-	"encoding/binary"
 	"io"
 	"net"
+	"slices"
 	"snugkv/internal/persistence"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-	"slices"
 )
 
 type replicationRole uint8
@@ -192,7 +192,9 @@ func (s *Server) replicationInfo() string {
 }
 
 func replicationBoolInt(v bool) int {
-	if v { return 1 }
+	if v {
+		return 1
+	}
 	return 0
 }
 
@@ -243,7 +245,6 @@ func parseReplicaOf(args [][]byte) (detach bool, host string, port int, err erro
 	}
 	return false, string(args[1]), p, nil
 }
-
 
 func newReplicationRunID() string {
 	var raw [20]byte
