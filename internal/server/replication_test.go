@@ -2,6 +2,7 @@ package server
 
 import (
 	"net"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -42,7 +43,7 @@ func TestReplicationPhase1FullSyncLiveWritesAndPromotion(t *testing.T) {
 
 	addr := primary.listener.Addr().(*net.TCPAddr)
 	if _, err := replica.server.Execute([][]byte{
-		[]byte("REPLICAOF"), []byte("127.0.0.1"), []byte(strings.TrimSpace(strings.Split(addr.String(), ":")[len(strings.Split(addr.String(), ":"))-1])),
+		[]byte("REPLICAOF"), []byte("127.0.0.1"), []byte(strconv.Itoa(addr.Port)),
 	}); err != nil {
 		t.Fatal(err)
 	}
