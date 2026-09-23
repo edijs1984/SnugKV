@@ -1663,7 +1663,7 @@ func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 						item.sortNumber = number
 					}
 				case engine.SearchFieldTag, engine.SearchFieldText:
-					item.sortText = strings.Trim(string(value), """)
+					item.sortText = strings.Trim(string(value), "\\\"")
 				}
 			}
 		}
