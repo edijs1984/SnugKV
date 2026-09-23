@@ -18,6 +18,7 @@ const (
 	SearchFieldTag SearchFieldKind = iota
 	SearchFieldNumeric
 	SearchFieldText
+	SearchFieldGeo
 )
 
 type SearchField struct {
@@ -47,9 +48,15 @@ type numericPosting struct {
 	Value float64
 }
 
+type searchGeoPoint struct {
+	Longitude float64
+	Latitude  float64
+}
+
 type searchDocumentState struct {
 	Tags          map[string][]string
 	Numerics      map[string][]float64
+	Geos          map[string][]searchGeoPoint
 	Texts         map[string][]string
 	TextStems     map[string][]string
 	TextPhonetics  map[string][]string
@@ -67,6 +74,7 @@ type searchIndex struct {
 	textPhonetics map[string]map[string]map[string]struct{}
 
 	numerics      map[string]map[string][]float64
+	geos          map[string]map[string][]searchGeoPoint
 	numericSorted map[string][]numericPosting
 	numericDirty  map[string]bool
 }
@@ -101,6 +109,7 @@ func newSearchIndex(def SearchDefinition) *searchIndex {
 		textStems:     make(map[string]map[string]map[string]struct{}),
 		textPhonetics: make(map[string]map[string]map[string]struct{}),
 		numerics:      make(map[string]map[string][]float64),
+		geos:          make(map[string]map[string][]searchGeoPoint),
 		numericSorted: make(map[string][]numericPosting),
 		numericDirty:  make(map[string]bool),
 	}
@@ -168,7 +177,7 @@ func validateSearchDefinition(def SearchDefinition) error {
 		aliases[field.Alias] = struct{}{}
 
 		switch field.Kind {
-		case SearchFieldTag, SearchFieldNumeric, SearchFieldText:
+		case SearchFieldTag, SearchFieldNumeric, SearchFieldText, SearchFieldGeo:
 		default:
 			return errors.New("ERR unsupported search field type")
 		}
@@ -355,6 +364,43 @@ func searchPhoneticEnglish(token string) string {
 	return string(out)
 }
 
+const searchGeoMaxLatitude = 85.05112878
+
+func parseSearchGeoString(value string) (searchGeoPoint, bool) {
+	comma := strings.IndexByte(value, ',')
+	if comma <= 0 || comma == len(value)-1 || strings.IndexByte(value[comma+1:], ',') >= 0 {
+		return searchGeoPoint{}, false
+	}
+	lon, err := strconv.ParseFloat(strings.TrimSpace(value[:comma]), 64)
+	if err != nil || math.IsNaN(lon) || math.IsInf(lon, 0) {
+		return searchGeoPoint{}, false
+	}
+	lat, err := strconv.ParseFloat(strings.TrimSpace(value[comma+1:]), 64)
+	if err != nil || math.IsNaN(lat) || math.IsInf(lat, 0) {
+		return searchGeoPoint{}, false
+	}
+	if lon < -180 || lon > 180 || lat < -searchGeoMaxLatitude || lat > searchGeoMaxLatitude {
+		return searchGeoPoint{}, false
+	}
+	return searchGeoPoint{Longitude: lon, Latitude: lat}, true
+}
+
+func searchGeoDistanceMeters(a, b searchGeoPoint) float64 {
+	const earthRadiusMeters = 6372797.560856
+	const deg = math.Pi / 180
+	lat1 := a.Latitude * deg
+	lat2 := b.Latitude * deg
+	dlat := (b.Latitude - a.Latitude) * deg
+	dlon := (b.Longitude - a.Longitude) * deg
+	sinLat := math.Sin(dlat / 2)
+	sinLon := math.Sin(dlon / 2)
+	h := sinLat*sinLat + math.Cos(lat1)*math.Cos(lat2)*sinLon*sinLon
+	if h > 1 {
+		h = 1
+	}
+	return 2 * earthRadiusMeters * math.Asin(math.Sqrt(h))
+}
+
 func extractSearchDocument(def SearchDefinition, raw []byte) (searchDocumentState, error) {
 	root, err := jsonvalue.Parse(raw)
 	if err != nil {
@@ -366,6 +412,7 @@ func extractSearchDocument(def SearchDefinition, raw []byte) (searchDocumentStat
 	state := searchDocumentState{
 		Tags:          make(map[string][]string),
 		Numerics:      make(map[string][]float64),
+		Geos:          make(map[string][]searchGeoPoint),
 		Texts:         make(map[string][]string),
 		TextStems:     make(map[string][]string),
 		TextPhonetics: make(map[string][]string),
@@ -434,6 +481,26 @@ func extractSearchDocument(def SearchDefinition, raw []byte) (searchDocumentStat
 					state.TextPhonetics[field.Alias] = uniqueStrings(phonetics)
 				}
 				state.TextSequences[field.Alias] = sequences
+			}
+
+		case SearchFieldGeo:
+			points := make([]searchGeoPoint, 0, len(values))
+			for _, value := range values {
+				text, ok := value.(string)
+				if !ok {
+					// Redis JSON GEO indexing ignores non-string shapes.
+					continue
+				}
+				point, ok := parseSearchGeoString(text)
+				if !ok {
+					// A malformed GEO string makes the document an indexing
+					// failure rather than partially indexing its other fields.
+					return searchDocumentState{}, nil
+				}
+				points = append(points, point)
+			}
+			if len(points) > 0 {
+				state.Geos[field.Alias] = points
 			}
 
 		case SearchFieldNumeric:
@@ -576,6 +643,15 @@ func (idx *searchIndex) removeDocument(key string) {
 		}
 	}
 
+	for alias := range old.Geos {
+		if field := idx.geos[alias]; field != nil {
+			delete(field, key)
+			if len(field) == 0 {
+				delete(idx.geos, alias)
+			}
+		}
+	}
+
 	for alias := range old.Numerics {
 		if field := idx.numerics[alias]; field != nil {
 			delete(field, key)
@@ -590,7 +666,7 @@ func (idx *searchIndex) removeDocument(key string) {
 }
 
 func (idx *searchIndex) addDocument(key string, state searchDocumentState) {
-	if len(state.Tags) == 0 && len(state.Numerics) == 0 && len(state.Texts) == 0 && len(state.TextPhonetics) == 0 {
+	if len(state.Tags) == 0 && len(state.Numerics) == 0 && len(state.Geos) == 0 && len(state.Texts) == 0 && len(state.TextPhonetics) == 0 {
 		return
 	}
 
@@ -658,6 +734,15 @@ func (idx *searchIndex) addDocument(key string, state searchDocumentState) {
 			}
 			postings[key] = struct{}{}
 		}
+	}
+
+	for alias, values := range state.Geos {
+		field := idx.geos[alias]
+		if field == nil {
+			field = make(map[string][]searchGeoPoint)
+			idx.geos[alias] = field
+		}
+		field[key] = append([]searchGeoPoint(nil), values...)
 	}
 
 	for alias, values := range state.Numerics {
@@ -1481,6 +1566,31 @@ func (idx *searchIndex) ensureNumericSorted(alias string) []numericPosting {
 	return postings
 }
 
+func (m *searchManager) geoRadiusKeys(indexName, alias string, longitude, latitude, radiusMeters float64) ([]string, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	idx, ok := m.indexes[indexName]
+	if !ok {
+		return nil, false
+	}
+	field := idx.geos[alias]
+	if field == nil {
+		return []string{}, true
+	}
+	center := searchGeoPoint{Longitude: longitude, Latitude: latitude}
+	matches := make(map[string]struct{})
+	for key, points := range field {
+		for _, point := range points {
+			if searchGeoDistanceMeters(center, point) <= radiusMeters {
+				matches[key] = struct{}{}
+				break
+			}
+		}
+	}
+	return sortedPostingKeys(matches), true
+}
+
 func (m *searchManager) numericRangeKeys(indexName, alias string, min, max float64) ([]string, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1581,6 +1691,10 @@ func (m *searchManager) memoryBytes() uint64 {
 						bytes += uint64(len(token))
 					}
 				}
+			}
+			for alias, values := range state.Geos {
+				bytes += uint64(len(alias) + len(key))
+				bytes += uint64(len(values)) * 16
 			}
 			for alias, values := range state.Numerics {
 				bytes += uint64(len(alias) + len(key))
@@ -1855,6 +1969,14 @@ func (s *Store) SearchBM25WildcardAllScores(indexName string) (map[string]float6
 		return nil, false
 	}
 	return manager.bm25WildcardAllScores(indexName)
+}
+
+func (s *Store) SearchGeoRadiusKeys(indexName, alias string, longitude, latitude, radiusMeters float64) ([]string, bool) {
+	manager := s.getSearchManager()
+	if manager == nil {
+		return nil, false
+	}
+	return manager.geoRadiusKeys(indexName, alias, longitude, latitude, radiusMeters)
 }
 
 func (s *Store) SearchNumericRangeKeys(indexName, alias string, min, max float64) ([]string, bool) {
