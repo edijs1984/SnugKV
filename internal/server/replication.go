@@ -166,10 +166,18 @@ func (s *Server) replicationInfo() string {
 			"role:master\r\n"+
 			"connected_slaves:%d\r\n"+
 			"master_replid:%s\r\n"+
-			"master_repl_offset:%d\r\n",
+			"master_repl_offset:%d\r\n"+
+			"repl_backlog_active:%d\r\n"+
+			"repl_backlog_size:%d\r\n"+
+			"repl_backlog_first_byte_offset:%d\r\n"+
+			"repl_backlog_histlen:%d\r\n",
 		state.connectedReplicas,
 		state.runID,
 		state.offset,
+		replicationBoolInt(state.backlogActive),
+		state.backlogSize,
+		state.backlogFirstOffset,
+		state.backlogBytes,
 	)
 }
 
@@ -378,22 +386,19 @@ func (s *Server) publishReplication(records []persistence.Record) {
 	}
 	payload := replicationBulk(frame)
 
-	s.replication.mu.RLock()
+	s.replication.mu.Lock()
+	s.replication.appendBacklogLocked(frame, payload)
 	targets := make(map[uint64]func([]byte) error, len(s.replication.replicas))
 	for id, write := range s.replication.replicas {
 		targets[id] = write
 	}
-	s.replication.mu.RUnlock()
+	s.replication.mu.Unlock()
 
 	for id, write := range targets {
 		if err := write(payload); err != nil {
 			s.replication.unregisterReplica(id)
 		}
 	}
-
-	s.replication.mu.Lock()
-	s.replication.offset += int64(len(frame))
-	s.replication.mu.Unlock()
 }
 
 func (s *Server) handlePSYNC(write func([]byte) error) (uint64, error) {
