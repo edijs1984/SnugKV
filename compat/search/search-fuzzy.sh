@@ -35,6 +35,8 @@ echo "=== exact baseline ==="
 run FT.SEARCH fuzzyidx '@text:memory' NOCONTENT
 run FT.SEARCH fuzzyidx '@text:memori' NOCONTENT
 run FT.SEARCH fuzzyidx '@text:run' NOCONTENT
+run FT.SEARCH fuzzyidx '@text:memri' NOCONTENT
+run FT.SEARCH fuzzyidx '@text:memry' NOCONTENT
 
 echo
 echo "=== fuzzy tiers ==="
