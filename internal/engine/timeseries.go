@@ -153,7 +153,7 @@ func decodeTimeSeries(value []byte) (*timeSeries, error) {
 		return nil, errors.New("invalid TimeSeries")
 	}
 	samples := make([]TimeSeriesSample, sampleCount)
-	var last int64 = math.MinInt64
+	var last int64 = -1 << 63
 	for i := 0; i < sampleCount; i++ {
 		ts := int64(binary.LittleEndian.Uint64(value[off : off+8]))
 		v := math.Float64frombits(binary.LittleEndian.Uint64(value[off+8 : off+16]))
