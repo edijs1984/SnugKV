@@ -794,3 +794,16 @@ Replica state retains the upstream replication ID and processed offset across re
 A live Redis 8.2 oracle and SnugKV oracle matched exactly for the audited Phase 2 core: backlog metadata shape, full sync establishment, offset advancement, partial PSYNC continuation, and invalid/future-offset fallback. The final Redis-vs-SnugKV diff was empty.
 
 Still deferred: ACK offset accounting/observability, Redis RDB full-sync interoperability, topology authentication/TLS, additional diskless-transfer hardening, and failover orchestration.
+
+
+## Replication Phase 2 Core — 2026-09-23
+
+SnugKV now implements the partial-resynchronization core of Replication Phase 2. Once replication is activated, the primary maintains a bounded logical replication backlog and continues recording committed replication frames even while no replica is connected.
+
+Reconnects now use Redis's next-byte PSYNC convention: the replica requests `last_processed_offset + 1`. If the requested replid/offset remains covered by the backlog, the primary replies `+CONTINUE` and sends only the missing frames. Requests that cannot be satisfied fall back to `FULLRESYNC`.
+
+Replica state retains the upstream replication ID and processed offset across reconnect attempts. Focused race-enabled replication tests passed, including a reconnect regression that preserves a replica-local sentinel key to prove that the continuation path was genuinely partial rather than a hidden full resync.
+
+A live Redis 8.2 oracle and SnugKV oracle matched exactly for the audited Phase 2 core: backlog metadata shape, full sync establishment, offset advancement, partial PSYNC continuation, and invalid/future-offset fallback. The final Redis-vs-SnugKV diff was empty.
+
+Still deferred: ACK offset accounting/observability, Redis RDB full-sync interoperability, topology authentication/TLS, additional diskless-transfer hardening, and failover orchestration.
