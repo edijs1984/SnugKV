@@ -147,6 +147,9 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Verified
 
+- Bloom filter expansion adds RedisBloom-compatible scalable generations, `EXPANSION`, `NONSCALING`, inline per-item overflow errors, and exact audited `BF.INFO` capacity/size/filter metadata. The live expansion oracle matched RedisBloom line-for-line except for the target/port label.
+
+
 - Bloom filter Phase 1 adds native persistent Bloom values with `BF.RESERVE`, `BF.ADD`, `BF.EXISTS`, `BF.MADD`, `BF.MEXISTS`, `BF.CARD`, `BF.INFO`, and audited `BF.INSERT ... CAPACITY ... ERROR ... ITEMS` support. A live differential against RedisBloom on port 6392 matched line-for-line for the audited surface, including error and wrong-type behavior.
 
 
