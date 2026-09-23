@@ -918,7 +918,9 @@ func errorResponse(err error) []byte {
 		!strings.HasPrefix(message, "SEARCH_ARG_UNRECOGNIZED ") &&
 		!strings.HasPrefix(message, "SEARCH_PARSE_ARGS ") &&
 		!strings.HasPrefix(message, "SEARCH_EXPR ") &&
-		!strings.HasPrefix(message, "SEARCH_PARAM_NOT_FOUND ") {
+		!strings.HasPrefix(message, "SEARCH_PARAM_NOT_FOUND ") &&
+		message != "Capacity must be in the range [2 * BUCKETSIZE, 1073741824]" &&
+		message != "Not found" {
 		message = "ERR " + message
 	}
 	return []byte("-" + message + "\r\n")
