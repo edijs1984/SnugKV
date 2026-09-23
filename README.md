@@ -320,3 +320,5 @@ Count-Min Sketches are supported as native persistent probabilistic values with 
 TopK heavy-hitter tracking is supported as a native persistent probabilistic value with RedisBloom-audited `TOPK.RESERVE`, `TOPK.ADD`, `TOPK.INCRBY`, `TOPK.QUERY`, `TOPK.COUNT`, `TOPK.LIST`, and `TOPK.INFO` behavior.
 
 t-digest sketches are supported as native persistent probabilistic values with RedisBloom-audited `TDIGEST.CREATE`, `TDIGEST.ADD`, `TDIGEST.MERGE`, `TDIGEST.RESET`, `TDIGEST.MIN`, `TDIGEST.MAX`, `TDIGEST.QUANTILE`, `TDIGEST.CDF`, `TDIGEST.RANK`, `TDIGEST.REVRANK`, `TDIGEST.BYRANK`, `TDIGEST.BYREVRANK`, `TDIGEST.TRIMMED_MEAN`, and `TDIGEST.INFO` behavior.
+
+TimeSeries values are supported as native persistent series with RedisTimeSeries-audited `TS.CREATE`, `TS.ADD`, `TS.GET`, `TS.RANGE`, `TS.REVRANGE`, `TS.INCRBY`, `TS.DECRBY`, `TS.DEL`, and `TS.INFO` behavior, including retention, labels, duplicate policies, NaN, and out-of-order samples.
