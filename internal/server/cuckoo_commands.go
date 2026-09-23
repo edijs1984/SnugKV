@@ -2,7 +2,6 @@ package server
 
 import (
 	"errors"
-	"snugkv/internal/engine"
 	"strconv"
 	"strings"
 )
@@ -180,4 +179,3 @@ func (s *Server) executeCuckoo(args [][]byte) ([]byte, error) {
 	return nil, errors.New("ERR unknown Cuckoo command")
 }
 
-var _ = engine.TypeCuckoo
