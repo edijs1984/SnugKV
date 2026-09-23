@@ -129,9 +129,9 @@ def consume_full_sync(f):
             raise EOFError("snapshot truncated")
         remaining -= len(chunk)
 
-    trailer = f.read(2)
-    if trailer != b"\r\n":
-        raise RuntimeError("bad snapshot trailer: %r" % (trailer,))
+    # Replication full-sync bulk transfer is not a normal RESP bulk reply.
+    # After exactly N RDB bytes, Redis may immediately begin the replication
+    # command stream; there is no required trailing CRLF to consume.
     return n, "bulk"
 
 def full_sync_probe():
