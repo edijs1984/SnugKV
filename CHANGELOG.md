@@ -147,6 +147,8 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Verified
 
+- Redis Search PHONETIC `dm:en` support for TEXT fields, including unqualified lookup, NOSTEM interaction, schema ordering, duplicate handling, and audited parser errors.
+
 - Redis Search broader TEXT wildcard compatibility: suffix (`*ory`), contains (`*mor*`), grouped forms, escaping, parser boundaries, and measured fuzzy/wildcard syntax errors.
 
 - Redis Search unqualified TEXT queries across all indexed TEXT fields, including multi-term AND, phrases, prefix/fuzzy queries, stopwords, stemming/NOSTEM, and mixed fielded clauses.

@@ -351,6 +351,7 @@ lands.
 - [x] Add audited schema modifiers `WEIGHT`, `SORTABLE`, and `NOINDEX`, including Redis-compatible modifier ordering and duplicate handling.
 - [x] Add audited unqualified TEXT queries across all indexed TEXT fields, including multi-term AND, phrases, prefix/fuzzy forms, stopwords, stemming/NOSTEM, mixed fielded clauses, and DIALECT 1/2 parity.
 - [x] Add audited broader TEXT wildcard forms: suffix (`*ory`), contains (`*mor*`), grouped wildcard terms, escaping, parser boundaries, and DIALECT 1/2 parity.
+- [x] Add audited PHONETIC dm:en support for TEXT fields, including unqualified queries, modifier ordering, NOSTEM interaction, and Redis error behavior.
 - [ ] Add probabilistic/time-series structures only after the JSON/search storage
   boundaries are settled.
 - [ ] Return to optimizer convergence so dense-entry compaction is reached

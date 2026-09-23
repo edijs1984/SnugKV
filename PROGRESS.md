@@ -621,3 +621,11 @@ SnugKV Search now supports the broader Redis-audited TEXT wildcard subset: trail
 Quoted wildcard terms and fuzzy+wildcard combinations preserve Redis syntax-error classes and measured offsets. Escaping behavior is also audited: a single backslash escapes `*`, while a doubled backslash leaves the wildcard active after query escape processing.
 
 The live differential harness `compat/search/search-wildcards.sh` was run against Redis Search on port 6392 and SnugKV on port 6383. Result sets, syntax-error classes, offsets, and wildcard semantics match for the audited cases. Remaining textual differences are SnugKV's deterministic key ordering versus Redis unsorted order and trailing whitespace in a few `near` error renderings.
+
+## Search PHONETIC milestone — 2026-09-23
+
+SnugKV Search now supports the Redis-audited `PHONETIC dm:en` subset for TEXT fields. Ordinary exact TEXT-term lookup expands through phonetic postings; unqualified queries inherit that behavior across eligible TEXT fields. Prefix searches and exact quoted phrases remain surface-text based, while grouped term queries intersect phonetic-expanded term sets.
+
+`NOSTEM` remains independent of phonetic matching, matching the Redis oracle. Schema parsing covers valid modifier ordering, duplicate `PHONETIC`, missing/invalid matcher errors, and rejection on TAG/NUMERIC fields. Redis FT.INFO does not expose PHONETIC metadata in the field attributes, so SnugKV intentionally keeps that metadata hidden there as well.
+
+The live differential harness `compat/search/search-phonetic.sh` was run against Redis Search on port 6392 and SnugKV on port 6383. Audited query result sets and parser/error behavior match. Remaining diff noise is the known narrow SnugKV FT.INFO payload and deterministic key ordering versus Redis's unsorted order.

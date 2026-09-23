@@ -24,6 +24,7 @@ type SearchField struct {
 	Alias    string
 	Kind     SearchFieldKind
 	NoStem   bool
+	Phonetic string
 	Weight   float64
 	WeightSet bool
 	Sortable bool
@@ -50,6 +51,7 @@ type searchDocumentState struct {
 	Numerics      map[string][]float64
 	Texts         map[string][]string
 	TextStems     map[string][]string
+	TextPhonetics  map[string][]string
 	TextSequences map[string][][]string
 }
 
@@ -61,6 +63,7 @@ type searchIndex struct {
 	tags      map[string]map[string]map[string]struct{}
 	texts     map[string]map[string]map[string]struct{}
 	textStems map[string]map[string]map[string]struct{}
+	textPhonetics map[string]map[string]map[string]struct{}
 
 	numerics      map[string]map[string][]float64
 	numericSorted map[string][]numericPosting
@@ -95,6 +98,7 @@ func newSearchIndex(def SearchDefinition) *searchIndex {
 		tags:          make(map[string]map[string]map[string]struct{}),
 		texts:         make(map[string]map[string]map[string]struct{}),
 		textStems:     make(map[string]map[string]map[string]struct{}),
+		textPhonetics: make(map[string]map[string]map[string]struct{}),
 		numerics:      make(map[string]map[string][]float64),
 		numericSorted: make(map[string][]numericPosting),
 		numericDirty:  make(map[string]bool),
@@ -305,6 +309,51 @@ func uniqueFloat64s(values []float64) []float64 {
 	return out
 }
 
+func searchPhoneticEnglish(token string) string {
+	token = strings.ToLower(token)
+	if token == "" {
+		return ""
+	}
+	token = strings.ReplaceAll(token, "ph", "f")
+	token = strings.ReplaceAll(token, "kn", "n")
+	token = strings.ReplaceAll(token, "gn", "n")
+	token = strings.ReplaceAll(token, "wr", "r")
+	token = strings.ReplaceAll(token, "wh", "w")
+	token = strings.ReplaceAll(token, "tch", "ch")
+	if strings.HasPrefix(token, "sch") {
+		token = "x" + token[3:]
+	}
+	token = strings.ReplaceAll(token, "sh", "x")
+	token = strings.ReplaceAll(token, "ch", "x")
+	token = strings.ReplaceAll(token, "th", "0")
+	token = strings.ReplaceAll(token, "dg", "j")
+	token = strings.ReplaceAll(token, "ght", "t")
+	token = strings.ReplaceAll(token, "gh", "")
+	token = strings.ReplaceAll(token, "h", "")
+
+	runes := []rune(token)
+	out := make([]rune, 0, len(runes))
+	for i, r := range runes {
+		switch r {
+		case 'a', 'e', 'i', 'o', 'u', 'y':
+			if i == 0 {
+				out = append(out, 'a')
+			}
+			continue
+		case 'c', 'q':
+			r = 'k'
+		case 'v':
+			r = 'f'
+		case 'z':
+			r = 's'
+		}
+		if len(out) == 0 || out[len(out)-1] != r {
+			out = append(out, r)
+		}
+	}
+	return string(out)
+}
+
 func extractSearchDocument(def SearchDefinition, raw []byte) (searchDocumentState, error) {
 	root, err := jsonvalue.Parse(raw)
 	if err != nil {
@@ -318,6 +367,7 @@ func extractSearchDocument(def SearchDefinition, raw []byte) (searchDocumentStat
 		Numerics:      make(map[string][]float64),
 		Texts:         make(map[string][]string),
 		TextStems:     make(map[string][]string),
+		TextPhonetics: make(map[string][]string),
 		TextSequences: make(map[string][][]string),
 	}
 
@@ -348,6 +398,7 @@ func extractSearchDocument(def SearchDefinition, raw []byte) (searchDocumentStat
 		case SearchFieldText:
 			tokens := make([]string, 0)
 			stems := make([]string, 0)
+			phonetics := make([]string, 0)
 			sequences := make([][]string, 0, len(values))
 			for _, value := range values {
 				text, ok := value.(string)
@@ -360,6 +411,13 @@ func extractSearchDocument(def SearchDefinition, raw []byte) (searchDocumentStat
 				}
 				sequences = append(sequences, sequence)
 				tokens = append(tokens, sequence...)
+				if field.Phonetic == "dm:en" {
+					for _, token := range sequence {
+						if code := searchPhoneticEnglish(token); code != "" {
+							phonetics = append(phonetics, code)
+						}
+					}
+				}
 				if !field.NoStem {
 					for _, token := range sequence {
 						stems = append(stems, stemSearchLanguage(language, token))
@@ -370,6 +428,9 @@ func extractSearchDocument(def SearchDefinition, raw []byte) (searchDocumentStat
 				state.Texts[field.Alias] = uniqueStrings(tokens)
 				if len(stems) > 0 {
 					state.TextStems[field.Alias] = uniqueStrings(stems)
+				}
+				if len(phonetics) > 0 {
+					state.TextPhonetics[field.Alias] = uniqueStrings(phonetics)
 				}
 				state.TextSequences[field.Alias] = sequences
 			}
@@ -500,6 +561,20 @@ func (idx *searchIndex) removeDocument(key string) {
 		}
 	}
 
+	for alias, values := range old.TextPhonetics {
+		field := idx.textPhonetics[alias]
+		for _, value := range values {
+			postings := field[value]
+			delete(postings, key)
+			if len(postings) == 0 {
+				delete(field, value)
+			}
+		}
+		if len(field) == 0 {
+			delete(idx.textPhonetics, alias)
+		}
+	}
+
 	for alias := range old.Numerics {
 		if field := idx.numerics[alias]; field != nil {
 			delete(field, key)
@@ -514,7 +589,7 @@ func (idx *searchIndex) removeDocument(key string) {
 }
 
 func (idx *searchIndex) addDocument(key string, state searchDocumentState) {
-	if len(state.Tags) == 0 && len(state.Numerics) == 0 && len(state.Texts) == 0 {
+	if len(state.Tags) == 0 && len(state.Numerics) == 0 && len(state.Texts) == 0 && len(state.TextPhonetics) == 0 {
 		return
 	}
 
@@ -557,6 +632,22 @@ func (idx *searchIndex) addDocument(key string, state searchDocumentState) {
 		if field == nil {
 			field = make(map[string]map[string]struct{})
 			idx.textStems[alias] = field
+		}
+		for _, value := range values {
+			postings := field[value]
+			if postings == nil {
+				postings = make(map[string]struct{})
+				field[value] = postings
+			}
+			postings[key] = struct{}{}
+		}
+	}
+
+	for alias, values := range state.TextPhonetics {
+		field := idx.textPhonetics[alias]
+		if field == nil {
+			field = make(map[string]map[string]struct{})
+			idx.textPhonetics[alias] = field
 		}
 		for _, value := range values {
 			postings := field[value]
@@ -689,6 +780,12 @@ func (m *searchManager) textKeys(indexName, alias, token, language string) ([]st
 	if found && !defField.NoStem {
 		stem := stemSearchLanguage(language, token)
 		for key := range idx.textStems[alias][stem] {
+			seen[key] = struct{}{}
+		}
+	}
+	if found && defField.Phonetic == "dm:en" {
+		code := searchPhoneticEnglish(token)
+		for key := range idx.textPhonetics[alias][code] {
 			seen[key] = struct{}{}
 		}
 	}

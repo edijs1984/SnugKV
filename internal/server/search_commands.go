@@ -127,11 +127,11 @@ func executeFTCreate(store *engine.Store, args [][]byte) ([]byte, error) {
 
 	for pos < len(args) {
 		switch strings.ToUpper(string(args[pos])) {
-		case "WEIGHT", "SORTABLE", "NOINDEX", "NOSTEM":
+		case "WEIGHT", "SORTABLE", "NOINDEX", "NOSTEM", "PHONETIC":
 			return nil, fmt.Errorf("SEARCH_PARSE_ARGS Invalid field type for field `%s`", string(args[pos]))
 		}
 		if len(args)-pos < 4 {
-			return nil, errors.New("ERR syntax error")
+			return nil, fmt.Errorf("SEARCH_PARSE_ARGS Field `%s` does not have a type", string(args[pos]))
 		}
 
 		path := string(args[pos])
@@ -159,6 +159,7 @@ func executeFTCreate(store *engine.Store, args [][]byte) ([]byte, error) {
 		pos++
 
 		noStem := false
+		phonetic := ""
 		weight := float64(0)
 		if kind == engine.SearchFieldText {
 			weight = 1
@@ -167,6 +168,7 @@ func executeFTCreate(store *engine.Store, args [][]byte) ([]byte, error) {
 		sortable := false
 		noIndex := false
 		allowWeight := kind == engine.SearchFieldText
+		allowPhonetic := kind == engine.SearchFieldText
 
 		for pos < len(args) {
 			switch strings.ToUpper(string(args[pos])) {
@@ -176,6 +178,22 @@ func executeFTCreate(store *engine.Store, args [][]byte) ([]byte, error) {
 				}
 				noStem = true
 				pos++
+
+			case "PHONETIC":
+				if kind != engine.SearchFieldText || !allowPhonetic {
+					goto modifiersDone
+				}
+				if pos+1 >= len(args) {
+					return nil, errors.New("SEARCH_PARSE_ARGS PHONETIC requires an argument")
+				}
+				matcher := strings.ToLower(string(args[pos+1]))
+				switch matcher {
+				case "dm:en", "dm:fr", "dm:pt", "dm:es":
+					phonetic = matcher
+				default:
+					return nil, errors.New("SEARCH_QUERY_BAD Matcher Format: <2 chars algorithm>:<2 chars language>. Support algorithms: double metaphone (dm). Supported languages: English (en), French (fr), Portuguese (pt) and Spanish (es)")
+				}
+				pos += 2
 
 			case "WEIGHT":
 				if kind != engine.SearchFieldText || !allowWeight {
@@ -197,6 +215,7 @@ func executeFTCreate(store *engine.Store, args [][]byte) ([]byte, error) {
 			case "SORTABLE":
 				sortable = true
 				allowWeight = false
+				allowPhonetic = false
 				pos++
 				if pos < len(args) && strings.EqualFold(string(args[pos]), "UNF") {
 					pos++
@@ -205,6 +224,7 @@ func executeFTCreate(store *engine.Store, args [][]byte) ([]byte, error) {
 			case "NOINDEX":
 				noIndex = true
 				allowWeight = false
+				allowPhonetic = false
 				pos++
 
 			default:
@@ -218,6 +238,7 @@ func executeFTCreate(store *engine.Store, args [][]byte) ([]byte, error) {
 			Alias:    alias,
 			Kind:     kind,
 			NoStem:   noStem,
+			Phonetic: phonetic,
 			Weight:   weight,
 			WeightSet: weightSet,
 			Sortable: sortable,
