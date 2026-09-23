@@ -688,6 +688,95 @@ func (m *searchManager) textKeys(indexName, alias, token, language string) ([]st
 	return sortedPostingKeys(seen), true
 }
 
+
+func searchEditDistanceWithin(a, b string, maxDistance int) bool {
+	ar := []rune(a)
+	br := []rune(b)
+	if maxDistance < 0 {
+		return false
+	}
+	diff := len(ar) - len(br)
+	if diff < 0 {
+		diff = -diff
+	}
+	if diff > maxDistance {
+		return false
+	}
+
+	prev := make([]int, len(br)+1)
+	curr := make([]int, len(br)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(ar); i++ {
+		curr[0] = i
+		rowMin := curr[0]
+		for j := 1; j <= len(br); j++ {
+			cost := 0
+			if ar[i-1] != br[j-1] {
+				cost = 1
+			}
+			deleteCost := prev[j] + 1
+			insertCost := curr[j-1] + 1
+			replaceCost := prev[j-1] + cost
+			best := deleteCost
+			if insertCost < best {
+				best = insertCost
+			}
+			if replaceCost < best {
+				best = replaceCost
+			}
+			curr[j] = best
+			if best < rowMin {
+				rowMin = best
+			}
+		}
+		if rowMin > maxDistance {
+			return false
+		}
+		prev, curr = curr, prev
+	}
+	return prev[len(br)] <= maxDistance
+}
+
+func (m *searchManager) textFuzzyKeys(indexName, alias, token string, distance int) ([]string, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	idx, ok := m.indexes[indexName]
+	if !ok {
+		return nil, false
+	}
+	field := idx.texts[alias]
+	if field == nil {
+		return []string{}, true
+	}
+
+	token = strings.ToLower(token)
+	seen := make(map[string]struct{})
+	for candidate, postings := range field {
+		if !searchEditDistanceWithin(token, candidate, distance) {
+			continue
+		}
+		for key := range postings {
+			seen[key] = struct{}{}
+		}
+	}
+
+	defField, found := searchTextField(idx.def, alias)
+	if found && !defField.NoStem {
+		for candidate, postings := range idx.textStems[alias] {
+			if !searchEditDistanceWithin(token, candidate, distance) {
+				continue
+			}
+			for key := range postings {
+				seen[key] = struct{}{}
+			}
+		}
+	}
+	return sortedPostingKeys(seen), true
+}
+
 func (m *searchManager) textPrefixKeys(indexName, alias, prefix string) ([]string, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -1183,6 +1272,14 @@ func (s *Store) SearchTextPrefixKeys(indexName, alias, prefix string) ([]string,
 		return nil, false
 	}
 	return manager.textPrefixKeys(indexName, alias, prefix)
+}
+
+func (s *Store) SearchTextFuzzyKeys(indexName, alias, token string, distance int) ([]string, bool) {
+	manager := s.getSearchManager()
+	if manager == nil {
+		return nil, false
+	}
+	return manager.textFuzzyKeys(indexName, alias, token, distance)
 }
 
 func (s *Store) SearchTextPhraseKeys(indexName, alias, phrase, language string) ([]string, bool) {
