@@ -49,12 +49,14 @@ type Server struct {
 }
 
 func New(store *engine.Store) *Server {
-	return &Server{
+	s := &Server{
 		store:   store,
 		metrics: stats.New(),
 		acl:     NewACL(),
 		aclLog:  NewACLLog(),
 	}
+	s.replication.init()
+	return s
 }
 
 type commandInfo struct {
