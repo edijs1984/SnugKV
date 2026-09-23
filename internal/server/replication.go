@@ -243,13 +243,71 @@ func (r *replicationState) init() {
 	if r.replicas == nil {
 		r.replicas = make(map[uint64]func([]byte) error)
 	}
+	if r.backlogSize == 0 {
+		r.backlogSize = 1024 * 1024
+	}
+	if r.backlogFirstOffset == 0 {
+		r.backlogFirstOffset = 1
+	}
 	r.mu.Unlock()
+}
+
+func (r *replicationState) ensureBacklogLocked() {
+	if r.backlogSize == 0 {
+		r.backlogSize = 1024 * 1024
+	}
+	if !r.backlogActive {
+		r.backlogActive = true
+		r.backlogFirstOffset = r.offset + 1
+	}
+}
+
+func (r *replicationState) appendBacklogLocked(frame []byte, payload []byte) {
+	r.ensureBacklogLocked()
+	start := r.offset + 1
+	end := r.offset + int64(len(frame))
+	entry := replicationBacklogEntry{
+		startOffset: start,
+		endOffset: end,
+		payload: append([]byte(nil), payload...),
+	}
+	r.backlog = append(r.backlog, entry)
+	r.backlogBytes += int64(len(frame))
+	r.offset = end
+	for len(r.backlog) > 0 && r.backlogBytes > r.backlogSize {
+		r.backlogBytes -= r.backlog[0].endOffset - r.backlog[0].startOffset + 1
+		r.backlog = r.backlog[1:]
+	}
+	if len(r.backlog) > 0 {
+		r.backlogFirstOffset = r.backlog[0].startOffset
+	} else {
+		r.backlogFirstOffset = r.offset + 1
+	}
+}
+
+func (r *replicationState) partialSyncPayloadLocked(runID string, offset int64) ([][]byte, bool) {
+	if !r.backlogActive || runID == "" || runID != r.runID {
+		return nil, false
+	}
+	if offset > r.offset {
+		return nil, false
+	}
+	if offset < r.backlogFirstOffset-1 {
+		return nil, false
+	}
+	payloads := make([][]byte, 0)
+	for _, entry := range r.backlog {
+		if entry.endOffset > offset {
+			payloads = append(payloads, append([]byte(nil), entry.payload...))
+		}
+	}
+	return payloads, true
 }
 
 func (r *replicationState) primaryHasReplicas() bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.role == replicationMaster && len(r.replicas) > 0
+	return r.role == replicationMaster && (len(r.replicas) > 0 || r.backlogActive)
 }
 
 func (r *replicationState) registerReplica(write func([]byte) error) (uint64, string, int64) {
