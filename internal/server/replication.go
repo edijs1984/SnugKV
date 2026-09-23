@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"slices"
 )
 
 type replicationRole uint8
@@ -54,6 +55,8 @@ type replicationState struct {
 
 	nextReplicaID uint64
 	replicas map[uint64]func([]byte) error
+	replicaAckOffsets map[uint64]int64
+	replicaAckTimes map[uint64]time.Time
 
 	followCancel chan struct{}
 	followDone chan struct{}
@@ -170,6 +173,7 @@ func (s *Server) replicationInfo() string {
 		"# Replication\r\n"+
 			"role:master\r\n"+
 			"connected_slaves:%d\r\n"+
+			"%s"+
 			"master_replid:%s\r\n"+
 			"master_repl_offset:%d\r\n"+
 			"repl_backlog_active:%d\r\n"+
@@ -177,6 +181,7 @@ func (s *Server) replicationInfo() string {
 			"repl_backlog_first_byte_offset:%d\r\n"+
 			"repl_backlog_histlen:%d\r\n",
 		state.connectedReplicas,
+		s.replication.replicaInfoLines(),
 		state.runID,
 		state.offset,
 		replicationBoolInt(state.backlogActive),
@@ -256,6 +261,12 @@ func (r *replicationState) init() {
 	if r.replicas == nil {
 		r.replicas = make(map[uint64]func([]byte) error)
 	}
+	if r.replicaAckOffsets == nil {
+		r.replicaAckOffsets = make(map[uint64]int64)
+	}
+	if r.replicaAckTimes == nil {
+		r.replicaAckTimes = make(map[uint64]time.Time)
+	}
 	if r.backlogSize == 0 {
 		r.backlogSize = 1024 * 1024
 	}
@@ -330,9 +341,17 @@ func (r *replicationState) registerReplica(write func([]byte) error) (uint64, st
 	if r.replicas == nil {
 		r.replicas = make(map[uint64]func([]byte) error)
 	}
+	if r.replicaAckOffsets == nil {
+		r.replicaAckOffsets = make(map[uint64]int64)
+	}
+	if r.replicaAckTimes == nil {
+		r.replicaAckTimes = make(map[uint64]time.Time)
+	}
 	r.nextReplicaID++
 	id := r.nextReplicaID
 	r.replicas[id] = write
+	r.replicaAckOffsets[id] = 0
+	r.replicaAckTimes[id] = time.Now()
 	r.connectedReplicas = len(r.replicas)
 	return id, r.runID, r.offset
 }
@@ -340,8 +359,45 @@ func (r *replicationState) registerReplica(write func([]byte) error) (uint64, st
 func (r *replicationState) unregisterReplica(id uint64) {
 	r.mu.Lock()
 	delete(r.replicas, id)
+	delete(r.replicaAckOffsets, id)
+	delete(r.replicaAckTimes, id)
 	r.connectedReplicas = len(r.replicas)
 	r.mu.Unlock()
+}
+
+func (r *replicationState) acknowledgeReplica(id uint64, offset int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.replicas[id]; !ok {
+		return
+	}
+	if current, ok := r.replicaAckOffsets[id]; !ok || offset > current {
+		r.replicaAckOffsets[id] = offset
+	}
+	r.replicaAckTimes[id] = time.Now()
+}
+
+func (r *replicationState) replicaInfoLines() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if len(r.replicas) == 0 {
+		return ""
+	}
+	ids := make([]uint64, 0, len(r.replicas))
+	for id := range r.replicas {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	now := time.Now()
+	var b strings.Builder
+	for i, id := range ids {
+		lag := int(now.Sub(r.replicaAckTimes[id]).Seconds())
+		if lag < 0 {
+			lag = 0
+		}
+		fmt.Fprintf(&b, "slave%d:ip=127.0.0.1,port=0,state=online,offset=%d,lag=%d\r\n", i, r.replicaAckOffsets[id], lag)
+	}
+	return b.String()
 }
 
 func encodeReplicationFrame(records []persistence.Record) ([]byte, error) {
