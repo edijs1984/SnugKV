@@ -167,7 +167,7 @@ func parseAggregateOptions(args [][]byte) (aggregateOptions, error) {
 			loads := make([]aggregateLoad, 0, count)
 			for i := 0; i < count; i++ {
 				if strings.EqualFold(string(args[pos]), "AS") {
-					return aggregateOptions{}, fmt.Errorf("SEARCH_ARG_UNRECOGNIZED Unknown argument `AS` at position %d for <main>", pos)
+					return aggregateOptions{}, fmt.Errorf("SEARCH_ARG_UNRECOGNIZED Unknown argument `AS` at position %d for <main>", pos+1)
 				}
 				loads = append(loads, aggregateLoad{name: string(args[pos])})
 				pos++
@@ -445,7 +445,8 @@ func executeFTAggregate(store *engine.Store, args [][]byte) ([]byte, error) {
 	}
 
 	reportedTotal := -1
-	for _, stage := range options.stages {
+	filterOnlyImplicitRows := false
+	for stageIndex, stage := range options.stages {
 		switch stage.kind {
 		case aggregateLoadStage:
 			for i := range rows {
@@ -463,6 +464,16 @@ func executeFTAggregate(store *engine.Store, args [][]byte) ([]byte, error) {
 			}
 
 		case aggregateFilterStage:
+			// Redis FT.AGGREGATE reports the cardinality entering FILTER when
+			// earlier pipeline stages already materialized rows (e.g. LOAD).
+			if reportedTotal < 0 && stageIndex > 0 {
+				reportedTotal = len(rows)
+			}
+			// With FILTER as the first/only materializing stage Redis reports
+			// one aggregate row while exposing the referenced property values.
+			if stageIndex == 0 {
+				filterOnlyImplicitRows = true
+			}
 			filtered := make([]aggregateRow, 0, len(rows))
 			for i := range rows {
 				match, err := evaluateAggregateFilter(store, def, &rows[i], stage.filter)
@@ -591,7 +602,13 @@ func executeFTAggregate(store *engine.Store, args [][]byte) ([]byte, error) {
 
 		case aggregateLimitStage:
 			if reportedTotal < 0 {
-				reportedTotal = len(rows)
+				// Measured Redis behavior reports the remaining logical
+				// cardinality after applying the offset, not always the full
+				// pre-LIMIT row count.
+				reportedTotal = len(rows) - stage.offset
+				if reportedTotal < 0 {
+					reportedTotal = 0
+				}
 			}
 			start := stage.offset
 			if start > len(rows) {
@@ -606,7 +623,32 @@ func executeFTAggregate(store *engine.Store, args [][]byte) ([]byte, error) {
 	}
 
 	if reportedTotal < 0 {
-		reportedTotal = len(rows)
+		if filterOnlyImplicitRows && len(rows) > 0 {
+			reportedTotal = 1
+		} else {
+			reportedTotal = len(rows)
+		}
+	}
+
+	if filterOnlyImplicitRows && len(rows) > 1 {
+		merged := aggregateRow{values: make(map[string]aggregateValue)}
+		for _, row := range rows {
+			for _, name := range row.order {
+				// Preserve repeated FILTER-materialized property names in the
+				// wire row by giving each occurrence a synthetic order token.
+				value := row.values[name]
+				synthetic := name
+				for {
+					if _, exists := merged.values[synthetic]; !exists {
+						break
+					}
+					synthetic += "\x00"
+				}
+				merged.values[synthetic] = value
+				merged.order = append(merged.order, synthetic)
+			}
+		}
+		rows = []aggregateRow{merged}
 	}
 
 	items := make([][]byte, 0, len(rows)+1)
@@ -615,8 +657,9 @@ func executeFTAggregate(store *engine.Store, args [][]byte) ([]byte, error) {
 		fields := make([][]byte, 0, len(row.order)*2)
 		for _, name := range row.order {
 			value := row.values[name]
+			wireName := strings.TrimRight(name, "\x00")
 			fields = append(fields,
-				formatBulkString([]byte(name)),
+				formatBulkString([]byte(wireName)),
 				formatBulkString([]byte(value.text)),
 			)
 		}
