@@ -20,10 +20,13 @@ const (
 )
 
 type SearchField struct {
-	Path   string
-	Alias  string
-	Kind   SearchFieldKind
-	NoStem bool
+	Path     string
+	Alias    string
+	Kind     SearchFieldKind
+	NoStem   bool
+	Weight   float64
+	Sortable bool
+	NoIndex  bool
 }
 
 type SearchDefinition struct {
@@ -318,6 +321,9 @@ func extractSearchDocument(def SearchDefinition, raw []byte) (searchDocumentStat
 	}
 
 	for _, field := range def.Fields {
+		if field.NoIndex {
+			continue
+		}
 		values, err := jsonvalue.Matches(root, field.Path)
 		if err != nil {
 			// Redis accepts malformed JSONPath strings at FT.CREATE time.
