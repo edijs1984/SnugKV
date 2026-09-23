@@ -363,6 +363,7 @@ lands.
   - [ ] Add additional probabilistic families (Cuckoo, CMS, TopK, t-digest) and TimeSeries in separate audited slices.
   - [x] Cuckoo filter Phase 1: native persistent fingerprint filters with reserve/add/addnx/insert/insertnx/exists/mexists/count/delete/info, TTL/persistence, ACL/OOM metadata, and RedisBloom live differential parity for the audited slice.
   - [x] CMS Phase 1: native persistent Count-Min Sketches with INITBYDIM/INITBYPROB/INCRBY/QUERY/MERGE/INFO, weighted merges, TTL/persistence, ACL/OOM metadata, and RedisBloom live differential parity for the audited slice.
+  - [x] TopK Phase 1: native persistent heavy-hitter tracking with RESERVE/ADD/INCRBY/QUERY/COUNT/LIST/INFO, TTL/persistence, ACL/OOM metadata, and RedisBloom live differential parity for the audited slice.
 - [x] Return to optimizer convergence so dropped/missed optimization candidates are periodically revisited and dense-entry compaction is reached automatically without an explicit `SNUG.COMPACT`.
 
 ### P4 — distributed features (outside current single-node target)
