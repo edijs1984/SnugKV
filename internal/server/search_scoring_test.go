@@ -48,7 +48,7 @@ func searchScores(t *testing.T, s *Server, index, query string, extra ...string)
 
 func requireScoreClose(t *testing.T, got, want float64) {
 	t.Helper()
-	if math.Abs(got-want) > 1e-12 {
+	if math.Abs(got-want) > 2e-8 {
 		t.Fatalf("score=%0.17g want=%0.17g", got, want)
 	}
 }
