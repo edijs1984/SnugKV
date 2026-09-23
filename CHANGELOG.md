@@ -147,6 +147,8 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Verified
 
+- Redis Search differential coverage for grouped TEXT `SLOP`/`INORDER` semantics, quoted-phrase exactness under those options, and compatible parse/argument errors.
+
 - Redis Search language differential coverage for `LANGUAGE`, query `LANGUAGE`, and `LANGUAGE_FIELD` with English/German stemming and Redis-compatible invalid-language error classes.
 
 - Redis 8.2 Search differential coverage for JSON TEXT indexing, multi-term groups, prefixes, exact phrases, English stemming/NOSTEM, and default/disabled/custom stopword modes; remaining diffs are unsorted result ordering and JSON object field order.
