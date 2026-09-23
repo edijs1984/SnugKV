@@ -705,3 +705,13 @@ The live oracle was first captured from RedisBloom on port 6392, including exact
 The same oracle was then run against SnugKV on port 6383. The complete output matched line-for-line except for the expected first-line target/port label.
 
 Phase 1 intentionally does not claim scalable Bloom-chain compatibility yet. Expansion/overflow behavior remains a separate RedisBloom audit target.
+
+## Bloom scalable expansion — 2026-09-23
+
+The Bloom implementation now supports RedisBloom-style scalable filter generations. Default expansion 2 grows capacities geometrically (for example 2 → 4 → 8), explicit expansion factors such as 3 grow 2 → 6 → 18, and BF.INFO reports aggregate capacity, number of filters, inserted-item count, expansion metadata, and the audited module-style SIZE values.
+
+NONSCALING and EXPANSION 0 produce fixed-capacity filters. Once full, BF.ADD returns `ERR non scaling filter is full`, while BF.INSERT preserves RedisBloom's per-item behavior by embedding the error in the result array for the overflowing item.
+
+The persisted Bloom format now supports multiple generations while retaining decode compatibility with Phase 1 Bloom payloads. Membership checks span all generations, and later generations use progressively tighter error rates.
+
+A live differential oracle covering default scaling, explicit expansion, NONSCALING, BF.INSERT modifiers, null expansion metadata, overflow behavior, and audited option/error quirks was run against RedisBloom on port 6392 and SnugKV on port 6383. The outputs matched line-for-line except for the expected target/port label.

@@ -311,4 +311,4 @@ Redis and related marks are trademarks of their respective owners.
 
 ### Bloom filters
 
-SnugKV includes an initial native Bloom filter implementation with persistent storage and RedisBloom-style `BF.RESERVE`, `BF.ADD`, `BF.EXISTS`, `BF.MADD`, `BF.MEXISTS`, `BF.CARD`, `BF.INFO`, and audited `BF.INSERT` support. The Phase 1 command/error surface has been live-differential tested against RedisBloom. Scalable expansion behavior is intentionally deferred to a separate compatibility audit.
+SnugKV includes an initial native Bloom filter implementation with persistent storage and RedisBloom-style `BF.RESERVE`, `BF.ADD`, `BF.EXISTS`, `BF.MADD`, `BF.MEXISTS`, `BF.CARD`, `BF.INFO`, and audited `BF.INSERT` support. The Phase 1 command/error surface has been live-differential tested against RedisBloom. Scalable expansion is supported with geometric filter generations, explicit `EXPANSION`, `NONSCALING`, overflow behavior, and RedisBloom-audited `BF.INFO` metadata.
