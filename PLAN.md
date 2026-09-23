@@ -349,6 +349,7 @@ lands.
 - [x] Add audited grouped TEXT proximity modifiers with `SLOP` and `INORDER` while preserving exact quoted-phrase behavior.
 - [x] Add audited fuzzy TEXT query support for `%term%`, `%%term%%`, and `%%%term%%%` with Redis-compatible parser errors.
 - [x] Add audited schema modifiers `WEIGHT`, `SORTABLE`, and `NOINDEX`, including Redis-compatible modifier ordering and duplicate handling.
+- [x] Add audited unqualified TEXT queries across all indexed TEXT fields, including multi-term AND, phrases, prefix/fuzzy forms, stopwords, stemming/NOSTEM, mixed fielded clauses, and DIALECT 1/2 parity.
 - [ ] Add probabilistic/time-series structures only after the JSON/search storage
   boundaries are settled.
 - [ ] Return to optimizer convergence so dense-entry compaction is reached
