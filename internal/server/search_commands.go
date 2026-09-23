@@ -101,6 +101,13 @@ func executeFTCreate(store *engine.Store, args [][]byte) ([]byte, error) {
 			if pos+1 >= len(args) {
 				return nil, errors.New("ERR syntax error")
 			}
+			if strings.EqualFold(string(args[pos+1]), "SCHEMA") {
+				unknown := "SCHEMA"
+				if pos+2 < len(args) {
+					unknown = string(args[pos+2])
+				}
+				return nil, fmt.Errorf("SEARCH_ARG_UNRECOGNIZED Unknown argument `%s`", unknown)
+			}
 			def.LanguageField = string(args[pos+1])
 			pos += 2
 
