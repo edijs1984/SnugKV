@@ -163,6 +163,7 @@ func executeFTCreate(store *engine.Store, args [][]byte) ([]byte, error) {
 		if kind == engine.SearchFieldText {
 			weight = 1
 		}
+		weightSet := false
 		sortable := false
 		noIndex := false
 		allowWeight := kind == engine.SearchFieldText
@@ -180,6 +181,7 @@ func executeFTCreate(store *engine.Store, args [][]byte) ([]byte, error) {
 				if kind != engine.SearchFieldText || !allowWeight {
 					goto modifiersDone
 				}
+				weightSet = true
 				if pos+1 >= len(args) {
 					weight = 0
 					pos++
@@ -217,6 +219,7 @@ func executeFTCreate(store *engine.Store, args [][]byte) ([]byte, error) {
 			Kind:     kind,
 			NoStem:   noStem,
 			Weight:   weight,
+			WeightSet: weightSet,
 			Sortable: sortable,
 			NoIndex:  noIndex,
 		})
@@ -295,9 +298,9 @@ func executeFTInfo(store *engine.Store, args [][]byte) ([]byte, error) {
 		}
 		if field.Kind == engine.SearchFieldText {
 			weight := field.Weight
-			if weight == 0 && !field.NoIndex && !field.Sortable && !field.NoStem {
-				// Definitions created before WEIGHT support deserialize with zero.
-				// Preserve the historical/default Redis-visible weight.
+			if !field.WeightSet {
+				// Definitions created before WEIGHT support deserialize without
+				// the new marker. Redis's default TEXT weight is 1.
 				weight = 1
 			}
 			fieldItems = append(fieldItems,
