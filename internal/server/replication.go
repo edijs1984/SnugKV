@@ -310,7 +310,7 @@ func (s *Server) publishReplication(records []persistence.Record) {
 	s.replication.mu.Unlock()
 }
 
-func (s *Server) handlePSYNC(write func([]byte) error) error {
+func (s *Server) handlePSYNC(write func([]byte) error) (uint64, error) {
 	s.durableMu.Lock()
 	defer s.durableMu.Unlock()
 
@@ -320,7 +320,7 @@ func (s *Server) handlePSYNC(write func([]byte) error) error {
 	full = append(full, records...)
 	frame, err := encodeReplicationFrame(full)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	id, runID, offset := s.replication.registerReplica(write)
@@ -333,13 +333,13 @@ func (s *Server) handlePSYNC(write func([]byte) error) error {
 
 	header := []byte(fmt.Sprintf("+FULLRESYNC %s %d\r\n", runID, offset))
 	if err := write(header); err != nil {
-		return err
+		return 0, err
 	}
 	if err := write(replicationBulk(frame)); err != nil {
-		return err
+		return 0, err
 	}
 	ok = true
-	return nil
+	return id, nil
 }
 
 func readReplicationRESP(reader *bufio.Reader) ([]byte, error) {
