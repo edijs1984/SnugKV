@@ -342,7 +342,7 @@ func TestDecodeRedisFullSyncRDB(t *testing.T) {
 	if items, err := store.ListRange("rdb:list", 0, -1); err != nil || len(items) != 3 {
 		t.Fatalf("list items=%v err=%v", items, err)
 	}
-	if ttl := store.PTTL("rdb:ttl"); ttl <= 0 {
+	if ttl := store.TTL("rdb:ttl", true); ttl <= 0 {
 		t.Fatalf("ttl=%d", ttl)
 	}
 }
