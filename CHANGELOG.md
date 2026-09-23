@@ -147,6 +147,9 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Verified
 
+- TopK Phase 1 adds native persistent RedisBloom-compatible heavy-hitter tracking with RESERVE/ADD/INCRBY/QUERY/COUNT/LIST/INFO, ejection semantics, TTL/persistence, ACL/OOM metadata, and exact live differential parity for the audited slice.
+
+
 - Count-Min Sketch Phase 1 adds native persistent CMS values with audited INITBYDIM/INITBYPROB/INCRBY/QUERY/MERGE/INFO behavior, weighted merges, packed 32-bit counters, TTL/persistence, ACL/OOM metadata, and exact live RedisBloom differential parity for the audited slice.
 
 
