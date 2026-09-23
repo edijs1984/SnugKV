@@ -347,6 +347,7 @@ lands.
 - [x] Add TEXT query support for multi-term groups, prefixes, exact phrases, English stemming/NOSTEM, and Redis-compatible default/disabled/custom stopword modes.
 - [x] Add audited Search language semantics for index `LANGUAGE`, query `LANGUAGE`, and JSON `LANGUAGE_FIELD` with English/German stemming.
 - [x] Add audited grouped TEXT proximity modifiers with `SLOP` and `INORDER` while preserving exact quoted-phrase behavior.
+- [x] Add audited fuzzy TEXT query support for `%term%`, `%%term%%`, and `%%%term%%%` with Redis-compatible parser errors.
 - [ ] Add probabilistic/time-series structures only after the JSON/search storage
   boundaries are settled.
 - [ ] Return to optimizer convergence so dense-entry compaction is reached
