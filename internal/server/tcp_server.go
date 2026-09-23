@@ -925,6 +925,7 @@ func errorResponse(err error) []byte {
 		!strings.HasPrefix(message, "NOSCRIPT ") &&
 		!strings.HasPrefix(message, "OOM ") &&
 		!strings.HasPrefix(message, "WRONGTYPE ") &&
+		!strings.HasPrefix(message, "READONLY ") &&
 		!strings.HasPrefix(message, "EXECABORT ") &&
 		!strings.HasPrefix(message, "INVALIDOBJ ") &&
 		!strings.HasPrefix(message, "NOAUTH ") &&
