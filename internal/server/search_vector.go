@@ -72,7 +72,9 @@ func parseVectorSearchSpec(query string, def engine.SearchDefinition) (vectorSea
 		field, ok := findVectorField(def, alias)
 		if !ok {
 			offset := strings.Index(query, alias)
-			if offset < 0 {
+			if offset > 0 {
+				offset--
+			} else if offset < 0 {
 				offset = 0
 			}
 			return vectorSearchSpec{}, true, fmt.Errorf("SEARCH_SYNTAX Unknown field at offset %d near %s", offset, alias)
@@ -92,7 +94,11 @@ func parseVectorSearchSpec(query string, def engine.SearchDefinition) (vectorSea
 		field, ok := findVectorField(def, alias)
 		if !ok {
 			offset := strings.Index(query, alias)
-			if offset < 0 { offset = 0 }
+			if offset > 0 {
+				offset--
+			} else if offset < 0 {
+				offset = 0
+			}
 			return vectorSearchSpec{}, true, fmt.Errorf("SEARCH_SYNTAX Unknown field at offset %d near %s", offset, alias)
 		}
 		body := strings.TrimSuffix(query[colon+2:], "]")
