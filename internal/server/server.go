@@ -29,6 +29,7 @@ type Server struct {
 	durableMu        sync.RWMutex
 	durabilityFailed bool
 	watchSessions    atomic.Int32
+	replication     replicationState
 
 	// executionACLUsername / executionACLArgs are valid only while durableMu is
 	// held. TCP and transaction execution populate them so dynamic command
@@ -76,6 +77,9 @@ var commandTable = map[string]commandInfo{
 	"PING":            {1, 2, 0, 0, 0, false}, "ECHO": {2, 2, 0, 0, 0, false}, "QUIT": {1, 1, 0, 0, 0, false},
 	"SELECT": {2, 2, 0, 0, 0, false}, "HELLO": {1, 0, 0, 0, 0, false}, "INFO": {1, 2, 0, 0, 0, false},
 	"DBSIZE": {1, 1, 0, 0, 0, false}, "COMMAND": {1, 0, 0, 0, 0, false},
+	"ROLE": {1, 1, 0, 0, 0, false},
+	"REPLICAOF": {3, 3, 0, 0, 0, false},
+	"PSYNC": {3, 3, 0, 0, 0, false},
 	"CONFIG":      {2, 0, 0, 0, 0, false},
 	"CLIENT":      {2, 0, 0, 0, 0, false},
 	"SCAN":        {2, 0, 0, 0, 0, false},
@@ -1359,9 +1363,28 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 	case "DBSIZE":
 		return integer(int64(s.store.Stats().Keys)), nil
 
+	case "ROLE":
+		return s.replicationRoleReply(), nil
+
+	case "REPLICAOF":
+		detach, host, port, err := parseReplicaOf(args)
+		if err != nil {
+			return nil, err
+		}
+		if detach {
+			s.stopReplicaFollow()
+			s.replication.promote()
+			return []byte("+OK\r\n"), nil
+		}
+		s.startReplicaFollow(host, port)
+		return []byte("+OK\r\n"), nil
+
+	case "PSYNC":
+		return nil, errors.New("ERR PSYNC is only valid on a replication connection")
+
 	case "INFO":
 		section := strings.ToLower(key)
-		if section != "" && section != "all" && section != "default" && section != "server" && section != "memory" && section != "stats" && section != "keyspace" {
+		if section != "" && section != "all" && section != "default" && section != "server" && section != "memory" && section != "stats" && section != "keyspace" && section != "replication" {
 			return formatBulkString(nil), nil
 		}
 		st := s.store.Stats()
@@ -1409,6 +1432,9 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		}
 		if section == "" || section == "all" || section == "default" || section == "keyspace" {
 			out += fmt.Sprintf("# Keyspace\r\ndb0:keys=%d\r\n", st.Keys)
+		}
+		if section == "" || section == "all" || section == "default" || section == "replication" {
+			out += s.replicationInfo()
 		}
 		return formatBulkString([]byte(out)), nil
 
