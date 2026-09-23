@@ -201,6 +201,36 @@ func shouldCompactArena(arenaBytes, liveBytes uint64, queueDepth int) bool {
 	return dead >= 8<<20 && dead*5 >= arenaBytes*2
 }
 
+func shouldCompactEntries(capacity, live uint64, queueDepth int) bool {
+	if capacity == 0 || live >= capacity {
+		return false
+	}
+
+	slack := capacity - live
+	if queueDepth == 0 {
+		return slack >= 1024 && slack*4 >= capacity
+	}
+
+	return slack >= 4096 && slack*5 >= capacity*2
+}
+
+func (o *Optimizer) maintenanceStep() {
+	// Periodic sampling guarantees eventual recovery for dropped write-time
+	// queue attempts and lets JSON values be reconsidered after shared-shape
+	// admission matures. Avoid generating more catch-up work while a meaningful
+	// foreground backlog is already queued.
+	if len(o.queue) <= cap(o.queue)/4 {
+		o.Sample(4096)
+	}
+
+	m := o.store.Memory()
+	layout := o.store.Layout()
+	if shouldCompactArena(m.ArenaBytes, m.ArenaLiveBlockBytes, len(o.queue)) ||
+		shouldCompactEntries(layout.EntryCapacity, layout.EntryCount, len(o.queue)) {
+		o.store.Compact(uint64(o.config.MaxScratchBytes))
+	}
+}
+
 func (o *Optimizer) maintenance() {
 	defer o.wg.Done()
 
@@ -213,12 +243,7 @@ func (o *Optimizer) maintenance() {
 			return
 
 		case <-ticker.C:
-			m := o.store.Memory()
-			if !shouldCompactArena(m.ArenaBytes, m.ArenaLiveBlockBytes, len(o.queue)) {
-				continue
-			}
-
-			o.store.Compact(uint64(o.config.MaxScratchBytes))
+			o.maintenanceStep()
 		}
 	}
 }
