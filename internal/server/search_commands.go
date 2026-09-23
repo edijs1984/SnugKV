@@ -698,6 +698,7 @@ func parseSearchFuzzyExpr(expr, fullQuery string) (string, int, bool, error) {
 		switch {
 		case leading > 3:
 			offset = strings.Index(fullQuery, expr) + 3
+			near = "text"
 		case leading == 0:
 			offset = strings.LastIndex(fullQuery, "%")
 		case trailing == 0:
