@@ -471,7 +471,7 @@ func executeFTAggregate(store *engine.Store, args [][]byte) ([]byte, error) {
 			}
 			// With FILTER as the first/only materializing stage Redis reports
 			// one aggregate row while exposing the referenced property values.
-			if stageIndex == 0 {
+			if stageIndex == 0 && len(options.stages) == 1 {
 				filterOnlyImplicitRows = true
 			}
 			filtered := make([]aggregateRow, 0, len(rows))
@@ -601,11 +601,13 @@ func executeFTAggregate(store *engine.Store, args [][]byte) ([]byte, error) {
 			})
 
 		case aggregateLimitStage:
-			if reportedTotal < 0 {
-				// Measured Redis behavior reports the remaining logical
-				// cardinality after applying the offset, not always the full
-				// pre-LIMIT row count.
-				reportedTotal = len(rows) - stage.offset
+			// LIMIT owns the aggregate header count in measured Redis output.
+			// Offset 0 reports the upstream cardinality. Positive offsets use
+			// Redis's observed upstream-offset+1 convention.
+			if stage.offset == 0 {
+				reportedTotal = len(rows)
+			} else {
+				reportedTotal = len(rows) - stage.offset + 1
 				if reportedTotal < 0 {
 					reportedTotal = 0
 				}
