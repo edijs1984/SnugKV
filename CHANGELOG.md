@@ -147,6 +147,9 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Verified
 
+- Bloom filter Phase 1 adds native persistent Bloom values with `BF.RESERVE`, `BF.ADD`, `BF.EXISTS`, `BF.MADD`, `BF.MEXISTS`, `BF.CARD`, `BF.INFO`, and audited `BF.INSERT ... CAPACITY ... ERROR ... ITEMS` support. A live differential against RedisBloom on port 6392 matched line-for-line for the audited surface, including error and wrong-type behavior.
+
+
 - Optimizer convergence now periodically resamples missed candidates and automatically compacts dense entry storage when slot slack is material. `Compact()` rebuilds live entries contiguously instead of retaining deleted entry holes. A 200,000-key / 50,000-live-key delete-heavy probe reduced entry capacity from 225,091 to 50,000 and entry storage from 5,402,184 bytes to 1,200,000 bytes (~77.8% reclaimed).
 
 
