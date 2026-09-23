@@ -127,6 +127,9 @@ func (s *Server) executePressureCommand(args [][]byte) ([]byte, error) {
 	if isTopKCommand(args) {
 		return s.executeTopK(args)
 	}
+	if isTDigestCommand(args) {
+		return s.executeTDigest(args)
+	}
 	if isGeoCommand(args) {
 		return s.executeGeo(args)
 	}

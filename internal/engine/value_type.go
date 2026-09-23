@@ -34,6 +34,7 @@ const (
 	TypeCuckoo
 	TypeCMS
 	TypeTopK
+	TypeTDigest
 )
 
 func (t ValueType) String() string {
@@ -70,6 +71,8 @@ func (t ValueType) String() string {
 		return "CMS"
 	case TypeTopK:
 		return "TOPK"
+	case TypeTDigest:
+		return "TDIGEST"
 	default:
 		return "UNKNOWN"
 	}

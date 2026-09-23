@@ -92,7 +92,7 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 		if len(record.Value) > 32<<20 {
 			return errors.New("ERR recovered value exceeds 32 MiB limit")
 		}
-		if record.ValueType > uint8(TypeTopK) {
+		if record.ValueType > uint8(TypeTDigest) {
 			return errors.New("ERR recovered value has unknown type")
 		}
 	}
@@ -157,6 +157,11 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 				return errors.New("ERR recovered TOPK value is invalid")
 			}
 			e = topKPreparedEntry(record.Value)
+		case TypeTDigest:
+			if _, err := decodeTDigest(record.Value); err != nil {
+				return errors.New("ERR recovered TDIGEST value is invalid")
+			}
+			e = tDigestPreparedEntry(record.Value)
 		default:
 			e = s.makeEntry(record.Value)
 

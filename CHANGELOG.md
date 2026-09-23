@@ -147,6 +147,9 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Verified
 
+- t-digest Phase 1 adds native persistent RedisBloom-compatible sketches with CREATE/ADD/MERGE/RESET/MIN/MAX/QUANTILE/CDF/RANK/REVRANK/BYRANK/BYREVRANK/TRIMMED_MEAN/INFO, centroid buffering/compression state, TTL/persistence, ACL/OOM metadata, and exact live differential parity for the audited slice.
+
+
 - TopK Phase 1 adds native persistent RedisBloom-compatible heavy-hitter tracking with RESERVE/ADD/INCRBY/QUERY/COUNT/LIST/INFO, ejection semantics, TTL/persistence, ACL/OOM metadata, and exact live differential parity for the audited slice.
 
 
