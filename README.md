@@ -312,3 +312,5 @@ Redis and related marks are trademarks of their respective owners.
 ### Bloom filters
 
 SnugKV includes an initial native Bloom filter implementation with persistent storage and RedisBloom-style `BF.RESERVE`, `BF.ADD`, `BF.EXISTS`, `BF.MADD`, `BF.MEXISTS`, `BF.CARD`, `BF.INFO`, and audited `BF.INSERT` support. The Phase 1 command/error surface has been live-differential tested against RedisBloom. Scalable expansion is supported with geometric filter generations, explicit `EXPANSION`, `NONSCALING`, overflow behavior, and RedisBloom-audited `BF.INFO` metadata.
+
+Cuckoo filters are supported as native persistent probabilistic values with RedisBloom-audited `CF.RESERVE`, `CF.ADD`, `CF.ADDNX`, `CF.EXISTS`, `CF.MEXISTS`, `CF.COUNT`, `CF.DEL`, `CF.INSERT`, `CF.INSERTNX`, and `CF.INFO` behavior.
