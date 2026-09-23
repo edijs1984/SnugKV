@@ -422,6 +422,7 @@ type searchOptions struct {
 	offset       int
 	count        int
 	noContent    bool
+	withScores   bool
 	returnFields []searchReturnField
 	sortBy       string
 	sortDesc     bool
@@ -1262,6 +1263,10 @@ func parseSearchOptions(args [][]byte) (searchOptions, error) {
 			options.noContent = true
 			pos++
 
+		case "WITHSCORES":
+			options.withScores = true
+			pos++
+
 		case "LIMIT":
 			if pos+2 >= len(args) {
 				return searchOptions{}, errors.New("ERR syntax error")
@@ -1755,6 +1760,77 @@ func stripSearchStopwords(def engine.SearchDefinition, node *searchQueryNode) (*
 	}
 }
 
+func mergeSearchScores(dst map[string]float64, src map[string]float64) {
+	for key, score := range src {
+		dst[key] += score
+	}
+}
+
+func evaluateSearchScores(store *engine.Store, indexName string, def engine.SearchDefinition, node *searchQueryNode, language string) (map[string]float64, error) {
+	if node == nil {
+		scores, ok := store.SearchBM25WildcardAllScores(indexName)
+		if !ok {
+			return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
+		}
+		return scores, nil
+	}
+
+	switch node.kind {
+	case searchQueryClauseNode:
+		if node.clause == nil || node.clause.noMatch {
+			return map[string]float64{}, nil
+		}
+		switch {
+		case node.clause.textPhrase != nil:
+			scores, ok := store.SearchBM25PhraseScores(indexName, node.clause.alias, *node.clause.textPhrase, language)
+			if !ok {
+				return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
+			}
+			return scores, nil
+		case node.clause.text != nil:
+			var (
+				scores map[string]float64
+				ok     bool
+			)
+			switch {
+			case node.clause.textFuzzy > 0:
+				scores, ok = store.SearchBM25FuzzyScores(indexName, node.clause.alias, *node.clause.text, node.clause.textFuzzy, language)
+			case node.clause.textWildcardLeading || node.clause.textWildcardTrailing:
+				scores, ok = store.SearchBM25WildcardScores(indexName, node.clause.alias, *node.clause.text, node.clause.textWildcardLeading, node.clause.textWildcardTrailing, language)
+			case node.clause.textPrefix:
+				scores, ok = store.SearchBM25WildcardScores(indexName, node.clause.alias, *node.clause.text, false, true, language)
+			default:
+				scores, ok = store.SearchBM25TextScores(indexName, node.clause.alias, *node.clause.text, language)
+			}
+			if !ok {
+				return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
+			}
+			return scores, nil
+		default:
+			// Non-text query nodes do not contribute to BM25STD.
+			return map[string]float64{}, nil
+		}
+
+	case searchQueryAndNode, searchQueryOrNode:
+		left, err := evaluateSearchScores(store, indexName, def, node.left, language)
+		if err != nil {
+			return nil, err
+		}
+		right, err := evaluateSearchScores(store, indexName, def, node.right, language)
+		if err != nil {
+			return nil, err
+		}
+		mergeSearchScores(left, right)
+		return left, nil
+
+	case searchQueryNotNode:
+		return map[string]float64{}, nil
+
+	default:
+		return map[string]float64{}, nil
+	}
+}
+
 func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 	if len(args) < 3 {
 		return nil, errors.New("ERR wrong number of arguments for 'ft.search' command")
@@ -1843,6 +1919,7 @@ func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 	type hit struct {
 		key        string
 		raw        []byte
+		score      float64
 		sortFound  bool
 		sortText   string
 		sortNumber float64
@@ -1862,6 +1939,18 @@ func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 		}
 	}
 
+	scoreByKey := map[string]float64{}
+	if options.withScores {
+		if queryNode == nil && strings.TrimSpace(string(args[2])) != "*" {
+			scoreByKey = map[string]float64{}
+		} else {
+			scoreByKey, err = evaluateSearchScores(store, indexName, def, queryNode, language)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	hits := make([]hit, 0, len(candidates))
 	for _, key := range candidates {
 		raw, found, err := store.JSONGet(key, ".")
@@ -1872,7 +1961,7 @@ func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 			continue
 		}
 
-		item := hit{key: key, raw: raw}
+		item := hit{key: key, raw: raw, score: scoreByKey[key]}
 		if sortField != nil {
 			value, found, projectionErr := store.JSONProjection(key, sortField.Path)
 			if projectionErr != nil {
@@ -1927,6 +2016,13 @@ func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 			}
 			return less
 		})
+	} else if options.withScores {
+		sort.SliceStable(hits, func(i, j int) bool {
+			if hits[i].score == hits[j].score {
+				return hits[i].key < hits[j].key
+			}
+			return hits[i].score > hits[j].score
+		})
 	}
 
 	total := len(hits)
@@ -1940,11 +2036,18 @@ func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 		end = total
 	}
 
-	items := make([][]byte, 0, 1+(end-start)*2)
+	perHit := 2
+	if options.withScores {
+		perHit++
+	}
+	items := make([][]byte, 0, 1+(end-start)*perHit)
 	items = append(items, integer(int64(total)))
 
 	for _, hit := range hits[start:end] {
 		items = append(items, formatBulkString([]byte(hit.key)))
+		if options.withScores {
+			items = append(items, formatBulkString([]byte(strconv.FormatFloat(hit.score, 'g', -1, 64))))
+		}
 		if options.noContent {
 			continue
 		}
