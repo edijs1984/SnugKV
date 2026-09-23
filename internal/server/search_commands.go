@@ -1999,6 +1999,17 @@ func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 	}
 
 	indexName := string(args[1])
+	def, ok := store.SearchDefinition(indexName)
+	if !ok {
+		return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
+	}
+	if spec, matched, err := parseVectorSearchSpec(string(args[2]), def); matched {
+		if err != nil {
+			return nil, err
+		}
+		return executeFTVectorSearch(store, args, def, spec)
+	}
+
 	options, err := parseSearchOptions(args)
 	if err != nil {
 		return nil, err
@@ -2008,10 +2019,6 @@ func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 		return nil, err
 	}
 
-	def, ok := store.SearchDefinition(indexName)
-	if !ok {
-		return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
-	}
 	language := def.Language
 	if language == "" {
 		language = "english"
