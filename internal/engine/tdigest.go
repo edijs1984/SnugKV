@@ -130,7 +130,7 @@ func decodeTDigest(value []byte) (*tDigest, error) {
 	for i := range nodes {
 		mean := math.Float64frombits(binary.LittleEndian.Uint64(value[off : off+8]))
 		weight := int64(binary.LittleEndian.Uint64(value[off+8 : off+16]))
-		if !math.IsFinite(mean) || weight <= 0 {
+		if math.IsNaN(mean) || math.IsInf(mean, 0) || weight <= 0 {
 			return nil, errors.New("invalid TDigest")
 		}
 		nodes[i] = tDigestNode{mean: mean, weight: weight}
@@ -146,7 +146,7 @@ func decodeTDigest(value []byte) (*tDigest, error) {
 	}
 	if nodeCount == 0 {
 		min, max = math.Inf(1), math.Inf(-1)
-	} else if !math.IsFinite(min) || !math.IsFinite(max) || min > max {
+	} else if math.IsNaN(min) || math.IsInf(min, 0) || math.IsNaN(max) || math.IsInf(max, 0) || min > max {
 		return nil, errors.New("invalid TDigest")
 	}
 	return &tDigest{
