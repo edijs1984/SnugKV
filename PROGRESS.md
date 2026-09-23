@@ -629,3 +629,13 @@ SnugKV Search now supports the Redis-audited `PHONETIC dm:en` subset for TEXT fi
 `NOSTEM` remains independent of phonetic matching, matching the Redis oracle. Schema parsing covers valid modifier ordering, duplicate `PHONETIC`, missing/invalid matcher errors, and rejection on TAG/NUMERIC fields. Redis FT.INFO does not expose PHONETIC metadata in the field attributes, so SnugKV intentionally keeps that metadata hidden there as well.
 
 The live differential harness `compat/search/search-phonetic.sh` was run against Redis Search on port 6392 and SnugKV on port 6383. Audited query result sets and parser/error behavior match. Remaining diff noise is the known narrow SnugKV FT.INFO payload and deterministic key ordering versus Redis's unsorted order.
+
+## Search scoring/ranking milestone — 2026-09-23
+
+SnugKV Search now implements the audited Redis default relevance behavior for the current TEXT surface and exposes scores through `FT.SEARCH ... WITHSCORES`. The scorer follows Redis's BM25STD-style model for the measured Search 8.x behavior, including weighted document length/frequency, field `WEIGHT`, ordinary/stem/fuzzy/phonetic query expansion, exact phrases, grouped proximity queries, wildcard `*`, `SORTBY` precedence, `LIMIT`, `RETURN`, and duplicate `WITHSCORES` handling.
+
+A key compatibility detail discovered during the live audit is that field qualifiers gate eligibility while term frequency and IDF come from the shared cross-field posting. The implementation also avoids double-counting a surface term when its stem is identical to the original token.
+
+The differential harness `compat/search/search-scoring.sh` was run against Redis Search on port 6392 and SnugKV on port 6383. Query result sets, score ordering, field weights, stemming/fuzzy/phonetic behavior, phrase/proximity behavior, `SORTBY`, `LIMIT`, DIALECT 1/2, and option framing matched semantically. Remaining textual differences are limited to tiny floating-point rounding, JSON object key serialization order, and Redis-vs-SnugKV equal-score tie ordering.
+
+Focused scoring tests, full engine/server tests, race tests, `go vet ./...`, live process startup, and the final differential all passed.

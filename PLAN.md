@@ -352,6 +352,7 @@ lands.
 - [x] Add audited unqualified TEXT queries across all indexed TEXT fields, including multi-term AND, phrases, prefix/fuzzy forms, stopwords, stemming/NOSTEM, mixed fielded clauses, and DIALECT 1/2 parity.
 - [x] Add audited broader TEXT wildcard forms: suffix (`*ory`), contains (`*mor*`), grouped wildcard terms, escaping, parser boundaries, and DIALECT 1/2 parity.
 - [x] Add audited PHONETIC dm:en support for TEXT fields, including unqualified queries, modifier ordering, NOSTEM interaction, and Redis error behavior.
+- [x] Add audited BM25STD-style Search relevance scoring and `WITHSCORES`, including field weights, expansion scoring, phrase/proximity scoring, `SORTBY` precedence, `LIMIT`, and shared-posting field-mask behavior.
 - [ ] Add probabilistic/time-series structures only after the JSON/search storage
   boundaries are settled.
 - [ ] Return to optimizer convergence so dense-entry compaction is reached

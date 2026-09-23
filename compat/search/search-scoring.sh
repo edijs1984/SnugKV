@@ -1,0 +1,221 @@
+#!/usr/bin/env bash
+set -u
+
+PORT="${REDIS_PORT:-6379}"
+TARGET="${TARGET_NAME:-target}"
+CLI=(redis-cli -p "$PORT" --raw)
+
+run() {
+  printf '> '
+  printf '%q ' "$@"
+  printf '\n'
+  "${CLI[@]}" "$@" 2>&1 || true
+  printf '\n'
+}
+
+echo "target=$TARGET port=$PORT"
+
+echo
+echo "=== reset ==="
+run FLUSHDB
+for idx in score weight phrase phon fuzzy sortidx; do
+  run FT.DROPINDEX "$idx"
+done
+
+echo
+echo "=== seed ==="
+run JSON.SET doc:1 '$' '{"title":"memory guide","body":"fast storage engine memory","rank":30}'
+run JSON.SET doc:2 '$' '{"title":"memory memory","body":"server design","rank":10}'
+run JSON.SET doc:3 '$' '{"title":"server design","body":"memory system guide","rank":20}'
+run JSON.SET doc:4 '$' '{"title":"running system","body":"run memory","rank":40}'
+run JSON.SET doc:5 '$' '{"title":"memori guide","body":"memory guide","rank":50}'
+run JSON.SET doc:6 '$' '{"title":"Jon Smith","body":"memory","rank":60}'
+
+echo
+echo "=== create baseline ==="
+run FT.CREATE score ON JSON PREFIX 1 doc: SCHEMA '$.title' AS title TEXT '$.body' AS body TEXT '$.rank' AS rank NUMERIC SORTABLE
+
+echo
+echo "=== WITHSCORES shape ==="
+run FT.SEARCH score 'memory' WITHSCORES NOCONTENT
+run FT.SEARCH score 'memory' WITHSCORES
+run FT.SEARCH score '@title:memory' WITHSCORES NOCONTENT
+run FT.SEARCH score 'memory guide' WITHSCORES NOCONTENT
+run FT.SEARCH score '*' WITHSCORES NOCONTENT
+
+echo
+echo "=== repeated term / field distribution ==="
+run FT.SEARCH score '@title:memory' WITHSCORES NOCONTENT
+run FT.SEARCH score '@body:memory' WITHSCORES NOCONTENT
+run FT.SEARCH score 'memory' WITHSCORES NOCONTENT
+run FT.SEARCH score '@title:memory @body:memory' WITHSCORES NOCONTENT
+
+echo
+echo "=== field WEIGHT ==="
+run FT.CREATE weight ON JSON PREFIX 1 doc: SCHEMA '$.title' AS title TEXT WEIGHT 5 '$.body' AS body TEXT WEIGHT 1
+run FT.SEARCH weight 'memory' WITHSCORES NOCONTENT
+run FT.SEARCH weight '@title:memory' WITHSCORES NOCONTENT
+run FT.SEARCH weight '@body:memory' WITHSCORES NOCONTENT
+run FT.SEARCH weight 'guide' WITHSCORES NOCONTENT
+
+echo
+echo "=== exact vs stem ==="
+run FT.SEARCH score '@title:run' WITHSCORES NOCONTENT
+run FT.SEARCH score '@title:running' WITHSCORES NOCONTENT
+run FT.SEARCH score '@title:memory' WITHSCORES NOCONTENT
+
+echo
+echo "=== fuzzy ==="
+run FT.CREATE fuzzy ON JSON PREFIX 1 doc: SCHEMA '$.title' AS title TEXT '$.body' AS body TEXT
+run FT.SEARCH fuzzy '@title:%memory%' WITHSCORES NOCONTENT
+run FT.SEARCH fuzzy '@title:%memori%' WITHSCORES NOCONTENT
+run FT.SEARCH fuzzy '%memory%' WITHSCORES NOCONTENT
+
+echo
+echo "=== phonetic ==="
+run FT.CREATE phon ON JSON PREFIX 1 doc: SCHEMA '$.title' AS title TEXT PHONETIC dm:en '$.body' AS body TEXT
+run FT.SEARCH phon '@title:jon' WITHSCORES NOCONTENT
+run FT.SEARCH phon '@title:john' WITHSCORES NOCONTENT
+run FT.SEARCH phon 'jon' WITHSCORES NOCONTENT
+
+echo
+echo "=== phrase and proximity ==="
+run FT.CREATE phrase ON JSON PREFIX 1 doc: SCHEMA '$.title' AS title TEXT '$.body' AS body TEXT
+run FT.SEARCH phrase '@body:"memory guide"' WITHSCORES NOCONTENT
+run FT.SEARCH phrase '"memory guide"' WITHSCORES NOCONTENT
+run FT.SEARCH phrase '@body:(memory guide)' WITHSCORES NOCONTENT
+run FT.SEARCH phrase '@body:(memory guide)' SLOP 0 WITHSCORES NOCONTENT
+run FT.SEARCH phrase '@body:(memory guide)' SLOP 2 WITHSCORES NOCONTENT
+run FT.SEARCH phrase '@body:(memory guide)' SLOP 2 INORDER WITHSCORES NOCONTENT
+
+echo
+echo "=== SORTBY precedence ==="
+run FT.CREATE sortidx ON JSON PREFIX 1 doc: SCHEMA '$.title' AS title TEXT '$.body' AS body TEXT '$.rank' AS rank NUMERIC SORTABLE
+run FT.SEARCH sortidx 'memory' WITHSCORES NOCONTENT SORTBY rank ASC
+run FT.SEARCH sortidx 'memory' WITHSCORES NOCONTENT SORTBY rank DESC
+
+echo
+echo "=== LIMIT ==="
+run FT.SEARCH score 'memory' WITHSCORES NOCONTENT LIMIT 0 2
+run FT.SEARCH score 'memory' WITHSCORES NOCONTENT LIMIT 1 2
+
+echo
+echo "=== DIALECT ==="
+run FT.SEARCH score 'memory guide' WITHSCORES NOCONTENT DIALECT 1
+run FT.SEARCH score 'memory guide' WITHSCORES NOCONTENT DIALECT 2
+run FT.SEARCH score '@title:memory' WITHSCORES NOCONTENT DIALECT 1
+run FT.SEARCH score '@title:memory' WITHSCORES NOCONTENT DIALECT 2
+
+echo
+echo "=== parser / option boundaries ==="
+run FT.SEARCH score 'memory' WITHSCORES WITHSCORES NOCONTENT
+run FT.SEARCH score 'memory' NOCONTENT WITHSCORES
+run FT.SEARCH score 'memory' WITHSCORES LIMIT 0 1 NOCONTENT
+run FT.SEARCH score 'memory' WITHSCORES RETURN 1 '$.title'
+run FT.SEARCH score 'memory' WITHSCORES SORTBY rank ASC LIMIT 0 3 NOCONTENT
+
+echo
+echo "=== drop ==="
+for idx in score weight phrase phon fuzzy sortidx; do
+  run FT.DROPINDEX "$idx"
+done
+run FT._LIST
+
+
+echo
+echo "=== controlled scorer isolation ==="
+run FT.DROPINDEX iso1
+run FT.DROPINDEX iso2
+run FT.DROPINDEX isow
+run FLUSHDB
+
+run JSON.SET iso:1 '$' '{"title":"memory"}'
+run JSON.SET iso:2 '$' '{"title":"memory memory"}'
+run JSON.SET iso:3 '$' '{"title":"memory alpha beta gamma"}'
+run JSON.SET iso:4 '$' '{"title":"alpha memory"}'
+run JSON.SET iso:5 '$' '{"title":"alpha beta gamma delta"}'
+run FT.CREATE iso1 ON JSON PREFIX 1 iso: SCHEMA '$.title' AS title TEXT
+
+run FT.SEARCH iso1 '*' WITHSCORES NOCONTENT
+run FT.SEARCH iso1 '@title:memory' WITHSCORES NOCONTENT
+run FT.SEARCH iso1 '@title:alpha' WITHSCORES NOCONTENT
+run FT.SEARCH iso1 '@title:memory @title:alpha' WITHSCORES NOCONTENT
+
+echo
+echo "=== controlled two fields ==="
+run FLUSHDB
+run JSON.SET iso:1 '$' '{"title":"memory","body":"alpha"}'
+run JSON.SET iso:2 '$' '{"title":"alpha","body":"memory"}'
+run JSON.SET iso:3 '$' '{"title":"memory","body":"memory"}'
+run JSON.SET iso:4 '$' '{"title":"memory memory","body":"alpha"}'
+run JSON.SET iso:5 '$' '{"title":"alpha","body":"alpha"}'
+run FT.CREATE iso2 ON JSON PREFIX 1 iso: SCHEMA '$.title' AS title TEXT '$.body' AS body TEXT
+
+run FT.SEARCH iso2 'memory' WITHSCORES NOCONTENT
+run FT.SEARCH iso2 '@title:memory' WITHSCORES NOCONTENT
+run FT.SEARCH iso2 '@body:memory' WITHSCORES NOCONTENT
+run FT.SEARCH iso2 '@title:memory @body:memory' WITHSCORES NOCONTENT
+
+echo
+echo "=== controlled field weights ==="
+run FT.CREATE isow ON JSON PREFIX 1 iso: SCHEMA '$.title' AS title TEXT WEIGHT 5 '$.body' AS body TEXT WEIGHT 1
+run FT.SEARCH isow 'memory' WITHSCORES NOCONTENT
+run FT.SEARCH isow '@title:memory' WITHSCORES NOCONTENT
+run FT.SEARCH isow '@body:memory' WITHSCORES NOCONTENT
+
+echo
+echo "=== controlled stemming multiplier ==="
+run FLUSHDB
+run JSON.SET iso:1 '$' '{"title":"run"}'
+run JSON.SET iso:2 '$' '{"title":"running"}'
+run JSON.SET iso:3 '$' '{"title":"runs"}'
+run JSON.SET iso:4 '$' '{"title":"runner"}'
+run FT.DROPINDEX stemiso
+run FT.CREATE stemiso ON JSON PREFIX 1 iso: SCHEMA '$.title' AS title TEXT
+run FT.SEARCH stemiso '@title:run' WITHSCORES NOCONTENT
+run FT.SEARCH stemiso '@title:running' WITHSCORES NOCONTENT
+run FT.SEARCH stemiso '@title:runs' WITHSCORES NOCONTENT
+
+echo
+echo "=== controlled cleanup ==="
+for idx in iso1 iso2 isow stemiso; do
+  run FT.DROPINDEX "$idx"
+done
+run FLUSHDB
+
+
+echo
+echo "=== scorer explanations ==="
+run FLUSHDB
+run JSON.SET iso:1 '$' '{"title":"memory","body":"alpha"}'
+run JSON.SET iso:2 '$' '{"title":"alpha","body":"memory"}'
+run JSON.SET iso:3 '$' '{"title":"memory","body":"memory"}'
+run JSON.SET iso:4 '$' '{"title":"memory memory","body":"alpha"}'
+run JSON.SET iso:5 '$' '{"title":"alpha","body":"alpha"}'
+run FT.DROPINDEX explainw
+run FT.CREATE explainw ON JSON PREFIX 1 iso: SCHEMA '$.title' AS title TEXT WEIGHT 5 '$.body' AS body TEXT WEIGHT 1
+run FT.SEARCH explainw 'memory' WITHSCORES EXPLAINSCORE NOCONTENT
+run FT.SEARCH explainw '@title:memory' WITHSCORES EXPLAINSCORE NOCONTENT
+run FT.SEARCH explainw '@body:memory' WITHSCORES EXPLAINSCORE NOCONTENT
+
+run FLUSHDB
+run JSON.SET iso:1 '$' '{"title":"run"}'
+run JSON.SET iso:2 '$' '{"title":"running"}'
+run JSON.SET iso:3 '$' '{"title":"runs"}'
+run JSON.SET iso:4 '$' '{"title":"runner"}'
+run FT.DROPINDEX explainstem
+run FT.CREATE explainstem ON JSON PREFIX 1 iso: SCHEMA '$.title' AS title TEXT
+run FT.SEARCH explainstem '@title:run' WITHSCORES EXPLAINSCORE NOCONTENT
+run FT.SEARCH explainstem '@title:running' WITHSCORES EXPLAINSCORE NOCONTENT
+
+run FLUSHDB
+run JSON.SET iso:1 '$' '{"title":"Jon Smith","body":"memory"}'
+run FT.DROPINDEX explainphon
+run FT.CREATE explainphon ON JSON PREFIX 1 iso: SCHEMA '$.title' AS title TEXT PHONETIC dm:en '$.body' AS body TEXT
+run FT.SEARCH explainphon '@title:jon' WITHSCORES EXPLAINSCORE NOCONTENT
+run FT.SEARCH explainphon '@title:john' WITHSCORES EXPLAINSCORE NOCONTENT
+
+for idx in explainw explainstem explainphon; do
+  run FT.DROPINDEX "$idx"
+done
+run FLUSHDB

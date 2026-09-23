@@ -147,6 +147,9 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Verified
 
+- Redis Search BM25STD-style relevance scoring and `WITHSCORES`, including field weights, stemming/fuzzy/phonetic expansion scoring, phrase/proximity scoring, wildcard `*` normalization, `SORTBY` precedence, `LIMIT`, `RETURN`, duplicate option handling, and shared-posting field-mask semantics. Live Redis differential differences are limited to tiny floating-point rounding, JSON object key order, and equal-score tie ordering.
+
+
 - Redis Search PHONETIC `dm:en` support for TEXT fields, including unqualified lookup, NOSTEM interaction, schema ordering, duplicate handling, and audited parser errors.
 
 - Redis Search broader TEXT wildcard compatibility: suffix (`*ory`), contains (`*mor*`), grouped forms, escaping, parser boundaries, and measured fuzzy/wildcard syntax errors.

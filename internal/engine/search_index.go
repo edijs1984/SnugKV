@@ -2,6 +2,7 @@ package engine
 
 import (
 	"errors"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -1094,6 +1095,367 @@ func (m *searchManager) textProximityKeys(indexName, alias string, terms []strin
 	return sortedPostingKeys(matches), true
 }
 
+type searchBM25TermMode uint8
+
+const (
+	searchBM25Surface searchBM25TermMode = iota
+	searchBM25Stem
+	searchBM25Phonetic
+)
+
+func searchFieldIndexWeight(field SearchField) int {
+	weight := field.Weight
+	if !field.WeightSet {
+		weight = 1
+	}
+	n := int(weight)
+	if n < 1 {
+		n = 1
+	}
+	return n
+}
+
+func searchStemIndexWeight(field SearchField) int {
+	weight := field.Weight
+	if !field.WeightSet {
+		weight = 1
+	}
+	n := int(weight * 0.2)
+	if n < 1 {
+		n = 1
+	}
+	return n
+}
+
+func searchBM25Fields(def SearchDefinition, alias string, requireStem, requirePhonetic bool) []SearchField {
+	fields := make([]SearchField, 0, len(def.Fields))
+	for _, field := range def.Fields {
+		if field.Kind != SearchFieldText || field.NoIndex {
+			continue
+		}
+		if alias != "" && field.Alias != alias {
+			continue
+		}
+		if requireStem && field.NoStem {
+			continue
+		}
+		if requirePhonetic && field.Phonetic != "dm:en" {
+			continue
+		}
+		fields = append(fields, field)
+	}
+	return fields
+}
+
+func searchBM25DocLength(def SearchDefinition, state searchDocumentState) int {
+	total := 0
+	for _, field := range def.Fields {
+		if field.Kind != SearchFieldText || field.NoIndex {
+			continue
+		}
+		w := searchFieldIndexWeight(field)
+		for _, sequence := range state.TextSequences[field.Alias] {
+			total += len(sequence) * w
+		}
+	}
+	return total
+}
+
+func searchBM25TermFrequency(state searchDocumentState, field SearchField, term, language string, mode searchBM25TermMode) int {
+	freq := 0
+	for _, sequence := range state.TextSequences[field.Alias] {
+		for _, token := range sequence {
+			switch mode {
+			case searchBM25Surface:
+				if token == term {
+					freq += searchFieldIndexWeight(field)
+				}
+			case searchBM25Stem:
+				stem := stemSearchLanguage(language, token)
+				// RediSearch only emits a distinct stem posting when the stem
+				// differs from the indexed surface token.
+				if stem != token && stem == term {
+					freq += searchStemIndexWeight(field)
+				}
+			case searchBM25Phonetic:
+				if searchPhoneticEnglish(token) == term {
+					freq += searchFieldIndexWeight(field)
+				}
+			}
+		}
+	}
+	return freq
+}
+
+func searchBM25Add(dst map[string]float64, src map[string]float64) {
+	for key, score := range src {
+		dst[key] += score
+	}
+}
+
+func searchBM25Max(dst map[string]float64, src map[string]float64) {
+	for key, score := range src {
+		if current, ok := dst[key]; !ok || score > current {
+			dst[key] = score
+		}
+	}
+}
+
+func (idx *searchIndex) bm25TermScores(fields []SearchField, term, language string, mode searchBM25TermMode) map[string]float64 {
+	scores := make(map[string]float64)
+	if len(fields) == 0 || len(idx.docs) == 0 {
+		return scores
+	}
+
+	frequencies := make(map[string]int)
+	df := 0
+	totalDocLen := 0
+	docLengths := make(map[string]int, len(idx.docs))
+	for key, state := range idx.docs {
+		docLen := searchBM25DocLength(idx.def, state)
+		docLengths[key] = docLen
+		totalDocLen += docLen
+
+		f := 0
+		for _, field := range fields {
+			f += searchBM25TermFrequency(state, field, term, language, mode)
+		}
+		if f > 0 {
+			frequencies[key] = f
+			df++
+		}
+	}
+	if df == 0 {
+		return scores
+	}
+
+	n := float64(len(idx.docs))
+	avgDocLen := float64(totalDocLen) / n
+	if avgDocLen <= 0 {
+		avgDocLen = 1
+	}
+	idf := math.Log(1 + (n-float64(df)+0.5)/(float64(df)+0.5))
+
+	const k1 = 1.2
+	const b = 0.75
+	for key, fInt := range frequencies {
+		f := float64(fInt)
+		docLen := float64(docLengths[key])
+		denom := f + k1*(1-b+b*docLen/avgDocLen)
+		if denom <= 0 {
+			continue
+		}
+		scores[key] = idf * f * (k1 + 1) / denom
+	}
+	return scores
+}
+
+func searchBM25FilterByPosting(scores map[string]float64, postings map[string]struct{}) map[string]float64 {
+	if postings == nil {
+		return map[string]float64{}
+	}
+	out := make(map[string]float64)
+	for key, score := range scores {
+		if _, ok := postings[key]; ok {
+			out[key] = score
+		}
+	}
+	return out
+}
+
+func searchBM25FilterSurface(idx *searchIndex, alias, term string, scores map[string]float64) map[string]float64 {
+	if alias == "" {
+		return scores
+	}
+	return searchBM25FilterByPosting(scores, idx.texts[alias][term])
+}
+
+func searchBM25FilterStem(idx *searchIndex, alias, term string, scores map[string]float64) map[string]float64 {
+	if alias == "" {
+		return scores
+	}
+	eligible := make(map[string]struct{})
+	for key, state := range idx.docs {
+		language := normalizeSearchLanguage(idx.def.Language)
+		for _, sequence := range state.TextSequences[alias] {
+			for _, token := range sequence {
+				stem := stemSearchLanguage(language, token)
+				// RediSearch writes a distinct stem posting only when the
+				// stem differs from the surface token. A token such as
+				// "memori" therefore qualifies via its surface posting only.
+				if stem != token && stem == term {
+					eligible[key] = struct{}{}
+				}
+			}
+		}
+	}
+	return searchBM25FilterByPosting(scores, eligible)
+}
+
+func searchBM25FilterPhonetic(idx *searchIndex, alias, term string, scores map[string]float64) map[string]float64 {
+	if alias == "" {
+		return scores
+	}
+	return searchBM25FilterByPosting(scores, idx.textPhonetics[alias][term])
+}
+
+func (idx *searchIndex) bm25ExpandedTextScores(alias, token, language string) map[string]float64 {
+	token = strings.ToLower(token)
+	out := make(map[string]float64)
+
+	// Redis field masks gate whether a posting child applies, but the posting's
+	// frequency and IDF remain index-wide across all TEXT fields.
+	allFields := searchBM25Fields(idx.def, "", false, false)
+	base := idx.bm25TermScores(allFields, token, language, searchBM25Surface)
+	searchBM25Add(out, searchBM25FilterSurface(idx, alias, token, base))
+
+	stemFields := searchBM25Fields(idx.def, "", true, false)
+	if len(stemFields) > 0 {
+		stem := stemSearchLanguage(language, token)
+		stemScore := idx.bm25TermScores(stemFields, stem, language, searchBM25Stem)
+		searchBM25Add(out, searchBM25FilterStem(idx, alias, stem, stemScore))
+		if stem != token {
+			surfaceStem := idx.bm25TermScores(allFields, stem, language, searchBM25Surface)
+			searchBM25Add(out, searchBM25FilterSurface(idx, alias, stem, surfaceStem))
+		}
+	}
+
+	phoneticFields := searchBM25Fields(idx.def, "", false, true)
+	if len(phoneticFields) > 0 {
+		if code := searchPhoneticEnglish(token); code != "" {
+			phonScore := idx.bm25TermScores(phoneticFields, code, language, searchBM25Phonetic)
+			searchBM25Add(out, searchBM25FilterPhonetic(idx, alias, code, phonScore))
+		}
+	}
+	return out
+}
+
+func (idx *searchIndex) bm25SurfaceExpansionScores(alias, pattern, language string, match func(string) bool) map[string]float64 {
+	allFields := searchBM25Fields(idx.def, "", false, false)
+	terms := make(map[string]struct{})
+	for _, field := range allFields {
+		for term := range idx.texts[field.Alias] {
+			if match(term) {
+				terms[term] = struct{}{}
+			}
+		}
+	}
+	out := make(map[string]float64)
+	for term := range terms {
+		child := idx.bm25TermScores(allFields, term, language, searchBM25Surface)
+		child = searchBM25FilterSurface(idx, alias, term, child)
+		// Fuzzy/prefix/wildcard expansion is a quick-exit union in Redis.
+		// One concrete expansion child contributes to each matched document.
+		searchBM25Max(out, child)
+	}
+	return out
+}
+
+func (m *searchManager) bm25TextScores(indexName, alias, token, language string) (map[string]float64, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	idx, ok := m.indexes[indexName]
+	if !ok {
+		return nil, false
+	}
+	return idx.bm25ExpandedTextScores(alias, token, language), true
+}
+
+func (m *searchManager) bm25SurfaceScores(indexName, alias, token, language string) (map[string]float64, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	idx, ok := m.indexes[indexName]
+	if !ok {
+		return nil, false
+	}
+	fields := searchBM25Fields(idx.def, alias, false, false)
+	return idx.bm25TermScores(fields, strings.ToLower(token), language, searchBM25Surface), true
+}
+
+func (m *searchManager) bm25FuzzyScores(indexName, alias, token string, distance int, language string) (map[string]float64, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	idx, ok := m.indexes[indexName]
+	if !ok {
+		return nil, false
+	}
+	token = strings.ToLower(token)
+	return idx.bm25SurfaceExpansionScores(alias, token, language, func(term string) bool {
+		return searchEditDistanceWithin(token, term, distance)
+	}), true
+}
+
+func (m *searchManager) bm25WildcardScores(indexName, alias, value string, leading, trailing bool, language string) (map[string]float64, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	idx, ok := m.indexes[indexName]
+	if !ok {
+		return nil, false
+	}
+	value = strings.ToLower(value)
+	return idx.bm25SurfaceExpansionScores(alias, value, language, func(term string) bool {
+		switch {
+		case leading && trailing:
+			return strings.Contains(term, value)
+		case leading:
+			return strings.HasSuffix(term, value)
+		case trailing:
+			return strings.HasPrefix(term, value)
+		default:
+			return term == value
+		}
+	}), true
+}
+
+func (m *searchManager) bm25PhraseScores(indexName, alias, phrase, language string) (map[string]float64, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	idx, ok := m.indexes[indexName]
+	if !ok {
+		return nil, false
+	}
+	tokens := filterSearchStopwords(idx.def, tokenizeSearchTextSequence(phrase))
+	out := make(map[string]float64)
+	allFields := searchBM25Fields(idx.def, "", false, false)
+	for _, token := range tokens {
+		child := idx.bm25TermScores(allFields, token, language, searchBM25Surface)
+		child = searchBM25FilterSurface(idx, alias, token, child)
+		searchBM25Add(out, child)
+	}
+	return out, true
+}
+
+func (m *searchManager) bm25WildcardAllScores(indexName string) (map[string]float64, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	idx, ok := m.indexes[indexName]
+	if !ok {
+		return nil, false
+	}
+	out := make(map[string]float64, len(idx.docs))
+	if len(idx.docs) == 0 {
+		return out, true
+	}
+	totalDocLen := 0
+	docLengths := make(map[string]int, len(idx.docs))
+	for key, state := range idx.docs {
+		docLen := searchBM25DocLength(idx.def, state)
+		docLengths[key] = docLen
+		totalDocLen += docLen
+	}
+	avgDocLen := float64(totalDocLen) / float64(len(idx.docs))
+	if avgDocLen <= 0 {
+		avgDocLen = 1
+	}
+	const k1 = 1.2
+	const b = 0.75
+	for key, docLenInt := range docLengths {
+		docLen := float64(docLenInt)
+		out[key] = (k1 + 1) / (1 + k1*(1-b+b*docLen/avgDocLen))
+	}
+	return out, true
+}
+
 func (idx *searchIndex) ensureNumericSorted(alias string) []numericPosting {
 	if !idx.numericDirty[alias] {
 		return idx.numericSorted[alias]
@@ -1445,6 +1807,54 @@ func (s *Store) SearchTextProximityKeys(indexName, alias string, terms []string,
 		return nil, false
 	}
 	return manager.textProximityKeys(indexName, alias, terms, slop, inOrder, language)
+}
+
+func (s *Store) SearchBM25TextScores(indexName, alias, token, language string) (map[string]float64, bool) {
+	manager := s.getSearchManager()
+	if manager == nil {
+		return nil, false
+	}
+	return manager.bm25TextScores(indexName, alias, token, language)
+}
+
+func (s *Store) SearchBM25SurfaceScores(indexName, alias, token, language string) (map[string]float64, bool) {
+	manager := s.getSearchManager()
+	if manager == nil {
+		return nil, false
+	}
+	return manager.bm25SurfaceScores(indexName, alias, token, language)
+}
+
+func (s *Store) SearchBM25FuzzyScores(indexName, alias, token string, distance int, language string) (map[string]float64, bool) {
+	manager := s.getSearchManager()
+	if manager == nil {
+		return nil, false
+	}
+	return manager.bm25FuzzyScores(indexName, alias, token, distance, language)
+}
+
+func (s *Store) SearchBM25WildcardScores(indexName, alias, value string, leading, trailing bool, language string) (map[string]float64, bool) {
+	manager := s.getSearchManager()
+	if manager == nil {
+		return nil, false
+	}
+	return manager.bm25WildcardScores(indexName, alias, value, leading, trailing, language)
+}
+
+func (s *Store) SearchBM25PhraseScores(indexName, alias, phrase, language string) (map[string]float64, bool) {
+	manager := s.getSearchManager()
+	if manager == nil {
+		return nil, false
+	}
+	return manager.bm25PhraseScores(indexName, alias, phrase, language)
+}
+
+func (s *Store) SearchBM25WildcardAllScores(indexName string) (map[string]float64, bool) {
+	manager := s.getSearchManager()
+	if manager == nil {
+		return nil, false
+	}
+	return manager.bm25WildcardAllScores(indexName)
 }
 
 func (s *Store) SearchNumericRangeKeys(indexName, alias string, min, max float64) ([]string, bool) {
