@@ -92,7 +92,7 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 		if len(record.Value) > 32<<20 {
 			return errors.New("ERR recovered value exceeds 32 MiB limit")
 		}
-		if record.ValueType > uint8(TypeTDigest) {
+		if record.ValueType > uint8(TypeTimeSeries) {
 			return errors.New("ERR recovered value has unknown type")
 		}
 	}
@@ -162,6 +162,11 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 				return errors.New("ERR recovered TDIGEST value is invalid")
 			}
 			e = tDigestPreparedEntry(record.Value)
+		case TypeTimeSeries:
+			if _, err := decodeTimeSeries(record.Value); err != nil {
+				return errors.New("ERR recovered TIMESERIES value is invalid")
+			}
+			e = timeSeriesPreparedEntry(record.Value)
 		default:
 			e = s.makeEntry(record.Value)
 
