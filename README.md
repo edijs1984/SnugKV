@@ -308,3 +308,7 @@ available. See [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md).
 
 SnugKV is an independent project and is not affiliated with or endorsed by Redis.
 Redis and related marks are trademarks of their respective owners.
+
+### Bloom filters
+
+SnugKV includes an initial native Bloom filter implementation with persistent storage and RedisBloom-style `BF.RESERVE`, `BF.ADD`, `BF.EXISTS`, `BF.MADD`, `BF.MEXISTS`, `BF.CARD`, `BF.INFO`, and audited `BF.INSERT` support. The Phase 1 command/error surface has been live-differential tested against RedisBloom. Scalable expansion behavior is intentionally deferred to a separate compatibility audit.

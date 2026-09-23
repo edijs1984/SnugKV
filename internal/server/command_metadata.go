@@ -517,6 +517,7 @@ func commandDenyOOM(name string) bool {
 		"ZADD",
 		"XADD",
 		"PFADD",
+		"BF.RESERVE", "BF.ADD", "BF.MADD", "BF.INSERT",
 		"GEOADD",
 		"BITOP",
 		"COPY",
@@ -579,6 +580,9 @@ func commandInfoFlags(
 		return []string{"write", "blocking", "movablekeys"}
 
 	case "PFADD":
+		return []string{"write", "denyoom", "fast"}
+
+	case "BF.RESERVE", "BF.ADD", "BF.MADD", "BF.INSERT":
 		return []string{"write", "denyoom", "fast"}
 
 	case "GEOADD":
@@ -738,6 +742,20 @@ func commandInfoACL(
 		return []string{
 			"@write",
 			"@hyperloglog",
+			"@fast",
+		}
+
+	case "BF.RESERVE", "BF.ADD", "BF.MADD", "BF.INSERT":
+		return []string{
+			"@write",
+			"@bloom",
+			"@fast",
+		}
+
+	case "BF.EXISTS", "BF.MEXISTS", "BF.CARD", "BF.INFO":
+		return []string{
+			"@read",
+			"@bloom",
 			"@fast",
 		}
 

@@ -30,6 +30,7 @@ const (
 	TypeList
 	TypeZSet
 	TypeStream
+	TypeBloom
 )
 
 func (t ValueType) String() string {
@@ -58,6 +59,8 @@ func (t ValueType) String() string {
 		return "ZSET"
 	case TypeStream:
 		return "STREAM"
+	case TypeBloom:
+		return "BLOOM"
 	default:
 		return "UNKNOWN"
 	}
