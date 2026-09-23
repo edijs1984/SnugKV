@@ -253,3 +253,36 @@ func TestFTSearchWithScoresFieldMaskUsesSharedPostingStats(t *testing.T) {
 		requireScoreClose(t, body[key], all[key])
 	}
 }
+
+
+func TestFTSearchWithScoresDoesNotDoubleCountSurfaceEqualToStem(t *testing.T) {
+	s := newSearchTestServer(t)
+
+	for _, doc := range []struct{ key, value string }{
+		{"doc:1", `{"title":"memory guide","body":"fast storage engine memory"}`},
+		{"doc:2", `{"title":"memory memory","body":"server design"}`},
+		{"doc:3", `{"title":"server design","body":"memory system guide"}`},
+		{"doc:4", `{"title":"running system","body":"run memory"}`},
+		{"doc:5", `{"title":"memori guide","body":"memory guide"}`},
+		{"doc:6", `{"title":"Jon Smith","body":"memory"}`},
+	} {
+		if _, err := s.Execute([][]byte{
+			[]byte("JSON.SET"), []byte(doc.key), []byte("$"), []byte(doc.value),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.Execute([][]byte{
+		[]byte("FT.CREATE"), []byte("score"),
+		[]byte("ON"), []byte("JSON"), []byte("PREFIX"), []byte("1"), []byte("doc:"),
+		[]byte("SCHEMA"),
+		[]byte("$.title"), []byte("AS"), []byte("title"), []byte("TEXT"),
+		[]byte("$.body"), []byte("AS"), []byte("body"), []byte("TEXT"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	keys, scores := searchScores(t, s, "score", "@title:memory")
+	requireSearchKeys(t, keys, "doc:5", "doc:2", "doc:1")
+	requireScoreClose(t, scores["doc:5"], 1.5904956027777346)
+}
