@@ -62,7 +62,7 @@ func (s *Store) Compact(scratch uint64) int {
 		}
 
 		var fresh arena.Arena
-		projected := fresh.GrowthFor(lengths)
+		_ = fresh.GrowthFor(lengths)
 
 		s.memory.mu.Lock()
 
