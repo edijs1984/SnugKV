@@ -25,6 +25,7 @@ type SearchField struct {
 	Kind     SearchFieldKind
 	NoStem   bool
 	Weight   float64
+	WeightSet bool
 	Sortable bool
 	NoIndex  bool
 }
