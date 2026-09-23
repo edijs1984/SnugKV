@@ -2,6 +2,7 @@ package engine
 
 import (
 	"errors"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
