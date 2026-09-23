@@ -550,6 +550,7 @@ func commandDenyOOM(name string) bool {
 		"CMS.INITBYDIM", "CMS.INITBYPROB", "CMS.INCRBY", "CMS.MERGE",
 		"TOPK.RESERVE", "TOPK.ADD", "TOPK.INCRBY",
 		"TDIGEST.CREATE", "TDIGEST.ADD", "TDIGEST.RESET", "TDIGEST.MERGE",
+		"TS.CREATE", "TS.ADD", "TS.INCRBY", "TS.DECRBY",
 		"GEOADD",
 		"BITOP",
 		"COPY",
@@ -637,6 +638,12 @@ func commandInfoFlags(
 
 	case "TDIGEST.ADD", "TDIGEST.MERGE":
 		return []string{"write", "denyoom"}
+
+	case "TS.CREATE", "TS.ADD", "TS.INCRBY", "TS.DECRBY":
+		return []string{"write", "denyoom"}
+
+	case "TS.DEL":
+		return []string{"write", "fast"}
 
 	case "GEOADD":
 		return []string{"write", "denyoom"}
@@ -908,6 +915,34 @@ func commandInfoACL(
 		return []string{
 			"@read",
 			"@tdigest",
+			"@slow",
+		}
+
+	case "TS.CREATE", "TS.ADD", "TS.INCRBY", "TS.DECRBY":
+		return []string{
+			"@write",
+			"@timeseries",
+			"@slow",
+		}
+
+	case "TS.DEL":
+		return []string{
+			"@write",
+			"@timeseries",
+			"@fast",
+		}
+
+	case "TS.GET", "TS.INFO":
+		return []string{
+			"@read",
+			"@timeseries",
+			"@fast",
+		}
+
+	case "TS.RANGE", "TS.REVRANGE":
+		return []string{
+			"@read",
+			"@timeseries",
 			"@slow",
 		}
 

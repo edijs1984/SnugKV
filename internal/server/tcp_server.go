@@ -922,6 +922,8 @@ func errorResponse(err error) []byte {
 		!strings.HasPrefix(message, "CMS: ") &&
 		!strings.HasPrefix(message, "TopK: ") &&
 		message != "WITHCOUNT keyword expected" &&
+		message != "TSDB: timestamp must be equal to or higher than the maximum existing timestamp" &&
+		message != "TSDB: Couldn't parse RETENTION" &&
 		message != "Capacity must be in the range [2 * BUCKETSIZE, 1073741824]" &&
 		message != "Not found" {
 		message = "ERR " + message

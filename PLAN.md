@@ -365,6 +365,7 @@ lands.
   - [x] CMS Phase 1: native persistent Count-Min Sketches with INITBYDIM/INITBYPROB/INCRBY/QUERY/MERGE/INFO, weighted merges, TTL/persistence, ACL/OOM metadata, and RedisBloom live differential parity for the audited slice.
   - [x] TopK Phase 1: native persistent heavy-hitter tracking with RESERVE/ADD/INCRBY/QUERY/COUNT/LIST/INFO, TTL/persistence, ACL/OOM metadata, and RedisBloom live differential parity for the audited slice.
   - [x] t-digest Phase 1: native persistent sketches with CREATE/ADD/MERGE/RESET/MIN/MAX/QUANTILE/CDF/RANK/REVRANK/BYRANK/BYREVRANK/TRIMMED_MEAN/INFO, TTL/persistence, ACL/OOM metadata, and RedisBloom live differential parity for the audited slice.
+  - [x] TimeSeries Phase 1: native persistent series with CREATE/ADD/GET/RANGE/REVRANGE/INCRBY/DECRBY/DEL/INFO, retention, duplicate policies, labels, TTL/persistence, ACL/OOM metadata, and RedisTimeSeries live differential parity for the audited slice.
 - [x] Return to optimizer convergence so dropped/missed optimization candidates are periodically revisited and dense-entry compaction is reached automatically without an explicit `SNUG.COMPACT`.
 
 ### P4 — distributed features (outside current single-node target)

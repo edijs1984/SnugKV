@@ -147,6 +147,9 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Verified
 
+- TimeSeries Phase 1 adds native persistent RedisTimeSeries-compatible series with CREATE/ADD/GET/RANGE/REVRANGE/INCRBY/DECRBY/DEL/INFO, retention, duplicate policies, labels, NaN/out-of-order semantics, TTL/persistence, ACL/OOM metadata, and exact live differential parity for the audited slice.
+
+
 - t-digest Phase 1 adds native persistent RedisBloom-compatible sketches with CREATE/ADD/MERGE/RESET/MIN/MAX/QUANTILE/CDF/RANK/REVRANK/BYRANK/BYREVRANK/TRIMMED_MEAN/INFO, centroid buffering/compression state, TTL/persistence, ACL/OOM metadata, and exact live differential parity for the audited slice.
 
 
