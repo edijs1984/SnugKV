@@ -88,9 +88,39 @@ def send_psync(replid, offset):
     return s, f, first
 
 def consume_full_sync(f):
-    second = f.readline().decode(errors="replace").strip()
+    second_raw = f.readline()
+    if not second_raw:
+        raise EOFError("missing snapshot header")
+    second = second_raw.decode(errors="replace").strip()
+
+    if second.startswith("$EOF:"):
+        marker = second[5:].encode()
+        if not marker:
+            raise RuntimeError("empty diskless EOF marker")
+
+        total = 0
+        buf = bytearray()
+        keep = max(1, len(marker) - 1)
+
+        while True:
+            chunk = f.read(65536)
+            if not chunk:
+                raise EOFError("diskless snapshot truncated before EOF marker")
+            buf.extend(chunk)
+
+            pos = buf.find(marker)
+            if pos >= 0:
+                total += pos
+                return total, "eof"
+
+            if len(buf) > keep:
+                flush = len(buf) - keep
+                total += flush
+                del buf[:flush]
+
     if not second.startswith("$"):
-        raise RuntimeError("expected bulk snapshot header, got %r" % second)
+        raise RuntimeError("expected snapshot header, got %r" % second)
+
     n = int(second[1:])
     remaining = n
     while remaining:
@@ -98,10 +128,11 @@ def consume_full_sync(f):
         if not chunk:
             raise EOFError("snapshot truncated")
         remaining -= len(chunk)
+
     trailer = f.read(2)
     if trailer != b"\r\n":
         raise RuntimeError("bad snapshot trailer: %r" % (trailer,))
-    return n
+    return n, "bulk"
 
 def full_sync_probe():
     s, f, first = send_psync("?", -1)
@@ -111,12 +142,13 @@ def full_sync_probe():
             raise RuntimeError("unexpected PSYNC full-sync reply: %r" % first)
         replid = parts[1]
         offset = int(parts[2])
-        snapshot_bytes = consume_full_sync(f)
+        snapshot_bytes, snapshot_mode = consume_full_sync(f)
         print("full_sync=" + repr({
             "kind": "FULLRESYNC",
             "replid_len": len(replid),
             "offset_is_integer": True,
             "snapshot_nonempty": snapshot_bytes > 0,
+            "snapshot_mode": snapshot_mode,
         }))
         return replid, offset
     finally:
@@ -143,12 +175,14 @@ def fallback_probe(replid, offset):
         parts = first.split()
         kind = parts[0].lstrip("+") if parts else ""
         snapshot = False
+        snapshot_mode = None
         if kind == "FULLRESYNC":
-            consume_full_sync(f)
+            _, snapshot_mode = consume_full_sync(f)
             snapshot = True
         print("future_offset=" + repr({
             "kind": kind,
             "snapshot_received": snapshot,
+            "snapshot_mode": snapshot_mode,
         }))
         return kind
     finally:
