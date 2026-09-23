@@ -421,14 +421,30 @@ func extractSearchDocument(def SearchDefinition, raw []byte) (searchDocumentStat
 	}
 
 	for _, field := range def.Fields {
-		if field.NoIndex {
-			continue
-		}
 		values, err := jsonvalue.Matches(root, field.Path)
 		if err != nil {
 			// Redis accepts malformed JSONPath strings at FT.CREATE time.
 			// Treat an unusable schema path as producing no indexed values
 			// instead of failing backfill or later document mutations.
+			continue
+		}
+
+		// Redis still validates GEO strings on NOINDEX fields. A malformed
+		// coordinate excludes the document from the index even though no GEO
+		// posting is built. Missing/non-string GEO values are not failures.
+		if field.Kind == SearchFieldGeo {
+			for _, value := range values {
+				text, ok := value.(string)
+				if !ok {
+					continue
+				}
+				if _, ok := parseSearchGeoString(text); !ok {
+					return searchDocumentState{IndexingFailed: true}, nil
+				}
+			}
+		}
+
+		if field.NoIndex {
 			continue
 		}
 
@@ -492,13 +508,7 @@ func extractSearchDocument(def SearchDefinition, raw []byte) (searchDocumentStat
 					// Redis JSON GEO indexing ignores non-string shapes.
 					continue
 				}
-				point, ok := parseSearchGeoString(text)
-				if !ok {
-					// Redis records an indexing failure for a malformed GEO
-					// string and excludes that document from the index. Missing
-					// or non-string GEO values are not failures.
-					return searchDocumentState{IndexingFailed: true}, nil
-				}
+				point, _ := parseSearchGeoString(text)
 				points = append(points, point)
 			}
 			if len(points) > 0 {
