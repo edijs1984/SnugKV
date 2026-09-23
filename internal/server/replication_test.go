@@ -212,3 +212,30 @@ func TestReplicationPhase2InfoBacklogShape(t *testing.T) {
 		}
 	}
 }
+
+
+func TestReplicationACKMonotonicAndInfo(t *testing.T) {
+	s := New(engine.New())
+	s.replication.init()
+
+	id, _, _ := s.replication.registerReplica(func([]byte) error { return nil })
+	defer s.replication.unregisterReplica(id)
+
+	s.replication.acknowledgeReplica(id, 123)
+	s.replication.acknowledgeReplica(id, 7)
+
+	s.replication.mu.RLock()
+	got := s.replication.replicaAckOffsets[id]
+	s.replication.mu.RUnlock()
+	if got != 123 {
+		t.Fatalf("ack offset moved backwards: got=%d want=123", got)
+	}
+
+	info := s.replicationInfo()
+	if !strings.Contains(info, "connected_slaves:1\r\n") {
+		t.Fatalf("INFO replication missing connected slave: %q", info)
+	}
+	if !strings.Contains(info, "state=online,offset=123,lag=") {
+		t.Fatalf("INFO replication missing replica offset/lag: %q", info)
+	}
+}
