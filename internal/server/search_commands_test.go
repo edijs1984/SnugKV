@@ -1719,7 +1719,6 @@ func TestFTSearchDefaultStopwords(t *testing.T) {
 		want  string
 	}{
 		{"@text:(memory and guide)", "*3\r\n:2\r\n$6\r\nstop:1\r\n$6\r\nstop:2\r\n"},
-		{`@text:"memory and guide"`, "*3\r\n:2\r\n$6\r\nstop:1\r\n$6\r\nstop:2\r\n"},
 		{"@text:the", "*1\r\n:0\r\n"},
 	} {
 		reply, err := s.Execute([][]byte{
@@ -1731,6 +1730,13 @@ func TestFTSearchDefaultStopwords(t *testing.T) {
 		if got := string(reply); got != tc.want {
 			t.Fatalf("query %q reply=%q want=%q", tc.query, got, tc.want)
 		}
+	}
+
+	_, err := s.Execute([][]byte{
+		[]byte("FT.SEARCH"), []byte("stopdefault"), []byte(`@text:"memory and guide"`), []byte("NOCONTENT"),
+	})
+	if err == nil || err.Error() != "SEARCH_SYNTAX Syntax error at offset 14 near and" {
+		t.Fatalf("quoted phrase stopword error=%v", err)
 	}
 }
 
