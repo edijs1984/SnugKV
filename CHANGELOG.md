@@ -147,6 +147,9 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Verified
 
+- Count-Min Sketch Phase 1 adds native persistent CMS values with audited INITBYDIM/INITBYPROB/INCRBY/QUERY/MERGE/INFO behavior, weighted merges, packed 32-bit counters, TTL/persistence, ACL/OOM metadata, and exact live RedisBloom differential parity for the audited slice.
+
+
 - Cuckoo filter Phase 1 adds a native persistent RedisBloom-compatible fingerprint filter with reserve/add/addnx/insert/insertnx/exists/mexists/count/delete/info, TTL preservation, ACL/OOM metadata, and exact live differential parity for the audited slice.
 
 
