@@ -757,3 +757,15 @@ The live oracle established key compatibility points: default compression 100 gi
 TTL preservation, persistence/restore, OOM routing, @tdigest ACL metadata, and dynamic merge-key extraction are included.
 
 A live differential against RedisBloom on port 6392 and SnugKV on port 6383 matched line-for-line for the audited t-digest surface. The only difference was the expected target/port label.
+
+## TimeSeries Phase 1 — 2026-09-23
+
+SnugKV now includes a native persistent TimeSeries value with sorted timestamp/value samples and RedisTimeSeries-compatible Phase-1 behavior. The audited command surface includes TS.CREATE, TS.ADD, TS.GET, TS.RANGE, TS.REVRANGE, TS.INCRBY, TS.DECRBY, TS.DEL, and TS.INFO.
+
+The live oracle established key semantics: TS.ADD accepts out-of-order timestamps and NaN values; default duplicate policy is BLOCK; FIRST/LAST/MIN/MAX/SUM are supported; retention is applied relative to the maximum timestamp; INCRBY/DECRBY require timestamps not lower than the current maximum; labels and auto-create options are preserved; and RedisTimeSeries-specific wrong-type/error framing is reproduced.
+
+The audited INFO surface includes totalSamples, memoryUsage, firstTimestamp, lastTimestamp, retentionTime, chunkCount, chunkSize, chunkType, duplicatePolicy, labels, sourceKey, rules, ignoreMaxTimeDiff, and ignoreMaxValDiff.
+
+TTL preservation, persistence/restore, OOM routing, and @timeseries ACL metadata are included.
+
+A live differential against RedisTimeSeries on port 6392 and SnugKV on port 6383 matched line-for-line for the audited TimeSeries surface. The only difference was the expected target/port label.
