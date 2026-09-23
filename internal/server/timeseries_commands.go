@@ -115,8 +115,8 @@ func parseTimeSeriesTimestamp(raw []byte) (int64,error) {
 }
 
 func parseTimeSeriesBound(raw []byte, lower bool)(int64,error){
-	if string(raw)=="-" { return math.MinInt64,nil }
-	if string(raw)=="+" { return math.MaxInt64,nil }
+	if string(raw)=="-" { return -1 << 63,nil }
+	if string(raw)=="+" { return 1<<63 - 1,nil }
 	return parseTimeSeriesTimestamp(raw)
 }
 
