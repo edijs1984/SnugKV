@@ -401,9 +401,34 @@ func (s *Server) publishReplication(records []persistence.Record) {
 	}
 }
 
-func (s *Server) handlePSYNC(write func([]byte) error) (uint64, error) {
+func (s *Server) handlePSYNC(write func([]byte) error, requestedRunID string, requestedOffset int64) (uint64, error) {
 	s.durableMu.Lock()
 	defer s.durableMu.Unlock()
+
+	// durableMu prevents a committed write from slipping between backlog
+	// selection and replica registration.
+	s.replication.mu.RLock()
+	payloads, partial := s.replication.partialSyncPayloadLocked(requestedRunID, requestedOffset)
+	s.replication.mu.RUnlock()
+	if partial {
+		id, _, _ := s.replication.registerReplica(write)
+		ok := false
+		defer func() {
+			if !ok {
+				s.replication.unregisterReplica(id)
+			}
+		}()
+		if err := write([]byte("+CONTINUE\r\n")); err != nil {
+			return 0, err
+		}
+		for _, payload := range payloads {
+			if err := write(payload); err != nil {
+				return 0, err
+			}
+		}
+		ok = true
+		return id, nil
+	}
 
 	records := s.store.Export(nil)
 	full := make([]persistence.Record, 0, len(records)+1)
@@ -415,6 +440,10 @@ func (s *Server) handlePSYNC(write func([]byte) error) (uint64, error) {
 	}
 
 	id, runID, offset := s.replication.registerReplica(write)
+	s.replication.mu.Lock()
+	s.replication.ensureBacklogLocked()
+	s.replication.mu.Unlock()
+
 	ok := false
 	defer func() {
 		if !ok {
