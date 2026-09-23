@@ -32,6 +32,8 @@ type SearchDefinition struct {
 	Fields              []SearchField
 	Stopwords           []string
 	StopwordsConfigured bool
+	Language            string
+	LanguageField       string
 }
 
 type numericPosting struct {
@@ -77,6 +79,8 @@ func cloneSearchDefinition(def SearchDefinition) SearchDefinition {
 		Fields:              append([]SearchField(nil), def.Fields...),
 		Stopwords:           append([]string(nil), def.Stopwords...),
 		StopwordsConfigured: def.StopwordsConfigured,
+		Language:            def.Language,
+		LanguageField:       def.LanguageField,
 	}
 }
 
@@ -93,12 +97,55 @@ func newSearchIndex(def SearchDefinition) *searchIndex {
 	}
 }
 
+func normalizeSearchLanguage(language string) string {
+	if language == "" {
+		return "english"
+	}
+	return strings.ToLower(language)
+}
+
+func SearchLanguageSupported(language string) bool {
+	switch normalizeSearchLanguage(language) {
+	case "english", "german":
+		return true
+	default:
+		return false
+	}
+}
+
+func stemSearchLanguage(language, token string) string {
+	switch normalizeSearchLanguage(language) {
+	case "german":
+		return stemSearchGerman(token)
+	default:
+		return stemSearchEnglish(token)
+	}
+}
+
+func effectiveSearchDocumentLanguage(def SearchDefinition, root any) string {
+	language := normalizeSearchLanguage(def.Language)
+	if def.LanguageField == "" {
+		return language
+	}
+	values, err := jsonvalue.Matches(root, def.LanguageField)
+	if err != nil || len(values) == 0 {
+		return language
+	}
+	if value, ok := values[0].(string); ok && SearchLanguageSupported(value) {
+		return normalizeSearchLanguage(value)
+	}
+	return language
+}
+
 func validateSearchDefinition(def SearchDefinition) error {
 	if def.Name == "" {
 		return errors.New("ERR search index name is required")
 	}
 	if len(def.Fields) == 0 {
 		return errors.New("ERR search schema is required")
+	}
+	if !SearchLanguageSupported(def.Language) {
+		return errors.New("SEARCH_ADD_ARGS Invalid language")
 	}
 
 	aliases := make(map[string]struct{}, len(def.Fields))
@@ -260,6 +307,8 @@ func extractSearchDocument(def SearchDefinition, raw []byte) (searchDocumentStat
 		return searchDocumentState{}, err
 	}
 
+	language := effectiveSearchDocumentLanguage(def, root)
+
 	state := searchDocumentState{
 		Tags:          make(map[string][]string),
 		Numerics:      make(map[string][]float64),
@@ -306,7 +355,7 @@ func extractSearchDocument(def SearchDefinition, raw []byte) (searchDocumentStat
 				tokens = append(tokens, sequence...)
 				if !field.NoStem {
 					for _, token := range sequence {
-						stems = append(stems, stemSearchEnglish(token))
+						stems = append(stems, stemSearchLanguage(language, token))
 					}
 				}
 			}
@@ -342,6 +391,7 @@ func (m *searchManager) create(def SearchDefinition) error {
 	}
 	def = cloneSearchDefinition(def)
 	def.Prefixes = normalizeSearchPrefixes(def.Prefixes)
+	def.Language = normalizeSearchLanguage(def.Language)
 	normalizeSearchStopwords(&def)
 
 	m.mu.Lock()
@@ -609,7 +659,7 @@ func searchTextField(def SearchDefinition, alias string) (SearchField, bool) {
 	return SearchField{}, false
 }
 
-func (m *searchManager) textKeys(indexName, alias, token string) ([]string, bool) {
+func (m *searchManager) textKeys(indexName, alias, token, language string) ([]string, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -630,7 +680,7 @@ func (m *searchManager) textKeys(indexName, alias, token string) ([]string, bool
 
 	defField, found := searchTextField(idx.def, alias)
 	if found && !defField.NoStem {
-		stem := stemSearchEnglish(token)
+		stem := stemSearchLanguage(language, token)
 		for key := range idx.textStems[alias][stem] {
 			seen[key] = struct{}{}
 		}
@@ -683,15 +733,15 @@ func containsSearchPhrase(sequence, phrase []string) bool {
 	return false
 }
 
-func stemSearchSequence(tokens []string) []string {
+func stemSearchSequence(tokens []string, language string) []string {
 	out := make([]string, len(tokens))
 	for i, token := range tokens {
-		out[i] = stemSearchEnglish(token)
+		out[i] = stemSearchLanguage(language, token)
 	}
 	return out
 }
 
-func (m *searchManager) textPhraseKeys(indexName, alias, phrase string) ([]string, bool) {
+func (m *searchManager) textPhraseKeys(indexName, alias, phrase, language string) ([]string, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -708,7 +758,7 @@ func (m *searchManager) textPhraseKeys(indexName, alias, phrase string) ([]strin
 	defField, found := searchTextField(idx.def, alias)
 	useStems := found && !defField.NoStem
 	if useStems {
-		tokens = stemSearchSequence(tokens)
+		tokens = stemSearchSequence(tokens, language)
 	}
 
 	matches := make(map[string]struct{})
@@ -716,7 +766,7 @@ func (m *searchManager) textPhraseKeys(indexName, alias, phrase string) ([]strin
 		for _, sequence := range state.TextSequences[alias] {
 			candidate := sequence
 			if useStems {
-				candidate = stemSearchSequence(sequence)
+				candidate = stemSearchSequence(sequence, language)
 			}
 			if containsSearchPhrase(candidate, tokens) {
 				matches[key] = struct{}{}
@@ -885,6 +935,8 @@ func (s *Store) CreateSearchIndex(def SearchDefinition) error {
 	}
 	def = cloneSearchDefinition(def)
 	def.Prefixes = normalizeSearchPrefixes(def.Prefixes)
+	def.Language = normalizeSearchLanguage(def.Language)
+	normalizeSearchStopwords(&def)
 
 	manager := s.ensureSearchManager()
 
@@ -959,6 +1011,7 @@ func (s *Store) RestoreSearchDefinitions(defs []SearchDefinition) error {
 		seen[def.Name] = struct{}{}
 		normalized[i] = cloneSearchDefinition(def)
 		normalized[i].Prefixes = normalizeSearchPrefixes(normalized[i].Prefixes)
+		normalized[i].Language = normalizeSearchLanguage(normalized[i].Language)
 		normalizeSearchStopwords(&normalized[i])
 	}
 
@@ -1028,12 +1081,12 @@ func (s *Store) SearchTagKeys(indexName, alias, value string) ([]string, bool) {
 	return manager.tagKeys(indexName, alias, value)
 }
 
-func (s *Store) SearchTextKeys(indexName, alias, token string) ([]string, bool) {
+func (s *Store) SearchTextKeys(indexName, alias, token, language string) ([]string, bool) {
 	manager := s.getSearchManager()
 	if manager == nil {
 		return nil, false
 	}
-	return manager.textKeys(indexName, alias, token)
+	return manager.textKeys(indexName, alias, token, language)
 }
 
 func (s *Store) SearchTextPrefixKeys(indexName, alias, prefix string) ([]string, bool) {
@@ -1044,12 +1097,12 @@ func (s *Store) SearchTextPrefixKeys(indexName, alias, prefix string) ([]string,
 	return manager.textPrefixKeys(indexName, alias, prefix)
 }
 
-func (s *Store) SearchTextPhraseKeys(indexName, alias, phrase string) ([]string, bool) {
+func (s *Store) SearchTextPhraseKeys(indexName, alias, phrase, language string) ([]string, bool) {
 	manager := s.getSearchManager()
 	if manager == nil {
 		return nil, false
 	}
-	return manager.textPhraseKeys(indexName, alias, phrase)
+	return manager.textPhraseKeys(indexName, alias, phrase, language)
 }
 
 func (s *Store) SearchNumericRangeKeys(indexName, alias string, min, max float64) ([]string, bool) {
