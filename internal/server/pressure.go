@@ -130,6 +130,9 @@ func (s *Server) executePressureCommand(args [][]byte) ([]byte, error) {
 	if isTDigestCommand(args) {
 		return s.executeTDigest(args)
 	}
+	if isTimeSeriesCommand(args) {
+		return s.executeTimeSeries(args)
+	}
 	if isGeoCommand(args) {
 		return s.executeGeo(args)
 	}
