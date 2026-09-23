@@ -363,6 +363,7 @@ func executeFTInfo(store *engine.Store, args [][]byte) ([]byte, error) {
 
 type searchQueryClause struct {
 	alias         string
+	noMatch       bool
 	tag           *string
 	text          *string
 	textPhrase    *string
@@ -812,7 +813,44 @@ func parseSearchFuzzyExpr(expr, fullQuery string) (string, int, bool, error) {
 func parseSearchClause(part, fullQuery string) (searchQueryClause, error) {
 	clause := searchQueryClause{}
 	if !strings.HasPrefix(part, "@") {
-		return searchQueryClause{}, errors.New("ERR unsupported search query")
+		if strings.HasPrefix(part, "\"") && strings.HasSuffix(part, "\"") {
+			phrase := part[1 : len(part)-1]
+			if strings.TrimSpace(phrase) == "" || strings.Contains(phrase, "\"") {
+				return searchQueryClause{}, errors.New("ERR unsupported search query")
+			}
+			clause.textPhrase = &phrase
+			return clause, nil
+		}
+
+		if strings.Contains(part, "%") {
+			token, distance, matched, err := parseSearchFuzzyExpr(part, fullQuery)
+			if matched {
+				if err != nil {
+					offset := strings.LastIndex(part, "%")
+					if strings.HasPrefix(part, "%%%%") {
+						offset = 3
+					}
+					if offset < 0 {
+						offset = 0
+					}
+					return searchQueryClause{}, fmt.Errorf("SEARCH_SYNTAX Syntax error at offset %d near ", offset)
+				}
+				clause.text = &token
+				clause.textFuzzy = distance
+				return clause, nil
+			}
+		}
+
+		if strings.HasSuffix(part, "*") && strings.Count(part, "*") == 1 && len(part) > 1 {
+			value := strings.ToLower(strings.TrimSuffix(part, "*"))
+			clause.text = &value
+			clause.textPrefix = true
+			return clause, nil
+		}
+
+		value := strings.ToLower(part)
+		clause.text = &value
+		return clause, nil
 	}
 
 	colon := strings.IndexByte(part, ':')
@@ -898,7 +936,10 @@ func parseSearchQuery(query string, dialect int) (*searchQueryNode, error) {
 		return nil, nil
 	}
 	if query == "" {
-		return nil, errors.New("ERR invalid search query")
+		return &searchQueryNode{
+			kind: searchQueryClauseNode,
+			clause: &searchQueryClause{noMatch: true},
+		}, nil
 	}
 
 	if dialect == 1 {
@@ -1279,7 +1320,7 @@ func orderedSearchKeys(allKeys []string, set map[string]struct{}) []string {
 	return keys
 }
 
-func evaluateSearchQuery(store *engine.Store, indexName string, node *searchQueryNode, allKeys []string, language string) ([]string, error) {
+func evaluateSearchQuery(store *engine.Store, indexName string, def engine.SearchDefinition, node *searchQueryNode, allKeys []string, language string) ([]string, error) {
 	if node == nil {
 		return append([]string(nil), allKeys...), nil
 	}
@@ -1290,6 +1331,9 @@ func evaluateSearchQuery(store *engine.Store, indexName string, node *searchQuer
 			return nil, errors.New("ERR unsupported search query")
 		}
 		switch {
+		case node.clause.noMatch:
+			return []string{}, nil
+
 		case node.clause.tag != nil:
 			keys, ok := store.SearchTagKeys(indexName, node.clause.alias, *node.clause.tag)
 			if !ok {
@@ -1298,6 +1342,22 @@ func evaluateSearchQuery(store *engine.Store, indexName string, node *searchQuer
 			return keys, nil
 
 		case node.clause.textPhrase != nil:
+			if node.clause.alias == "" {
+				union := make(map[string]struct{})
+				for _, field := range def.Fields {
+					if field.Kind != engine.SearchFieldText || field.NoIndex {
+						continue
+					}
+					keys, ok := store.SearchTextPhraseKeys(indexName, field.Alias, *node.clause.textPhrase, language)
+					if !ok {
+						return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
+					}
+					for _, key := range keys {
+						union[key] = struct{}{}
+					}
+				}
+				return orderedSearchKeys(allKeys, union), nil
+			}
 			keys, ok := store.SearchTextPhraseKeys(indexName, node.clause.alias, *node.clause.textPhrase, language)
 			if !ok {
 				return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
@@ -1309,6 +1369,28 @@ func evaluateSearchQuery(store *engine.Store, indexName string, node *searchQuer
 				keys []string
 				ok   bool
 			)
+			if node.clause.alias == "" {
+				union := make(map[string]struct{})
+				for _, field := range def.Fields {
+					if field.Kind != engine.SearchFieldText || field.NoIndex {
+						continue
+					}
+					if node.clause.textFuzzy > 0 {
+						keys, ok = store.SearchTextFuzzyKeys(indexName, field.Alias, *node.clause.text, node.clause.textFuzzy)
+					} else if node.clause.textPrefix {
+						keys, ok = store.SearchTextPrefixKeys(indexName, field.Alias, *node.clause.text)
+					} else {
+						keys, ok = store.SearchTextKeys(indexName, field.Alias, *node.clause.text, language)
+					}
+					if !ok {
+						return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
+					}
+					for _, key := range keys {
+						union[key] = struct{}{}
+					}
+				}
+				return orderedSearchKeys(allKeys, union), nil
+			}
 			if node.clause.textFuzzy > 0 {
 				keys, ok = store.SearchTextFuzzyKeys(indexName, node.clause.alias, *node.clause.text, node.clause.textFuzzy)
 			} else if node.clause.textPrefix {
@@ -1338,7 +1420,7 @@ func evaluateSearchQuery(store *engine.Store, indexName string, node *searchQuer
 		}
 
 	case searchQueryNotNode:
-		child, err := evaluateSearchQuery(store, indexName, node.child, allKeys, language)
+		child, err := evaluateSearchQuery(store, indexName, def, node.child, allKeys, language)
 		if err != nil {
 			return nil, err
 		}
@@ -1352,11 +1434,11 @@ func evaluateSearchQuery(store *engine.Store, indexName string, node *searchQuer
 		return out, nil
 
 	case searchQueryAndNode:
-		left, err := evaluateSearchQuery(store, indexName, node.left, allKeys, language)
+		left, err := evaluateSearchQuery(store, indexName, def, node.left, allKeys, language)
 		if err != nil {
 			return nil, err
 		}
-		right, err := evaluateSearchQuery(store, indexName, node.right, allKeys, language)
+		right, err := evaluateSearchQuery(store, indexName, def, node.right, allKeys, language)
 		if err != nil {
 			return nil, err
 		}
@@ -1371,11 +1453,11 @@ func evaluateSearchQuery(store *engine.Store, indexName string, node *searchQuer
 		return out, nil
 
 	case searchQueryOrNode:
-		left, err := evaluateSearchQuery(store, indexName, node.left, allKeys, language)
+		left, err := evaluateSearchQuery(store, indexName, def, node.left, allKeys, language)
 		if err != nil {
 			return nil, err
 		}
-		right, err := evaluateSearchQuery(store, indexName, node.right, allKeys, language)
+		right, err := evaluateSearchQuery(store, indexName, def, node.right, allKeys, language)
 		if err != nil {
 			return nil, err
 		}
@@ -1399,6 +1481,9 @@ func validateSearchTextAliases(def engine.SearchDefinition, node *searchQueryNod
 	switch node.kind {
 	case searchQueryClauseNode:
 		if node.clause == nil || (node.clause.text == nil && node.clause.textPhrase == nil) {
+			return nil
+		}
+		if node.clause.alias == "" {
 			return nil
 		}
 		for _, field := range def.Fields {
@@ -1585,7 +1670,7 @@ func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 
 	candidates := allKeys
 	if queryNode != nil {
-		matches, err := evaluateSearchQuery(store, indexName, queryNode, allKeys, language)
+		matches, err := evaluateSearchQuery(store, indexName, def, queryNode, allKeys, language)
 		if err != nil {
 			return nil, err
 		}
