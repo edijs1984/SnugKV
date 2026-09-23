@@ -1162,6 +1162,41 @@ func validateSearchTextAliases(def engine.SearchDefinition, node *searchQueryNod
 	}
 }
 
+func validateSearchPhraseStopwords(def engine.SearchDefinition, node *searchQueryNode, query string) error {
+	if node == nil {
+		return nil
+	}
+
+	switch node.kind {
+	case searchQueryClauseNode:
+		if node.clause == nil || node.clause.textPhrase == nil {
+			return nil
+		}
+		for _, token := range strings.Fields(*node.clause.textPhrase) {
+			if !engine.SearchIsStopword(def, token) {
+				continue
+			}
+			offset := strings.Index(strings.ToLower(query), strings.ToLower(token))
+			if offset < 0 {
+				offset = 0
+			}
+			return fmt.Errorf("SEARCH_SYNTAX Syntax error at offset %d near %s", offset, token)
+		}
+		return nil
+
+	case searchQueryAndNode, searchQueryOrNode:
+		if err := validateSearchPhraseStopwords(def, node.left, query); err != nil {
+			return err
+		}
+		return validateSearchPhraseStopwords(def, node.right, query)
+
+	case searchQueryNotNode:
+		return validateSearchPhraseStopwords(def, node.child, query)
+	}
+
+	return nil
+}
+
 func stripSearchStopwords(def engine.SearchDefinition, node *searchQueryNode) (*searchQueryNode, bool) {
 	if node == nil {
 		return nil, true
@@ -1248,6 +1283,9 @@ func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 		return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
 	}
 	if err := validateSearchTextAliases(def, queryNode); err != nil {
+		return nil, err
+	}
+	if err := validateSearchPhraseStopwords(def, queryNode, string(args[2])); err != nil {
 		return nil, err
 	}
 	if queryNode != nil {
