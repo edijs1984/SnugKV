@@ -534,6 +534,7 @@ func commandDenyOOM(name string) bool {
 		"BF.RESERVE", "BF.ADD", "BF.MADD", "BF.INSERT",
 		"CF.RESERVE", "CF.ADD", "CF.ADDNX", "CF.DEL", "CF.INSERT", "CF.INSERTNX",
 		"CMS.INITBYDIM", "CMS.INITBYPROB", "CMS.INCRBY", "CMS.MERGE",
+		"TOPK.RESERVE", "TOPK.ADD", "TOPK.INCRBY",
 		"GEOADD",
 		"BITOP",
 		"COPY",
@@ -608,6 +609,12 @@ func commandInfoFlags(
 		return []string{"write", "denyoom", "fast"}
 
 	case "CMS.INCRBY", "CMS.MERGE":
+		return []string{"write", "denyoom"}
+
+	case "TOPK.RESERVE":
+		return []string{"write", "denyoom", "fast"}
+
+	case "TOPK.ADD", "TOPK.INCRBY":
 		return []string{"write", "denyoom"}
 
 	case "GEOADD":
@@ -823,6 +830,34 @@ func commandInfoACL(
 		return []string{
 			"@read",
 			"@cms",
+			"@fast",
+		}
+
+	case "TOPK.RESERVE":
+		return []string{
+			"@write",
+			"@topk",
+			"@fast",
+		}
+
+	case "TOPK.ADD", "TOPK.INCRBY":
+		return []string{
+			"@write",
+			"@topk",
+			"@slow",
+		}
+
+	case "TOPK.QUERY", "TOPK.COUNT", "TOPK.LIST":
+		return []string{
+			"@read",
+			"@topk",
+			"@slow",
+		}
+
+	case "TOPK.INFO":
+		return []string{
+			"@read",
+			"@topk",
 			"@fast",
 		}
 
