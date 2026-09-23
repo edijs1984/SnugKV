@@ -155,7 +155,11 @@ func (s *Server) executeTimeSeries(args [][]byte)([]byte,error){
 		return integer(ts),nil
 
 	case "TS.GET":
-		sample,found,err:=s.store.TimeSeriesGet(key);if err!=nil{return nil,err}
+		sample,found,err:=s.store.TimeSeriesGet(key)
+		if err!=nil{
+			if strings.HasPrefix(err.Error(),"WRONGTYPE "){return nil,errors.New("ERR "+err.Error())}
+			return nil,err
+		}
 		if !found{return nullBulk(),nil}
 		return timeSeriesSampleReply(sample),nil
 
@@ -192,7 +196,11 @@ func (s *Server) executeTimeSeries(args [][]byte)([]byte,error){
 		return integer(timestamp),nil
 
 	case "TS.INFO":
-		v,err:=s.store.TimeSeriesInfo(key);if err!=nil{return nil,err}
+		v,err:=s.store.TimeSeriesInfo(key)
+		if err!=nil{
+			if strings.HasPrefix(err.Error(),"WRONGTYPE "){return nil,errors.New("ERR "+err.Error())}
+			return nil,err
+		}
 		labelItems:=make([][]byte,len(v.Labels))
 		for i,label:=range v.Labels{
 			labelItems[i]=array(formatBulkString([]byte(label.Key)),formatBulkString([]byte(label.Value)))
