@@ -605,3 +605,11 @@ SnugKV Search now supports the audited Redis schema modifiers `WEIGHT`, `SORTABL
 `NOINDEX` suppresses posting-list construction for the field. `SORTABLE` is retained as schema metadata, while SnugKV continues to allow `SORTBY` on non-SORTABLE fields because Redis treats SORTABLE as an optimization rather than a correctness requirement. TEXT sorting now uses the projected JSON string value, matching the live Redis differential for the audited cases.
 
 The live harness `compat/search/search-schema-modifiers.sh` was run against Redis Search on port 6392 and SnugKV on port 6383. Remaining textual differences are the already documented narrow `FT.INFO` statistics surface, deterministic unsorted/tie ordering, and a pre-existing RETURN-parser error-shape difference outside this milestone.
+
+## Search unqualified TEXT milestone — 2026-09-23
+
+SnugKV Search now supports unqualified TEXT queries across all indexed TEXT fields. Redis-audited behavior includes single terms, implicit AND across multiple terms, mixed fielded and unqualified clauses, trailing-prefix terms, fuzzy terms, exact quoted phrases, default/custom/disabled stopwords, stemming and NOSTEM, no-TEXT schemas, empty queries, and DIALECT 1/2 parity for the audited forms.
+
+Unqualified terms are evaluated as a union across indexed TEXT fields for each clause, while multiple clauses are intersected by the existing query AST. Phrase matching remains constrained to one TEXT field at a time, matching Redis behavior. Fields marked NOINDEX are excluded from unqualified search.
+
+The live differential harness `compat/search/search-unqualified-text.sh` was run against Redis Search on port 6392 and SnugKV on port 6383. The audited result sets and error classes match. Remaining textual differences are deterministic SnugKV result ordering versus Redis's unsorted ranking/order and trailing whitespace in three malformed-fuzzy error renderings.
