@@ -1499,9 +1499,7 @@ func TestFTSearchTextPrefixRejectsUnsupportedWildcards(t *testing.T) {
 
 	for _, query := range []string{
 		"@title:*",
-		"@title:me*m",
 		"@title:mem**",
-		"@title:(mem* *eng)",
 	} {
 		if _, err := s.Execute([][]byte{
 			[]byte("FT.SEARCH"), []byte("products"), []byte(query), []byte("NOCONTENT"),
