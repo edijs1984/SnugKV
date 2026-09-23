@@ -147,6 +147,9 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Verified
 
+- Optimizer convergence now periodically resamples missed candidates and automatically compacts dense entry storage when slot slack is material. `Compact()` rebuilds live entries contiguously instead of retaining deleted entry holes. A 200,000-key / 50,000-live-key delete-heavy probe reduced entry capacity from 225,091 to 50,000 and entry storage from 5,402,184 bytes to 1,200,000 bytes (~77.8% reclaimed).
+
+
 - Search index creation now builds an online generation: `FT.CREATE` snapshots JSON one shard at a time, journals concurrent matching mutations/deletes, replays them into the pending generation, and atomically publishes the finished index without holding all primary shards locked for the full backfill.
 
 

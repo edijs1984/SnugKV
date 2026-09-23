@@ -359,8 +359,7 @@ lands.
 - [x] Add online Search index rebuild generations so `FT.CREATE` backfills without holding all primary shards locked for the full build, while concurrent updates/deletes/creates are journaled and replayed before atomic publication.
 - [ ] Add probabilistic/time-series structures only after the JSON/search storage
   boundaries are settled.
-- [ ] Return to optimizer convergence so dense-entry compaction is reached
-  automatically without an explicit `SNUG.COMPACT`.
+- [x] Return to optimizer convergence so dropped/missed optimization candidates are periodically revisited and dense-entry compaction is reached automatically without an explicit `SNUG.COMPACT`.
 
 ### P4 — distributed features (outside current single-node target)
 
