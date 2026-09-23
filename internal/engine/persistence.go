@@ -92,7 +92,7 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 		if len(record.Value) > 32<<20 {
 			return errors.New("ERR recovered value exceeds 32 MiB limit")
 		}
-		if record.ValueType > uint8(TypeStream) {
+		if record.ValueType > uint8(TypeBloom) {
 			return errors.New("ERR recovered value has unknown type")
 		}
 	}
@@ -137,6 +137,11 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 				return errors.New("ERR recovered STREAM value is invalid")
 			}
 			e = streamPreparedEntry(record.Value)
+		case TypeBloom:
+			if _, err := decodeBloom(record.Value); err != nil {
+				return errors.New("ERR recovered BLOOM value is invalid")
+			}
+			e = bloomPreparedEntry(record.Value)
 		default:
 			e = s.makeEntry(record.Value)
 
