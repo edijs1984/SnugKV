@@ -196,3 +196,75 @@ func TestShouldCompactArenaPolicy(t *testing.T) {
 		})
 	}
 }
+
+
+func TestShouldCompactEntriesPolicy(t *testing.T) {
+	tests := []struct {
+		name       string
+		capacity   uint64
+		live       uint64
+		queueDepth int
+		want       bool
+	}{
+		{"no slack", 4096, 4096, 0, false},
+		{"idle below minimum slack", 4096, 3200, 0, false},
+		{"idle 25 percent slack", 4096, 3072, 0, true},
+		{"backlog requires larger slack", 8192, 5120, 1, false},
+		{"backlog 50 percent slack", 8192, 4096, 1, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldCompactEntries(tc.capacity, tc.live, tc.queueDepth); got != tc.want {
+				t.Fatalf("compact=%v want=%v capacity=%d live=%d queue=%d",
+					got, tc.want, tc.capacity, tc.live, tc.queueDepth)
+			}
+		})
+	}
+}
+
+func TestMaintenanceSamplingConvergesDroppedCandidate(t *testing.T) {
+	store, err := engine.NewWithOptions(engine.Options{
+		Shards:      1,
+		Encoding:    true,
+		Compression: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	value := bytes.Repeat([]byte("converge-me"), 2048)
+	if err := store.Set("k", value, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	config := Default()
+	config.Workers = 1
+	config.MinRewriteInterval = 0
+	config.MinAttemptInterval = 0
+
+	o, err := New(store, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer o.Close()
+
+	// Deliberately do not Queue("k"). Periodic maintenance sampling must recover
+	// the missed write-time enqueue and converge the representation.
+	o.maintenanceStep()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		name, _, _, _ := store.Encoding("k")
+		switch name {
+		case "repeat-byte", "periodic", "lz4", "zstd":
+			got, ok := store.Get("k")
+			if !ok || !bytes.Equal(got, value) {
+				t.Fatal("maintenance rewrite changed bytes")
+			}
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("maintenance sampling did not converge candidate: %+v", o.Stats())
+}
