@@ -124,3 +124,38 @@ func TestFTSearchWildcardDialectParity(t *testing.T) {
 		requireSearchKeys(t, d2, d1...)
 	}
 }
+
+
+func TestFTSearchWildcardEscaping(t *testing.T) {
+	s := setupWildcardSearch(t)
+
+	requireSearchKeys(t, searchNoContentKeys(t, s, "wc", `@text:mem\*`))
+	requireSearchKeys(t, searchNoContentKeys(t, s, "wc", `mem\*`))
+	requireSearchKeys(t, searchNoContentKeys(t, s, "wc", `@text:\*ory`))
+	requireSearchKeys(t, searchNoContentKeys(t, s, "wc", `\*ory`))
+
+	requireSearchKeys(t, searchNoContentKeys(t, s, "wc", `@text:mem\\*`),
+		"doc:1", "doc:2", "doc:3", "doc:4", "doc:6")
+	requireSearchKeys(t, searchNoContentKeys(t, s, "wc", `mem\\*`),
+		"doc:1", "doc:2", "doc:3", "doc:4", "doc:6")
+}
+
+func TestFTSearchWildcardFuzzyErrors(t *testing.T) {
+	s := setupWildcardSearch(t)
+
+	for _, tc := range []struct {
+		query, want string
+	}{
+		{`@text:%mem*%`, "SEARCH_SYNTAX Syntax error at offset 7 near mem"},
+		{`%mem*%`, "SEARCH_SYNTAX Syntax error at offset 1 near mem"},
+		{`@text:*%memory%*`, "SEARCH_SYNTAX Syntax error at offset 6 near text"},
+		{`*%memory%*`, "SEARCH_SYNTAX Syntax error at offset 1 near "},
+	} {
+		_, err := s.Execute([][]byte{
+			[]byte("FT.SEARCH"), []byte("wc"), []byte(tc.query), []byte("NOCONTENT"),
+		})
+		if err == nil || err.Error() != tc.want {
+			t.Fatalf("query=%q err=%v want=%q", tc.query, err, tc.want)
+		}
+	}
+}
