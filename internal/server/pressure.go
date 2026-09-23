@@ -121,6 +121,9 @@ func (s *Server) executePressureCommand(args [][]byte) ([]byte, error) {
 	if isCuckooCommand(args) {
 		return s.executeCuckoo(args)
 	}
+	if isCMSCommand(args) {
+		return s.executeCMS(args)
+	}
 	if isGeoCommand(args) {
 		return s.executeGeo(args)
 	}
