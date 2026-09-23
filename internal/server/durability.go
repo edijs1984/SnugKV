@@ -224,9 +224,13 @@ func (s *Server) executeAuthorizedConcurrentGet(args [][]byte) (response []byte,
 // It is only used when persistence, metrics, WATCH and maxmemory semantics do not
 // require the ordinary durability/pressure path.
 func (s *Server) executeAuthorizedConcurrentSet(args [][]byte) (response []byte, handled bool, err error) {
+	if len(args) == 3 && bytes.EqualFold(args[0], []byte("SET")) && s.replication.isReadOnlyReplica() {
+		return nil, true, errors.New("READONLY You can't write against a read only replica.")
+	}
 	if len(args) != 3 ||
 		!bytes.EqualFold(args[0], []byte("SET")) ||
 		s.journal != nil ||
+		s.replication.primaryHasReplicas() ||
 		atomic.LoadUint32(&s.metricsEnabled) != 0 ||
 		s.store.MaxMemory() != 0 {
 		return nil, false, nil
