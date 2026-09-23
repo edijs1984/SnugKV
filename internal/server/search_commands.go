@@ -126,12 +126,12 @@ func executeFTCreate(store *engine.Store, args [][]byte) ([]byte, error) {
 	}
 
 	for pos < len(args) {
-		if len(args)-pos < 4 {
-			return nil, errors.New("ERR syntax error")
-		}
 		switch strings.ToUpper(string(args[pos])) {
 		case "WEIGHT", "SORTABLE", "NOINDEX", "NOSTEM":
 			return nil, fmt.Errorf("SEARCH_PARSE_ARGS Invalid field type for field `%s`", string(args[pos]))
+		}
+		if len(args)-pos < 4 {
+			return nil, errors.New("ERR syntax error")
 		}
 
 		path := string(args[pos])
