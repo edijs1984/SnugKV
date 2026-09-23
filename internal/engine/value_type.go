@@ -35,6 +35,7 @@ const (
 	TypeCMS
 	TypeTopK
 	TypeTDigest
+	TypeTimeSeries
 )
 
 func (t ValueType) String() string {
@@ -73,6 +74,8 @@ func (t ValueType) String() string {
 		return "TOPK"
 	case TypeTDigest:
 		return "TDIGEST"
+	case TypeTimeSeries:
+		return "TIMESERIES"
 	default:
 		return "UNKNOWN"
 	}
