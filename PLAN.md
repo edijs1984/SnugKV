@@ -1,5 +1,15 @@
 # SnugKV Delivery Plan
 
+## Replication hardening update — Redis RDB full sync
+
+- [x] Redis 8.2 primary -> SnugKV replica length-prefixed RDB full-sync import for the audited core object encodings and TTLs.
+- [x] Continue from imported RDB into the live Redis replication command stream.
+- [x] Preserve replica READONLY semantics after Redis-origin full sync.
+- [ ] EOF-marker / diskless RDB full-sync framing.
+- [ ] Additional RDB object encodings as demanded by real datasets.
+- [ ] Replication topology authentication and TLS.
+
+
 This document is the current implementation roadmap. `PROGRESS.md` contains
 verification evidence, `COMPATIBILITY.md` contains the public Redis boundary, and
 GitHub issue #55 tracks command-family compatibility work.

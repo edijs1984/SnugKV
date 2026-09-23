@@ -1,5 +1,10 @@
 ## Realistic workload memory milestone — 2026-09-21
 
+## Redis RDB Full-Sync Interoperability — 2026-09-23
+
+Redis 8.2.9 -> SnugKV full synchronization is validated end-to-end for STRING, HASH listpack, SET intset/listpack, LIST quicklist2, ZSET listpack, STREAM listpacks3, and expiries. SnugKV recognizes Redis `REDISxxxx` snapshots, verifies CRC64, imports DB 0, then consumes the live Redis replication command stream. Live SET/INCR/HSET/RPUSH and `SET ... PX` propagation passed, as did READONLY enforcement. Full race/vet validation is green. EOF-marker/diskless framing, auth/TLS topology, and broader RDB encodings remain open. See `docs/REPLICATION-RDB-FULLSYNC-AUDIT.md`.
+
+
 - Added realistic fixed-shape benchmark profiles for session JSON (384 B), API JSON
   (768 B), cached request/response JSON (1024 B), counters, UUIDs, text,
   repetitive, already-compressed, and random controls.

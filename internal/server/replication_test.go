@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/binary"
 	"net"
 	"strconv"
 	"strings"
@@ -249,5 +250,120 @@ func TestReplicationACKMonotonicAndInfo(t *testing.T) {
 	}
 	if !strings.Contains(info, "state=online,offset=123,lag=") {
 		t.Fatalf("INFO replication missing replica offset/lag: %q", info)
+	}
+}
+
+func TestDecodeRedisFullSyncRDB(t *testing.T) {
+	appendDumpObject := func(dst []byte, key string, dump []byte) []byte {
+		if len(dump) < 11 {
+			t.Fatalf("short dump for %s", key)
+		}
+		dst = append(dst, dump[0])
+		dst = appendRDBRawString(dst, []byte(key))
+		dst = append(dst, dump[1:len(dump)-10]...)
+		return dst
+	}
+
+	out := []byte("REDIS0012")
+	out = append(out, redisRDBOpcodeAux)
+	out = appendRDBRawString(out, []byte("redis-ver"))
+	out = appendRDBRawString(out, []byte("8.2.9"))
+	out = append(out, redisRDBOpcodeSelectDB)
+	out = appendRDBLen(out, 0)
+	out = append(out, redisRDBOpcodeResizeDB)
+	out = appendRDBLen(out, 5)
+	out = appendRDBLen(out, 1)
+
+	stringDump, err := encodeKeyStringDump([]byte("hello"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out = appendDumpObject(out, "rdb:string", stringDump)
+
+	out = append(out, redisRDBOpcodeExpireTimeMS)
+	expiresAt := time.Now().Add(10 * time.Minute).UnixMilli()
+	var expiry [8]byte
+	binary.LittleEndian.PutUint64(expiry[:], uint64(expiresAt))
+	out = append(out, expiry[:]...)
+	ttlDump, err := encodeKeyStringDump([]byte("expires"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out = appendDumpObject(out, "rdb:ttl", ttlDump)
+
+	hashDump, err := encodeHashDump([]engine.HashPair{
+		{Field: []byte("a"), Value: []byte("1")},
+		{Field: []byte("b"), Value: []byte("two")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out = appendDumpObject(out, "rdb:hash", hashDump)
+
+	setDump, err := encodeSetDump([][]byte{[]byte("1"), []byte("2"), []byte("3")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out = appendDumpObject(out, "rdb:set", setDump)
+
+	listDump, err := encodeListDump([][]byte{[]byte("a"), []byte("b"), []byte("c")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out = appendDumpObject(out, "rdb:list", listDump)
+
+	out = append(out, redisRDBOpcodeEOF)
+	var checksum [8]byte
+	binary.LittleEndian.PutUint64(checksum[:], redisCRC64(out))
+	out = append(out, checksum[:]...)
+
+	records, err := decodeRedisFullSyncRDB(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 6 || !records[0].Reset {
+		t.Fatalf("records=%d reset=%v", len(records), len(records) > 0 && records[0].Reset)
+	}
+
+	store := engine.New()
+	if err := store.Restore(records, true); err != nil {
+		t.Fatal(err)
+	}
+	if value, found, wrong := store.GetString("rdb:string"); !found || wrong || string(value) != "hello" {
+		t.Fatalf("string found=%v wrong=%v value=%q", found, wrong, value)
+	}
+	if pairs, err := store.HashGetAll("rdb:hash"); err != nil || len(pairs) != 2 {
+		t.Fatalf("hash pairs=%v err=%v", pairs, err)
+	}
+	if members, err := store.SetMembers("rdb:set"); err != nil || len(members) != 3 {
+		t.Fatalf("set members=%v err=%v", members, err)
+	}
+	if items, err := store.ListRange("rdb:list", 0, -1); err != nil || len(items) != 3 {
+		t.Fatalf("list items=%v err=%v", items, err)
+	}
+	if ttl := store.TTL("rdb:ttl", true); ttl <= 0 {
+		t.Fatalf("ttl=%d", ttl)
+	}
+}
+
+func TestDecodeRedisFullSyncRDBRejectsChecksumCorruption(t *testing.T) {
+	out := []byte("REDIS0012")
+	out = append(out, redisRDBOpcodeSelectDB)
+	out = appendRDBLen(out, 0)
+	dump, err := encodeKeyStringDump([]byte("value"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out = append(out, dump[0])
+	out = appendRDBRawString(out, []byte("key"))
+	out = append(out, dump[1:len(dump)-10]...)
+	out = append(out, redisRDBOpcodeEOF)
+	var checksum [8]byte
+	binary.LittleEndian.PutUint64(checksum[:], redisCRC64(out))
+	out = append(out, checksum[:]...)
+	out[len(out)-9] ^= 0x01
+
+	if _, err := decodeRedisFullSyncRDB(out); err == nil {
+		t.Fatal("expected checksum error")
 	}
 }

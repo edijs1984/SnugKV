@@ -1,4 +1,9 @@
 # Changelog
+
+### Verified — Redis RDB full-sync interoperability
+
+- Redis 8.2.9 primary -> SnugKV replica full sync now imports real length-prefixed Redis RDB snapshots for the audited core encodings, preserves absolute TTLs, continues with the live Redis command stream, and retains replica READONLY behavior. Audit: `docs/REPLICATION-RDB-FULLSYNC-AUDIT.md`.
+
 - Added Redis-compatible CLIENT-side caching/tracking for the audited single-node surface: `CLIENT TRACKING`, `CLIENT CACHING`, `CLIENT GETREDIR`, BCAST/PREFIX, OPTIN/OPTOUT, NOLOOP, REDIRECT, RESP3 invalidation pushes, and broken-redirect notification semantics.
 
 All notable changes to SnugKV will be documented in this file.

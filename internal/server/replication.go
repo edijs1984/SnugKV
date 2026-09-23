@@ -525,6 +525,42 @@ func (s *Server) handlePSYNC(write func([]byte) error, requestedRunID string, re
 	return id, nil
 }
 
+func readReplicationSnapshot(reader *bufio.Reader) ([]byte, bool, error) {
+	p, err := reader.ReadByte()
+	if err != nil {
+		return nil, false, err
+	}
+	if p != '$' {
+		line, _ := reader.ReadString('\n')
+		return nil, false, fmt.Errorf("unexpected replication snapshot %q", string(p)+line)
+	}
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return nil, false, err
+	}
+	if strings.HasPrefix(strings.TrimSpace(line), "EOF:") {
+		return nil, false, errors.New("Redis EOF-framed full sync is not supported yet")
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(line))
+	if err != nil || n < 0 || n > persistence.MaxFrameBytes {
+		return nil, false, errors.New("invalid replication snapshot length")
+	}
+	payload := make([]byte, n)
+	if _, err := io.ReadFull(reader, payload); err != nil {
+		return nil, false, err
+	}
+	if isRedisRDBPayload(payload) {
+		// Redis replication's length-prefixed RDB transfer ends exactly after
+		// the advertised bytes; the command stream begins immediately.
+		return payload, true, nil
+	}
+	var crlf [2]byte
+	if _, err := io.ReadFull(reader, crlf[:]); err != nil || crlf != [2]byte{'\r', '\n'} {
+		return nil, false, errors.New("invalid replication snapshot terminator")
+	}
+	return payload, false, nil
+}
+
 func readReplicationRESP(reader *bufio.Reader) ([]byte, error) {
 	p, err := reader.ReadByte()
 	if err != nil {
@@ -651,6 +687,7 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 		return err
 	}
 
+	redisStream := false
 	if strings.HasPrefix(line, "+FULLRESYNC ") {
 		parts := strings.Fields(line)
 		if len(parts) < 3 {
@@ -665,11 +702,17 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 		s.replication.offset = off
 		s.replication.mu.Unlock()
 
-		frame, err := readReplicationRESP(reader)
+		snapshot, isRedisRDB, err := readReplicationSnapshot(reader)
 		if err != nil {
 			return err
 		}
-		records, err := decodeReplicationFrame(frame)
+		var records []persistence.Record
+		if isRedisRDB {
+			records, err = decodeRedisFullSyncRDB(snapshot)
+			redisStream = true
+		} else {
+			records, err = decodeReplicationFrame(snapshot)
+		}
 		if err != nil {
 			return err
 		}
@@ -685,6 +728,8 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 
 	s.replication.setReplicaConnected()
 
+	var transaction [][][]byte
+	var transactionBytes int64
 	for {
 		select {
 		case <-cancel:
@@ -692,6 +737,70 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 		default:
 		}
 		_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+		if redisStream {
+			args, streamBytes, err := readRedisReplicationCommand(reader)
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				s.replication.mu.RLock()
+				ackOffset := s.replication.offset
+				s.replication.mu.RUnlock()
+				if writeErr := writeReplicationRESPCommand(conn, "REPLCONF", "ACK", strconv.FormatInt(ackOffset, 10)); writeErr != nil {
+					return writeErr
+				}
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if len(args) == 0 {
+				continue
+			}
+
+			cmd := strings.ToUpper(string(args[0]))
+			if transaction != nil {
+				transactionBytes += streamBytes
+				if cmd == "EXEC" {
+					if err := s.applyRedisReplicationBatch(transaction); err != nil {
+						return err
+					}
+					s.replication.mu.Lock()
+					s.replication.offset += transactionBytes
+					s.replication.mu.Unlock()
+					transaction = nil
+					transactionBytes = 0
+				} else if cmd == "DISCARD" {
+					s.replication.mu.Lock()
+					s.replication.offset += transactionBytes
+					s.replication.mu.Unlock()
+					transaction = nil
+					transactionBytes = 0
+				} else {
+					transaction = append(transaction, args)
+				}
+				continue
+			}
+
+			if cmd == "MULTI" {
+				transaction = make([][][]byte, 0)
+				transactionBytes = streamBytes
+				continue
+			}
+
+			if err := s.applyRedisReplicationBatch([][][]byte{args}); err != nil {
+				return err
+			}
+			s.replication.mu.Lock()
+			s.replication.offset += streamBytes
+			ackOffset := s.replication.offset
+			s.replication.mu.Unlock()
+
+			if cmd == "REPLCONF" && len(args) >= 3 && strings.EqualFold(string(args[1]), "GETACK") {
+				if err := writeReplicationRESPCommand(conn, "REPLCONF", "ACK", strconv.FormatInt(ackOffset, 10)); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+
 		frame, err := readReplicationRESP(reader)
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			s.replication.mu.RLock()
