@@ -182,3 +182,40 @@ for idx in iso1 iso2 isow stemiso; do
   run FT.DROPINDEX "$idx"
 done
 run FLUSHDB
+
+
+echo
+echo "=== scorer explanations ==="
+run FLUSHDB
+run JSON.SET iso:1 '$' '{"title":"memory","body":"alpha"}'
+run JSON.SET iso:2 '$' '{"title":"alpha","body":"memory"}'
+run JSON.SET iso:3 '$' '{"title":"memory","body":"memory"}'
+run JSON.SET iso:4 '$' '{"title":"memory memory","body":"alpha"}'
+run JSON.SET iso:5 '$' '{"title":"alpha","body":"alpha"}'
+run FT.DROPINDEX explainw
+run FT.CREATE explainw ON JSON PREFIX 1 iso: SCHEMA '$.title' AS title TEXT WEIGHT 5 '$.body' AS body TEXT WEIGHT 1
+run FT.SEARCH explainw 'memory' WITHSCORES EXPLAINSCORE NOCONTENT
+run FT.SEARCH explainw '@title:memory' WITHSCORES EXPLAINSCORE NOCONTENT
+run FT.SEARCH explainw '@body:memory' WITHSCORES EXPLAINSCORE NOCONTENT
+
+run FLUSHDB
+run JSON.SET iso:1 '$' '{"title":"run"}'
+run JSON.SET iso:2 '$' '{"title":"running"}'
+run JSON.SET iso:3 '$' '{"title":"runs"}'
+run JSON.SET iso:4 '$' '{"title":"runner"}'
+run FT.DROPINDEX explainstem
+run FT.CREATE explainstem ON JSON PREFIX 1 iso: SCHEMA '$.title' AS title TEXT
+run FT.SEARCH explainstem '@title:run' WITHSCORES EXPLAINSCORE NOCONTENT
+run FT.SEARCH explainstem '@title:running' WITHSCORES EXPLAINSCORE NOCONTENT
+
+run FLUSHDB
+run JSON.SET iso:1 '$' '{"title":"Jon Smith","body":"memory"}'
+run FT.DROPINDEX explainphon
+run FT.CREATE explainphon ON JSON PREFIX 1 iso: SCHEMA '$.title' AS title TEXT PHONETIC dm:en '$.body' AS body TEXT
+run FT.SEARCH explainphon '@title:jon' WITHSCORES EXPLAINSCORE NOCONTENT
+run FT.SEARCH explainphon '@title:john' WITHSCORES EXPLAINSCORE NOCONTENT
+
+for idx in explainw explainstem explainphon; do
+  run FT.DROPINDEX "$idx"
+done
+run FLUSHDB
