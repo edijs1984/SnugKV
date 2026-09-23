@@ -92,7 +92,7 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 		if len(record.Value) > 32<<20 {
 			return errors.New("ERR recovered value exceeds 32 MiB limit")
 		}
-		if record.ValueType > uint8(TypeCMS) {
+		if record.ValueType > uint8(TypeTopK) {
 			return errors.New("ERR recovered value has unknown type")
 		}
 	}
@@ -152,6 +152,11 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 				return errors.New("ERR recovered CMS value is invalid")
 			}
 			e = cmsPreparedEntry(record.Value)
+		case TypeTopK:
+			if _, err := decodeTopK(record.Value); err != nil {
+				return errors.New("ERR recovered TOPK value is invalid")
+			}
+			e = topKPreparedEntry(record.Value)
 		default:
 			e = s.makeEntry(record.Value)
 

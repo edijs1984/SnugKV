@@ -735,3 +735,13 @@ The live oracle established the compatibility target for the installed RedisBloo
 Persistence/restore, TTL preservation, OOM routing, ACL metadata, and dynamic merge key extraction are included.
 
 A live differential against RedisBloom on port 6392 and SnugKV on port 6383 matched line-for-line for the audited CMS surface. The only difference was the expected target/port label.
+
+## TopK Phase 1 — 2026-09-23
+
+SnugKV now includes a native persistent TopK implementation using the RedisBloom two-layer model: a probabilistic counter matrix plus a heap of current heavy hitters. The audited command surface includes TOPK.RESERVE, TOPK.ADD, TOPK.INCRBY, TOPK.QUERY, TOPK.COUNT, TOPK.LIST, and TOPK.INFO.
+
+The live oracle established important observable behavior: default reserve uses width 8, depth 7, decay 0.9; ejected items can still retain non-zero approximate counts; zero increment can make QUERY true while COUNT remains zero and LIST stays empty; invalid INCRBY values are returned as error elements inside the response array; and TopK/WITHCOUNT errors use raw RESP error classes.
+
+TTL preservation, persistence/restore, OOM routing, and @topk ACL metadata are included.
+
+A live differential against RedisBloom on port 6392 and SnugKV on port 6383 matched line-for-line for the audited TopK surface. The only difference was the expected target/port label.
