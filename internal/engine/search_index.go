@@ -808,6 +808,44 @@ func (m *searchManager) textPrefixKeys(indexName, alias, prefix string) ([]strin
 	return sortedPostingKeys(seen), true
 }
 
+func (m *searchManager) textWildcardKeys(indexName, alias, value string, leading, trailing bool) ([]string, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	idx, ok := m.indexes[indexName]
+	if !ok {
+		return nil, false
+	}
+	field := idx.texts[alias]
+	if field == nil {
+		return []string{}, true
+	}
+
+	value = strings.ToLower(value)
+	seen := make(map[string]struct{})
+	for token, postings := range field {
+		matched := false
+		switch {
+		case leading && trailing:
+			matched = strings.Contains(token, value)
+		case leading:
+			matched = strings.HasSuffix(token, value)
+		case trailing:
+			matched = strings.HasPrefix(token, value)
+		default:
+			matched = token == value
+		}
+		if !matched {
+			continue
+		}
+		for key := range postings {
+			seen[key] = struct{}{}
+		}
+	}
+	return sortedPostingKeys(seen), true
+}
+
+
 func containsSearchPhrase(sequence, phrase []string) bool {
 	if len(phrase) == 0 || len(sequence) < len(phrase) {
 		return false
@@ -1278,6 +1316,15 @@ func (s *Store) SearchTextPrefixKeys(indexName, alias, prefix string) ([]string,
 	}
 	return manager.textPrefixKeys(indexName, alias, prefix)
 }
+
+func (s *Store) SearchTextWildcardKeys(indexName, alias, value string, leading, trailing bool) ([]string, bool) {
+	manager := s.getSearchManager()
+	if manager == nil {
+		return nil, false
+	}
+	return manager.textWildcardKeys(indexName, alias, value, leading, trailing)
+}
+
 
 func (s *Store) SearchTextFuzzyKeys(indexName, alias, token string, distance int) ([]string, bool) {
 	manager := s.getSearchManager()
