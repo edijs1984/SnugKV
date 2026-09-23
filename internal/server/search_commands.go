@@ -46,48 +46,67 @@ func executeFTCreate(store *engine.Store, args [][]byte) ([]byte, error) {
 	}
 	pos++
 
-	if pos < len(args) && strings.EqualFold(string(args[pos]), "PREFIX") {
-		pos++
-		if pos >= len(args) {
-			return nil, errors.New("ERR syntax error")
-		}
+	for pos < len(args) && !strings.EqualFold(string(args[pos]), "SCHEMA") {
+		switch strings.ToUpper(string(args[pos])) {
+		case "PREFIX":
+			pos++
+			if pos >= len(args) {
+				return nil, errors.New("ERR syntax error")
+			}
+			count, err := strconv.Atoi(string(args[pos]))
+			if err != nil || count < 0 {
+				return nil, errors.New("ERR invalid PREFIX count")
+			}
+			pos++
+			if len(args)-pos < count {
+				return nil, errors.New("ERR syntax error")
+			}
+			def.Prefixes = make([]string, count)
+			for i := 0; i < count; i++ {
+				def.Prefixes[i] = string(args[pos+i])
+			}
+			pos += count
 
-		count, err := strconv.Atoi(string(args[pos]))
-		if err != nil || count < 0 {
-			return nil, errors.New("ERR invalid PREFIX count")
-		}
-		pos++
+		case "STOPWORDS":
+			def.StopwordsConfigured = true
+			pos++
+			if pos >= len(args) {
+				return nil, errors.New("ERR syntax error")
+			}
+			count, err := strconv.Atoi(string(args[pos]))
+			if err != nil || count < 0 {
+				return nil, errors.New("ERR invalid STOPWORDS count")
+			}
+			pos++
+			if len(args)-pos < count {
+				return nil, errors.New("ERR syntax error")
+			}
+			def.Stopwords = make([]string, count)
+			for i := 0; i < count; i++ {
+				def.Stopwords[i] = string(args[pos+i])
+			}
+			pos += count
 
-		if len(args)-pos < count {
-			return nil, errors.New("ERR syntax error")
-		}
+		case "LANGUAGE":
+			if pos+1 >= len(args) {
+				return nil, errors.New("ERR syntax error")
+			}
+			def.Language = strings.ToLower(string(args[pos+1]))
+			if !engine.SearchLanguageSupported(def.Language) {
+				return nil, errors.New("SEARCH_ADD_ARGS Invalid language")
+			}
+			pos += 2
 
-		def.Prefixes = make([]string, count)
-		for i := 0; i < count; i++ {
-			def.Prefixes[i] = string(args[pos+i])
-		}
-		pos += count
-	}
+		case "LANGUAGE_FIELD":
+			if pos+1 >= len(args) {
+				return nil, errors.New("ERR syntax error")
+			}
+			def.LanguageField = string(args[pos+1])
+			pos += 2
 
-	if pos < len(args) && strings.EqualFold(string(args[pos]), "STOPWORDS") {
-		def.StopwordsConfigured = true
-		pos++
-		if pos >= len(args) {
-			return nil, errors.New("ERR syntax error")
+		default:
+			return nil, errors.New("ERR unsupported FT.CREATE option")
 		}
-		count, err := strconv.Atoi(string(args[pos]))
-		if err != nil || count < 0 {
-			return nil, errors.New("ERR invalid STOPWORDS count")
-		}
-		pos++
-		if len(args)-pos < count {
-			return nil, errors.New("ERR syntax error")
-		}
-		def.Stopwords = make([]string, count)
-		for i := 0; i < count; i++ {
-			def.Stopwords[i] = string(args[pos+i])
-		}
-		pos += count
 	}
 
 	if pos >= len(args) || !strings.EqualFold(string(args[pos]), "SCHEMA") {
@@ -225,14 +244,25 @@ func executeFTInfo(store *engine.Store, args [][]byte) ([]byte, error) {
 		formatBulkString([]byte("index_options")),
 		array(),
 		formatBulkString([]byte("index_definition")),
-		array(
-			formatBulkString([]byte("key_type")),
-			formatBulkString([]byte("JSON")),
-			formatBulkString([]byte("prefixes")),
-			array(prefixItems...),
-			formatBulkString([]byte("default_score")),
-			formatBulkString([]byte("1")),
-		),
+		func() []byte {
+			items := [][]byte{
+				formatBulkString([]byte("key_type")),
+				formatBulkString([]byte("JSON")),
+				formatBulkString([]byte("prefixes")),
+				array(prefixItems...),
+			}
+			if def.LanguageField != "" {
+				items = append(items,
+					formatBulkString([]byte("language_field")),
+					formatBulkString([]byte(def.LanguageField)),
+				)
+			}
+			items = append(items,
+				formatBulkString([]byte("default_score")),
+				formatBulkString([]byte("1")),
+			)
+			return array(items...)
+		}(),
 		formatBulkString([]byte("attributes")),
 		array(attributes...),
 		formatBulkString([]byte("num_docs")),
@@ -286,6 +316,7 @@ type searchOptions struct {
 	sortBy       string
 	sortDesc     bool
 	dialect      int
+	language     string
 }
 
 
@@ -915,6 +946,16 @@ func parseSearchOptions(args [][]byte) (searchOptions, error) {
 			options.dialect = dialect
 			pos += 2
 
+		case "LANGUAGE":
+			if pos+1 >= len(args) {
+				return searchOptions{}, errors.New("ERR syntax error")
+			}
+			options.language = strings.ToLower(string(args[pos+1]))
+			if !engine.SearchLanguageSupported(options.language) {
+				return searchOptions{}, errors.New("SEARCH_QUERY_BAD No such language")
+			}
+			pos += 2
+
 		case "RETURN":
 			if pos+1 >= len(args) {
 				return searchOptions{}, errors.New("ERR syntax error")
@@ -1015,7 +1056,7 @@ func orderedSearchKeys(allKeys []string, set map[string]struct{}) []string {
 	return keys
 }
 
-func evaluateSearchQuery(store *engine.Store, indexName string, node *searchQueryNode, allKeys []string) ([]string, error) {
+func evaluateSearchQuery(store *engine.Store, indexName string, node *searchQueryNode, allKeys []string, language string) ([]string, error) {
 	if node == nil {
 		return append([]string(nil), allKeys...), nil
 	}
@@ -1034,7 +1075,7 @@ func evaluateSearchQuery(store *engine.Store, indexName string, node *searchQuer
 			return keys, nil
 
 		case node.clause.textPhrase != nil:
-			keys, ok := store.SearchTextPhraseKeys(indexName, node.clause.alias, *node.clause.textPhrase)
+			keys, ok := store.SearchTextPhraseKeys(indexName, node.clause.alias, *node.clause.textPhrase, language)
 			if !ok {
 				return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
 			}
@@ -1048,7 +1089,7 @@ func evaluateSearchQuery(store *engine.Store, indexName string, node *searchQuer
 			if node.clause.textPrefix {
 				keys, ok = store.SearchTextPrefixKeys(indexName, node.clause.alias, *node.clause.text)
 			} else {
-				keys, ok = store.SearchTextKeys(indexName, node.clause.alias, *node.clause.text)
+				keys, ok = store.SearchTextKeys(indexName, node.clause.alias, *node.clause.text, language)
 			}
 			if !ok {
 				return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
@@ -1072,7 +1113,7 @@ func evaluateSearchQuery(store *engine.Store, indexName string, node *searchQuer
 		}
 
 	case searchQueryNotNode:
-		child, err := evaluateSearchQuery(store, indexName, node.child, allKeys)
+		child, err := evaluateSearchQuery(store, indexName, node.child, allKeys, language)
 		if err != nil {
 			return nil, err
 		}
@@ -1086,11 +1127,11 @@ func evaluateSearchQuery(store *engine.Store, indexName string, node *searchQuer
 		return out, nil
 
 	case searchQueryAndNode:
-		left, err := evaluateSearchQuery(store, indexName, node.left, allKeys)
+		left, err := evaluateSearchQuery(store, indexName, node.left, allKeys, language)
 		if err != nil {
 			return nil, err
 		}
-		right, err := evaluateSearchQuery(store, indexName, node.right, allKeys)
+		right, err := evaluateSearchQuery(store, indexName, node.right, allKeys, language)
 		if err != nil {
 			return nil, err
 		}
@@ -1105,11 +1146,11 @@ func evaluateSearchQuery(store *engine.Store, indexName string, node *searchQuer
 		return out, nil
 
 	case searchQueryOrNode:
-		left, err := evaluateSearchQuery(store, indexName, node.left, allKeys)
+		left, err := evaluateSearchQuery(store, indexName, node.left, allKeys, language)
 		if err != nil {
 			return nil, err
 		}
-		right, err := evaluateSearchQuery(store, indexName, node.right, allKeys)
+		right, err := evaluateSearchQuery(store, indexName, node.right, allKeys, language)
 		if err != nil {
 			return nil, err
 		}
@@ -1282,6 +1323,13 @@ func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 	if !ok {
 		return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
 	}
+	language := def.Language
+	if language == "" {
+		language = "english"
+	}
+	if options.language != "" {
+		language = options.language
+	}
 	if err := validateSearchTextAliases(def, queryNode); err != nil {
 		return nil, err
 	}
@@ -1312,7 +1360,7 @@ func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 
 	candidates := allKeys
 	if queryNode != nil {
-		matches, err := evaluateSearchQuery(store, indexName, queryNode, allKeys)
+		matches, err := evaluateSearchQuery(store, indexName, queryNode, allKeys, language)
 		if err != nil {
 			return nil, err
 		}
