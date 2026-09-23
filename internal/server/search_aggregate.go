@@ -485,6 +485,12 @@ func executeFTAggregate(store *engine.Store, args [][]byte) ([]byte, error) {
 				}
 			}
 			rows = filtered
+			if len(rows) == 0 {
+				// Redis collapses the aggregate header to zero when FILTER
+				// eliminates every row, even if an earlier LOAD stage would
+				// otherwise preserve the upstream cardinality.
+				reportedTotal = 0
+			}
 
 		case aggregateGroupStage:
 			type group struct {
