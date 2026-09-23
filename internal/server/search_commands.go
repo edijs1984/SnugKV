@@ -284,13 +284,14 @@ func executeFTInfo(store *engine.Store, args [][]byte) ([]byte, error) {
 
 
 type searchQueryClause struct {
-	alias      string
-	tag        *string
-	text       *string
-	textPhrase *string
-	textPrefix bool
-	minimum    *float64
-	maximum    *float64
+	alias         string
+	tag           *string
+	text          *string
+	textPhrase    *string
+	textPrefix    bool
+	textFuzzy     int
+	minimum       *float64
+	maximum       *float64
 }
 
 type searchQueryNodeKind uint8
@@ -513,22 +514,41 @@ func (p *searchQueryParser) parseFieldTextGroup() (*searchQueryNode, bool, error
 		if strings.HasPrefix(term, "-") || term == "" {
 			return nil, true, errors.New("ERR unsupported search query")
 		}
-		prefix := strings.HasSuffix(term, "*")
-		if prefix {
-			if strings.Count(term, "*") != 1 || len(term) == 1 {
+
+		value := strings.ToLower(term)
+		fuzzyDistance := 0
+		if strings.Contains(term, "%") {
+			token, distance, matched, err := parseSearchFuzzyExpr(term, p.query)
+			if !matched || err != nil {
+				if err != nil {
+					return nil, true, err
+				}
 				return nil, true, errors.New("ERR unsupported search query")
 			}
-			term = strings.TrimSuffix(term, "*")
-		} else if strings.Contains(term, "*") {
-			return nil, true, errors.New("ERR unsupported search query")
+			value = token
+			fuzzyDistance = distance
 		}
-		value := strings.ToLower(term)
+
+		prefix := false
+		if fuzzyDistance == 0 {
+			prefix = strings.HasSuffix(term, "*")
+			if prefix {
+				if strings.Count(term, "*") != 1 || len(term) == 1 {
+					return nil, true, errors.New("ERR unsupported search query")
+				}
+				value = strings.ToLower(strings.TrimSuffix(term, "*"))
+			} else if strings.Contains(term, "*") {
+				return nil, true, errors.New("ERR unsupported search query")
+			}
+		}
+
 		clause := &searchQueryNode{
 			kind: searchQueryClauseNode,
 			clause: &searchQueryClause{
 				alias:      alias,
 				text:       &value,
 				textPrefix: prefix,
+				textFuzzy:  fuzzyDistance,
 			},
 		}
 		if node == nil {
@@ -643,6 +663,73 @@ func parseSearchBound(value string) (float64, error) {
 	}
 }
 
+func parseSearchFuzzyExpr(expr, fullQuery string) (string, int, bool, error) {
+	if !strings.Contains(expr, "%") {
+		return "", 0, false, nil
+	}
+	if strings.Contains(expr, "*") {
+		near := strings.Trim(expr, "%")
+		near = strings.TrimSuffix(near, "*")
+		if near == "" {
+			near = "text"
+		}
+		offset := strings.Index(fullQuery, near)
+		if offset < 0 {
+			offset = 0
+		}
+		return "", 0, true, fmt.Errorf("SEARCH_SYNTAX Syntax error at offset %d near %s", offset, near)
+	}
+
+	leading := 0
+	for leading < len(expr) && expr[leading] == '%' {
+		leading++
+	}
+	trailing := 0
+	for trailing < len(expr) && expr[len(expr)-1-trailing] == '%' {
+		trailing++
+	}
+
+	if leading < 1 || trailing < 1 || leading != trailing || leading > 3 || leading+trailing >= len(expr) {
+		near := strings.Trim(expr, "%")
+		if near == "" {
+			near = "text"
+		}
+		var offset int
+		switch {
+		case leading > 3:
+			offset = strings.Index(fullQuery, expr) + 3
+		case leading == 0:
+			offset = strings.LastIndex(fullQuery, "%")
+		case trailing == 0:
+			offset = strings.Index(fullQuery, expr) + leading
+		case leading != trailing:
+			offset = strings.LastIndex(fullQuery, "%")
+		default:
+			offset = strings.LastIndex(fullQuery, "%")
+		}
+		if near != "text" {
+			nearStart := strings.Index(fullQuery, near)
+			if trailing == 0 && nearStart >= 0 {
+				offset = nearStart
+			}
+		}
+		if offset < 0 {
+			offset = 0
+		}
+		return "", 0, true, fmt.Errorf("SEARCH_SYNTAX Syntax error at offset %d near %s", offset, near)
+	}
+
+	token := expr[leading : len(expr)-trailing]
+	if token == "" || strings.Contains(token, "%") {
+		offset := strings.LastIndex(fullQuery, "%")
+		if offset < 0 {
+			offset = 0
+		}
+		return "", 0, true, fmt.Errorf("SEARCH_SYNTAX Syntax error at offset %d near text", offset)
+	}
+	return strings.ToLower(token), leading, true, nil
+}
+
 func parseSearchClause(part, fullQuery string) (searchQueryClause, error) {
 	clause := searchQueryClause{}
 	if !strings.HasPrefix(part, "@") {
@@ -656,6 +743,15 @@ func parseSearchClause(part, fullQuery string) (searchQueryClause, error) {
 
 	clause.alias = part[1:colon]
 	expr := part[colon+1:]
+
+	if token, distance, matched, err := parseSearchFuzzyExpr(expr, fullQuery); matched {
+		if err != nil {
+			return searchQueryClause{}, err
+		}
+		clause.text = &token
+		clause.textFuzzy = distance
+		return clause, nil
+	}
 
 	if strings.HasPrefix(expr, "\"") && strings.HasSuffix(expr, "\"") {
 		phrase := expr[1 : len(expr)-1]
@@ -1134,7 +1230,9 @@ func evaluateSearchQuery(store *engine.Store, indexName string, node *searchQuer
 				keys []string
 				ok   bool
 			)
-			if node.clause.textPrefix {
+			if node.clause.textFuzzy > 0 {
+				keys, ok = store.SearchTextFuzzyKeys(indexName, node.clause.alias, *node.clause.text, node.clause.textFuzzy)
+			} else if node.clause.textPrefix {
 				keys, ok = store.SearchTextPrefixKeys(indexName, node.clause.alias, *node.clause.text)
 			} else {
 				keys, ok = store.SearchTextKeys(indexName, node.clause.alias, *node.clause.text, language)
@@ -1296,7 +1394,7 @@ func stripSearchStopwords(def engine.SearchDefinition, node *searchQueryNode) (*
 		if node.clause == nil {
 			return node, true
 		}
-		if node.clause.text != nil && !node.clause.textPrefix &&
+		if node.clause.text != nil && !node.clause.textPrefix && node.clause.textFuzzy == 0 &&
 			engine.SearchIsStopword(def, *node.clause.text) {
 			return nil, false
 		}
