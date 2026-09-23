@@ -115,6 +115,9 @@ func (s *Server) executePressureCommand(args [][]byte) ([]byte, error) {
 	if isHyperLogLogCommand(args) {
 		return s.executeHyperLogLog(args)
 	}
+	if isBloomCommand(args) {
+		return s.executeBloom(args)
+	}
 	if isGeoCommand(args) {
 		return s.executeGeo(args)
 	}
