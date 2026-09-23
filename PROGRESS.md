@@ -681,3 +681,15 @@ Before publication, the pending mutation journal is replayed onto the new genera
 The command remains synchronous for compatibility: the client issuing `FT.CREATE` waits for the build to finish. The production improvement is lock scope, not command asynchrony.
 
 Validation included repeated focused Search engine tests, race-tested engine/server coverage, `go vet ./...`, and a live concurrent rebuild probe over 20,000 JSON documents. During the measured live build, documents were updated, deleted, and newly created while `FT.CREATE` was running; the published generation reflected the final primary state and the probe completed with PASS.
+
+## Optimizer convergence — 2026-09-23
+
+SnugKV's background optimizer now converges both value representation and dense entry storage without requiring an explicit `SNUG.COMPACT` in the normal path.
+
+The maintenance loop periodically samples keys when the optimizer queue has headroom, recovering dropped or missed write-time enqueue attempts and allowing structured JSON values to be reconsidered after shared-shape admission matures. Existing rewrite interval, attempt interval, scratch, bandwidth, foreground-quiet, and CPU controls remain in force.
+
+Dense-entry structural convergence is now independent of arena-fragmentation thresholds. Layout statistics expose live entry count alongside capacity, and maintenance can trigger compaction when entry-slot slack is material even if the arena itself is not fragmented enough to justify compaction.
+
+The compactor now rebuilds the shard's key-to-entry table and packs live entries contiguously, clearing deleted entry holes and `freeIDs` instead of preserving sparse dense-entry storage. Arena, index, entry, and metadata accounting are recomputed from the rebuilt shard before publication.
+
+Validation included focused convergence tests, full engine/optimizer tests, race-tested engine/server/optimizer coverage, and `go vet ./...`. A delete-heavy development probe inserted 200,000 keys, retained 50,000, and allowed automatic convergence. Entry capacity fell from 225,091 to 50,000 and entry storage from 5,402,184 bytes to 1,200,000 bytes, reclaiming approximately 77.8% of dense entry storage while sampled surviving values remained correct.
