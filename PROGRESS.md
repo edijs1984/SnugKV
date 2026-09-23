@@ -807,3 +807,16 @@ Replica state retains the upstream replication ID and processed offset across re
 A live Redis 8.2 oracle and SnugKV oracle matched exactly for the audited Phase 2 core: backlog metadata shape, full sync establishment, offset advancement, partial PSYNC continuation, and invalid/future-offset fallback. The final Redis-vs-SnugKV diff was empty.
 
 Still deferred: ACK offset accounting/observability, Redis RDB full-sync interoperability, topology authentication/TLS, additional diskless-transfer hardening, and failover orchestration.
+
+
+## Replication Phase 2 ACK / Observability — 2026-09-23
+
+SnugKV now tracks acknowledged replication progress per connected replica and accepts `REPLCONF ACK <offset>` on replication links.
+
+ACK offsets are monotonic: lower/stale acknowledgements refresh the replica's ACK timestamp but do not move the recorded acknowledged offset backwards. `INFO replication` now exposes Redis-shaped replica lines with online state, acknowledged offset, and lag.
+
+SnugKV replicas periodically emit `REPLCONF ACK` while following an upstream primary, so the observability path works in real SnugKV-to-SnugKV replication rather than only in the synthetic oracle.
+
+Focused unit and race-enabled replication tests passed. The Redis 8.2 ACK oracle and SnugKV oracle matched exactly for replica visibility, online state, integer offset/lag, explicit ACK advancement, fresh lag, and stale-ACK monotonicity. The final Redis-vs-SnugKV diff was empty.
+
+Still deferred: Redis RDB full-sync interoperability, additional diskless-transfer hardening, topology authentication/TLS, and failover orchestration.

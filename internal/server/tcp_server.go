@@ -8,11 +8,11 @@ import (
 	"log"
 	"net"
 	"runtime/debug"
-	"strconv"
 	"snugkv/internal/config"
 	"snugkv/internal/engine"
 	"snugkv/internal/optimizer"
 	"snugkv/internal/resp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -410,9 +410,22 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				return
 			}
 			_ = conn.SetReadDeadline(time.Time{})
-			_, _ = io.Copy(io.Discard, reader)
-			s.server.replication.unregisterReplica(replicaID)
-			return
+			for {
+				replMsg, readErr := decoder.ReadCommand()
+				if readErr != nil {
+					s.server.replication.unregisterReplica(replicaID)
+					return
+				}
+				if len(replMsg) == 3 &&
+					strings.EqualFold(string(replMsg[0]), "REPLCONF") &&
+					strings.EqualFold(string(replMsg[1]), "ACK") {
+					offset, ackErr := strconv.ParseInt(string(replMsg[2]), 10, 64)
+					if ackErr == nil {
+						s.server.replication.acknowledgeReplica(replicaID, offset)
+					}
+					continue
+				}
+			}
 		}
 
 		if !borrowed && len(msg) > 0 &&

@@ -24,11 +24,15 @@ func waitReplication(t *testing.T, fn func() bool) {
 
 func TestReplicationPhase1FullSyncLiveWritesAndPromotion(t *testing.T) {
 	primary, err := Listen("127.0.0.1:0", engine.New())
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer primary.Close()
 
 	replica, err := Listen("127.0.0.1:0", engine.New())
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer replica.Close()
 
 	if _, err := primary.server.Execute([][]byte{[]byte("SET"), []byte("initial"), []byte("alpha")}); err != nil {
@@ -99,26 +103,33 @@ func TestReplicationPhase1FullSyncLiveWritesAndPromotion(t *testing.T) {
 func TestReplicationRoleAndInfoShape(t *testing.T) {
 	s := New(engine.New())
 	role, err := s.Execute([][]byte{[]byte("ROLE")})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.HasPrefix(string(role), "*3\r\n$6\r\nmaster\r\n") {
 		t.Fatalf("ROLE=%q", role)
 	}
 	info, err := s.Execute([][]byte{[]byte("INFO"), []byte("replication")})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(string(info), "role:master\r\n") ||
 		!strings.Contains(string(info), "connected_slaves:0\r\n") {
 		t.Fatalf("INFO replication=%q", info)
 	}
 }
 
-
 func TestReplicationPhase2PartialResyncAfterDisconnect(t *testing.T) {
 	primary, err := Listen("127.0.0.1:0", engine.New())
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer primary.Close()
 
 	replica, err := Listen("127.0.0.1:0", engine.New())
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer replica.Close()
 
 	addr := primary.listener.Addr().(*net.TCPAddr)
@@ -200,7 +211,9 @@ func TestReplicationPhase2InfoBacklogShape(t *testing.T) {
 	s := New(engine.New())
 
 	info, err := s.Execute([][]byte{[]byte("INFO"), []byte("replication")})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, want := range []string{
 		"repl_backlog_active:0\r\n",
 		"repl_backlog_size:",
@@ -210,5 +223,31 @@ func TestReplicationPhase2InfoBacklogShape(t *testing.T) {
 		if !strings.Contains(string(info), want) {
 			t.Fatalf("INFO replication missing %q: %q", want, info)
 		}
+	}
+}
+
+func TestReplicationACKMonotonicAndInfo(t *testing.T) {
+	s := New(engine.New())
+	s.replication.init()
+
+	id, _, _ := s.replication.registerReplica(func([]byte) error { return nil })
+	defer s.replication.unregisterReplica(id)
+
+	s.replication.acknowledgeReplica(id, 123)
+	s.replication.acknowledgeReplica(id, 7)
+
+	s.replication.mu.RLock()
+	got := s.replication.replicaAckOffsets[id]
+	s.replication.mu.RUnlock()
+	if got != 123 {
+		t.Fatalf("ack offset moved backwards: got=%d want=123", got)
+	}
+
+	info := s.replicationInfo()
+	if !strings.Contains(info, "connected_slaves:1\r\n") {
+		t.Fatalf("INFO replication missing connected slave: %q", info)
+	}
+	if !strings.Contains(info, "state=online,offset=123,lag=") {
+		t.Fatalf("INFO replication missing replica offset/lag: %q", info)
 	}
 }

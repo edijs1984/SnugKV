@@ -372,7 +372,8 @@ lands.
 
 - [x] Replication Phase 1: primary/replica control plane, full sync, live propagation, read-only replicas, promotion, and Redis-shaped audited behavior.
 - [x] Replication Phase 2 core: bounded backlog, Redis next-byte PSYNC offsets, reconnect continuation, and full-resync fallback with exact Redis 8.2 differential parity. Audit: `docs/REPLICATION-PHASE2-DIFFERENTIAL-AUDIT.md`.
-- [ ] Replication Phase 2 hardening: ACK offsets/observability, Redis RDB full-sync interoperability, diskless-transfer hardening, authentication/TLS topology support.
+- [x] Replication Phase 2 ACK/observability: REPLCONF ACK handling, monotonic per-replica offsets, lag reporting, replica INFO lines, periodic ACK emission, and exact Redis 8.2 differential parity. Audit: `docs/REPLICATION-ACK-DIFFERENTIAL-AUDIT.md`.
+- [ ] Replication Phase 2 hardening: Redis RDB full-sync interoperability, diskless-transfer hardening, authentication/TLS topology support.
 - [ ] Automatic failover / Sentinel-like behavior.
 - [ ] Cluster/sharding protocol.
 - [ ] Multi-node consistency and recovery model.
