@@ -302,15 +302,16 @@ func (r *replicationState) partialSyncPayloadLocked(runID string, offset int64) 
 	if !r.backlogActive || runID == "" || runID != r.runID {
 		return nil, false
 	}
-	if offset > r.offset {
+	// Redis PSYNC offsets identify the next byte the replica needs.
+	if offset > r.offset+1 {
 		return nil, false
 	}
-	if offset < r.backlogFirstOffset-1 {
+	if offset < r.backlogFirstOffset {
 		return nil, false
 	}
 	payloads := make([][]byte, 0)
 	for _, entry := range r.backlog {
-		if entry.endOffset > offset {
+		if entry.endOffset >= offset {
 			payloads = append(payloads, append([]byte(nil), entry.payload...))
 		}
 	}
@@ -577,7 +578,7 @@ func (s *Server) runReplicaFollow(host string, port int, cancel <-chan struct{})
 func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struct{}) error {
 	s.replication.mu.RLock()
 	requestedRunID := s.replication.masterRunID
-	requestedOffset := s.replication.offset
+	requestedOffset := s.replication.offset + 1
 	s.replication.mu.RUnlock()
 	if requestedRunID == "" {
 		requestedRunID = "?"
