@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"runtime/debug"
+	"strconv"
 	"snugkv/internal/config"
 	"snugkv/internal/engine"
 	"snugkv/internal/optimizer"
@@ -392,7 +393,14 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				}
 				continue
 			}
-			replicaID, psyncErr := s.server.handlePSYNC(writer.write)
+			requestedOffset, parseErr := strconv.ParseInt(string(msg[2]), 10, 64)
+			if parseErr != nil {
+				if writer.write(errorResponse(errors.New("ERR invalid PSYNC offset"))) != nil {
+					return
+				}
+				continue
+			}
+			replicaID, psyncErr := s.server.handlePSYNC(writer.write, string(msg[1]), requestedOffset)
 			if psyncErr != nil {
 				_ = writer.write(errorResponse(psyncErr))
 				return

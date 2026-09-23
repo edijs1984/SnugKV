@@ -26,6 +26,12 @@ const (
 	replicationReplica
 )
 
+type replicationBacklogEntry struct {
+	startOffset int64
+	endOffset   int64
+	payload     []byte
+}
+
 type replicationState struct {
 	mu sync.RWMutex
 
@@ -40,11 +46,18 @@ type replicationState struct {
 	runID string
 	offset int64
 
+	backlogActive bool
+	backlogSize int64
+	backlogBytes int64
+	backlogFirstOffset int64
+	backlog []replicationBacklogEntry
+
 	nextReplicaID uint64
 	replicas map[uint64]func([]byte) error
 
 	followCancel chan struct{}
 	followDone chan struct{}
+	masterRunID string
 }
 
 type replicationSnapshot struct {
@@ -56,6 +69,10 @@ type replicationSnapshot struct {
 	connectedReplicas int
 	runID string
 	offset int64
+	backlogActive bool
+	backlogSize int64
+	backlogBytes int64
+	backlogFirstOffset int64
 }
 
 func (r *replicationState) snapshot() replicationSnapshot {
@@ -70,11 +87,19 @@ func (r *replicationState) snapshot() replicationSnapshot {
 		connectedReplicas: r.connectedReplicas,
 		runID: r.runID,
 		offset: r.offset,
+		backlogActive: r.backlogActive,
+		backlogSize: r.backlogSize,
+		backlogBytes: r.backlogBytes,
+		backlogFirstOffset: r.backlogFirstOffset,
 	}
 }
 
 func (r *replicationState) setReplica(host string, port int) {
 	r.mu.Lock()
+	if r.masterHost != host || r.masterPort != port {
+		r.masterRunID = ""
+		r.offset = 0
+	}
 	r.role = replicationReplica
 	r.masterHost = host
 	r.masterPort = port
@@ -108,6 +133,7 @@ func (r *replicationState) promote() {
 	r.masterPort = 0
 	r.masterLinkStatus = ""
 	r.masterSyncInProgress = false
+	r.masterRunID = ""
 	r.mu.Unlock()
 }
 
@@ -145,10 +171,18 @@ func (s *Server) replicationInfo() string {
 			"role:master\r\n"+
 			"connected_slaves:%d\r\n"+
 			"master_replid:%s\r\n"+
-			"master_repl_offset:%d\r\n",
+			"master_repl_offset:%d\r\n"+
+			"repl_backlog_active:%d\r\n"+
+			"repl_backlog_size:%d\r\n"+
+			"repl_backlog_first_byte_offset:%d\r\n"+
+			"repl_backlog_histlen:%d\r\n",
 		state.connectedReplicas,
 		state.runID,
 		state.offset,
+		replicationBoolInt(state.backlogActive),
+		state.backlogSize,
+		state.backlogFirstOffset,
+		state.backlogBytes,
 	)
 }
 
@@ -222,13 +256,72 @@ func (r *replicationState) init() {
 	if r.replicas == nil {
 		r.replicas = make(map[uint64]func([]byte) error)
 	}
+	if r.backlogSize == 0 {
+		r.backlogSize = 1024 * 1024
+	}
+	if r.backlogFirstOffset == 0 {
+		r.backlogFirstOffset = 1
+	}
 	r.mu.Unlock()
+}
+
+func (r *replicationState) ensureBacklogLocked() {
+	if r.backlogSize == 0 {
+		r.backlogSize = 1024 * 1024
+	}
+	if !r.backlogActive {
+		r.backlogActive = true
+		r.backlogFirstOffset = r.offset + 1
+	}
+}
+
+func (r *replicationState) appendBacklogLocked(frame []byte, payload []byte) {
+	r.ensureBacklogLocked()
+	start := r.offset + 1
+	end := r.offset + int64(len(frame))
+	entry := replicationBacklogEntry{
+		startOffset: start,
+		endOffset: end,
+		payload: append([]byte(nil), payload...),
+	}
+	r.backlog = append(r.backlog, entry)
+	r.backlogBytes += int64(len(frame))
+	r.offset = end
+	for len(r.backlog) > 0 && r.backlogBytes > r.backlogSize {
+		r.backlogBytes -= r.backlog[0].endOffset - r.backlog[0].startOffset + 1
+		r.backlog = r.backlog[1:]
+	}
+	if len(r.backlog) > 0 {
+		r.backlogFirstOffset = r.backlog[0].startOffset
+	} else {
+		r.backlogFirstOffset = r.offset + 1
+	}
+}
+
+func (r *replicationState) partialSyncPayloadLocked(runID string, offset int64) ([][]byte, bool) {
+	if !r.backlogActive || runID == "" || runID != r.runID {
+		return nil, false
+	}
+	// Redis PSYNC offsets identify the next byte the replica needs.
+	if offset > r.offset+1 {
+		return nil, false
+	}
+	if offset < r.backlogFirstOffset {
+		return nil, false
+	}
+	payloads := make([][]byte, 0)
+	for _, entry := range r.backlog {
+		if entry.endOffset >= offset {
+			payloads = append(payloads, append([]byte(nil), entry.payload...))
+		}
+	}
+	return payloads, true
 }
 
 func (r *replicationState) primaryHasReplicas() bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.role == replicationMaster && len(r.replicas) > 0
+	return r.role == replicationMaster && (len(r.replicas) > 0 || r.backlogActive)
 }
 
 func (r *replicationState) registerReplica(write func([]byte) error) (uint64, string, int64) {
@@ -299,27 +392,49 @@ func (s *Server) publishReplication(records []persistence.Record) {
 	}
 	payload := replicationBulk(frame)
 
-	s.replication.mu.RLock()
+	s.replication.mu.Lock()
+	s.replication.appendBacklogLocked(frame, payload)
 	targets := make(map[uint64]func([]byte) error, len(s.replication.replicas))
 	for id, write := range s.replication.replicas {
 		targets[id] = write
 	}
-	s.replication.mu.RUnlock()
+	s.replication.mu.Unlock()
 
 	for id, write := range targets {
 		if err := write(payload); err != nil {
 			s.replication.unregisterReplica(id)
 		}
 	}
-
-	s.replication.mu.Lock()
-	s.replication.offset += int64(len(frame))
-	s.replication.mu.Unlock()
 }
 
-func (s *Server) handlePSYNC(write func([]byte) error) (uint64, error) {
+func (s *Server) handlePSYNC(write func([]byte) error, requestedRunID string, requestedOffset int64) (uint64, error) {
 	s.durableMu.Lock()
 	defer s.durableMu.Unlock()
+
+	// durableMu prevents a committed write from slipping between backlog
+	// selection and replica registration.
+	s.replication.mu.RLock()
+	payloads, partial := s.replication.partialSyncPayloadLocked(requestedRunID, requestedOffset)
+	s.replication.mu.RUnlock()
+	if partial {
+		id, _, _ := s.replication.registerReplica(write)
+		ok := false
+		defer func() {
+			if !ok {
+				s.replication.unregisterReplica(id)
+			}
+		}()
+		if err := write([]byte("+CONTINUE\r\n")); err != nil {
+			return 0, err
+		}
+		for _, payload := range payloads {
+			if err := write(payload); err != nil {
+				return 0, err
+			}
+		}
+		ok = true
+		return id, nil
+	}
 
 	records := s.store.Export(nil)
 	full := make([]persistence.Record, 0, len(records)+1)
@@ -331,6 +446,10 @@ func (s *Server) handlePSYNC(write func([]byte) error) (uint64, error) {
 	}
 
 	id, runID, offset := s.replication.registerReplica(write)
+	s.replication.mu.Lock()
+	s.replication.ensureBacklogLocked()
+	s.replication.mu.Unlock()
+
 	ok := false
 	defer func() {
 		if !ok {
@@ -457,41 +576,56 @@ func (s *Server) runReplicaFollow(host string, port int, cancel <-chan struct{})
 }
 
 func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struct{}) error {
-	if err := writeReplicationRESPCommand(conn, "PSYNC", "?", "-1"); err != nil {
+	s.replication.mu.RLock()
+	requestedRunID := s.replication.masterRunID
+	requestedOffset := s.replication.offset + 1
+	s.replication.mu.RUnlock()
+	if requestedRunID == "" {
+		requestedRunID = "?"
+		requestedOffset = -1
+	}
+	if err := writeReplicationRESPCommand(conn, "PSYNC", requestedRunID, strconv.FormatInt(requestedOffset, 10)); err != nil {
 		return err
 	}
+
 	reader := bufio.NewReader(conn)
 	line, err := reader.ReadString('\n')
 	if err != nil {
 		return err
 	}
-	if !strings.HasPrefix(line, "+FULLRESYNC ") {
-		return errors.New("master did not provide FULLRESYNC")
-	}
-	parts := strings.Fields(line)
-	if len(parts) >= 3 {
-		if off, parseErr := strconv.ParseInt(parts[2], 10, 64); parseErr == nil {
-			s.replication.mu.Lock()
-			s.replication.offset = off
-			s.replication.mu.Unlock()
+
+	if strings.HasPrefix(line, "+FULLRESYNC ") {
+		parts := strings.Fields(line)
+		if len(parts) < 3 {
+			return errors.New("invalid FULLRESYNC response")
 		}
+		off, parseErr := strconv.ParseInt(parts[2], 10, 64)
+		if parseErr != nil {
+			return errors.New("invalid FULLRESYNC offset")
+		}
+		s.replication.mu.Lock()
+		s.replication.masterRunID = parts[1]
+		s.replication.offset = off
+		s.replication.mu.Unlock()
+
+		frame, err := readReplicationRESP(reader)
+		if err != nil {
+			return err
+		}
+		records, err := decodeReplicationFrame(frame)
+		if err != nil {
+			return err
+		}
+		s.durableMu.Lock()
+		err = s.store.Restore(records, true)
+		s.durableMu.Unlock()
+		if err != nil {
+			return err
+		}
+	} else if !strings.HasPrefix(line, "+CONTINUE") {
+		return errors.New("master did not provide FULLRESYNC or CONTINUE")
 	}
 
-	frame, err := readReplicationRESP(reader)
-	if err != nil {
-		return err
-	}
-	records, err := decodeReplicationFrame(frame)
-	if err != nil {
-		return err
-	}
-
-	s.durableMu.Lock()
-	err = s.store.Restore(records, true)
-	s.durableMu.Unlock()
-	if err != nil {
-		return err
-	}
 	s.replication.setReplicaConnected()
 
 	for {

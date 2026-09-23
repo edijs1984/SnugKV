@@ -147,6 +147,10 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Verified
 
+- Replication Phase 2 core adds a bounded backlog, Redis next-byte PSYNC offset semantics, reconnect continuation via `+CONTINUE`, full-resync fallback for unserviceable offsets, replica-side upstream replid/offset reuse, and exact Redis 8.2 live differential parity for the audited slice.
+
+- Replication Phase 2 core adds a bounded backlog, Redis next-byte PSYNC offset semantics, reconnect continuation via `+CONTINUE`, full-resync fallback for unserviceable offsets, replica-side upstream replid/offset reuse, and exact Redis 8.2 live differential parity for the audited slice.
+
 - Replication Phase 1 adds SnugKV primary/replica support with Redis-shaped REPLICAOF/ROLE/INFO replication/PSYNC control flow, full logical snapshot sync, live logical-frame propagation, TTL preservation, replica read-only enforcement, disconnect cleanup, promotion, transaction replication, and exact live oracle parity for the audited surface.
 
 
