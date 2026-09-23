@@ -147,6 +147,9 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Verified
 
+- Redis Search vector Phase 1 for JSON indexes: `VECTOR FLAT` schema fields with `FLOAT32`, fixed `DIM`, `COSINE`, binary `PARAMS`, KNN, `VECTOR_RANGE`, score aliases, vector-aware `RETURN`, explicit `SORTBY score`, and audited error handling. Unsorted/tied vector result order and Redis-only `FT.INFO` implementation statistics are not treated as compatibility requirements.
+
+
 - Redis Search `FT.AGGREGATE` core pipeline over JSON indexes, including base queries, `LOAD`, `FILTER`, `GROUPBY`, `REDUCE COUNT|SUM|MIN|MAX|AVG`, aggregate `SORTBY`, `LIMIT`, DIALECT 1/2, and audited parser/error behavior. Remaining live-diff noise is limited to Redis's incidental unsorted row/group ordering and empty-row formatting.
 
 
