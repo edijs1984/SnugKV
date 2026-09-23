@@ -122,6 +122,8 @@ Not yet implemented: unqualified full-text terms,
 phonetics, suffix/infix wildcard expansion,
 relevance scoring or broader language-specific tokenization beyond the audited English/German subset.
 
+PHONETIC `dm:en` adds a parallel phonetic posting map per TEXT field. Exact term lookup unions surface/stem matches with the matching phonetic code; prefix, wildcard, fuzzy, and phrase execution keep their existing measured semantics.
+
 Wildcard execution supports three measured shapes over indexed surface terms: prefix (`mem*`), suffix (`*ory`), and contains (`*mor*`). Arbitrary internal globbing is intentionally not generalized because the audited Redis forms such as `m*mory` return zero matches rather than behaving like a generic glob engine.
 
 Unqualified TEXT terms are evaluated across all indexed TEXT fields. Each unqualified clause unions matches across eligible TEXT fields, while the query AST preserves implicit AND/OR/NOT composition; quoted phrases must match within a single TEXT field.
