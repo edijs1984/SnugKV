@@ -361,6 +361,7 @@ lands.
   - [x] Bloom filter Phase 1: native persistent Bloom values, reserve/add/exists, multi operations, cardinality/info, audited insert options, TTL/persistence, OOM/ACL metadata, and RedisBloom live differential parity for the audited slice.
   - [x] Audit and add scalable Bloom expansion/overflow semantics, including geometric filter generations, `EXPANSION`, `NONSCALING`, overflow errors, and `BF.INFO` parity.
   - [ ] Add additional probabilistic families (Cuckoo, CMS, TopK, t-digest) and TimeSeries in separate audited slices.
+  - [x] Cuckoo filter Phase 1: native persistent fingerprint filters with reserve/add/addnx/insert/insertnx/exists/mexists/count/delete/info, TTL/persistence, ACL/OOM metadata, and RedisBloom live differential parity for the audited slice.
 - [x] Return to optimizer convergence so dropped/missed optimization candidates are periodically revisited and dense-entry compaction is reached automatically without an explicit `SNUG.COMPACT`.
 
 ### P4 — distributed features (outside current single-node target)
