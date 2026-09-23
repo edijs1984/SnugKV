@@ -693,3 +693,15 @@ Dense-entry structural convergence is now independent of arena-fragmentation thr
 The compactor now rebuilds the shard's key-to-entry table and packs live entries contiguously, clearing deleted entry holes and `freeIDs` instead of preserving sparse dense-entry storage. Arena, index, entry, and metadata accounting are recomputed from the rebuilt shard before publication.
 
 Validation included focused convergence tests, full engine/optimizer tests, race-tested engine/server/optimizer coverage, and `go vet ./...`. A delete-heavy development probe inserted 200,000 keys, retained 50,000, and allowed automatic convergence. Entry capacity fell from 225,091 to 50,000 and entry storage from 5,402,184 bytes to 1,200,000 bytes, reclaiming approximately 77.8% of dense entry storage while sampled surviving values remained correct.
+
+## Bloom filter Phase 1 — 2026-09-23
+
+SnugKV now has a first-class native Bloom value type with packed persistent storage and RedisBloom-compatible command routing for the audited core surface.
+
+Implemented commands: `BF.RESERVE`, `BF.ADD`, `BF.EXISTS`, `BF.MADD`, `BF.MEXISTS`, `BF.CARD`, `BF.INFO`, and the audited `BF.INSERT ... CAPACITY ... ERROR ... ITEMS` form. Bloom updates preserve TTL, participate in normal max-memory admission and persistence/restore, and expose Bloom command metadata/ACL categories.
+
+The live oracle was first captured from RedisBloom on port 6392, including exact response shapes, argument errors, `BF.INFO` labels/counters, auto-create behavior, and the RedisBloom quirk where `BF.EXISTS` on a plain string returns 0 while `BF.ADD` returns WRONGTYPE.
+
+The same oracle was then run against SnugKV on port 6383. The complete output matched line-for-line except for the expected first-line target/port label.
+
+Phase 1 intentionally does not claim scalable Bloom-chain compatibility yet. Expansion/overflow behavior remains a separate RedisBloom audit target.
