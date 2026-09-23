@@ -2,6 +2,7 @@ package engine
 
 import (
 	"snugkv/internal/arena"
+	"snugkv/internal/index"
 	"sort"
 	"unsafe"
 )
@@ -13,21 +14,6 @@ func shardEntryStorageBytes(sh *shard) uint64 {
 			uint64(cap(sh.metas.slots))*entryMetaSlotBytes
 	}
 	return bytes
-}
-
-func compactDenseEntryStorage(sh *shard) {
-	if len(sh.freeIDs) != 0 || cap(sh.entries) == len(sh.entries) {
-		return
-	}
-	entries := make([]entryData, len(sh.entries))
-	copy(entries, sh.entries)
-	sh.entries = entries
-
-	if sh.metas != nil {
-		slots := make([]*entryMeta, len(sh.entries))
-		copy(slots, sh.metas.slots)
-		sh.metas.slots = slots
-	}
 }
 
 // Compact reclaims unused arena segments, index slots, and dense entry
@@ -79,11 +65,6 @@ func (s *Store) Compact(scratch uint64) int {
 		projected := fresh.GrowthFor(lengths)
 
 		s.memory.mu.Lock()
-		if max := s.memory.max.Load(); max > 0 && s.memory.used-oldArena+projected > max {
-			s.memory.mu.Unlock()
-			sh.mu.Unlock()
-			continue
-		}
 
 		for j := range items {
 			e := items[j].value
@@ -104,18 +85,46 @@ func (s *Store) Compact(scratch uint64) int {
 			items[j].value = e
 		}
 
-		sh.arena = fresh
-
-		for _, item := range items {
-			sh.set(item.key, item.value)
+		freshIndex := index.New[uint32]()
+		freshEntries := make([]entryData, len(items))
+		var freshMetas *entryMetaSidecar
+		if sh.metas != nil {
+			freshMetas = &entryMetaSidecar{slots: make([]*entryMeta, len(items))}
 		}
-		sh.data.Compact()
-		compactDenseEntryStorage(sh)
-		newArena, newIndex := sh.arena.TotalMemoryBytes(), sh.data.CapacityBytes()
-		newEntries := shardEntryStorageBytes(sh)
-		s.memory.used = s.memory.used -
+		for j, item := range items {
+			freshEntries[j] = item.value.entryData
+			if freshMetas != nil {
+				freshMetas.slots[j] = item.value.entryMeta
+			}
+			freshIndex.Set(item.key, uint32(j))
+		}
+
+		newArena := fresh.TotalMemoryBytes()
+		newIndex := freshIndex.CapacityBytes()
+		newEntries := uint64(cap(freshEntries)) * entryStructBytes
+		if freshMetas != nil {
+			newEntries += uint64(unsafe.Sizeof(entryMetaSidecar{})) +
+				uint64(cap(freshMetas.slots))*entryMetaSlotBytes
+		}
+
+		// Account for the complete compacted shard, not only arena growth.
+		// Dense entry holes and oversized index tables are reclaimed together.
+		next := s.memory.used -
 			oldArena - oldIndex - oldEntries +
 			newArena + newIndex + newEntries
+		if max := s.memory.max.Load(); max > 0 && next > max {
+			s.memory.mu.Unlock()
+			sh.mu.Unlock()
+			continue
+		}
+
+		sh.arena = fresh
+		sh.data = *freshIndex
+		sh.entries = freshEntries
+		sh.metas = freshMetas
+		sh.freeIDs = nil
+
+		s.memory.used = next
 		s.memory.arenas = s.memory.arenas - oldArena + newArena
 		s.memory.index = s.memory.index - oldIndex + newIndex
 		s.memory.entries = s.memory.entries - oldEntries + newEntries
