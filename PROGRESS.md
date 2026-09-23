@@ -671,3 +671,13 @@ The initial implementation intentionally uses a FLAT scan over the current JSON 
 The live differential probe in `compat/search/search-vector.py` was run against Redis Search on port 6392 and SnugKV on port 6383. Explicit `SORTBY score ASC` matched exactly, including Redis's measured FLOAT32 cosine score formatting. Remaining differences are limited to Redis's richer `FT.INFO` implementation statistics and unsorted/tied KNN/range result ordering; equal-distance tie selection is not treated as a compatibility requirement.
 
 Focused vector tests, full engine/server tests, race tests, and `go vet ./...` passed.
+
+## Search online rebuild generations — 2026-09-23
+
+Search index creation now uses a generation build instead of holding every primary shard locked for the entire `FT.CREATE` backfill. A pending generation is registered first, the primary dataset is snapshotted one shard at a time under short read locks, posting construction happens outside primary shard locks, and concurrent matching JSON mutations/deletes are retained in a last-write-wins journal.
+
+Before publication, the pending mutation journal is replayed onto the new generation under the Search manager lock, then the generation is atomically installed. Mutations that complete after publication continue through the ordinary synchronous Search update path. Pending builds can also be cancelled through index drop handling.
+
+The command remains synchronous for compatibility: the client issuing `FT.CREATE` waits for the build to finish. The production improvement is lock scope, not command asynchrony.
+
+Validation included repeated focused Search engine tests, race-tested engine/server coverage, `go vet ./...`, and a live concurrent rebuild probe over 20,000 JSON documents. During the measured live build, documents were updated, deleted, and newly created while `FT.CREATE` was running; the published generation reflected the final primary state and the probe completed with PASS.
