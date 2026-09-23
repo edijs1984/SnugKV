@@ -18,7 +18,7 @@ echo "target=$TARGET port=$PORT"
 echo
 echo "=== reset ==="
 run FLUSHDB
-for idx in modtxt modtag modnum modmix badweight baddup; do
+for idx in modtxt modtag modnum modmix badw1 badw2 badw3 badw4 badw5 dupsort dupnoindex dupweight order1 order2 order3 order4 order5 order6; do
   run FT.DROPINDEX "$idx"
 done
 
@@ -66,23 +66,41 @@ run FT.SEARCH modmix '*' SORTBY category ASC NOCONTENT
 
 echo
 echo "=== weight validation ==="
-run FT.CREATE badweight ON JSON SCHEMA '$.title' AS title TEXT WEIGHT
-run FT.CREATE badweight ON JSON SCHEMA '$.title' AS title TEXT WEIGHT nope
-run FT.CREATE badweight ON JSON SCHEMA '$.title' AS title TEXT WEIGHT -1
-run FT.CREATE badweight ON JSON SCHEMA '$.title' AS title TEXT WEIGHT 0
-run FT.CREATE badweight ON JSON SCHEMA '$.title' AS title TEXT WEIGHT 1.5
-run FT.DROPINDEX badweight
+run FT.CREATE badw1 ON JSON SCHEMA '$.title' AS title TEXT WEIGHT
+run FT.INFO badw1
+run FT.CREATE badw2 ON JSON SCHEMA '$.title' AS title TEXT WEIGHT nope
+run FT.CREATE badw3 ON JSON SCHEMA '$.title' AS title TEXT WEIGHT -1
+run FT.CREATE badw4 ON JSON SCHEMA '$.title' AS title TEXT WEIGHT 0
+run FT.CREATE badw5 ON JSON SCHEMA '$.title' AS title TEXT WEIGHT 1.5
+run FT.INFO badw5
 
 echo
 echo "=== duplicate modifiers ==="
-run FT.CREATE baddup ON JSON SCHEMA '$.title' AS title TEXT SORTABLE SORTABLE
-run FT.CREATE baddup ON JSON SCHEMA '$.title' AS title TEXT NOINDEX NOINDEX
-run FT.CREATE baddup ON JSON SCHEMA '$.title' AS title TEXT WEIGHT 2 WEIGHT 3
-run FT.DROPINDEX baddup
+run FT.CREATE dupsort ON JSON SCHEMA '$.title' AS title TEXT SORTABLE SORTABLE
+run FT.INFO dupsort
+run FT.CREATE dupnoindex ON JSON SCHEMA '$.title' AS title TEXT NOINDEX NOINDEX
+run FT.INFO dupnoindex
+run FT.CREATE dupweight ON JSON SCHEMA '$.title' AS title TEXT WEIGHT 2 WEIGHT 3
+run FT.INFO dupweight
+
+echo
+echo "=== modifier ordering ==="
+run FT.CREATE order1 ON JSON SCHEMA '$.title' AS title TEXT WEIGHT 3 SORTABLE NOINDEX
+run FT.INFO order1
+run FT.CREATE order2 ON JSON SCHEMA '$.title' AS title TEXT WEIGHT 3 NOINDEX SORTABLE
+run FT.INFO order2
+run FT.CREATE order3 ON JSON SCHEMA '$.title' AS title TEXT NOINDEX SORTABLE
+run FT.INFO order3
+run FT.CREATE order4 ON JSON SCHEMA '$.price' AS price NUMERIC NOINDEX SORTABLE
+run FT.INFO order4
+run FT.CREATE order5 ON JSON SCHEMA '$.category' AS category TAG NOINDEX SORTABLE
+run FT.INFO order5
+run FT.CREATE order6 ON JSON SCHEMA '$.title' AS title TEXT SORTABLE NOINDEX
+run FT.INFO order6
 
 echo
 echo "=== drop ==="
-for idx in modtxt modtag modnum modmix; do
+for idx in modtxt modtag modnum modmix badw1 badw2 badw3 badw4 badw5 dupsort dupnoindex dupweight order1 order2 order3 order4 order5 order6; do
   run FT.DROPINDEX "$idx"
 done
 run FT._LIST
