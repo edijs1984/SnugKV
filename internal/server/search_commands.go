@@ -825,11 +825,12 @@ func parseMeasuredSearchWildcard(expr, fullQuery string, fielded bool) (value st
 	}
 
 	// Redis treats a single backslash before '*' as escaping the wildcard.
-	// Two backslashes leave the wildcard active after escape processing.
-	if strings.Contains(expr, "\\*") && !strings.Contains(expr, "\\\\*") {
+	// Two backslashes leave '*' active after escape processing.
+	if strings.Contains(expr, "\\\\*") {
+		expr = strings.ReplaceAll(expr, "\\\\*", "*")
+	} else if strings.Contains(expr, "\\*") {
 		return strings.ToLower(strings.ReplaceAll(expr, "\\*", "*")), false, false, true, true, nil
 	}
-	expr = strings.ReplaceAll(expr, "\\\\", "\\")
 
 	count := strings.Count(expr, "*")
 	if expr == "*" {
@@ -905,6 +906,12 @@ func parseSearchClause(part, fullQuery string) (searchQueryClause, error) {
 			token, distance, matched, err := parseSearchFuzzyExpr(part, fullQuery)
 			if matched {
 				if err != nil {
+					if strings.Contains(part, "*") {
+						if strings.HasPrefix(part, "*%") && strings.HasSuffix(part, "%*") {
+							return searchQueryClause{}, errors.New("SEARCH_SYNTAX Syntax error at offset 1 near ")
+						}
+						return searchQueryClause{}, err
+					}
 					offset := strings.LastIndex(part, "%")
 					if strings.HasPrefix(part, "%%%%") {
 						offset = 3
@@ -950,6 +957,14 @@ func parseSearchClause(part, fullQuery string) (searchQueryClause, error) {
 
 	if token, distance, matched, err := parseSearchFuzzyExpr(expr, fullQuery); matched {
 		if err != nil {
+			if strings.HasPrefix(expr, "*%") && strings.HasSuffix(expr, "%*") {
+				colon := strings.Index(fullQuery, ":")
+				offset := 0
+				if colon >= 0 {
+					offset = colon + 1
+				}
+				return searchQueryClause{}, fmt.Errorf("SEARCH_SYNTAX Syntax error at offset %d near text", offset)
+			}
 			return searchQueryClause{}, err
 		}
 		clause.text = &token
