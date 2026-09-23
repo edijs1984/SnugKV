@@ -56,7 +56,7 @@ func cloneEntryMeta(meta *entryMeta) *entryMeta {
 }
 
 func isNativeContainerType(t ValueType) bool {
-	return t == TypeHash || t == TypeSet || t == TypeList || t == TypeZSet || t == TypeStream
+	return t == TypeHash || t == TypeSet || t == TypeList || t == TypeZSet || t == TypeStream || t == TypeBloom
 }
 
 func (s *Store) shouldTrackActivity(e entry) bool {
