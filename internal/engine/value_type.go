@@ -32,6 +32,7 @@ const (
 	TypeStream
 	TypeBloom
 	TypeCuckoo
+	TypeCMS
 )
 
 func (t ValueType) String() string {
@@ -64,6 +65,8 @@ func (t ValueType) String() string {
 		return "BLOOM"
 	case TypeCuckoo:
 		return "CUCKOO"
+	case TypeCMS:
+		return "CMS"
 	default:
 		return "UNKNOWN"
 	}
