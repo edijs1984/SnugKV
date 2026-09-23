@@ -212,22 +212,21 @@ func jsonFloat32Vector(raw []byte, dim int) ([]float32, bool) {
 }
 
 func cosineVectorDistance(a, b []float32) float64 {
-	var dot, aa, bb float64
+	var dot, aa, bb float32
 	for i := range a {
-		x := float64(a[i])
-		y := float64(b[i])
-		dot += x*y
-		aa += x*x
-		bb += y*y
+		dot += a[i] * b[i]
+		aa += a[i] * a[i]
+		bb += b[i] * b[i]
 	}
 	if aa == 0 || bb == 0 {
 		return 1
 	}
-	d := 1 - dot/(math.Sqrt(aa)*math.Sqrt(bb))
-	if d < 0 && d > -1e-12 {
-		return 0
+	denom := float32(math.Sqrt(float64(aa))) * float32(math.Sqrt(float64(bb)))
+	d := float32(1) - dot/denom
+	if d < 0 && d > -1e-6 {
+		d = 0
 	}
-	return d
+	return float64(d)
 }
 
 func executeFTVectorSearch(store *engine.Store, args [][]byte, def engine.SearchDefinition, spec vectorSearchSpec) ([]byte, error) {
@@ -308,7 +307,7 @@ func executeFTVectorSearch(store *engine.Store, args [][]byte, def engine.Search
 		if scoreRequested {
 			fields = append(fields,
 				formatBulkString([]byte(spec.scoreAlias)),
-				formatBulkString([]byte(strconv.FormatFloat(hit.distance, 'g', -1, 64))),
+				formatBulkString([]byte(strconv.FormatFloat(hit.distance, 'g', 12, 64))),
 			)
 		}
 		for _, name := range options.returnFields {
