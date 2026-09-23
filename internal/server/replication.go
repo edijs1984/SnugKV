@@ -693,6 +693,12 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 		_ = conn.SetReadDeadline(time.Now().Add(time.Second))
 		frame, err := readReplicationRESP(reader)
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			s.replication.mu.RLock()
+			ackOffset := s.replication.offset
+			s.replication.mu.RUnlock()
+			if writeErr := writeReplicationRESPCommand(conn, "REPLCONF", "ACK", strconv.FormatInt(ackOffset, 10)); writeErr != nil {
+				return writeErr
+			}
 			continue
 		}
 		if err != nil {
