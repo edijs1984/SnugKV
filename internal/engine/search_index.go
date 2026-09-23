@@ -54,6 +54,7 @@ type searchGeoPoint struct {
 }
 
 type searchDocumentState struct {
+	IndexingFailed bool
 	Tags          map[string][]string
 	Numerics      map[string][]float64
 	Geos          map[string][]searchGeoPoint
@@ -493,9 +494,10 @@ func extractSearchDocument(def SearchDefinition, raw []byte) (searchDocumentStat
 				}
 				point, ok := parseSearchGeoString(text)
 				if !ok {
-					// A malformed GEO string makes the document an indexing
-					// failure rather than partially indexing its other fields.
-					return searchDocumentState{}, nil
+					// Redis records an indexing failure for a malformed GEO
+					// string and excludes that document from the index. Missing
+					// or non-string GEO values are not failures.
+					return searchDocumentState{IndexingFailed: true}, nil
 				}
 				points = append(points, point)
 			}
@@ -666,10 +668,13 @@ func (idx *searchIndex) removeDocument(key string) {
 }
 
 func (idx *searchIndex) addDocument(key string, state searchDocumentState) {
-	if len(state.Tags) == 0 && len(state.Numerics) == 0 && len(state.Geos) == 0 && len(state.Texts) == 0 && len(state.TextPhonetics) == 0 {
+	if state.IndexingFailed {
 		return
 	}
 
+	// Redis counts every successfully indexed document matching the index
+	// prefix, even when all schema fields are missing or NOINDEX. Posting
+	// presence is therefore distinct from document membership.
 	idx.docs[key] = state
 
 	for alias, values := range state.Tags {
