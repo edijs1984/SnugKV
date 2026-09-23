@@ -17,7 +17,7 @@ func stemSearchGerman(word string) string {
 	).Replace(word)
 
 	// Remove common inflectional endings. Longest suffixes must be checked first.
-	for _, suffix := range []string{"ern", "em", "er", "en", "es", "e", "s"} {
+	for _, suffix := range []string{"ern", "em", "er", "en", "es", "e"} {
 		if !strings.HasSuffix(w, suffix) {
 			continue
 		}
@@ -26,6 +26,18 @@ func stemSearchGerman(word string) string {
 			continue
 		}
 		return base
+	}
+
+	// German Snowball removes a final 's' only after a restricted set of
+	// preceding letters. In particular, "haus" must remain "haus".
+	if strings.HasSuffix(w, "s") && len(w) > 1 {
+		prev := w[len(w)-2]
+		if strings.ContainsRune("bdfghklmnrt", rune(prev)) {
+			base := w[:len(w)-1]
+			if len([]rune(base)) >= 3 {
+				return base
+			}
+		}
 	}
 	return w
 }
