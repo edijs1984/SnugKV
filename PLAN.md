@@ -371,7 +371,8 @@ lands.
 ### P4 — distributed features (outside current single-node target)
 
 - [x] Replication Phase 1: primary/replica control plane, full sync, live propagation, read-only replicas, promotion, and Redis-shaped audited behavior.
-- [ ] Replication Phase 2: partial resynchronization/backlog, ACK offsets, reconnect continuation, diskless-transfer hardening, authentication/TLS topology support.
+- [x] Replication Phase 2 core: bounded backlog, Redis next-byte PSYNC offsets, reconnect continuation, and full-resync fallback with exact Redis 8.2 differential parity. Audit: `docs/REPLICATION-PHASE2-DIFFERENTIAL-AUDIT.md`.
+- [ ] Replication Phase 2 hardening: ACK offsets/observability, Redis RDB full-sync interoperability, diskless-transfer hardening, authentication/TLS topology support.
 - [ ] Automatic failover / Sentinel-like behavior.
 - [ ] Cluster/sharding protocol.
 - [ ] Multi-node consistency and recovery model.
