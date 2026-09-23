@@ -17,6 +17,7 @@ var searchCommands = map[string]commandInfo{
 	"FT._LIST":     {1, 1, 0, 0, 0, false},
 	"FT.INFO":      {2, 2, 0, 0, 0, false},
 	"FT.SEARCH":    {3, 0, 0, 0, 0, false},
+	"FT.AGGREGATE": {3, 0, 0, 0, 0, false},
 }
 
 func init() {
@@ -2196,6 +2197,8 @@ func (s *Server) executeSearchCommand(args [][]byte) ([]byte, error) {
 		return executeFTInfo(s.store, args)
 	case "FT.SEARCH":
 		return executeFTSearch(s.store, args)
+	case "FT.AGGREGATE":
+		return executeFTAggregate(s.store, args)
 	default:
 		return nil, errors.New("ERR command unavailable")
 	}

@@ -147,6 +147,9 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		return nil, fmt.Errorf("ERR unknown command '%s'", cmd)
 	}
 	if len(args) < info.min || info.max > 0 && len(args) > info.max {
+		if cmd == "FT.AGGREGATE" {
+			return nil, errors.New("ERR wrong number of arguments for 'FT.AGGREGATE' command")
+		}
 		return nil, fmt.Errorf("ERR wrong number of arguments for '%s' command", strings.ToLower(cmd))
 	}
 	key := ""
@@ -154,7 +157,7 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		key = string(args[1])
 	}
 	switch cmd {
-	case "FT.CREATE", "FT.DROPINDEX", "FT._LIST", "FT.INFO", "FT.SEARCH":
+	case "FT.CREATE", "FT.DROPINDEX", "FT._LIST", "FT.INFO", "FT.SEARCH", "FT.AGGREGATE":
 		return s.executeSearchCommand(args)
 
 	case "CONFIG":

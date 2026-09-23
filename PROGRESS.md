@@ -649,3 +649,13 @@ Malformed GEO strings are treated as document indexing failures, including on `G
 The differential harness `compat/search/search-geo.sh` was run against Redis Search on port 6392 and SnugKV on port 6383. GEO result sets, unit conversion, mutation/removal visibility, boolean composition, explicit `SORTBY`, schema modifiers, parser errors, and DIALECT behavior matched semantically. Remaining textual differences are the intentionally smaller SnugKV `FT.INFO` statistics payload and deterministic unsorted ordering; consequently, `LIMIT` without an explicit sort may select different members from the same result set.
 
 Focused GEO tests, full engine/server tests, race tests, `go vet ./...`, live process startup, and the final differential all passed.
+
+## Search FT.AGGREGATE milestone — 2026-09-23
+
+SnugKV Search now supports an audited `FT.AGGREGATE` pipeline for JSON-backed indexes. The implemented slice reuses the existing Search query parser and index candidate engine, then applies pipeline stages in order: `LOAD` / `FILTER`, `GROUPBY` / `REDUCE`, `SORTBY`, and `LIMIT`.
+
+Implemented reducers are `COUNT`, `SUM`, `MIN`, `MAX`, and `AVG`. `LOAD` supports schema aliases and raw JSON paths. `FILTER` supports the audited comparison expressions and conjunction form used by the differential harness, including pipeline property lookup and Redis-shaped missing-property errors. Aggregate `SORTBY` supports explicit ASC/DESC ordering and grouped reducer aliases, while `LIMIT` follows the measured Redis aggregate header/count semantics.
+
+The live harness `compat/search/search-aggregate.sh` was run against Redis Search on port 6392 and SnugKV on port 6383. Query selection, loaded values, filter behavior, reducer outputs, explicit sorting, limit behavior, DIALECT 1/2, and parser/error classes matched the audited Redis surface. Remaining textual differences are limited to Redis's incidental unsorted row/group ordering and empty-row whitespace formatting, which are not treated as compatibility requirements.
+
+Focused aggregate tests, full engine/server tests, race tests, and `go vet ./...` passed.
