@@ -84,6 +84,71 @@ func TestSearchDocumentExtraction(t *testing.T) {
 	}
 }
 
+
+func TestSearchPendingBuildJournalsLastMutation(t *testing.T) {
+	m := newSearchManager()
+	def := testSearchDefinition()
+	def.Prefixes = normalizeSearchPrefixes(def.Prefixes)
+
+	m.pending[def.Name] = &searchPendingBuild{
+		def:       cloneSearchDefinition(def),
+		mutations: make(map[string]searchBuildMutation),
+	}
+
+	if err := m.replaceJSON("product:1", []byte(`{"category":"books","price":10}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.replaceJSON("product:1", []byte(`{"category":"games","price":20}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.replaceJSON("ignored:1", []byte(`{"category":"books","price":30}`)); err != nil {
+		t.Fatal(err)
+	}
+
+	build := m.pending[def.Name]
+	mutation, ok := build.mutations["product:1"]
+	if !ok {
+		t.Fatal("matching mutation was not journaled")
+	}
+	if mutation.deleted {
+		t.Fatal("replacement mutation unexpectedly marked deleted")
+	}
+	if got, want := string(mutation.raw), `{"category":"games","price":20}`; got != want {
+		t.Fatalf("journal raw=%s want=%s", got, want)
+	}
+	if _, ok := build.mutations["ignored:1"]; ok {
+		t.Fatal("non-matching prefix mutation was journaled")
+	}
+
+	m.removeKey("product:1")
+	mutation = build.mutations["product:1"]
+	if !mutation.deleted {
+		t.Fatal("delete did not replace prior mutation")
+	}
+	if mutation.raw != nil {
+		t.Fatalf("delete retained raw payload=%q", mutation.raw)
+	}
+}
+
+func TestSearchDropCancelsPendingBuild(t *testing.T) {
+	m := newSearchManager()
+	def := testSearchDefinition()
+	m.pending[def.Name] = &searchPendingBuild{
+		def:       cloneSearchDefinition(def),
+		mutations: make(map[string]searchBuildMutation),
+	}
+
+	if !m.drop(def.Name) {
+		t.Fatal("drop did not cancel pending build")
+	}
+	if _, ok := m.pending[def.Name]; ok {
+		t.Fatal("pending build remained after drop")
+	}
+	if m.drop(def.Name) {
+		t.Fatal("second drop unexpectedly succeeded")
+	}
+}
+
 func TestSearchManagerCreateListDrop(t *testing.T) {
 	m := newSearchManager()
 	if err := m.create(testSearchDefinition()); err != nil {

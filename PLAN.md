@@ -356,6 +356,7 @@ lands.
 - [x] Add audited JSON Search `GEO` fields with Redis-compatible string coordinate indexing, radius units, boolean composition, mutation visibility, schema modifiers, and parser/error behavior.
 - [x] Add audited `FT.AGGREGATE` core pipeline with `LOAD`, `FILTER`, `GROUPBY`, `REDUCE COUNT|SUM|MIN|MAX|AVG`, aggregate `SORTBY`, `LIMIT`, and DIALECT 1/2.
 - [x] Add Search vector Phase 1 with JSON `VECTOR FLAT`, `FLOAT32`, fixed `DIM`, `COSINE`, KNN, `VECTOR_RANGE`, binary `PARAMS`, score aliases, and explicit score sorting.
+- [x] Add online Search index rebuild generations so `FT.CREATE` backfills without holding all primary shards locked for the full build, while concurrent updates/deletes/creates are journaled and replayed before atomic publication.
 - [ ] Add probabilistic/time-series structures only after the JSON/search storage
   boundaries are settled.
 - [ ] Return to optimizer convergence so dense-entry compaction is reached

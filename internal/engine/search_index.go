@@ -85,13 +85,27 @@ type searchIndex struct {
 	numericDirty  map[string]bool
 }
 
+type searchBuildMutation struct {
+	raw     []byte
+	deleted bool
+}
+
+type searchPendingBuild struct {
+	def       SearchDefinition
+	mutations map[string]searchBuildMutation
+}
+
 type searchManager struct {
 	mu      sync.RWMutex
 	indexes map[string]*searchIndex
+	pending map[string]*searchPendingBuild
 }
 
 func newSearchManager() *searchManager {
-	return &searchManager{indexes: make(map[string]*searchIndex)}
+	return &searchManager{
+		indexes: make(map[string]*searchIndex),
+		pending: make(map[string]*searchPendingBuild),
+	}
 }
 
 func cloneSearchDefinition(def SearchDefinition) SearchDefinition {
@@ -565,11 +579,15 @@ func (m *searchManager) drop(name string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if _, exists := m.indexes[name]; !exists {
-		return false
+	if _, exists := m.indexes[name]; exists {
+		delete(m.indexes, name)
+		return true
 	}
-	delete(m.indexes, name)
-	return true
+	if _, exists := m.pending[name]; exists {
+		delete(m.pending, name)
+		return true
+	}
+	return false
 }
 
 func (m *searchManager) names() []string {
@@ -803,6 +821,12 @@ func (m *searchManager) replaceJSON(key string, raw []byte) error {
 			return err
 		}
 	}
+	for _, build := range m.pending {
+		if !searchPrefixMatches(build.def.Prefixes, key) {
+			continue
+		}
+		build.mutations[key] = searchBuildMutation{raw: append([]byte(nil), raw...)}
+	}
 	return nil
 }
 
@@ -812,6 +836,12 @@ func (m *searchManager) removeKey(key string) {
 
 	for _, idx := range m.indexes {
 		idx.removeDocument(key)
+	}
+	for _, build := range m.pending {
+		if !searchPrefixMatches(build.def.Prefixes, key) {
+			continue
+		}
+		build.mutations[key] = searchBuildMutation{deleted: true}
 	}
 }
 
@@ -1757,35 +1787,83 @@ func (s *Store) CreateSearchIndex(def SearchDefinition) error {
 
 	manager := s.ensureSearchManager()
 
-	// Build the new index while all primary shards are locked, then publish it
-	// into the manager only after backfill is complete. This prevents queries
-	// from observing a partially built index and gives mutations a clean
-	// before/after publication boundary.
-	unlock := s.lockAll()
-	defer unlock()
-
+	// Register a pending generation before taking the snapshot. Primary
+	// mutations that race with snapshotting are journaled by replaceJSON/removeKey
+	// and replayed before publication.
 	manager.mu.Lock()
-	defer manager.mu.Unlock()
-
 	if _, exists := manager.indexes[def.Name]; exists {
+		manager.mu.Unlock()
 		return errors.New("ERR search index already exists")
 	}
+	if _, exists := manager.pending[def.Name]; exists {
+		manager.mu.Unlock()
+		return errors.New("ERR search index already exists")
+	}
+	manager.pending[def.Name] = &searchPendingBuild{
+		def:       cloneSearchDefinition(def),
+		mutations: make(map[string]searchBuildMutation),
+	}
+	manager.mu.Unlock()
 
-	idx := newSearchIndex(def)
+	type snapshotDocument struct {
+		key string
+		raw []byte
+	}
+	snapshot := make([]snapshotDocument, 0)
 	now := s.now()
+
+	// Snapshot one shard at a time. Each shard is read-locked only long enough
+	// to clone its current JSON values; posting construction is done later with
+	// no primary shard lock held.
 	for i := range s.shards {
 		sh := &s.shards[i]
+		sh.mu.RLock()
 		for key, entry := range sh.all() {
 			if sh.expired(key, entry, now) || entry.valueType != TypeJSON {
 				continue
 			}
-			if err := idx.replaceJSON(key, s.decode(sh, entry)); err != nil {
-				return err
-			}
+			snapshot = append(snapshot, snapshotDocument{
+				key: key,
+				raw: append([]byte(nil), s.decode(sh, entry)...),
+			})
+		}
+		sh.mu.RUnlock()
+	}
+
+	idx := newSearchIndex(def)
+	for _, document := range snapshot {
+		if err := idx.replaceJSON(document.key, document.raw); err != nil {
+			manager.mu.Lock()
+			delete(manager.pending, def.Name)
+			manager.mu.Unlock()
+			return err
 		}
 	}
 
+	// Publish under the manager lock. Mutations that finished their primary
+	// write before this lock either already exist in the journal or are blocked
+	// waiting to enter replaceJSON/removeKey; the latter will update the newly
+	// published generation after we unlock.
+	manager.mu.Lock()
+	build, exists := manager.pending[def.Name]
+	if !exists {
+		manager.mu.Unlock()
+		return errors.New("ERR search index build cancelled")
+	}
+	for key, mutation := range build.mutations {
+		if mutation.deleted {
+			idx.removeDocument(key)
+			continue
+		}
+		if err := idx.replaceJSON(key, mutation.raw); err != nil {
+			delete(manager.pending, def.Name)
+			manager.mu.Unlock()
+			return err
+		}
+	}
 	manager.indexes[def.Name] = idx
+	delete(manager.pending, def.Name)
+	manager.mu.Unlock()
 	return nil
 }
 

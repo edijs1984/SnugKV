@@ -147,6 +147,9 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Verified
 
+- Search index creation now builds an online generation: `FT.CREATE` snapshots JSON one shard at a time, journals concurrent matching mutations/deletes, replays them into the pending generation, and atomically publishes the finished index without holding all primary shards locked for the full backfill.
+
+
 - Redis Search vector Phase 1 for JSON indexes: `VECTOR FLAT` schema fields with `FLOAT32`, fixed `DIM`, `COSINE`, binary `PARAMS`, KNN, `VECTOR_RANGE`, score aliases, vector-aware `RETURN`, explicit `SORTBY score`, and audited error handling. Unsorted/tied vector result order and Redis-only `FT.INFO` implementation statistics are not treated as compatibility requirements.
 
 
