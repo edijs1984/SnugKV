@@ -62,6 +62,17 @@ func TestFTCreateSchemaModifiers(t *testing.T) {
 
 	reply, err = s.Execute([][]byte{
 		[]byte("FT.SEARCH"), []byte("modtxt"), []byte("*"),
+		[]byte("SORTBY"), []byte("title"), []byte("ASC"), []byte("NOCONTENT"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(reply); got != "*4\r\n:3\r\n$5\r\ndoc:3\r\n$5\r\ndoc:1\r\n$5\r\ndoc:2\r\n" {
+		t.Fatalf("TEXT sort reply=%q", got)
+	}
+
+	reply, err = s.Execute([][]byte{
+		[]byte("FT.SEARCH"), []byte("modtxt"), []byte("*"),
 		[]byte("SORTBY"), []byte("hidden"), []byte("ASC"), []byte("NOCONTENT"),
 	})
 	if err != nil {
