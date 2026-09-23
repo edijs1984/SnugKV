@@ -324,6 +324,8 @@ type searchOptions struct {
 	sortDesc     bool
 	dialect      int
 	language     string
+	slop         *int
+	inOrder      bool
 }
 
 
@@ -963,6 +965,21 @@ func parseSearchOptions(args [][]byte) (searchOptions, error) {
 			}
 			pos += 2
 
+		case "SLOP":
+			if pos+1 >= len(args) {
+				return searchOptions{}, errors.New("SEARCH_PARSE_ARGS Bad arguments for SLOP: Expected an argument, but none provided")
+			}
+			slop, err := strconv.Atoi(string(args[pos+1]))
+			if err != nil {
+				return searchOptions{}, errors.New("SEARCH_PARSE_ARGS Bad arguments for SLOP: Could not convert argument to expected type")
+			}
+			options.slop = &slop
+			pos += 2
+
+		case "INORDER":
+			options.inOrder = true
+			pos++
+
 		case "RETURN":
 			if pos+1 >= len(args) {
 				return searchOptions{}, errors.New("ERR syntax error")
@@ -1004,11 +1021,35 @@ func parseSearchOptions(args [][]byte) (searchOptions, error) {
 			}
 
 		default:
-			return searchOptions{}, errors.New("ERR unsupported FT.SEARCH option")
+			return searchOptions{}, fmt.Errorf("SEARCH_ARG_UNRECOGNIZED Unknown argument `%s` at position %d for <main>", string(args[pos]), pos-2)
 		}
 	}
 
 	return options, nil
+}
+
+func parseSimpleTextGroupForProximity(query string) (string, []string, bool) {
+	query = strings.TrimSpace(query)
+	if !strings.HasPrefix(query, "@") {
+		return "", nil, false
+	}
+	colon := strings.Index(query, ":(")
+	if colon <= 1 || !strings.HasSuffix(query, ")") {
+		return "", nil, false
+	}
+	alias := query[1:colon]
+	body := strings.TrimSpace(query[colon+2 : len(query)-1])
+	if body == "" || strings.ContainsAny(body, "()|{}[]\"*") {
+		return "", nil, false
+	}
+	terms := strings.Fields(body)
+	if len(terms) < 2 {
+		return "", nil, false
+	}
+	for i := range terms {
+		terms[i] = strings.ToLower(terms[i])
+	}
+	return alias, terms, true
 }
 
 func intersectSortedSearchKeys(sets ...[]string) []string {
@@ -1372,6 +1413,27 @@ func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 			return nil, err
 		}
 		candidates = matches
+	}
+
+	if options.slop != nil || options.inOrder {
+		if alias, terms, grouped := parseSimpleTextGroupForProximity(string(args[2])); grouped {
+			slop := 0
+			if options.slop != nil {
+				slop = *options.slop
+			}
+			proximity, ok := store.SearchTextProximityKeys(indexName, alias, terms, slop, options.inOrder, language)
+			if !ok {
+				return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
+			}
+			allowed := searchKeySet(proximity)
+			filtered := make([]string, 0, len(candidates))
+			for _, key := range candidates {
+				if _, ok := allowed[key]; ok {
+					filtered = append(filtered, key)
+				}
+			}
+			candidates = filtered
+		}
 	}
 
 
