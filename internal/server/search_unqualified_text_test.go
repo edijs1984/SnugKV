@@ -53,12 +53,12 @@ func searchNoContentKeys(t *testing.T, s *Server, index, query string, extra ...
 	}
 	raw := string(reply)
 	parts := strings.Split(raw, "\r\n")
-	if len(parts) < 3 {
+	if len(parts) < 2 || !strings.HasPrefix(parts[0], "*") || !strings.HasPrefix(parts[1], ":") {
 		t.Fatalf("bad reply %q", raw)
 	}
 	keys := make([]string, 0)
-	for i := 3; i+1 < len(parts); i += 2 {
-		if strings.HasPrefix(parts[i], "$") && i+1 < len(parts) {
+	for i := 2; i+1 < len(parts); i += 2 {
+		if strings.HasPrefix(parts[i], "$") {
 			keys = append(keys, parts[i+1])
 		}
 	}
