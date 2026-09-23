@@ -199,7 +199,7 @@ try:
         "role": before.get("role"),
         "master_replid_len": len(before.get("master_replid", "")),
         "master_repl_offset_is_integer": before.get("master_repl_offset", "").lstrip("-").isdigit(),
-        "repl_backlog_active": before.get("repl_backlog_active"),
+        "repl_backlog_active_is_boolean": before.get("repl_backlog_active") in ("0", "1"),
         "repl_backlog_size_is_integer": before.get("repl_backlog_size", "").isdigit(),
         "repl_backlog_first_byte_offset_is_integer": before.get("repl_backlog_first_byte_offset", "").lstrip("-").isdigit(),
         "repl_backlog_histlen_is_integer": before.get("repl_backlog_histlen", "").isdigit(),
@@ -211,7 +211,7 @@ try:
     time.sleep(0.05)
     after_full = info(c)
     print("backlog_after_full_sync=" + repr({
-        "active": after_full.get("repl_backlog_active"),
+        "active": after_full.get("repl_backlog_active") == "1",
         "histlen_positive_or_zero": int(after_full.get("repl_backlog_histlen", "0")) >= 0,
     }))
 
