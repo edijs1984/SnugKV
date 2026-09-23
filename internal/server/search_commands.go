@@ -835,11 +835,11 @@ func parseMeasuredSearchWildcard(expr, fullQuery string, fielded bool) (value st
 	if expr == "*" {
 		offset := strings.Index(fullQuery, "*")
 		if fielded {
-			near := "text"
-			if offset >= 0 {
-				offset++
+			colon := strings.Index(fullQuery, ":")
+			if colon >= 0 {
+				offset = colon + 1
 			}
-			return "", false, false, true, false, fmt.Errorf("SEARCH_SYNTAX Syntax error at offset %d near %s", offset, near)
+			return "", false, false, true, false, fmt.Errorf("SEARCH_SYNTAX Syntax error at offset %d near text", offset)
 		}
 		return "", false, false, false, false, nil
 	}
@@ -891,6 +891,11 @@ func parseSearchClause(part, fullQuery string) (searchQueryClause, error) {
 			phrase := part[1 : len(part)-1]
 			if strings.TrimSpace(phrase) == "" || strings.Contains(phrase, "\"") {
 				return searchQueryClause{}, errors.New("ERR unsupported search query")
+			}
+			if strings.Contains(phrase, "*") {
+				first := strings.Fields(phrase)[0]
+				near := strings.Trim(first, "*")
+				return searchQueryClause{}, fmt.Errorf("SEARCH_SYNTAX Syntax error at offset 1 near %s", near)
 			}
 			clause.textPhrase = &phrase
 			return clause, nil
@@ -956,6 +961,16 @@ func parseSearchClause(part, fullQuery string) (searchQueryClause, error) {
 		phrase := expr[1 : len(expr)-1]
 		if strings.TrimSpace(phrase) == "" || strings.Contains(phrase, "\"") {
 			return searchQueryClause{}, errors.New("ERR unsupported search query")
+		}
+		if strings.Contains(phrase, "*") {
+			first := strings.Fields(phrase)[0]
+			near := strings.Trim(first, "*")
+			colon := strings.Index(fullQuery, ":")
+			offset := 1
+			if colon >= 0 {
+				offset = colon + 2
+			}
+			return searchQueryClause{}, fmt.Errorf("SEARCH_SYNTAX Syntax error at offset %d near %s", offset, near)
 		}
 		clause.textPhrase = &phrase
 		return clause, nil
