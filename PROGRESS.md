@@ -715,3 +715,13 @@ NONSCALING and EXPANSION 0 produce fixed-capacity filters. Once full, BF.ADD ret
 The persisted Bloom format now supports multiple generations while retaining decode compatibility with Phase 1 Bloom payloads. Membership checks span all generations, and later generations use progressively tighter error rates.
 
 A live differential oracle covering default scaling, explicit expansion, NONSCALING, BF.INSERT modifiers, null expansion metadata, overflow behavior, and audited option/error quirks was run against RedisBloom on port 6392 and SnugKV on port 6383. The outputs matched line-for-line except for the expected target/port label.
+
+## Cuckoo filter Phase 1 — 2026-09-23
+
+SnugKV now includes a native persistent Cuckoo filter implementation aligned with RedisBloom's observable fingerprint mechanics: MurmurHash64A with seed 0, one-byte fingerprints, two candidate buckets, deterministic kick-out relocation, expansion subfilters, approximate COUNT behavior, and duplicate/delete semantics.
+
+The audited command surface includes CF.RESERVE, CF.ADD, CF.ADDNX, CF.EXISTS, CF.MEXISTS, CF.COUNT, CF.DEL, CF.INSERT, CF.INSERTNX, and CF.INFO. Auto-create defaults, TTL preservation, persistence/restore, OOM routing, and ACL metadata are included.
+
+The differential harness intentionally checks collision-sensitive behavior rather than only command syntax. In particular, the tiny-capacity oracle reproduces RedisBloom's approximate counts where CF.INSERT of a,a,b,c yields CF.COUNT a = 4 and CF.INSERTNX yields CF.COUNT a = 2 because both candidate hashes can resolve to the same bucket.
+
+A live differential against RedisBloom on port 6392 and SnugKV on port 6383 matched line-for-line for the audited surface. The only difference was the expected target/port label.

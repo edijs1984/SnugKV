@@ -118,6 +118,9 @@ func (s *Server) executePressureCommand(args [][]byte) ([]byte, error) {
 	if isBloomCommand(args) {
 		return s.executeBloom(args)
 	}
+	if isCuckooCommand(args) {
+		return s.executeCuckoo(args)
+	}
 	if isGeoCommand(args) {
 		return s.executeGeo(args)
 	}

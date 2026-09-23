@@ -518,6 +518,7 @@ func commandDenyOOM(name string) bool {
 		"XADD",
 		"PFADD",
 		"BF.RESERVE", "BF.ADD", "BF.MADD", "BF.INSERT",
+		"CF.RESERVE", "CF.ADD", "CF.ADDNX", "CF.DEL", "CF.INSERT", "CF.INSERTNX",
 		"GEOADD",
 		"BITOP",
 		"COPY",
@@ -583,6 +584,9 @@ func commandInfoFlags(
 		return []string{"write", "denyoom", "fast"}
 
 	case "BF.RESERVE", "BF.ADD", "BF.MADD", "BF.INSERT":
+		return []string{"write", "denyoom", "fast"}
+
+	case "CF.RESERVE", "CF.ADD", "CF.ADDNX", "CF.DEL", "CF.INSERT", "CF.INSERTNX":
 		return []string{"write", "denyoom", "fast"}
 
 	case "GEOADD":
@@ -756,6 +760,20 @@ func commandInfoACL(
 		return []string{
 			"@read",
 			"@bloom",
+			"@fast",
+		}
+
+	case "CF.RESERVE", "CF.ADD", "CF.ADDNX", "CF.DEL", "CF.INSERT", "CF.INSERTNX":
+		return []string{
+			"@write",
+			"@cuckoo",
+			"@fast",
+		}
+
+	case "CF.EXISTS", "CF.MEXISTS", "CF.COUNT", "CF.INFO":
+		return []string{
+			"@read",
+			"@cuckoo",
 			"@fast",
 		}
 

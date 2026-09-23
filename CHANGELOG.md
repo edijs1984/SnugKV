@@ -147,6 +147,9 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Verified
 
+- Cuckoo filter Phase 1 adds a native persistent RedisBloom-compatible fingerprint filter with reserve/add/addnx/insert/insertnx/exists/mexists/count/delete/info, TTL preservation, ACL/OOM metadata, and exact live differential parity for the audited slice.
+
+
 - Bloom filter expansion adds RedisBloom-compatible scalable generations, `EXPANSION`, `NONSCALING`, inline per-item overflow errors, and exact audited `BF.INFO` capacity/size/filter metadata. The live expansion oracle matched RedisBloom line-for-line except for the target/port label.
 
 

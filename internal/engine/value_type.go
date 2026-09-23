@@ -31,6 +31,7 @@ const (
 	TypeZSet
 	TypeStream
 	TypeBloom
+	TypeCuckoo
 )
 
 func (t ValueType) String() string {
@@ -61,6 +62,8 @@ func (t ValueType) String() string {
 		return "STREAM"
 	case TypeBloom:
 		return "BLOOM"
+	case TypeCuckoo:
+		return "CUCKOO"
 	default:
 		return "UNKNOWN"
 	}
