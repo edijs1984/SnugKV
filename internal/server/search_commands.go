@@ -1105,6 +1105,9 @@ func parseSearchClause(part, fullQuery string) (searchQueryClause, error) {
 			if offset < 0 {
 				offset = 0
 			}
+			// Redis reports the missing-unit GEO error at the parser position
+			// after consuming the radius token, not at the token's first byte.
+			offset += len(bounds[2])
 			return searchQueryClause{}, fmt.Errorf("SEARCH_SYNTAX Syntax error at offset %d near %s", offset, bounds[2])
 		}
 		if len(bounds) != 2 {
