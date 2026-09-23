@@ -149,6 +149,7 @@ func ListenWithJournal(c config.Config, store *engine.Store, journal Journal) (*
 }
 func (s *TCPServer) Close() error {
 	s.closeOnce.Do(func() {
+		s.server.stopReplicaFollow()
 		s.mu.Lock()
 		s.closing = true
 		child := s.admin
@@ -383,6 +384,28 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			return
 		}
 		requestNow := clientSession.touch(msg)
+
+		if !borrowed && len(msg) > 0 && strings.EqualFold(string(msg[0]), "PSYNC") {
+			if len(msg) != 3 {
+				if writer.write(errorResponse(errors.New("ERR wrong number of arguments for 'psync' command"))) != nil {
+					return
+				}
+				continue
+			}
+			replicaID, psyncErr := s.server.handlePSYNC(writer.write)
+			if psyncErr != nil {
+				_ = writer.write(errorResponse(psyncErr))
+				return
+			}
+			if err := writer.flush(); err != nil {
+				s.server.replication.unregisterReplica(replicaID)
+				return
+			}
+			_ = conn.SetReadDeadline(time.Time{})
+			_, _ = io.Copy(io.Discard, reader)
+			s.server.replication.unregisterReplica(replicaID)
+			return
+		}
 
 		if !borrowed && len(msg) > 0 &&
 			strings.EqualFold(string(msg[0]), "HELLO") {
@@ -902,6 +925,7 @@ func errorResponse(err error) []byte {
 		!strings.HasPrefix(message, "NOSCRIPT ") &&
 		!strings.HasPrefix(message, "OOM ") &&
 		!strings.HasPrefix(message, "WRONGTYPE ") &&
+		!strings.HasPrefix(message, "READONLY ") &&
 		!strings.HasPrefix(message, "EXECABORT ") &&
 		!strings.HasPrefix(message, "INVALIDOBJ ") &&
 		!strings.HasPrefix(message, "NOAUTH ") &&

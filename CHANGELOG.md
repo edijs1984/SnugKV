@@ -147,6 +147,9 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Verified
 
+- Replication Phase 1 adds SnugKV primary/replica support with Redis-shaped REPLICAOF/ROLE/INFO replication/PSYNC control flow, full logical snapshot sync, live logical-frame propagation, TTL preservation, replica read-only enforcement, disconnect cleanup, promotion, transaction replication, and exact live oracle parity for the audited surface.
+
+
 - TimeSeries Phase 1 adds native persistent RedisTimeSeries-compatible series with CREATE/ADD/GET/RANGE/REVRANGE/INCRBY/DECRBY/DEL/INFO, retention, duplicate policies, labels, NaN/out-of-order semantics, TTL/persistence, ACL/OOM metadata, and exact live differential parity for the audited slice.
 
 

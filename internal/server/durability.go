@@ -224,9 +224,13 @@ func (s *Server) executeAuthorizedConcurrentGet(args [][]byte) (response []byte,
 // It is only used when persistence, metrics, WATCH and maxmemory semantics do not
 // require the ordinary durability/pressure path.
 func (s *Server) executeAuthorizedConcurrentSet(args [][]byte) (response []byte, handled bool, err error) {
+	if len(args) == 3 && bytes.EqualFold(args[0], []byte("SET")) && s.replication.isReadOnlyReplica() {
+		return nil, true, errors.New("READONLY You can't write against a read only replica.")
+	}
 	if len(args) != 3 ||
 		!bytes.EqualFold(args[0], []byte("SET")) ||
 		s.journal != nil ||
+		s.replication.primaryHasReplicas() ||
 		atomic.LoadUint32(&s.metricsEnabled) != 0 ||
 		s.store.MaxMemory() != 0 {
 		return nil, false, nil
@@ -260,11 +264,17 @@ func (s *Server) executeDurableForSession(
 	args [][]byte,
 	session *authSession,
 ) ([]byte, error) {
+	if len(args) > 0 {
+		if info, ok := commandTable[strings.ToUpper(string(args[0]))]; ok && info.write && s.replication.isReadOnlyReplica() {
+			return nil, errors.New("READONLY You can't write against a read only replica.")
+		}
+	}
+
 	// GET and SET are single-key engine operations whose Store paths are already
 	// concurrency-safe. When AOF is disabled and no WATCH session exists, they
 	// do not need the global exclusive command lock. An RLock still excludes
 	// MULTI/EXEC and every complex command, preserving transaction atomicity.
-	if s.journal == nil && isConcurrentScalarCommand(args) {
+	if s.journal == nil && !s.replication.primaryHasReplicas() && isConcurrentScalarCommand(args) {
 		s.durableMu.RLock()
 		if !s.hasWatchSessionsLocked() {
 			result, err := s.executePressure(args)
@@ -300,7 +310,16 @@ func (s *Server) executeDurableForSession(
 // Transaction execution uses a different durability path so the whole EXEC is
 // appended as one persistence frame rather than one frame per queued command.
 func (s *Server) executeDurableLocked(args [][]byte) ([]byte, error) {
+	if len(args) == 0 {
+		return s.executePressure(args)
+	}
+	cmd := strings.ToUpper(string(args[0]))
+	info, ok := commandTable[cmd]
+
 	if s.journal == nil {
+		if ok && info.write && s.replication.primaryHasReplicas() {
+			return s.executeReplicatedWriteLocked(args)
+		}
 		result, err := s.executePressure(args)
 		if err == nil {
 			s.signalListAvailability(args, result)
@@ -309,11 +328,6 @@ func (s *Server) executeDurableLocked(args [][]byte) ([]byte, error) {
 		}
 		return result, err
 	}
-	if len(args) == 0 {
-		return s.executePressure(args)
-	}
-	cmd := strings.ToUpper(string(args[0]))
-	info, ok := commandTable[cmd]
 	if !ok || !info.write {
 		return s.executePressure(args)
 	}
@@ -371,6 +385,7 @@ func (s *Server) executeDurableLocked(args [][]byte) ([]byte, error) {
 			return nil, errors.New("ERR persistence append failed")
 		}
 
+		s.publishReplication(reset)
 		s.signalListAvailability(args, result)
 		s.signalZSetAvailability(args, result)
 		s.signalStreamAvailability(args, result)
@@ -414,6 +429,7 @@ func (s *Server) executeDurableLocked(args [][]byte) ([]byte, error) {
 		}
 		return nil, errors.New("ERR persistence append failed")
 	}
+	s.publishReplication(after)
 	s.signalListAvailability(args, result)
 	s.signalZSetAvailability(args, result)
 	s.signalStreamAvailability(args, result)
@@ -428,4 +444,22 @@ func isConcurrentScalarCommand(args [][]byte) bool {
 	// Option parsing can involve TTL/conditional semantics and stays on the
 	// serialized path until separately audited.
 	return len(args) == 3 && bytes.EqualFold(args[0], []byte("SET"))
+}
+
+
+func (s *Server) executeReplicatedWriteLocked(args [][]byte) ([]byte, error) {
+	before := s.store.Export(nil)
+	result, err := s.executePressure(args)
+	if err != nil {
+		return result, err
+	}
+	after := s.store.Export(nil)
+	changes := persistenceDiff(before, after)
+	if len(changes) > 0 {
+		s.publishReplication(changes)
+	}
+	s.signalListAvailability(args, result)
+	s.signalZSetAvailability(args, result)
+	s.signalStreamAvailability(args, result)
+	return result, nil
 }

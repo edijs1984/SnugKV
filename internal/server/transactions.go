@@ -398,8 +398,9 @@ func (session *transactionSession) exec() ([]byte, error) {
 	session.clearWatchLocked()
 
 	writes := transactionHasWrites(commands)
+	replicate := writes && s.replication.primaryHasReplicas()
 	var before []persistence.Record
-	if s.journal != nil && writes {
+	if (s.journal != nil || replicate) && writes {
 		before = s.store.Export(nil)
 	}
 
@@ -433,17 +434,22 @@ func (session *transactionSession) exec() ([]byte, error) {
 		s.refreshWatchesLocked()
 	}
 
-	if s.journal != nil && writes && !s.durabilityFailed {
+	if writes && (s.journal != nil || replicate) && !s.durabilityFailed {
 		after := s.store.Export(nil)
 		changes := persistenceDiff(before, after)
 		if len(changes) > 0 {
-			if err := s.journal.Append(changes); err != nil {
-				s.durabilityFailed = true
-				rollback := append([]persistence.Record{{Reset: true}}, before...)
-				if rollbackErr := s.store.Restore(rollback, true); rollbackErr != nil {
-					return nil, errors.New("ERR persistence and rollback failed")
+			if s.journal != nil {
+				if err := s.journal.Append(changes); err != nil {
+					s.durabilityFailed = true
+					rollback := append([]persistence.Record{{Reset: true}}, before...)
+					if rollbackErr := s.store.Restore(rollback, true); rollbackErr != nil {
+						return nil, errors.New("ERR persistence and rollback failed")
+					}
+					return nil, errors.New("ERR persistence append failed")
 				}
-				return nil, errors.New("ERR persistence append failed")
+			}
+			if replicate {
+				s.publishReplication(changes)
 			}
 		}
 	}
