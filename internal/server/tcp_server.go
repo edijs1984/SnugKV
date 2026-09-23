@@ -917,7 +917,8 @@ func errorResponse(err error) []byte {
 		!strings.HasPrefix(message, "SEARCH_ADD_ARGS ") &&
 		!strings.HasPrefix(message, "SEARCH_ARG_UNRECOGNIZED ") &&
 		!strings.HasPrefix(message, "SEARCH_PARSE_ARGS ") &&
-		!strings.HasPrefix(message, "SEARCH_EXPR ") {
+		!strings.HasPrefix(message, "SEARCH_EXPR ") &&
+		!strings.HasPrefix(message, "SEARCH_PARAM_NOT_FOUND ") {
 		message = "ERR " + message
 	}
 	return []byte("-" + message + "\r\n")
