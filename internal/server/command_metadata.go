@@ -95,6 +95,20 @@ func commandKeys(args [][]byte) ([]commandKeyRef, error) {
 		}
 		return refs, nil
 
+	case "TDIGEST.MERGE":
+		if len(args) < 4 {
+			return nil, errors.New("ERR Invalid number of arguments specified for command")
+		}
+		n, err := strconv.Atoi(string(args[2]))
+		if err != nil || n <= 0 || 3+n > len(args) {
+			return nil, errors.New("ERR Invalid number of arguments specified for command")
+		}
+		refs := []commandKeyRef{{value: args[1], flags: []string{"RW", "update"}}}
+		for i := 0; i < n; i++ {
+			refs = append(refs, commandKeyRef{value: args[3+i], flags: []string{"RO", "access"}})
+		}
+		return refs, nil
+
 	case "COPY":
 		if len(args) < 3 {
 			return nil, errors.New(
@@ -535,6 +549,7 @@ func commandDenyOOM(name string) bool {
 		"CF.RESERVE", "CF.ADD", "CF.ADDNX", "CF.DEL", "CF.INSERT", "CF.INSERTNX",
 		"CMS.INITBYDIM", "CMS.INITBYPROB", "CMS.INCRBY", "CMS.MERGE",
 		"TOPK.RESERVE", "TOPK.ADD", "TOPK.INCRBY",
+		"TDIGEST.CREATE", "TDIGEST.ADD", "TDIGEST.RESET", "TDIGEST.MERGE",
 		"GEOADD",
 		"BITOP",
 		"COPY",
@@ -615,6 +630,12 @@ func commandInfoFlags(
 		return []string{"write", "denyoom", "fast"}
 
 	case "TOPK.ADD", "TOPK.INCRBY":
+		return []string{"write", "denyoom"}
+
+	case "TDIGEST.CREATE", "TDIGEST.RESET":
+		return []string{"write", "denyoom", "fast"}
+
+	case "TDIGEST.ADD", "TDIGEST.MERGE":
 		return []string{"write", "denyoom"}
 
 	case "GEOADD":
@@ -859,6 +880,35 @@ func commandInfoACL(
 			"@read",
 			"@topk",
 			"@fast",
+		}
+
+	case "TDIGEST.CREATE", "TDIGEST.RESET":
+		return []string{
+			"@write",
+			"@tdigest",
+			"@fast",
+		}
+
+	case "TDIGEST.ADD", "TDIGEST.MERGE":
+		return []string{
+			"@write",
+			"@tdigest",
+			"@slow",
+		}
+
+	case "TDIGEST.MIN", "TDIGEST.MAX", "TDIGEST.INFO":
+		return []string{
+			"@read",
+			"@tdigest",
+			"@fast",
+		}
+
+	case "TDIGEST.QUANTILE", "TDIGEST.CDF", "TDIGEST.RANK", "TDIGEST.REVRANK",
+		"TDIGEST.BYRANK", "TDIGEST.BYREVRANK", "TDIGEST.TRIMMED_MEAN":
+		return []string{
+			"@read",
+			"@tdigest",
+			"@slow",
 		}
 
 	case "GEOADD":
