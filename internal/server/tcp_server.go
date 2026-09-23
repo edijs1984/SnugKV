@@ -384,6 +384,28 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 		}
 		requestNow := clientSession.touch(msg)
 
+		if !borrowed && len(msg) > 0 && strings.EqualFold(string(msg[0]), "PSYNC") {
+			if len(msg) != 3 {
+				if writer.write(errorResponse(errors.New("ERR wrong number of arguments for 'psync' command"))) != nil {
+					return
+				}
+				continue
+			}
+			replicaID, psyncErr := s.server.handlePSYNC(writer.write)
+			if psyncErr != nil {
+				_ = writer.write(errorResponse(psyncErr))
+				return
+			}
+			if err := writer.flush(); err != nil {
+				s.server.replication.unregisterReplica(replicaID)
+				return
+			}
+			_ = conn.SetReadDeadline(time.Time{})
+			_, _ = io.Copy(io.Discard, reader)
+			s.server.replication.unregisterReplica(replicaID)
+			return
+		}
+
 		if !borrowed && len(msg) > 0 &&
 			strings.EqualFold(string(msg[0]), "HELLO") {
 			response, helloErr :=
