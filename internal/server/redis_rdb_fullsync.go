@@ -23,8 +23,10 @@ const (
 	redisRDBTypeZSetZiplist    = byte(12)
 	redisRDBTypeHashZiplist    = byte(13)
 	redisRDBTypeListQuicklist  = byte(14)
-	redisRDBTypeHashMetadataPreGA = byte(22)
-	redisRDBTypeHashMetadata      = byte(24)
+	redisRDBTypeHashMetadataPreGA     = byte(22)
+	redisRDBTypeHashListpackExPreGA   = byte(23)
+	redisRDBTypeHashMetadata          = byte(24)
+	redisRDBTypeHashListpackEx        = byte(25)
 	redisRDBOpcodeIdle         = byte(248)
 	redisRDBOpcodeFreq         = byte(249)
 	redisRDBOpcodeAux          = byte(250)
@@ -214,6 +216,49 @@ func decodeRedisRDBObjectAt(data []byte, pos *int, objectType byte) (decodedKeyO
 			}
 			pairs = append(pairs, engine.HashPair{
 				Field: field, Value: value, ExpiresAtMS: expiresAtMS,
+			})
+		}
+		return decodedKeyObject{valueType: engine.TypeHash, hash: pairs}, nil
+
+	case redisRDBTypeHashListpackExPreGA, redisRDBTypeHashListpackEx:
+		if objectType == redisRDBTypeHashListpackEx {
+			if len(data)-*pos < 8 {
+				return decodedKeyObject{}, errors.New("truncated Redis RDB hash listpack-ex min expiry")
+			}
+			minExpire := int64(binary.LittleEndian.Uint64(data[*pos : *pos+8]))
+			*pos += 8
+			if minExpire < 0 {
+				return decodedKeyObject{}, errors.New("invalid Redis RDB hash listpack-ex min expiry")
+			}
+		}
+
+		raw, err := decodeRDBString(data, pos)
+		if err != nil {
+			return decodedKeyObject{}, errors.New("invalid Redis RDB hash listpack-ex")
+		}
+		values, err := decodeRedisListpack(raw)
+		if err != nil || len(values) == 0 || len(values)%3 != 0 {
+			return decodedKeyObject{}, errors.New("invalid Redis RDB hash listpack-ex")
+		}
+		pairs := make([]engine.HashPair, 0, len(values)/3)
+		seen := make(map[string]struct{}, len(values)/3)
+		for i := 0; i < len(values); i += 3 {
+			field := values[i]
+			value := values[i+1]
+			expiryRaw := values[i+2]
+
+			expiry, err := strconv.ParseInt(string(expiryRaw), 10, 64)
+			if err != nil || expiry < 0 {
+				return decodedKeyObject{}, errors.New("invalid Redis RDB hash listpack-ex field TTL")
+			}
+			fieldKey := string(field)
+			if _, exists := seen[fieldKey]; exists {
+				return decodedKeyObject{}, errors.New("duplicate Redis RDB hash listpack-ex field")
+			}
+			seen[fieldKey] = struct{}{}
+
+			pairs = append(pairs, engine.HashPair{
+				Field: field, Value: value, ExpiresAtMS: expiry,
 			})
 		}
 		return decodedKeyObject{valueType: engine.TypeHash, hash: pairs}, nil
