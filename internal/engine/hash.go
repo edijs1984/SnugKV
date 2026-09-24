@@ -146,7 +146,6 @@ func decodePackedHash(data []byte) ([]HashPair, error) {
 
 	hasFieldExpiry := packedHashHasFieldExpiry(data)
 	pairs := make([]HashPair, 0, count)
-	hasFieldExpiry := packedHashHasFieldExpiry(data)
 	for i := 0; i < count; i++ {
 		fieldLen, err := readHashUvarint(data, &offset)
 		if err != nil {
@@ -205,6 +204,7 @@ func packedHashLookup(data, target []byte, nowMS int64) ([]byte, bool, error) {
 		return nil, false, err
 	}
 
+	hasFieldExpiry := packedHashHasFieldExpiry(data)
 	for i := 0; i < count; i++ {
 		fieldLen, err := readHashUvarint(data, &offset)
 		if err != nil {
