@@ -192,3 +192,75 @@ func TestReplicationWaitCommandMetadata(t *testing.T) {
 		t.Fatalf("WAIT response=%q", got)
 	}
 }
+
+func TestReplicationWaitSurvivesReplicaReconnect(t *testing.T) {
+	s := New(engine.New())
+
+	firstRequested := make(chan struct{}, 1)
+	firstID, _, _ := s.replication.registerReplica(func(payload []byte) error {
+		if strings.Contains(string(payload), "GETACK") {
+			select {
+			case firstRequested <- struct{}{}:
+			default:
+			}
+		}
+		return nil
+	})
+
+	done := make(chan struct {
+		value string
+		err   error
+	}, 1)
+	go func() {
+		value, err := s.executeReplicationWait(
+			[][]byte{[]byte("WAIT"), []byte("1"), []byte("1000")},
+			90,
+			nil,
+			true,
+		)
+		done <- struct {
+			value string
+			err   error
+		}{string(value), err}
+	}()
+
+	select {
+	case <-firstRequested:
+	case <-time.After(time.Second):
+		t.Fatal("initial replica did not receive GETACK")
+	}
+
+	s.replication.unregisterReplica(firstID)
+
+	secondRequested := make(chan struct{}, 1)
+	secondID, _, _ := s.replication.registerReplica(func(payload []byte) error {
+		if strings.Contains(string(payload), "GETACK") {
+			select {
+			case secondRequested <- struct{}{}:
+			default:
+			}
+		}
+		return nil
+	})
+	defer s.replication.unregisterReplica(secondID)
+
+	select {
+	case <-secondRequested:
+	case <-time.After(time.Second):
+		t.Fatal("replacement replica did not receive GETACK")
+	}
+
+	s.replication.acknowledgeReplica(secondID, 90)
+
+	select {
+	case result := <-done:
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		if result.value != ":1\r\n" {
+			t.Fatalf("WAIT=%q want=:1", result.value)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("WAIT did not complete after replacement replica ACK")
+	}
+}
