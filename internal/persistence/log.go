@@ -39,13 +39,12 @@ type Record struct {
 }
 
 // RecoverReplicationCheckpoint advances crash-recovery replication metadata in
-// the same order as logical persistence frames. A reset invalidates any earlier
-// continuation tuple until a later checkpoint record is encountered.
+// the same order as logical persistence frames. Only an explicit replication
+// clear marker invalidates an earlier continuation tuple; ordinary keyspace
+// reset records are also used by AOF compaction and do not imply a topology
+// change.
 func RecoverReplicationCheckpoint(current *ReplicationCheckpoint, records []Record) *ReplicationCheckpoint {
 	for _, record := range records {
-		if record.Reset {
-			current = nil
-		}
 		if record.Replication == nil {
 			continue
 		}
