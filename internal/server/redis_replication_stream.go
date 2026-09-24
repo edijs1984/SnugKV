@@ -136,9 +136,14 @@ func redisReplicationAffectedKeys(commands [][][]byte) (keys []string, full bool
 	return keys, false
 }
 
-func (s *Server) applyRedisReplicationBatch(commands [][][]byte, checkpointOffset int64) error {
+func (s *Server) applyRedisReplicationBatch(commands [][][]byte, checkpointOffsets ...int64) error {
 	if len(commands) == 0 {
 		return nil
+	}
+	persistCheckpoint := len(checkpointOffsets) > 0
+	var checkpointOffset int64
+	if persistCheckpoint {
+		checkpointOffset = checkpointOffsets[0]
 	}
 	s.durableMu.Lock()
 	defer s.durableMu.Unlock()
@@ -181,7 +186,7 @@ func (s *Server) applyRedisReplicationBatch(commands [][][]byte, checkpointOffse
 	}
 	s.refreshWatchesLocked()
 
-	if s.journal == nil {
+	if s.journal == nil || !persistCheckpoint {
 		return nil
 	}
 
