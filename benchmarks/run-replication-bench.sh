@@ -87,15 +87,14 @@ start_snug() {
 start_star() {
   local replicas="$1"
   start_snug "$PRIMARY_PORT"
-  for i in $(seq 0 $((replicas - 1))); do
-    if (( replicas == 0 )); then
-      break
-    fi
-    local port=$((BASE_REPLICA_PORT + i))
-    start_snug "$port"
-    redis-cli -p "$port" REPLICAOF 127.0.0.1 "$PRIMARY_PORT" >/dev/null
-    wait_replica_up "$port"
-  done
+  if (( replicas > 0 )); then
+    for i in $(seq 0 $((replicas - 1))); do
+      local port=$((BASE_REPLICA_PORT + i))
+      start_snug "$port"
+      redis-cli -p "$port" REPLICAOF 127.0.0.1 "$PRIMARY_PORT" >/dev/null
+      wait_replica_up "$port"
+    done
+  fi
 }
 
 run_star_case() {
@@ -116,19 +115,18 @@ run_star_case() {
 
   sleep "$SETTLE_SECONDS"
 
-  for i in $(seq 0 $((replicas - 1))); do
-    if (( replicas == 0 )); then
-      break
-    fi
-    local port=$((BASE_REPLICA_PORT + i))
-    local size
-    size="$(redis-cli -p "$port" DBSIZE)"
-    echo "replica port ${port} dbsize=${size}" >&2
-    if [[ "$size" != "$KEYS" ]]; then
-      echo "replica ${port} did not converge: dbsize=${size}, expected=${KEYS}" >&2
-      return 1
-    fi
-  done
+  if (( replicas > 0 )); then
+    for i in $(seq 0 $((replicas - 1))); do
+      local port=$((BASE_REPLICA_PORT + i))
+      local size
+      size="$(redis-cli -p "$port" DBSIZE)"
+      echo "replica port ${port} dbsize=${size}" >&2
+      if [[ "$size" != "$KEYS" ]]; then
+        echo "replica ${port} did not converge: dbsize=${size}, expected=${KEYS}" >&2
+        return 1
+      fi
+    done
+  fi
 }
 
 run_chain_case() {
