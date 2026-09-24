@@ -194,6 +194,40 @@ func TestKeyRestoreRedis16TemplateHashPayload(t *testing.T) {
 	}
 }
 
+func TestKeyRestoreAcceptsRedisRawDumpWithZeroChecksum(t *testing.T) {
+	body := []byte{redisRDBTypeHashTmplArray}
+	body = appendRDBLen(body, 1)
+	body = appendRDBLen(body, 3)
+	body = appendRDBRawString(body, []byte("age"))
+	body = appendRDBRawString(body, []byte("name"))
+	body = appendRDBRawString(body, []byte("email"))
+	body = appendRDBRawString(body, []byte("42"))
+	body = appendRDBRawString(body, []byte("Edijs"))
+	body = appendRDBRawString(body, []byte("edijs@example.com"))
+
+	var version [2]byte
+	binary.LittleEndian.PutUint16(version[:], uint16(redisRDBMaxSupportedVersion))
+	payload := append(append([]byte(nil), body...), version[:]...)
+	payload = append(payload, make([]byte, 8)...)
+
+	s := New(engine.New())
+	if _, err := s.Execute([][]byte{
+		[]byte("RESTORE"), []byte("tmpl:raw"), []byte("0"), payload, []byte("REPLACE"),
+	}); err != nil {
+		t.Fatalf("RESTORE zero-checksum payload: %v", err)
+	}
+
+	got, err := s.Execute([][]byte{[]byte("HGETALL"), []byte("tmpl:raw")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"age", "42", "name", "Edijs", "email", "edijs@example.com"} {
+		if !strings.Contains(string(got), want) {
+			t.Fatalf("HGETALL missing %q: %q", want, got)
+		}
+	}
+}
+
 func TestKeyRestoreCorruptPayloadRejected(t *testing.T) {
 	s := New(engine.New())
 	payload, _ := hex.DecodeString("000568656c6c6f0c00a804ebb69f1ebe43")
