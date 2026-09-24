@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"io"
 	"errors"
 	"bytes"
 	"encoding/binary"
@@ -475,6 +476,114 @@ func TestDecodeRedisRDBHashFieldExpirationMetadataPreGA(t *testing.T) {
 	}
 }
 
+func TestDecodeRedisRDBHashFieldExpirationListpack(t *testing.T) {
+	expireA := time.Now().Add(2 * time.Minute).UnixMilli()
+	expireC := expireA + 5000
+	lp, err := encodeRedisListpack([][]byte{
+		[]byte("a"), []byte("one"), []byte(strconv.FormatInt(expireA, 10)),
+		[]byte("c"), []byte("three"), []byte(strconv.FormatInt(expireC, 10)),
+		[]byte("b"), []byte("two"), []byte("0"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := make([]byte, 8)
+	binary.LittleEndian.PutUint64(body, uint64(expireA))
+	body = appendRDBRawString(body, lp)
+
+	pos := 0
+	obj, err := decodeRedisRDBObjectAt(body, &pos, redisRDBTypeHashListpackEx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pos != len(body) || len(obj.hash) != 3 {
+		t.Fatalf("decode pos=%d len=%d hash=%+v", pos, len(body), obj.hash)
+	}
+	if string(obj.hash[0].Field) != "a" || obj.hash[0].ExpiresAtMS != expireA ||
+		string(obj.hash[1].Field) != "c" || obj.hash[1].ExpiresAtMS != expireC ||
+		string(obj.hash[2].Field) != "b" || obj.hash[2].ExpiresAtMS != 0 {
+		t.Fatalf("unexpected LISTPACK_EX decode: %+v", obj.hash)
+	}
+
+	record, err := buildRestoreRecord("rdb:hfe:lp", obj, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := engine.New()
+	if err := store.Restore([]persistence.Record{record}, true); err != nil {
+		t.Fatal(err)
+	}
+	ttl, err := store.HashFieldPTTL("rdb:hfe:lp", [][]byte{[]byte("a"), []byte("b"), []byte("c")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ttl) != 3 || ttl[0] <= 0 || ttl[1] != -1 || ttl[2] <= ttl[0] {
+		t.Fatalf("restored LISTPACK_EX field TTLs = %v", ttl)
+	}
+}
+
+func TestDecodeRedisRDBHashFieldExpirationListpackPreGA(t *testing.T) {
+	expireAt := time.Now().Add(2 * time.Minute).UnixMilli()
+	lp, err := encodeRedisListpack([][]byte{
+		[]byte("field"), []byte("value"), []byte(strconv.FormatInt(expireAt, 10)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := appendRDBRawString(nil, lp)
+
+	pos := 0
+	obj, err := decodeRedisRDBObjectAt(body, &pos, redisRDBTypeHashListpackExPreGA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pos != len(body) || len(obj.hash) != 1 || obj.hash[0].ExpiresAtMS != expireAt {
+		t.Fatalf("unexpected LISTPACK_EX PRE_GA decode: pos=%d len=%d hash=%+v", pos, len(body), obj.hash)
+	}
+}
+
+func TestDecodeRedisRDBHashFieldExpirationListpackRejectsCorruption(t *testing.T) {
+	t.Run("tuple count", func(t *testing.T) {
+		lp, err := encodeRedisListpack([][]byte{[]byte("a"), []byte("one")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := appendRDBRawString(nil, lp)
+		pos := 0
+		if _, err := decodeRedisRDBObjectAt(body, &pos, redisRDBTypeHashListpackExPreGA); err == nil {
+			t.Fatal("expected invalid LISTPACK_EX tuple count")
+		}
+	})
+
+	t.Run("negative ttl", func(t *testing.T) {
+		lp, err := encodeRedisListpack([][]byte{[]byte("a"), []byte("one"), []byte("-1")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := appendRDBRawString(nil, lp)
+		pos := 0
+		if _, err := decodeRedisRDBObjectAt(body, &pos, redisRDBTypeHashListpackExPreGA); err == nil {
+			t.Fatal("expected negative LISTPACK_EX TTL rejection")
+		}
+	})
+
+	t.Run("duplicate field", func(t *testing.T) {
+		lp, err := encodeRedisListpack([][]byte{
+			[]byte("a"), []byte("one"), []byte("0"),
+			[]byte("a"), []byte("two"), []byte("0"),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := appendRDBRawString(nil, lp)
+		pos := 0
+		if _, err := decodeRedisRDBObjectAt(body, &pos, redisRDBTypeHashListpackExPreGA); err == nil {
+			t.Fatal("expected duplicate LISTPACK_EX field rejection")
+		}
+	})
+}
+
 func TestDecodeRedisRDBPlainCollections(t *testing.T) {
 	t.Run("list", func(t *testing.T) {
 		body := appendRDBLen(nil, 3)
@@ -787,6 +896,35 @@ func TestRedisPartialResyncKeepsRedisStreamMode(t *testing.T) {
 	case <-consumeDone:
 	case <-time.After(2 * time.Second):
 		t.Fatal("replication consumer did not stop")
+	}
+}
+
+type oneByteReader struct {
+	data []byte
+}
+
+func (r *oneByteReader) Read(p []byte) (int, error) {
+	if len(r.data) == 0 {
+		return 0, io.EOF
+	}
+	p[0] = r.data[0]
+	r.data = r.data[1:]
+	return 1, nil
+}
+
+func TestReadRedisReplicationCommandHandlesFragmentedCRLF(t *testing.T) {
+	wire := []byte("*1\r\n$4\r\nPING\r\n")
+	reader := bufio.NewReaderSize(&oneByteReader{data: wire}, 1)
+
+	args, n, err := readRedisReplicationCommand(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != int64(len(wire)) {
+		t.Fatalf("bytes=%d want=%d", n, len(wire))
+	}
+	if len(args) != 1 || string(args[0]) != "PING" {
+		t.Fatalf("args=%q", args)
 	}
 }
 
