@@ -1,6 +1,7 @@
 package server
 
 import (
+	"strings"
 	"errors"
 	"sync"
 	"testing"
@@ -250,5 +251,78 @@ func TestWaitAOFCommandMetadata(t *testing.T) {
 		if cats[i] != want[i] {
 			t.Fatalf("WAITAOF ACL=%v", cats)
 		}
+	}
+}
+
+func TestWaitAOFSurvivesReplicaReconnect(t *testing.T) {
+	s := New(engine.New())
+
+	firstRequested := make(chan struct{}, 1)
+	firstID, _, _ := s.replication.registerReplica(func(payload []byte) error {
+		if strings.Contains(string(payload), "GETACK") {
+			select {
+			case firstRequested <- struct{}{}:
+			default:
+			}
+		}
+		return nil
+	})
+
+	done := make(chan struct {
+		reply string
+		err   error
+	}, 1)
+	go func() {
+		reply, err := s.executeWaitAOF(
+			[][]byte{[]byte("WAITAOF"), []byte("0"), []byte("1"), []byte("1000")},
+			120,
+			0,
+			nil,
+			true,
+		)
+		done <- struct {
+			reply string
+			err   error
+		}{string(reply), err}
+	}()
+
+	select {
+	case <-firstRequested:
+	case <-time.After(time.Second):
+		t.Fatal("initial replica did not receive GETACK")
+	}
+
+	s.replication.unregisterReplica(firstID)
+
+	secondRequested := make(chan struct{}, 1)
+	secondID, _, _ := s.replication.registerReplica(func(payload []byte) error {
+		if strings.Contains(string(payload), "GETACK") {
+			select {
+			case secondRequested <- struct{}{}:
+			default:
+			}
+		}
+		return nil
+	})
+	defer s.replication.unregisterReplica(secondID)
+
+	select {
+	case <-secondRequested:
+	case <-time.After(time.Second):
+		t.Fatal("replacement replica did not receive GETACK")
+	}
+
+	s.replication.acknowledgeReplica(secondID, 120, 120)
+
+	select {
+	case result := <-done:
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		if result.reply != "*2\r\n:0\r\n:1\r\n" {
+			t.Fatalf("WAITAOF=%q", result.reply)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("WAITAOF did not complete after replacement replica FACK")
 	}
 }
