@@ -15,8 +15,9 @@ import (
 const (
 	redisRDBTypeList          = byte(1)
 	redisRDBTypeSet           = byte(2)
-	redisRDBTypeZSet2         = byte(5)
+	redisRDBTypeZSet          = byte(3)
 	redisRDBTypeHash          = byte(4)
+	redisRDBTypeZSet2         = byte(5)
 	redisRDBOpcodeIdle         = byte(248)
 	redisRDBOpcodeFreq         = byte(249)
 	redisRDBOpcodeAux          = byte(250)
@@ -28,6 +29,34 @@ const (
 
 	redisRDBMaxSupportedVersion = 16
 )
+
+func decodeRedisRDBTextDouble(data []byte, pos *int) (float64, error) {
+	if *pos >= len(data) {
+		return 0, errors.New("truncated Redis RDB zset score")
+	}
+	length := data[*pos]
+	*pos++
+
+	switch length {
+	case 255:
+		return math.Inf(-1), nil
+	case 254:
+		return math.Inf(1), nil
+	case 253:
+		return 0, errors.New("invalid Redis RDB zset score")
+	}
+
+	if int(length) > len(data)-*pos {
+		return 0, errors.New("truncated Redis RDB zset score")
+	}
+	raw := string(data[*pos : *pos+int(length)])
+	*pos += int(length)
+	score, err := strconv.ParseFloat(raw, 64)
+	if err != nil || math.IsNaN(score) {
+		return 0, errors.New("invalid Redis RDB zset score")
+	}
+	return score, nil
+}
 
 func decodeRedisRDBObjectAt(data []byte, pos *int, objectType byte) (decodedKeyObject, error) {
 	switch objectType {
@@ -79,6 +108,25 @@ func decodeRedisRDBObjectAt(data []byte, pos *int, objectType byte) (decodedKeyO
 			pairs = append(pairs, engine.HashPair{Field: field, Value: value})
 		}
 		return decodedKeyObject{valueType: engine.TypeHash, hash: pairs}, nil
+
+	case redisRDBTypeZSet:
+		count, encoded, err := readRDBLen(data, pos)
+		if err != nil || encoded || count == 0 || count > uint64(len(data)) {
+			return decodedKeyObject{}, errors.New("invalid Redis RDB zset")
+		}
+		items := make([]engine.ZSetItem, 0, count)
+		for i := uint64(0); i < count; i++ {
+			member, err := decodeRDBString(data, pos)
+			if err != nil {
+				return decodedKeyObject{}, errors.New("invalid Redis RDB zset member")
+			}
+			score, err := decodeRedisRDBTextDouble(data, pos)
+			if err != nil {
+				return decodedKeyObject{}, err
+			}
+			items = append(items, engine.ZSetItem{Member: member, Score: score})
+		}
+		return decodedKeyObject{valueType: engine.TypeZSet, zset: items}, nil
 
 	case redisRDBTypeZSet2:
 		count, encoded, err := readRDBLen(data, pos)
