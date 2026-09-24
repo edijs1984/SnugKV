@@ -1875,3 +1875,117 @@ func TestChainedReplicationLeafReconnectsThroughMiddle(t *testing.T) {
 		return found && !wrong && string(v) == "two"
 	})
 }
+
+func TestChainedReplicationWaitCountsOnlyDirectReplicas(t *testing.T) {
+	primary, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer primary.Close()
+
+	middle, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer middle.Close()
+
+	leaf, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer leaf.Close()
+
+	primaryAddr := primary.listener.Addr().(*net.TCPAddr)
+	middleAddr := middle.listener.Addr().(*net.TCPAddr)
+
+	if _, err := middle.server.Execute([][]byte{
+		[]byte("REPLICAOF"), []byte("127.0.0.1"), []byte(strconv.Itoa(primaryAddr.Port)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitReplication(t, func() bool {
+		return middle.server.replication.snapshot().masterLinkStatus == "up"
+	})
+
+	if _, err := leaf.server.Execute([][]byte{
+		[]byte("REPLICAOF"), []byte("127.0.0.1"), []byte(strconv.Itoa(middleAddr.Port)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitReplication(t, func() bool {
+		return leaf.server.replication.snapshot().masterLinkStatus == "up"
+	})
+	waitReplication(t, func() bool {
+		return primary.server.replication.snapshot().connectedReplicas == 1 &&
+			middle.server.replication.snapshot().connectedReplicas == 1
+	})
+
+	if _, err := primary.server.Execute([][]byte{
+		[]byte("SET"), []byte("chain:wait"), []byte("one"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitReplication(t, func() bool {
+		v, found, wrong := leaf.server.store.GetString("chain:wait")
+		return found && !wrong && string(v) == "one"
+	})
+
+	primary.server.replication.mu.RLock()
+	primaryTarget := primary.server.replication.offset
+	primary.server.replication.mu.RUnlock()
+
+	got, err := primary.server.executeReplicationWait(
+		[][]byte{[]byte("WAIT"), []byte("2"), []byte("0")},
+		primaryTarget,
+		nil,
+		false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != ":1\r\n" {
+		t.Fatalf("primary WAIT counted transitive replica: %q", got)
+	}
+
+	middle.server.replication.mu.RLock()
+	middleTarget := middle.server.replication.offset
+	middle.server.replication.mu.RUnlock()
+
+	got, err = middle.server.executeReplicationWait(
+		[][]byte{[]byte("WAIT"), []byte("1"), []byte("1000")},
+		middleTarget,
+		nil,
+		true,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != ":1\r\n" {
+		t.Fatalf("middle WAIT did not count direct leaf: %q", got)
+	}
+}
+
+func TestChainedReplicationWAITAOFCountsOnlyDirectFACKs(t *testing.T) {
+	s := New(engine.New())
+
+	middleID, _, _ := s.replication.registerReplica(func([]byte) error { return nil })
+	defer s.replication.unregisterReplica(middleID)
+
+	// Simulate the direct replica acknowledging both application and durable
+	// persistence. A transitive leaf must not inflate the primary's count.
+	s.replication.acknowledgeReplica(middleID, 200, 200)
+
+	got, err := s.executeWaitAOF(
+		[][]byte{[]byte("WAITAOF"), []byte("0"), []byte("2"), []byte("0")},
+		200,
+		0,
+		nil,
+		false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "*2\r\n:0\r\n:1\r\n" {
+		t.Fatalf("WAITAOF counted transitive replica: %q", got)
+	}
+}
