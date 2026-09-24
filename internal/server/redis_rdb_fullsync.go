@@ -77,6 +77,16 @@ type redisRDBHashTemplate struct {
 	fields [][]byte
 }
 
+func compareRedisTemplateFields(a, b []byte) int {
+	if len(a) < len(b) {
+		return -1
+	}
+	if len(a) > len(b) {
+		return 1
+	}
+	return bytes.Compare(a, b)
+}
+
 func validateRedisRDBTemplateFields(fields [][]byte) error {
 	if len(fields) == 0 {
 		return errors.New("Redis RDB hash template has zero fields")
@@ -85,7 +95,7 @@ func validateRedisRDBTemplateFields(fields [][]byte) error {
 		if len(fields[i]) == 0 {
 			return errors.New("Redis RDB hash template has empty field")
 		}
-		if i > 0 && bytes.Compare(fields[i-1], fields[i]) >= 0 {
+		if i > 0 && compareRedisTemplateFields(fields[i-1], fields[i]) >= 0 {
 			return errors.New("Redis RDB hash template fields are not strictly sorted")
 		}
 	}
