@@ -120,13 +120,35 @@ func TestReplicationWaitArgumentValidation(t *testing.T) {
 	s := New(engine.New())
 	for _, args := range [][][]byte{
 		{[]byte("WAIT")},
-		{[]byte("WAIT"), []byte("-1"), []byte("10")},
 		{[]byte("WAIT"), []byte("1"), []byte("-1")},
 		{[]byte("WAIT"), []byte("x"), []byte("10")},
+		{[]byte("WAIT"), []byte("1"), []byte("x")},
 	} {
 		if _, err := s.executeReplicationWait(args, 0, nil, false); err == nil {
 			t.Fatalf("WAIT args %q unexpectedly accepted", args)
 		}
+	}
+
+	got, err := s.executeReplicationWait(
+		[][]byte{[]byte("WAIT"), []byte("-1"), []byte("10")},
+		0,
+		nil,
+		false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != ":0\r\n" {
+		t.Fatalf("WAIT -1 10=%q", got)
+	}
+
+	if _, err := s.executeReplicationWait(
+		[][]byte{[]byte("WAIT"), []byte("1"), []byte("-1")},
+		0,
+		nil,
+		false,
+	); err == nil || err.Error() != "ERR timeout is negative" {
+		t.Fatalf("negative timeout err=%v", err)
 	}
 }
 
