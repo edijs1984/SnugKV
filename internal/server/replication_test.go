@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"snugkv/internal/engine"
+	"snugkv/internal/persistence"
 )
 
 func waitReplication(t *testing.T, fn func() bool) {
