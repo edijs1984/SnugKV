@@ -55,7 +55,15 @@ func (s *TCPServer) ConfigureReplicationPersistenceRecovered(
 
 	var state replicationPersistenceState
 	if recovered != nil && recovered.Clear {
-		_ = s.server.clearReplicationPersistence()
+		if err := s.server.clearReplicationPersistence(); err != nil {
+			return fmt.Errorf("replication recovery: %w", err)
+		}
+		if recovered.MasterHost != "" {
+			if recovered.MasterPort <= 0 || recovered.MasterPort > 65535 {
+				return fmt.Errorf("replication recovery: invalid upstream")
+			}
+			s.server.startReplicaFollow(recovered.MasterHost, recovered.MasterPort)
+		}
 		return nil
 	}
 	if recovered != nil {
@@ -122,12 +130,16 @@ func (s *Server) replicationCheckpointForOffset(offset int64, redisStream bool) 
 	}
 }
 
-func (s *Server) persistReplicationCheckpointClearLocked() error {
+func (s *Server) persistReplicationCheckpointClearLocked(host string, port int) error {
 	if s.journal == nil {
 		return nil
 	}
 	return s.journal.Append([]persistence.Record{{
-		Replication: &persistence.ReplicationCheckpoint{Clear: true},
+		Replication: &persistence.ReplicationCheckpoint{
+			Clear:      true,
+			MasterHost: host,
+			MasterPort: port,
+		},
 	}})
 }
 
