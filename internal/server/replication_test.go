@@ -323,6 +323,40 @@ func TestDecodeRedisRDBPlainCollections(t *testing.T) {
 		}
 	})
 
+	t.Run("zset", func(t *testing.T) {
+		body := appendRDBLen(nil, 3)
+		body = appendRDBRawString(body, []byte("one"))
+		body = append(body, byte(len("1.5")))
+		body = append(body, []byte("1.5")...)
+		body = appendRDBRawString(body, []byte("two"))
+		body = append(body, byte(len("-2.25")))
+		body = append(body, []byte("-2.25")...)
+		body = appendRDBRawString(body, []byte("inf"))
+		body = append(body, 254)
+
+		pos := 0
+		obj, err := decodeRedisRDBObjectAt(body, &pos, redisRDBTypeZSet)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pos != len(body) || len(obj.zset) != 3 ||
+			string(obj.zset[0].Member) != "one" || obj.zset[0].Score != 1.5 ||
+			string(obj.zset[1].Member) != "two" || obj.zset[1].Score != -2.25 ||
+			string(obj.zset[2].Member) != "inf" || !math.IsInf(obj.zset[2].Score, 1) {
+			t.Fatalf("unexpected legacy zset decode: pos=%d len=%d items=%v", pos, len(body), obj.zset)
+		}
+	})
+
+	t.Run("zset rejects nan", func(t *testing.T) {
+		body := appendRDBLen(nil, 1)
+		body = appendRDBRawString(body, []byte("nan"))
+		body = append(body, 253)
+		pos := 0
+		if _, err := decodeRedisRDBObjectAt(body, &pos, redisRDBTypeZSet); err == nil {
+			t.Fatal("expected NaN legacy zset score rejection")
+		}
+	})
+
 	t.Run("zset2", func(t *testing.T) {
 		body := appendRDBLen(nil, 2)
 		body = appendRDBRawString(body, []byte("one"))
