@@ -536,6 +536,27 @@ func replicationBulk(payload []byte) []byte {
 	return out
 }
 
+func (s *Server) forwardReplicatedSnugFrame(frame []byte) int64 {
+	payload := replicationBulk(frame)
+
+	s.replication.mu.Lock()
+	s.replication.appendBacklogLocked(frame, payload)
+	replicatedOffset := s.replication.offset
+	targets := make(map[uint64]func([]byte) error, len(s.replication.replicas))
+	for id, write := range s.replication.replicas {
+		targets[id] = write
+	}
+	s.replication.mu.Unlock()
+
+	for id, write := range targets {
+		if err := write(payload); err != nil {
+			s.replication.unregisterReplica(id)
+		}
+	}
+
+	return replicatedOffset
+}
+
 func (s *Server) publishReplication(records []persistence.Record) {
 	if len(records) == 0 {
 		return
@@ -1228,10 +1249,10 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 		if err != nil {
 			return err
 		}
-		s.replication.mu.Lock()
-		s.replication.offset += int64(len(frame))
-		replicatedOffset := s.replication.offset
-		s.replication.mu.Unlock()
+		// Preserve the exact upstream Snug frame when serving downstream
+		// replicas. This keeps chained PSYNC byte offsets aligned across hops
+		// while advancing the middle node's offset exactly once.
+		replicatedOffset := s.forwardReplicatedSnugFrame(frame)
 		s.noteReplicaAOFOffset(replicatedOffset)
 	}
 }
