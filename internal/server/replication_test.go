@@ -752,7 +752,7 @@ func TestRedisPartialResyncKeepsRedisStreamMode(t *testing.T) {
 		}
 
 		wire := []byte("+CONTINUE\r\n")
-		wire = append(wire, []byte("*3\r\n$3\r\nSET\r\n$12\r\npartial:key\r\n$2\r\nok\r\n")...)
+		wire = append(wire, []byte("*3\r\n$3\r\nSET\r\n$11\r\npartial:key\r\n$2\r\nok\r\n")...)
 		if _, err := upstream.Write(wire); err != nil {
 			upstreamDone <- err
 			return
