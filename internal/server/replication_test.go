@@ -707,6 +707,88 @@ func TestDecodeRedisFullSyncRDBRejectsChecksumCorruption(t *testing.T) {
 	}
 }
 
+func TestRedisPartialResyncKeepsRedisStreamMode(t *testing.T) {
+	s := New(engine.New())
+	s.replication.setReplica("127.0.0.1", 6379)
+	s.replication.mu.Lock()
+	s.replication.masterRunID = "0123456789012345678901234567890123456789"
+	s.replication.offset = 100
+	s.replication.masterRedisStream = true
+	s.replication.mu.Unlock()
+
+	client, upstream := net.Pipe()
+	defer client.Close()
+	defer upstream.Close()
+
+	upstreamDone := make(chan error, 1)
+	go func() {
+		reader := bufio.NewReader(upstream)
+
+		args, _, err := readRedisReplicationCommand(reader)
+		if err != nil {
+			upstreamDone <- err
+			return
+		}
+		if len(args) != 3 || string(args[0]) != "REPLCONF" || string(args[1]) != "capa" || string(args[2]) != "eof" {
+			upstreamDone <- fmt.Errorf("unexpected REPLCONF: %q", args)
+			return
+		}
+		if _, err := upstream.Write([]byte("+OK\r\n")); err != nil {
+			upstreamDone <- err
+			return
+		}
+
+		args, _, err = readRedisReplicationCommand(reader)
+		if err != nil {
+			upstreamDone <- err
+			return
+		}
+		if len(args) != 3 || string(args[0]) != "PSYNC" ||
+			string(args[1]) != "0123456789012345678901234567890123456789" ||
+			string(args[2]) != "101" {
+			upstreamDone <- fmt.Errorf("unexpected PSYNC: %q", args)
+			return
+		}
+
+		wire := []byte("+CONTINUE\r\n")
+		wire = append(wire, []byte("*3\r\n$3\r\nSET\r\n$12\r\npartial:key\r\n$2\r\nok\r\n")...)
+		if _, err := upstream.Write(wire); err != nil {
+			upstreamDone <- err
+			return
+		}
+
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			value, found, wrong := s.store.GetString("partial:key")
+			if found && !wrong && string(value) == "ok" {
+				upstreamDone <- nil
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		upstreamDone <- errors.New("partial-resync Redis command was not applied")
+	}()
+
+	cancel := make(chan struct{})
+	consumeDone := make(chan error, 1)
+	go func() {
+		consumeDone <- s.consumeReplicationConnection(client, cancel)
+	}()
+
+	if err := <-upstreamDone; err != nil {
+		close(cancel)
+		t.Fatal(err)
+	}
+
+	close(cancel)
+	_ = client.Close()
+	select {
+	case <-consumeDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("replication consumer did not stop")
+	}
+}
+
 func TestReadReplicationSnapshotEOFPreservesFollowingStream(t *testing.T) {
 	marker := "0123456789abcdef0123456789abcdef01234567"
 	payload := []byte("REDIS0012payload-0-not-the-marker")
