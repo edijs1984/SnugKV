@@ -5,7 +5,7 @@
 - [x] Redis 8.2 primary -> SnugKV replica length-prefixed RDB full-sync import for the audited core object encodings and TTLs.
 - [x] Continue from imported RDB into the live Redis replication command stream.
 - [x] Preserve replica READONLY semantics after Redis-origin full sync.
-- [ ] EOF-marker / diskless RDB full-sync framing.
+- [x] EOF-marker / diskless RDB full-sync framing. Audit: `docs/REPLICATION-DISKLESS-EOF-AUDIT.md`.
 - [ ] Additional RDB object encodings as demanded by real datasets.
 - [ ] Replication topology authentication and TLS.
 

@@ -525,6 +525,35 @@ func (s *Server) handlePSYNC(write func([]byte) error, requestedRunID string, re
 	return id, nil
 }
 
+func readReplicationEOFDelimited(reader *bufio.Reader, marker []byte) ([]byte, error) {
+	if len(marker) == 0 {
+		return nil, errors.New("empty Redis EOF marker")
+	}
+
+	payload := make([]byte, 0, 64<<10)
+	candidate := make([]byte, 0, len(marker))
+
+	for {
+		b, err := reader.ReadByte()
+		if err != nil {
+			return nil, err
+		}
+		candidate = append(candidate, b)
+
+		for len(candidate) > 0 && !bytes.HasPrefix(marker, candidate) {
+			payload = append(payload, candidate[0])
+			candidate = candidate[1:]
+			if len(payload) > persistence.MaxFrameBytes {
+				return nil, errors.New("Redis EOF-framed snapshot exceeds limit")
+			}
+		}
+
+		if len(candidate) == len(marker) {
+			return payload, nil
+		}
+	}
+}
+
 func readReplicationSnapshot(reader *bufio.Reader) ([]byte, bool, error) {
 	p, err := reader.ReadByte()
 	if err != nil {
@@ -538,10 +567,23 @@ func readReplicationSnapshot(reader *bufio.Reader) ([]byte, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	if strings.HasPrefix(strings.TrimSpace(line), "EOF:") {
-		return nil, false, errors.New("Redis EOF-framed full sync is not supported yet")
+	header := strings.TrimSpace(line)
+	if strings.HasPrefix(header, "EOF:") {
+		marker := []byte(strings.TrimPrefix(header, "EOF:"))
+		if len(marker) != 40 {
+			return nil, false, errors.New("invalid Redis EOF marker length")
+		}
+		payload, err := readReplicationEOFDelimited(reader, marker)
+		if err != nil {
+			return nil, false, err
+		}
+		if !isRedisRDBPayload(payload) {
+			return nil, false, errors.New("Redis EOF-framed snapshot is not an RDB payload")
+		}
+		return payload, true, nil
 	}
-	n, err := strconv.Atoi(strings.TrimSpace(line))
+
+	n, err := strconv.Atoi(header)
 	if err != nil || n < 0 || n > persistence.MaxFrameBytes {
 		return nil, false, errors.New("invalid replication snapshot length")
 	}
@@ -677,14 +719,31 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 		requestedRunID = "?"
 		requestedOffset = -1
 	}
+	reader := bufio.NewReader(conn)
+
+	// Redis uses EOF-delimited diskless full sync only when the replica advertises
+	// the EOF capability. Older SnugKV primaries may reject pre-PSYNC REPLCONF;
+	// either +OK or -ERR is safe to ignore before PSYNC.
+	if err := writeReplicationRESPCommand(conn, "REPLCONF", "capa", "eof"); err != nil {
+		return err
+	}
+	if _, err := reader.ReadString('\n'); err != nil {
+		return err
+	}
+
 	if err := writeReplicationRESPCommand(conn, "PSYNC", requestedRunID, strconv.FormatInt(requestedOffset, 10)); err != nil {
 		return err
 	}
 
-	reader := bufio.NewReader(conn)
 	line, err := reader.ReadString('\n')
 	if err != nil {
 		return err
+	}
+	for strings.TrimSpace(line) == "" {
+		line, err = reader.ReadString('\n')
+		if err != nil {
+			return err
+		}
 	}
 
 	redisStream := false
