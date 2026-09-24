@@ -955,7 +955,20 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 			continue
 		}
 
-		if first, peekErr := reader.Peek(1); peekErr == nil && len(first) == 1 && first[0] == '*' {
+		first, peekErr := reader.Peek(1)
+		if netErr, ok := peekErr.(net.Error); ok && netErr.Timeout() {
+			s.replication.mu.RLock()
+			ackOffset := s.replication.offset
+			s.replication.mu.RUnlock()
+			if writeErr := writeReplicationRESPCommand(conn, "REPLCONF", "ACK", strconv.FormatInt(ackOffset, 10)); writeErr != nil {
+				return writeErr
+			}
+			continue
+		}
+		if peekErr != nil {
+			return peekErr
+		}
+		if len(first) == 1 && first[0] == '*' {
 			redisStream = true
 			s.replication.mu.Lock()
 			s.replication.masterRedisStream = true
