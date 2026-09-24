@@ -260,6 +260,14 @@ func (s *Server) executeDurable(args [][]byte) ([]byte, error) {
 	return s.executeDurableForSession(args, nil)
 }
 
+func (s *Server) executeForSessionCapture(
+	args [][]byte,
+	session *authSession,
+	replicationOffset *int64,
+) ([]byte, error) {
+	return s.executeDurableForSessionCapture(args, session, replicationOffset)
+}
+
 func (s *Server) executeDurableForSession(
 	args [][]byte,
 	session *authSession,
