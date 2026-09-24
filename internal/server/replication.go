@@ -750,7 +750,6 @@ func (s *Server) dialReplicationUpstream(host string, port int) (net.Conn, error
 }
 
 func (s *Server) runReplicaFollow(host string, port int, cancel <-chan struct{}) {
-	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	for {
 		select {
 		case <-cancel:
