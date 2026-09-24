@@ -190,12 +190,12 @@ func decodeRedisRDBObjectAt(data []byte, pos *int, objectType byte) (decodedKeyO
 			var expiresAtMS int64
 			if ttl != 0 {
 				if objectType == redisRDBTypeHashMetadataPreGA {
-					if ttl > uint64(math.MaxInt64) {
+					if ttl > uint64(^uint64(0) >> 1) {
 						return decodedKeyObject{}, errors.New("Redis RDB hash field TTL out of range")
 					}
 					expiresAtMS = int64(ttl)
 				} else {
-					if minExpire == 0 || ttl-1 > uint64(math.MaxInt64-minExpire) {
+					if minExpire == 0 || ttl-1 > uint64(int64(^uint64(0)>>1) - minExpire) {
 						return decodedKeyObject{}, errors.New("Redis RDB hash field TTL out of range")
 					}
 					expiresAtMS = minExpire + int64(ttl) - 1
