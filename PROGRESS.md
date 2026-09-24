@@ -1,5 +1,10 @@
 ## Realistic workload memory milestone — 2026-09-21
 
+## TLS Replication — 2026-09-24
+
+Redis -> SnugKV replication is live-validated over verified TLS and mutual TLS. SnugKV requires a CA when upstream TLS is enabled, verifies the server identity, supports optional client certificate/key authentication, retains password/ACL authentication on top of TLS, propagates live writes, and preserves READONLY replica semantics. Full race/vet validation is green. See `docs/REPLICATION-TLS-AUDIT.md`.
+
+
 ## Authenticated Redis Replication — 2026-09-24
 
 Redis 8.2 -> SnugKV replication is validated with both `requirepass` and ACL username/password authentication. Authentication runs before `REPLCONF`/`PSYNC`, failed credentials are redacted from errors, full sync restores values and TTLs, and the replica remains READONLY. Full race/vet validation is green. See `docs/REPLICATION-AUTH-AUDIT.md`.

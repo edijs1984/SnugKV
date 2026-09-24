@@ -1,5 +1,10 @@
 # Changelog
 
+### Verified — TLS replication
+
+- Redis primary -> SnugKV replica TLS is now supported with mandatory CA verification, hostname/SNI verification, TLS 1.2 minimum, optional client certificates for mTLS, and unchanged plain TCP behavior when disabled. Live native Redis validation covered TLS + password auth, mTLS, live propagation, and READONLY semantics. Audit: `docs/REPLICATION-TLS-AUDIT.md`.
+
+
 ### Verified — authenticated Redis replication
 
 - Redis 8.2 primary authentication is now supported and live-validated for both password-only `AUTH <password>` and ACL `AUTH <username> <password>` upstream handshakes. SnugKV exposes Redis-compatible `masterauth` / `masteruser` settings via config, environment, and CLI. Audit: `docs/REPLICATION-AUTH-AUDIT.md`.

@@ -14,31 +14,36 @@ import (
 )
 
 type Config struct {
-	SourcePath        string `json:"-"`
-	MasterUser        string `json:"masteruser"`
-	MasterAuth        string `json:"masterauth"`
-	AdminAddr         string `json:"admin_listen"`
-	EvictionPolicy    string `json:"eviction_policy"`
-	MetricsAddr       string `json:"metrics_listen"`
-	Compression       bool   `json:"compression"`
-	JSONShape         bool   `json:"json_shape"`
-	OptimizerMode     string `json:"optimizer_mode"`
-	AOFPath           string `json:"aof_path"`
-	SnapshotPath      string `json:"snapshot_path"`
-	ACLFile           string `json:"acl_file"`
-	Fsync             string `json:"fsync"`
-	MaxMemory         uint64 `json:"max_memory"`
-	GoMemoryLimit     int64  `json:"go_memory_limit"`
-	Encoding          bool   `json:"encoding"`
-	ListenAddr        string `json:"listen"`
-	Shards            int    `json:"shards"`
-	MaxConnections    int    `json:"max_connections"`
-	ReadTimeoutMS     int64  `json:"read_timeout_ms"`
-	WriteTimeoutMS    int64  `json:"write_timeout_ms"`
-	MaxRequestBytes   int    `json:"max_request_bytes"`
-	MaxBulkBytes      int    `json:"max_bulk_bytes"`
-	MaxArguments      int    `json:"max_arguments"`
-	CleanupIntervalMS int64  `json:"cleanup_interval_ms"`
+	SourcePath          string `json:"-"`
+	MasterUser          string `json:"masteruser"`
+	MasterAuth          string `json:"masterauth"`
+	MasterTLS           bool   `json:"mastertls"`
+	MasterTLSCACert     string `json:"mastertls_ca_cert"`
+	MasterTLSCert       string `json:"mastertls_cert"`
+	MasterTLSKey        string `json:"mastertls_key"`
+	MasterTLSServerName string `json:"mastertls_server_name"`
+	AdminAddr           string `json:"admin_listen"`
+	EvictionPolicy      string `json:"eviction_policy"`
+	MetricsAddr         string `json:"metrics_listen"`
+	Compression         bool   `json:"compression"`
+	JSONShape           bool   `json:"json_shape"`
+	OptimizerMode       string `json:"optimizer_mode"`
+	AOFPath             string `json:"aof_path"`
+	SnapshotPath        string `json:"snapshot_path"`
+	ACLFile             string `json:"acl_file"`
+	Fsync               string `json:"fsync"`
+	MaxMemory           uint64 `json:"max_memory"`
+	GoMemoryLimit       int64  `json:"go_memory_limit"`
+	Encoding            bool   `json:"encoding"`
+	ListenAddr          string `json:"listen"`
+	Shards              int    `json:"shards"`
+	MaxConnections      int    `json:"max_connections"`
+	ReadTimeoutMS       int64  `json:"read_timeout_ms"`
+	WriteTimeoutMS      int64  `json:"write_timeout_ms"`
+	MaxRequestBytes     int    `json:"max_request_bytes"`
+	MaxBulkBytes        int    `json:"max_bulk_bytes"`
+	MaxArguments        int    `json:"max_arguments"`
+	CleanupIntervalMS   int64  `json:"cleanup_interval_ms"`
 }
 
 func Default() Config {
@@ -50,6 +55,16 @@ func (c Config) Limits() resp.Limits {
 func (c Config) Validate() error {
 	if c.GoMemoryLimit < 0 {
 		return errors.New("go_memory_limit must not be negative")
+	}
+	if c.MasterTLS {
+		if c.MasterTLSCACert == "" {
+			return errors.New("mastertls requires mastertls_ca_cert")
+		}
+		if (c.MasterTLSCert == "") != (c.MasterTLSKey == "") {
+			return errors.New("mastertls_cert and mastertls_key must be configured together")
+		}
+	} else if c.MasterTLSCACert != "" || c.MasterTLSCert != "" || c.MasterTLSKey != "" || c.MasterTLSServerName != "" {
+		return errors.New("mastertls certificate settings require mastertls")
 	}
 	if c.AdminAddr != "" && c.AdminAddr == c.ListenAddr {
 		return errors.New("admin and public listen addresses must differ")
@@ -152,6 +167,13 @@ func Load(path string) (Config, error) {
 	return c, nil
 }
 func (c *Config) ApplyEnv() error {
+	if v, ok := os.LookupEnv("SNUGKV_MASTERTLS"); ok {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return errors.New("invalid SNUGKV_MASTERTLS")
+		}
+		c.MasterTLS = b
+	}
 	if v, ok := os.LookupEnv("SNUGKV_COMPRESSION"); ok {
 		b, err := strconv.ParseBool(v)
 		if err != nil {
@@ -166,7 +188,7 @@ func (c *Config) ApplyEnv() error {
 		}
 		c.JSONShape = b
 	}
-	for name, dst := range map[string]*string{"AOF_PATH": &c.AOFPath, "SNAPSHOT_PATH": &c.SnapshotPath, "ACL_FILE": &c.ACLFile, "FSYNC": &c.Fsync, "EVICTION_POLICY": &c.EvictionPolicy, "METRICS_LISTEN": &c.MetricsAddr, "ADMIN_LISTEN": &c.AdminAddr, "OPTIMIZER_MODE": &c.OptimizerMode, "MASTERUSER": &c.MasterUser, "MASTERAUTH": &c.MasterAuth} {
+	for name, dst := range map[string]*string{"AOF_PATH": &c.AOFPath, "SNAPSHOT_PATH": &c.SnapshotPath, "ACL_FILE": &c.ACLFile, "FSYNC": &c.Fsync, "EVICTION_POLICY": &c.EvictionPolicy, "METRICS_LISTEN": &c.MetricsAddr, "ADMIN_LISTEN": &c.AdminAddr, "OPTIMIZER_MODE": &c.OptimizerMode, "MASTERUSER": &c.MasterUser, "MASTERAUTH": &c.MasterAuth, "MASTERTLS_CA_CERT": &c.MasterTLSCACert, "MASTERTLS_CERT": &c.MasterTLSCert, "MASTERTLS_KEY": &c.MasterTLSKey, "MASTERTLS_SERVER_NAME": &c.MasterTLSServerName} {
 		if v, ok := os.LookupEnv("SNUGKV_" + name); ok {
 			*dst = v
 		}
