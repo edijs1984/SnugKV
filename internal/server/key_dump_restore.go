@@ -19,7 +19,8 @@ const (
 	keyRDBTypeListQuicklist2 = byte(18)
 	keyRDBTypeSetListpack    = byte(20)
 	keyRDBTypeStreamListpacks3 = byte(21)
-	keyRDBVersion            = uint16(redisRDBMaxSupportedVersion)
+	keyRDBVersion            = functionRDBVersion
+	keyRDBMaxAcceptedVersion = uint16(redisRDBMaxSupportedVersion)
 )
 
 var keyDumpRestoreCommands = map[string]commandInfo{
@@ -102,7 +103,7 @@ func verifyKeyDumpPayload(data []byte) ([]byte, error) {
 
 	trailer := len(data) - 10
 	version := binary.LittleEndian.Uint16(data[trailer : trailer+2])
-	if version == 0 || version > keyRDBVersion {
+	if version == 0 || version > keyRDBMaxAcceptedVersion {
 		return nil, errors.New("ERR DUMP payload version or checksum are wrong")
 	}
 	wantChecksum := binary.LittleEndian.Uint64(data[trailer+2:])
