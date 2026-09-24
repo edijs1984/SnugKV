@@ -1092,6 +1092,92 @@ func (r *oneByteReader) Read(p []byte) (int, error) {
 	return 1, nil
 }
 
+func TestRedisPartialResyncRecoversRedisStreamMode(t *testing.T) {
+	s := New(engine.New())
+	s.replication.setReplica("127.0.0.1", 6379)
+	s.replication.mu.Lock()
+	s.replication.masterRunID = "0123456789012345678901234567890123456789"
+	s.replication.offset = 100
+	s.replication.masterRedisStream = false
+	s.replication.mu.Unlock()
+
+	client, upstream := net.Pipe()
+	defer client.Close()
+	defer upstream.Close()
+
+	upstreamDone := make(chan error, 1)
+	go func() {
+		reader := bufio.NewReader(upstream)
+
+		args, _, err := readRedisReplicationCommand(reader)
+		if err != nil {
+			upstreamDone <- err
+			return
+		}
+		if len(args) != 3 || string(args[0]) != "REPLCONF" {
+			upstreamDone <- fmt.Errorf("unexpected REPLCONF: %q", args)
+			return
+		}
+		if _, err := upstream.Write([]byte("+OK\r\n")); err != nil {
+			upstreamDone <- err
+			return
+		}
+
+		args, _, err = readRedisReplicationCommand(reader)
+		if err != nil {
+			upstreamDone <- err
+			return
+		}
+		if len(args) != 3 || string(args[0]) != "PSYNC" {
+			upstreamDone <- fmt.Errorf("unexpected PSYNC: %q", args)
+			return
+		}
+
+		wire := []byte("+CONTINUE\r\n*3\r\n$3\r\nSET\r\n$11\r\npartial:key\r\n$2\r\nok\r\n")
+		if _, err := upstream.Write(wire); err != nil {
+			upstreamDone <- err
+			return
+		}
+
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			value, found, wrong := s.store.GetString("partial:key")
+			if found && !wrong && string(value) == "ok" {
+				s.replication.mu.RLock()
+				mode := s.replication.masterRedisStream
+				s.replication.mu.RUnlock()
+				if !mode {
+					upstreamDone <- errors.New("Redis stream mode was not recovered")
+					return
+				}
+				upstreamDone <- nil
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		upstreamDone <- errors.New("partial-resync Redis command was not applied")
+	}()
+
+	cancel := make(chan struct{})
+	consumeDone := make(chan error, 1)
+	go func() {
+		consumeDone <- s.consumeReplicationConnection(client, cancel)
+	}()
+
+	if err := <-upstreamDone; err != nil {
+		close(cancel)
+		t.Fatal(err)
+	}
+
+	close(cancel)
+	_ = client.Close()
+	select {
+	case <-consumeDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("replication consumer did not stop")
+	}
+}
+
 func TestReadRedisReplicationCommandHandlesFragmentedCRLF(t *testing.T) {
 	wire := []byte("*1\r\n$4\r\nPING\r\n")
 	reader := bufio.NewReaderSize(&oneByteReader{data: wire}, 1)
