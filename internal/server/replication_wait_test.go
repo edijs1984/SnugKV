@@ -265,19 +265,19 @@ func TestReplicationWaitSurvivesReplicaReconnect(t *testing.T) {
 	}
 }
 
-func TestReplicationWaitWakesOnReplicaPromotionTopologyChange(t *testing.T) {
+func TestReplicationWaitReplicaTopologyLossKeepsWaitingUntilTimeout(t *testing.T) {
 	s := New(engine.New())
 
 	id, _, _ := s.replication.registerReplica(func([]byte) error { return nil })
-	defer s.replication.unregisterReplica(id)
 
+	started := time.Now()
 	done := make(chan struct {
 		value string
 		err   error
 	}, 1)
 	go func() {
 		value, err := s.executeReplicationWait(
-			[][]byte{[]byte("WAIT"), []byte("1"), []byte("1000")},
+			[][]byte{[]byte("WAIT"), []byte("1"), []byte("100")},
 			100,
 			nil,
 			true,
@@ -293,13 +293,16 @@ func TestReplicationWaitWakesOnReplicaPromotionTopologyChange(t *testing.T) {
 
 	select {
 	case result := <-done:
+		if elapsed := time.Since(started); elapsed < 70*time.Millisecond {
+			t.Fatalf("WAIT returned too early after replica topology loss: %v", elapsed)
+		}
 		if result.err != nil {
 			t.Fatal(result.err)
 		}
 		if result.value != ":0\r\n" {
-			t.Fatalf("WAIT after replica removal=%q want=:0", result.value)
+			t.Fatalf("WAIT after timeout=%q want=:0", result.value)
 		}
-	case <-time.After(250 * time.Millisecond):
-		t.Fatal("WAIT did not wake after replica topology change")
+	case <-time.After(time.Second):
+		t.Fatal("WAIT did not time out after replica topology loss")
 	}
 }
