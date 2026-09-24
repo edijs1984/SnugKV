@@ -886,6 +886,23 @@ func (s *Server) runReplicaFollow(host string, port int, cancel <-chan struct{})
 	}
 }
 
+func (s *Server) applySnugReplicationRecordsLocked(records []persistence.Record) error {
+	if s.journal != nil {
+		if s.durabilityFailed {
+			return errors.New("ERR persistence is unavailable; restart after repairing storage")
+		}
+		if err := s.journal.Append(records); err != nil {
+			s.durabilityFailed = true
+			return errors.New("replication persistence append failed")
+		}
+	}
+	if err := s.store.Restore(records, true); err != nil {
+		return err
+	}
+	s.refreshWatchesLocked()
+	return nil
+}
+
 func (s *Server) persistRedisFullSyncLocked(checkpointOffset int64) error {
 	if s.journal == nil {
 		return nil
@@ -1008,9 +1025,16 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 			return err
 		}
 		s.durableMu.Lock()
-		err = s.store.Restore(records, true)
-		if err == nil && isRedisRDB {
-			err = s.persistRedisFullSyncLocked(off)
+		if isRedisRDB {
+			err = s.store.Restore(records, true)
+			if err == nil {
+				err = s.persistRedisFullSyncLocked(off)
+				if err == nil {
+					s.noteReplicaAOFOffset(off)
+				}
+			}
+		} else {
+			err = s.applySnugReplicationRecordsLocked(records)
 			if err == nil {
 				s.noteReplicaAOFOffset(off)
 			}
@@ -1188,14 +1212,15 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 			return err
 		}
 		s.durableMu.Lock()
-		err = s.store.Restore(records, true)
-		s.refreshWatchesLocked()
+		err = s.applySnugReplicationRecordsLocked(records)
 		s.durableMu.Unlock()
 		if err != nil {
 			return err
 		}
 		s.replication.mu.Lock()
 		s.replication.offset += int64(len(frame))
+		replicatedOffset := s.replication.offset
 		s.replication.mu.Unlock()
+		s.noteReplicaAOFOffset(replicatedOffset)
 	}
 }
