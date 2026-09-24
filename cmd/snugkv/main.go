@@ -131,6 +131,10 @@ func main() {
 		listener.Close()
 		log.Fatal(err)
 	}
+	if err = listener.ConfigureReplicationPersistence(cfg.AOFPath, cfg.SnapshotPath); err != nil {
+		listener.Close()
+		log.Fatal(err)
+	}
 	if cfg.AdminAddr != "" {
 		if err = listener.OpenAdmin(cfg.AdminAddr); err != nil {
 			listener.Close()
@@ -160,14 +164,29 @@ func main() {
 				metrics.Shutdown(ctx)
 				cancel()
 			}
+
+			checkpointReplication := listener.HasReplicationContinuationState()
+			if checkpointReplication && journal != nil {
+				if err = journal.Rewrite(store.Export(nil)); err != nil {
+					log.Printf("event=replication_aof_checkpoint_failed error=%q", err)
+					checkpointReplication = false
+				}
+			}
 			if journal != nil {
 				if err = journal.Close(); err != nil {
 					log.Printf("event=persistence_close_failed error=%q", err)
+					checkpointReplication = false
 				}
 			}
 			if cfg.SnapshotPath != "" {
 				if err = persistence.Snapshot(cfg.SnapshotPath, store.Export(nil)); err != nil {
 					log.Printf("event=snapshot_failed error=%q", err)
+					checkpointReplication = false
+				}
+			}
+			if checkpointReplication {
+				if err = listener.CheckpointReplicationPersistence(); err != nil {
+					log.Printf("event=replication_checkpoint_failed error=%q", err)
 				}
 			}
 			log.Print("event=stopped")
