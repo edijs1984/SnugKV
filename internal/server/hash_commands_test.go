@@ -98,6 +98,38 @@ func TestHashFieldExpirationCommands(t *testing.T) {
 	}
 }
 
+func TestHashFieldExpirationConditions(t *testing.T) {
+	s := New(engine.New())
+	execute(t, s, "HSET", "cond", "a", "1", "b", "2")
+
+	base := time.Now().Add(2 * time.Minute).UnixMilli()
+	if got := execute(t, s, "HPEXPIREAT", "cond", strconv.FormatInt(base, 10), "NX", "FIELDS", "2", "a", "b"); got != "*2\r\n:1\r\n:1\r\n" {
+		t.Fatalf("NX initial = %q", got)
+	}
+	if got := execute(t, s, "HPEXPIREAT", "cond", strconv.FormatInt(base+1000, 10), "NX", "FIELDS", "1", "a"); got != "*1\r\n:0\r\n" {
+		t.Fatalf("NX existing = %q", got)
+	}
+
+	execute(t, s, "HSET", "cond", "c", "3")
+	if got := execute(t, s, "HPEXPIREAT", "cond", strconv.FormatInt(base+1000, 10), "XX", "FIELDS", "2", "a", "c"); got != "*2\r\n:1\r\n:0\r\n" {
+		t.Fatalf("XX = %q", got)
+	}
+
+	if got := execute(t, s, "HPEXPIREAT", "cond", strconv.FormatInt(base+500, 10), "GT", "FIELDS", "2", "a", "c"); got != "*2\r\n:0\r\n:0\r\n" {
+		t.Fatalf("GT lower/no-ttl = %q", got)
+	}
+	if got := execute(t, s, "HPEXPIREAT", "cond", strconv.FormatInt(base+2000, 10), "GT", "FIELDS", "1", "a"); got != "*1\r\n:1\r\n" {
+		t.Fatalf("GT higher = %q", got)
+	}
+
+	if got := execute(t, s, "HPEXPIREAT", "cond", strconv.FormatInt(base+3000, 10), "LT", "FIELDS", "2", "a", "c"); got != "*2\r\n:0\r\n:1\r\n" {
+		t.Fatalf("LT higher/no-ttl = %q", got)
+	}
+	if got := execute(t, s, "HPEXPIREAT", "cond", strconv.FormatInt(base+1500, 10), "LT", "FIELDS", "1", "a"); got != "*1\r\n:1\r\n" {
+		t.Fatalf("LT lower = %q", got)
+	}
+}
+
 func TestHashFieldExpirationSyntax(t *testing.T) {
 	s := New(engine.New())
 	execute(t, s, "HSET", "h", "a", "1")
@@ -106,7 +138,6 @@ func TestHashFieldExpirationSyntax(t *testing.T) {
 		{"HPTTL", "h", "NOPE", "1", "a"},
 		{"HPTTL", "h", "FIELDS", "0"},
 		{"HPTTL", "h", "FIELDS", "2", "a"},
-		{"HPEXPIRE", "h", "1000", "NX", "FIELDS", "1", "a"},
 	} {
 		raw := make([][]byte, len(args))
 		for i := range args {
