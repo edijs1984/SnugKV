@@ -1733,3 +1733,145 @@ func TestInterruptedPartialResyncDoesNotAdvancePastIncompleteRedisCommand(t *tes
 		t.Fatalf("runid changed during Redis partial replay: %q", runID)
 	}
 }
+
+func TestChainedReplicationPrimaryReplicaReplica(t *testing.T) {
+	primary, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer primary.Close()
+
+	middle, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer middle.Close()
+
+	leaf, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer leaf.Close()
+
+	primaryAddr := primary.listener.Addr().(*net.TCPAddr)
+	if _, err := middle.server.Execute([][]byte{
+		[]byte("REPLICAOF"), []byte("127.0.0.1"), []byte(strconv.Itoa(primaryAddr.Port)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	waitReplication(t, func() bool {
+		return middle.server.replication.snapshot().masterLinkStatus == "up"
+	})
+
+	middleAddr := middle.listener.Addr().(*net.TCPAddr)
+	if _, err := leaf.server.Execute([][]byte{
+		[]byte("REPLICAOF"), []byte("127.0.0.1"), []byte(strconv.Itoa(middleAddr.Port)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	waitReplication(t, func() bool {
+		return leaf.server.replication.snapshot().masterLinkStatus == "up"
+	})
+	waitReplication(t, func() bool {
+		return middle.server.replication.snapshot().connectedReplicas == 1
+	})
+
+	if _, err := primary.server.Execute([][]byte{
+		[]byte("SET"), []byte("chain:key"), []byte("value"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	waitReplication(t, func() bool {
+		v, found, wrong := middle.server.store.GetString("chain:key")
+		return found && !wrong && string(v) == "value"
+	})
+	waitReplication(t, func() bool {
+		v, found, wrong := leaf.server.store.GetString("chain:key")
+		return found && !wrong && string(v) == "value"
+	})
+
+	if state := primary.server.replication.snapshot(); state.connectedReplicas != 1 {
+		t.Fatalf("primary connected replicas=%d want=1", state.connectedReplicas)
+	}
+	if state := middle.server.replication.snapshot(); state.connectedReplicas != 1 {
+		t.Fatalf("middle connected replicas=%d want=1", state.connectedReplicas)
+	}
+}
+
+func TestChainedReplicationLeafReconnectsThroughMiddle(t *testing.T) {
+	primary, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer primary.Close()
+
+	middle, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer middle.Close()
+
+	leaf, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer leaf.Close()
+
+	primaryAddr := primary.listener.Addr().(*net.TCPAddr)
+	middleAddr := middle.listener.Addr().(*net.TCPAddr)
+
+	if _, err := middle.server.Execute([][]byte{
+		[]byte("REPLICAOF"), []byte("127.0.0.1"), []byte(strconv.Itoa(primaryAddr.Port)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitReplication(t, func() bool {
+		return middle.server.replication.snapshot().masterLinkStatus == "up"
+	})
+
+	if _, err := leaf.server.Execute([][]byte{
+		[]byte("REPLICAOF"), []byte("127.0.0.1"), []byte(strconv.Itoa(middleAddr.Port)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitReplication(t, func() bool {
+		return leaf.server.replication.snapshot().masterLinkStatus == "up"
+	})
+
+	if _, err := primary.server.Execute([][]byte{
+		[]byte("SET"), []byte("chain:before"), []byte("one"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitReplication(t, func() bool {
+		v, found, wrong := leaf.server.store.GetString("chain:before")
+		return found && !wrong && string(v) == "one"
+	})
+
+	leaf.server.stopReplicaFollow()
+	waitReplication(t, func() bool {
+		return middle.server.replication.snapshot().connectedReplicas == 0
+	})
+
+	if _, err := primary.server.Execute([][]byte{
+		[]byte("SET"), []byte("chain:during"), []byte("two"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitReplication(t, func() bool {
+		v, found, wrong := middle.server.store.GetString("chain:during")
+		return found && !wrong && string(v) == "two"
+	})
+
+	leaf.server.startReplicaFollow("127.0.0.1", middleAddr.Port)
+	waitReplication(t, func() bool {
+		return leaf.server.replication.snapshot().masterLinkStatus == "up"
+	})
+	waitReplication(t, func() bool {
+		v, found, wrong := leaf.server.store.GetString("chain:during")
+		return found && !wrong && string(v) == "two"
+	})
+}
