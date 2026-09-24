@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"snugkv/internal/persistence"
 	"sync"
 )
 
@@ -36,24 +37,57 @@ func replicationPersistencePath(aofPath, snapshotPath string) string {
 // is written only after the keyspace has been made durable during graceful
 // shutdown, so its offset never intentionally advances beyond recoverable data.
 func (s *TCPServer) ConfigureReplicationPersistence(aofPath, snapshotPath string) error {
+	return s.ConfigureReplicationPersistenceRecovered(aofPath, snapshotPath, nil)
+}
+
+// ConfigureReplicationPersistenceRecovered prefers a crash-safe checkpoint
+// recovered from the logical persistence stream. The graceful-shutdown sidecar
+// remains the fallback for compacted AOF/snapshot shutdown checkpoints.
+func (s *TCPServer) ConfigureReplicationPersistenceRecovered(
+	aofPath, snapshotPath string,
+	recovered *persistence.ReplicationCheckpoint,
+) error {
 	path := replicationPersistencePath(aofPath, snapshotPath)
 	if path == "" {
 		return nil
 	}
 	replicationPersistencePaths.Store(s.server, path)
 
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
+	var state replicationPersistenceState
+	if recovered != nil && recovered.Clear {
+		if err := s.server.clearReplicationPersistence(); err != nil {
+			return fmt.Errorf("replication recovery: %w", err)
+		}
+		if recovered.MasterHost != "" {
+			if recovered.MasterPort <= 0 || recovered.MasterPort > 65535 {
+				return fmt.Errorf("replication recovery: invalid upstream")
+			}
+			s.server.startReplicaFollow(recovered.MasterHost, recovered.MasterPort)
+		}
 		return nil
 	}
-	if err != nil {
-		return fmt.Errorf("replication recovery: %w", err)
+	if recovered != nil {
+		state = replicationPersistenceState{
+			Version:     replicationPersistenceVersion,
+			MasterHost:  recovered.MasterHost,
+			MasterPort:  recovered.MasterPort,
+			MasterRunID: recovered.MasterRunID,
+			Offset:      recovered.Offset,
+			RedisStream: recovered.RedisStream,
+		}
+	} else {
+		data, err := os.ReadFile(path)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("replication recovery: %w", err)
+		}
+		if err := json.Unmarshal(data, &state); err != nil {
+			return fmt.Errorf("replication recovery: %w", err)
+		}
 	}
 
-	var state replicationPersistenceState
-	if err := json.Unmarshal(data, &state); err != nil {
-		return fmt.Errorf("replication recovery: %w", err)
-	}
 	if state.Version != replicationPersistenceVersion {
 		return fmt.Errorf("replication recovery: unsupported state version %d", state.Version)
 	}
@@ -77,6 +111,36 @@ func (s *TCPServer) ConfigureReplicationPersistence(aofPath, snapshotPath string
 
 	s.server.startReplicaFollow(state.MasterHost, state.MasterPort)
 	return nil
+}
+
+func (s *Server) replicationCheckpointForOffset(offset int64, redisStream bool) *persistence.ReplicationCheckpoint {
+	s.replication.mu.RLock()
+	defer s.replication.mu.RUnlock()
+	if s.replication.role != replicationReplica ||
+		s.replication.masterHost == "" ||
+		s.replication.masterRunID == "" {
+		return nil
+	}
+	return &persistence.ReplicationCheckpoint{
+		MasterHost:  s.replication.masterHost,
+		MasterPort:  s.replication.masterPort,
+		MasterRunID: s.replication.masterRunID,
+		Offset:      offset,
+		RedisStream: redisStream,
+	}
+}
+
+func (s *Server) persistReplicationCheckpointClearLocked(host string, port int) error {
+	if s.journal == nil {
+		return nil
+	}
+	return s.journal.Append([]persistence.Record{{
+		Replication: &persistence.ReplicationCheckpoint{
+			Clear:      true,
+			MasterHost: host,
+			MasterPort: port,
+		},
+	}})
 }
 
 // HasReplicationContinuationState reports whether a graceful shutdown should

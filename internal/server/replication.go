@@ -787,6 +787,48 @@ func (s *Server) runReplicaFollow(host string, port int, cancel <-chan struct{})
 	}
 }
 
+func (s *Server) persistRedisFullSyncLocked(checkpointOffset int64) error {
+	if s.journal == nil {
+		return nil
+	}
+	s.replication.mu.RLock()
+	masterHost := s.replication.masterHost
+	masterPort := s.replication.masterPort
+	s.replication.mu.RUnlock()
+	if err := s.journal.Append([]persistence.Record{
+		{Replication: &persistence.ReplicationCheckpoint{
+			Clear: true, MasterHost: masterHost, MasterPort: masterPort,
+		}},
+		{Reset: true},
+	}); err != nil {
+		s.durabilityFailed = true
+		return errors.New("replication full-sync persistence reset failed")
+	}
+
+	records := s.store.Export(nil)
+	const batchSize = 1024
+	for start := 0; start < len(records); start += batchSize {
+		end := start + batchSize
+		if end > len(records) {
+			end = len(records)
+		}
+		if err := s.journal.Append(records[start:end]); err != nil {
+			s.durabilityFailed = true
+			return errors.New("replication full-sync persistence append failed")
+		}
+	}
+
+	checkpoint := s.replicationCheckpointForOffset(checkpointOffset, true)
+	if checkpoint == nil {
+		return errors.New("missing replication full-sync checkpoint state")
+	}
+	if err := s.journal.Append([]persistence.Record{{Replication: checkpoint}}); err != nil {
+		s.durabilityFailed = true
+		return errors.New("replication full-sync checkpoint append failed")
+	}
+	return nil
+}
+
 func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struct{}) error {
 	s.replication.mu.RLock()
 	requestedRunID := s.replication.masterRunID
@@ -868,6 +910,9 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 		}
 		s.durableMu.Lock()
 		err = s.store.Restore(records, true)
+		if err == nil && isRedisRDB {
+			err = s.persistRedisFullSyncLocked(off)
+		}
 		s.durableMu.Unlock()
 		if err != nil {
 			return err
@@ -913,11 +958,14 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 			if transaction != nil {
 				transactionBytes += streamBytes
 				if cmd == "EXEC" {
-					if err := s.applyRedisReplicationBatch(transaction); err != nil {
+					s.replication.mu.RLock()
+					targetOffset := s.replication.offset + transactionBytes
+					s.replication.mu.RUnlock()
+					if err := s.applyRedisReplicationBatch(transaction, targetOffset); err != nil {
 						return err
 					}
 					s.replication.mu.Lock()
-					s.replication.offset += transactionBytes
+					s.replication.offset = targetOffset
 					s.replication.mu.Unlock()
 					transaction = nil
 					transactionBytes = 0
@@ -939,11 +987,14 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 				continue
 			}
 
-			if err := s.applyRedisReplicationBatch([][][]byte{args}); err != nil {
+			s.replication.mu.RLock()
+			targetOffset := s.replication.offset + streamBytes
+			s.replication.mu.RUnlock()
+			if err := s.applyRedisReplicationBatch([][][]byte{args}, targetOffset); err != nil {
 				return err
 			}
 			s.replication.mu.Lock()
-			s.replication.offset += streamBytes
+			s.replication.offset = targetOffset
 			ackOffset := s.replication.offset
 			s.replication.mu.Unlock()
 

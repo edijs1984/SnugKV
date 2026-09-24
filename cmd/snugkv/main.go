@@ -98,6 +98,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	var recoveredReplication *persistence.ReplicationCheckpoint
 	var journal *persistence.Log
 	if cfg.AOFPath != "" {
 		journal, err = persistence.Open(cfg.AOFPath, cfg.Fsync)
@@ -106,12 +107,18 @@ func main() {
 		}
 	}
 	if cfg.SnapshotPath != "" {
-		if err = persistence.ReplaySnapshot(cfg.SnapshotPath, func(records []persistence.Record) error { return store.Restore(records, false) }); err != nil {
+		if err = persistence.ReplaySnapshot(cfg.SnapshotPath, func(records []persistence.Record) error {
+			recoveredReplication = persistence.RecoverReplicationCheckpoint(recoveredReplication, records)
+			return store.Restore(records, false)
+		}); err != nil {
 			log.Fatalf("snapshot recovery: %v", err)
 		}
 	}
 	if cfg.AOFPath != "" {
-		if err = persistence.Replay(cfg.AOFPath, func(records []persistence.Record) error { return store.Restore(records, false) }); err != nil {
+		if err = persistence.Replay(cfg.AOFPath, func(records []persistence.Record) error {
+			recoveredReplication = persistence.RecoverReplicationCheckpoint(recoveredReplication, records)
+			return store.Restore(records, false)
+		}); err != nil {
 			log.Fatalf("AOF recovery: %v", err)
 		}
 	}
@@ -131,7 +138,7 @@ func main() {
 		listener.Close()
 		log.Fatal(err)
 	}
-	if err = listener.ConfigureReplicationPersistence(cfg.AOFPath, cfg.SnapshotPath); err != nil {
+	if err = listener.ConfigureReplicationPersistenceRecovered(cfg.AOFPath, cfg.SnapshotPath, recoveredReplication); err != nil {
 		listener.Close()
 		log.Fatal(err)
 	}
