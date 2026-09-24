@@ -1,5 +1,10 @@
 # Changelog
 
+### Verified — Redis diskless EOF full sync
+
+- Redis 8.2 diskless replication using `$EOF:<40-byte marker>` is now supported and live-validated. SnugKV advertises EOF capability, imports the framed RDB without consuming the following command stream, preserves TTLs, continues live replication, and remains READONLY as a replica. Audit: `docs/REPLICATION-DISKLESS-EOF-AUDIT.md`.
+
+
 ### Verified — Redis RDB full-sync interoperability
 
 - Redis 8.2.9 primary -> SnugKV replica full sync now imports real length-prefixed Redis RDB snapshots for the audited core encodings, preserves absolute TTLs, continues with the live Redis command stream, and retains replica READONLY behavior. Audit: `docs/REPLICATION-RDB-FULLSYNC-AUDIT.md`.
