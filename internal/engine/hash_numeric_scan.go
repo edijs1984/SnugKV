@@ -34,6 +34,7 @@ func (s *Store) HashIncrBy(key string, field []byte, increment int64) (int64, er
 		if err != nil {
 			return 0, err
 		}
+		pairs = liveHashPairs(pairs, now.UnixMilli())
 		expiresAt = sh.expirationAt(key, old)
 	}
 
@@ -61,6 +62,7 @@ func (s *Store) HashIncrBy(key string, field []byte, increment int64) (int64, er
 
 	if found {
 		pairs[index].Value = value
+		pairs[index].ExpiresAtMS = 0
 	} else {
 		pairs = append(pairs, HashPair{})
 		copy(pairs[index+1:], pairs[index:])
@@ -113,6 +115,7 @@ func (s *Store) HashIncrByFloat(key string, field []byte, increment float64) (st
 		if err != nil {
 			return "", err
 		}
+		pairs = liveHashPairs(pairs, now.UnixMilli())
 		expiresAt = sh.expirationAt(key, old)
 	}
 
@@ -142,6 +145,7 @@ func (s *Store) HashIncrByFloat(key string, field []byte, increment float64) (st
 
 	if found {
 		pairs[index].Value = value
+		pairs[index].ExpiresAtMS = 0
 	} else {
 		pairs = append(pairs, HashPair{})
 		copy(pairs[index+1:], pairs[index:])
@@ -189,6 +193,7 @@ func (s *Store) HashScan(key string, cursor uint64, count int, pattern []byte) (
 	if err != nil {
 		return 0, nil, err
 	}
+	pairs = liveHashPairs(pairs, s.now().UnixMilli())
 	if cursor >= uint64(len(pairs)) {
 		return 0, nil, nil
 	}
