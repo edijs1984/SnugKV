@@ -96,7 +96,11 @@ func validateRedisRDBTemplateFields(fields [][]byte) error {
 			return errors.New("Redis RDB hash template has empty field")
 		}
 		if i > 0 && compareRedisTemplateFields(fields[i-1], fields[i]) >= 0 {
-			return errors.New("Redis RDB hash template fields are not strictly sorted")
+			return fmt.Errorf(
+				"Redis RDB hash template fields are not strictly sorted: previous=%q current=%q",
+				fields[i-1],
+				fields[i],
+			)
 		}
 	}
 	return nil
