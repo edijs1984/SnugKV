@@ -294,6 +294,46 @@ func testRedisZiplist(t *testing.T, values ...string) []byte {
 	return raw
 }
 
+func testRedisZipmap(t *testing.T, pairs ...[2]string) []byte {
+	t.Helper()
+	if len(pairs) >= 254 {
+		t.Fatal("test zipmap helper only supports short count")
+	}
+	raw := []byte{byte(len(pairs))}
+	for _, pair := range pairs {
+		if len(pair[0]) >= 254 || len(pair[1]) >= 254 {
+			t.Fatal("test zipmap helper only supports short strings")
+		}
+		raw = append(raw, byte(len(pair[0])))
+		raw = append(raw, []byte(pair[0])...)
+		raw = append(raw, byte(len(pair[1])))
+		raw = append(raw, 0)
+		raw = append(raw, []byte(pair[1])...)
+	}
+	return append(raw, 255)
+}
+
+func TestDecodeRedisLegacyZipmap(t *testing.T) {
+	raw := testRedisZipmap(t, [2]string{"a", "1"}, [2]string{"b", "two"})
+	body := appendRDBRawString(nil, raw)
+	pos := 0
+	obj, err := decodeRedisRDBObjectAt(body, &pos, redisRDBTypeHashZipmap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pos != len(body) || len(obj.hash) != 2 ||
+		string(obj.hash[0].Field) != "a" || string(obj.hash[0].Value) != "1" ||
+		string(obj.hash[1].Field) != "b" || string(obj.hash[1].Value) != "two" {
+		t.Fatalf("unexpected hash zipmap: pos=%d len=%d hash=%v", pos, len(body), obj.hash)
+	}
+
+	raw = testRedisZipmap(t, [2]string{"a", "1"})
+	raw[0] = 2
+	if _, err := decodeRedisZipmap(raw); err == nil {
+		t.Fatal("expected zipmap entry count mismatch")
+	}
+}
+
 func TestDecodeRedisLegacyZiplists(t *testing.T) {
 	t.Run("list ziplist", func(t *testing.T) {
 		raw := testRedisZiplist(t, "a", "b", "c")
