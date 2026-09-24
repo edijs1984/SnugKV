@@ -1,5 +1,10 @@
 # Changelog
 
+### Verified — Redis hash field expiration
+
+- Added Redis-compatible hash-field expiration commands with NX/XX/GT/LT semantics, Redis RDB HFE hashtable metadata decoding (types 22/24), and live Redis 8.10.2 validation of exact absolute field expirations. Also fixed Redis partial-resync reconnect handling so `+CONTINUE` preserves Redis RESP stream mode. Audit: `docs/HASH-FIELD-EXPIRATION-AUDIT.md`.
+
+
 ### Verified — broader Redis RDB encoding compatibility
 
 - Redis full-sync import now supports additional plain and legacy encodings: LIST, SET, HASH, textual-score ZSET, ZSET_2, HASH_ZIPMAP, LIST_ZIPLIST, ZSET_ZIPLIST, HASH_ZIPLIST, and legacy LIST_QUICKLIST. Live Redis 8.10.2 validation confirmed plain HASH/SET/ZSET_2, integer strings, LZF, and TTL restoration. Audit: `docs/REPLICATION-RDB-ENCODINGS-AUDIT.md`.
