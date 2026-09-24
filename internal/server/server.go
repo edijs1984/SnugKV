@@ -30,6 +30,10 @@ type Server struct {
 	durabilityFailed         bool
 	watchSessions            atomic.Int32
 	replication              replicationState
+	replicaDurabilityMu      sync.Mutex
+	replicaDurabilityPoints  []replicaDurabilityPoint
+	replicaDurabilityFsynced int64
+	replicaDurabilityKnown   bool
 	replicationMasterUser    string
 	replicationMasterAuth    string
 	replicationMasterTLS     bool
@@ -90,6 +94,7 @@ var commandTable = map[string]commandInfo{
 	"REPLICAOF":   {3, 3, 0, 0, 0, false},
 	"PSYNC":       {3, 3, 0, 0, 0, false},
 	"WAIT":        {3, 3, 0, 0, 0, false},
+	"WAITAOF":     {4, 4, 0, 0, 0, false},
 	"CONFIG":      {2, 0, 0, 0, 0, false},
 	"CLIENT":      {2, 0, 0, 0, 0, false},
 	"SCAN":        {2, 0, 0, 0, 0, false},
@@ -1405,6 +1410,13 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 
 	case "WAIT":
 		return s.executeReplicationWait(args, s.replication.currentOffset(), nil, false)
+
+	case "WAITAOF":
+		var seq uint64
+		if journal, ok := s.journal.(durabilityJournal); ok {
+			seq, _, _ = journal.DurabilitySnapshot()
+		}
+		return s.executeWaitAOF(args, s.replication.currentOffset(), seq, nil, false)
 
 	case "INFO":
 		section := strings.ToLower(key)

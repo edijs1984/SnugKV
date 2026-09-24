@@ -58,10 +58,11 @@ type replicationState struct {
 	backlog            []replicationBacklogEntry
 
 	nextReplicaID     uint64
-	replicas          map[uint64]func([]byte) error
-	replicaAckOffsets map[uint64]int64
-	replicaAckTimes   map[uint64]time.Time
-	ackChanged        chan struct{}
+	replicas           map[uint64]func([]byte) error
+	replicaAckOffsets  map[uint64]int64
+	replicaAOFOffsets  map[uint64]int64
+	replicaAckTimes    map[uint64]time.Time
+	ackChanged         chan struct{}
 
 	followCancel      chan struct{}
 	followDone        chan struct{}
@@ -177,6 +178,22 @@ func (r *replicationState) waitSnapshot(offset int64) (int, <-chan struct{}) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.replicasAcknowledgedLocked(offset), r.ackChanged
+}
+
+func (r *replicationState) aofReplicasAcknowledgedLocked(offset int64) int {
+	count := 0
+	for id := range r.replicas {
+		if r.replicaAOFOffsets[id] >= offset {
+			count++
+		}
+	}
+	return count
+}
+
+func (r *replicationState) waitAOFSnapshot(offset int64) (int, <-chan struct{}) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.aofReplicasAcknowledgedLocked(offset), r.ackChanged
 }
 
 func (r *replicationState) currentOffset() int64 {
@@ -321,6 +338,9 @@ func (r *replicationState) init() {
 	if r.replicaAckOffsets == nil {
 		r.replicaAckOffsets = make(map[uint64]int64)
 	}
+	if r.replicaAOFOffsets == nil {
+		r.replicaAOFOffsets = make(map[uint64]int64)
+	}
 	if r.replicaAckTimes == nil {
 		r.replicaAckTimes = make(map[uint64]time.Time)
 	}
@@ -407,10 +427,14 @@ func (r *replicationState) registerReplica(write func([]byte) error) (uint64, st
 	if r.replicaAckTimes == nil {
 		r.replicaAckTimes = make(map[uint64]time.Time)
 	}
+	if r.replicaAOFOffsets == nil {
+		r.replicaAOFOffsets = make(map[uint64]int64)
+	}
 	r.nextReplicaID++
 	id := r.nextReplicaID
 	r.replicas[id] = write
 	r.replicaAckOffsets[id] = 0
+	r.replicaAOFOffsets[id] = -1
 	r.replicaAckTimes[id] = time.Now()
 	r.connectedReplicas = len(r.replicas)
 	r.notifyAckChangedLocked()
@@ -421,13 +445,14 @@ func (r *replicationState) unregisterReplica(id uint64) {
 	r.mu.Lock()
 	delete(r.replicas, id)
 	delete(r.replicaAckOffsets, id)
+	delete(r.replicaAOFOffsets, id)
 	delete(r.replicaAckTimes, id)
 	r.connectedReplicas = len(r.replicas)
 	r.notifyAckChangedLocked()
 	r.mu.Unlock()
 }
 
-func (r *replicationState) acknowledgeReplica(id uint64, offset int64) {
+func (r *replicationState) acknowledgeReplica(id uint64, offset int64, aofOffset ...int64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, ok := r.replicas[id]; !ok {
@@ -437,6 +462,12 @@ func (r *replicationState) acknowledgeReplica(id uint64, offset int64) {
 	if current, ok := r.replicaAckOffsets[id]; !ok || offset > current {
 		r.replicaAckOffsets[id] = offset
 		changed = true
+	}
+	if len(aofOffset) > 0 {
+		if current, ok := r.replicaAOFOffsets[id]; !ok || aofOffset[0] > current {
+			r.replicaAOFOffsets[id] = aofOffset[0]
+			changed = true
+		}
 	}
 	r.replicaAckTimes[id] = time.Now()
 	if changed {
@@ -736,8 +767,17 @@ func writeReplicationRESPCommand(conn net.Conn, args ...string) error {
 	return err
 }
 
+func (s *Server) writeReplicationACK(conn net.Conn, ackOffset int64) error {
+	args := []string{"REPLCONF", "ACK", strconv.FormatInt(ackOffset, 10)}
+	if fsyncedOffset, ok := s.replicaAOFFsyncedOffset(); ok {
+		args = append(args, "FACK", strconv.FormatInt(fsyncedOffset, 10))
+	}
+	return writeReplicationRESPCommand(conn, args...)
+}
+
 func (s *Server) startReplicaFollow(host string, port int) {
 	s.stopReplicaFollow()
+	s.resetReplicaAOFTracking()
 	s.replication.setReplica(host, port)
 
 	cancel := make(chan struct{})
@@ -844,6 +884,23 @@ func (s *Server) runReplicaFollow(host string, port int, cancel <-chan struct{})
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
+}
+
+func (s *Server) applySnugReplicationRecordsLocked(records []persistence.Record) error {
+	if s.journal != nil {
+		if s.durabilityFailed {
+			return errors.New("ERR persistence is unavailable; restart after repairing storage")
+		}
+		if err := s.journal.Append(records); err != nil {
+			s.durabilityFailed = true
+			return errors.New("replication persistence append failed")
+		}
+	}
+	if err := s.store.Restore(records, true); err != nil {
+		return err
+	}
+	s.refreshWatchesLocked()
+	return nil
 }
 
 func (s *Server) persistRedisFullSyncLocked(checkpointOffset int64) error {
@@ -968,9 +1025,19 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 			return err
 		}
 		s.durableMu.Lock()
-		err = s.store.Restore(records, true)
-		if err == nil && isRedisRDB {
-			err = s.persistRedisFullSyncLocked(off)
+		if isRedisRDB {
+			err = s.store.Restore(records, true)
+			if err == nil {
+				err = s.persistRedisFullSyncLocked(off)
+				if err == nil {
+					s.noteReplicaAOFOffset(off)
+				}
+			}
+		} else {
+			err = s.applySnugReplicationRecordsLocked(records)
+			if err == nil {
+				s.noteReplicaAOFOffset(off)
+			}
 		}
 		s.durableMu.Unlock()
 		if err != nil {
@@ -1001,7 +1068,7 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 				s.replication.mu.RLock()
 				ackOffset := s.replication.offset
 				s.replication.mu.RUnlock()
-				if writeErr := writeReplicationRESPCommand(conn, "REPLCONF", "ACK", strconv.FormatInt(ackOffset, 10)); writeErr != nil {
+				if writeErr := s.writeReplicationACK(conn, ackOffset); writeErr != nil {
 					return writeErr
 				}
 				continue
@@ -1023,6 +1090,7 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 					if err := s.applyRedisReplicationBatch(transaction, targetOffset); err != nil {
 						return err
 					}
+					s.noteReplicaAOFOffset(targetOffset)
 					s.replication.mu.Lock()
 					s.replication.offset = targetOffset
 					s.replication.mu.Unlock()
@@ -1052,13 +1120,14 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 			if err := s.applyRedisReplicationBatch([][][]byte{args}, targetOffset); err != nil {
 				return err
 			}
+			s.noteReplicaAOFOffset(targetOffset)
 			s.replication.mu.Lock()
 			s.replication.offset = targetOffset
 			ackOffset := s.replication.offset
 			s.replication.mu.Unlock()
 
 			if cmd == "REPLCONF" && len(args) >= 3 && strings.EqualFold(string(args[1]), "GETACK") {
-				if err := writeReplicationRESPCommand(conn, "REPLCONF", "ACK", strconv.FormatInt(ackOffset, 10)); err != nil {
+				if err := s.writeReplicationACK(conn, ackOffset); err != nil {
 					return err
 				}
 			}
@@ -1070,7 +1139,7 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 			s.replication.mu.RLock()
 			ackOffset := s.replication.offset
 			s.replication.mu.RUnlock()
-			if writeErr := writeReplicationRESPCommand(conn, "REPLCONF", "ACK", strconv.FormatInt(ackOffset, 10)); writeErr != nil {
+			if writeErr := s.writeReplicationACK(conn, ackOffset); writeErr != nil {
 				return writeErr
 			}
 			continue
@@ -1089,7 +1158,7 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 				s.replication.mu.RLock()
 				ackOffset := s.replication.offset
 				s.replication.mu.RUnlock()
-				if err := writeReplicationRESPCommand(conn, "REPLCONF", "ACK", strconv.FormatInt(ackOffset, 10)); err != nil {
+				if err := s.writeReplicationACK(conn, ackOffset); err != nil {
 					return err
 				}
 				continue
@@ -1117,6 +1186,7 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 				if err := s.applyRedisReplicationBatch([][][]byte{args}, targetOffset); err != nil {
 					return err
 				}
+				s.noteReplicaAOFOffset(targetOffset)
 				s.replication.mu.Lock()
 				s.replication.offset = targetOffset
 				s.replication.mu.Unlock()
@@ -1129,7 +1199,7 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 			s.replication.mu.RLock()
 			ackOffset := s.replication.offset
 			s.replication.mu.RUnlock()
-			if writeErr := writeReplicationRESPCommand(conn, "REPLCONF", "ACK", strconv.FormatInt(ackOffset, 10)); writeErr != nil {
+			if writeErr := s.writeReplicationACK(conn, ackOffset); writeErr != nil {
 				return writeErr
 			}
 			continue
@@ -1142,14 +1212,15 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 			return err
 		}
 		s.durableMu.Lock()
-		err = s.store.Restore(records, true)
-		s.refreshWatchesLocked()
+		err = s.applySnugReplicationRecordsLocked(records)
 		s.durableMu.Unlock()
 		if err != nil {
 			return err
 		}
 		s.replication.mu.Lock()
 		s.replication.offset += int64(len(frame))
+		replicatedOffset := s.replication.offset
 		s.replication.mu.Unlock()
+		s.noteReplicaAOFOffset(replicatedOffset)
 	}
 }

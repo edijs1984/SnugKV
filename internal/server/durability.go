@@ -13,6 +13,11 @@ type Journal interface {
 	Append([]persistence.Record) error
 }
 
+type durabilityJournal interface {
+	Journal
+	DurabilitySnapshot() (appended, synced uint64, changed <-chan struct{})
+}
+
 // SetJournal is a startup-only operation. Command execution is serialized so
 // clients cannot observe a mutation whose journal append later fails, and so a
 // MULTI/EXEC block can execute without another client interleaving commands.
@@ -265,20 +270,30 @@ func (s *Server) executeForSessionCapture(
 	session *authSession,
 	replicationOffset *int64,
 ) ([]byte, error) {
-	return s.executeDurableForSessionCapture(args, session, replicationOffset)
+	return s.executeDurableForSessionCaptureState(args, session, replicationOffset, nil)
+}
+
+func (s *Server) executeForSessionCaptureState(
+	args [][]byte,
+	session *authSession,
+	replicationOffset *int64,
+	durabilitySequence *uint64,
+) ([]byte, error) {
+	return s.executeDurableForSessionCaptureState(args, session, replicationOffset, durabilitySequence)
 }
 
 func (s *Server) executeDurableForSession(
 	args [][]byte,
 	session *authSession,
 ) ([]byte, error) {
-	return s.executeDurableForSessionCapture(args, session, nil)
+	return s.executeDurableForSessionCaptureState(args, session, nil, nil)
 }
 
-func (s *Server) executeDurableForSessionCapture(
+func (s *Server) executeDurableForSessionCaptureState(
 	args [][]byte,
 	session *authSession,
 	replicationOffset *int64,
+	durabilitySequence *uint64,
 ) ([]byte, error) {
 	if len(args) > 0 {
 		if info, ok := commandTable[strings.ToUpper(string(args[0]))]; ok && info.write && s.replication.isReadOnlyReplica() {
@@ -320,9 +335,17 @@ func (s *Server) executeDurableForSessionCapture(
 		s.refreshWatchesLocked()
 		return result, err
 	})
-	if err == nil && replicationOffset != nil && len(args) > 0 {
+	if err == nil && len(args) > 0 {
 		if info, ok := commandTable[strings.ToUpper(string(args[0]))]; ok && info.write {
-			*replicationOffset = s.replication.currentOffset()
+			if replicationOffset != nil {
+				*replicationOffset = s.replication.currentOffset()
+			}
+			if durabilitySequence != nil {
+				if journal, ok := s.journal.(durabilityJournal); ok {
+					appended, _, _ := journal.DurabilitySnapshot()
+					*durabilitySequence = appended
+				}
+			}
 		}
 	}
 	return result, err
