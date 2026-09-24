@@ -161,7 +161,7 @@ func TestKeyRestoreABSTTL(t *testing.T) {
 }
 
 func TestKeyRestoreRedis16TemplateHashPayload(t *testing.T) {
-	fields := [][]byte{[]byte("age"), []byte("email"), []byte("name")}
+	fields := [][]byte{[]byte("age"), []byte("name"), []byte("email")}
 	body := []byte{redisRDBTypeHashTmplArray}
 	body = appendRDBLen(body, 1) // FIELDS_RAW
 	body = appendRDBLen(body, uint64(len(fields)))
@@ -169,8 +169,8 @@ func TestKeyRestoreRedis16TemplateHashPayload(t *testing.T) {
 		body = appendRDBRawString(body, field)
 	}
 	body = appendRDBRawString(body, []byte("42"))
-	body = appendRDBRawString(body, []byte("edijs@example.com"))
 	body = appendRDBRawString(body, []byte("Edijs"))
+	body = appendRDBRawString(body, []byte("edijs@example.com"))
 
 	var version [2]byte
 	binary.LittleEndian.PutUint16(version[:], uint16(redisRDBMaxSupportedVersion))
