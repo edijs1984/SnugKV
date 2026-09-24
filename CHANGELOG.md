@@ -1,5 +1,10 @@
 # Changelog
 
+### Verified — broader Redis RDB encoding compatibility
+
+- Redis full-sync import now supports additional plain and legacy encodings: LIST, SET, HASH, textual-score ZSET, ZSET_2, HASH_ZIPMAP, LIST_ZIPLIST, ZSET_ZIPLIST, HASH_ZIPLIST, and legacy LIST_QUICKLIST. Live Redis 8.10.2 validation confirmed plain HASH/SET/ZSET_2, integer strings, LZF, and TTL restoration. Audit: `docs/REPLICATION-RDB-ENCODINGS-AUDIT.md`.
+
+
 ### Verified — TLS replication
 
 - Redis primary -> SnugKV replica TLS is now supported with mandatory CA verification, hostname/SNI verification, TLS 1.2 minimum, optional client certificates for mTLS, and unchanged plain TCP behavior when disabled. Live native Redis validation covered TLS + password auth, mTLS, live propagation, and READONLY semantics. Audit: `docs/REPLICATION-TLS-AUDIT.md`.

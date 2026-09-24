@@ -386,7 +386,8 @@ lands.
 - [x] Replication Phase 2 ACK/observability: REPLCONF ACK handling, monotonic per-replica offsets, lag reporting, replica INFO lines, periodic ACK emission, and exact Redis 8.2 differential parity. Audit: `docs/REPLICATION-ACK-DIFFERENTIAL-AUDIT.md`.
 - [x] Replication Phase 2 hardening: Redis RDB full-sync interoperability, diskless-transfer hardening, authentication topology support. See `docs/REPLICATION-RDB-FULLSYNC-AUDIT.md`, `docs/REPLICATION-DISKLESS-EOF-AUDIT.md`, and `docs/REPLICATION-AUTH-AUDIT.md`.
 - [x] Replication Phase 2 hardening: TLS topology support. Audit: `docs/REPLICATION-TLS-AUDIT.md`.
-- [ ] Replication Phase 2 hardening: additional RDB encodings as demanded by real datasets.
+- [x] Replication Phase 2 hardening: broaden Redis RDB encoding compatibility. Audit: `docs/REPLICATION-RDB-ENCODINGS-AUDIT.md`.
+- [ ] Replication Phase 2 hardening: newer/remaining RDB encodings as demanded by real datasets.
 - [ ] Automatic failover / Sentinel-like behavior.
 - [ ] Cluster/sharding protocol.
 - [ ] Multi-node consistency and recovery model.
