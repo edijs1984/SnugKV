@@ -262,6 +262,107 @@ func TestReplicationACKMonotonicAndInfo(t *testing.T) {
 	}
 }
 
+func testRedisZiplist(t *testing.T, values ...string) []byte {
+	t.Helper()
+	raw := make([]byte, 10)
+	var prevLen int
+	tail := 10
+	for i, value := range values {
+		if len(value) > 63 {
+			t.Fatalf("test ziplist value too long: %d", len(value))
+		}
+		entryStart := len(raw)
+		if i == len(values)-1 {
+			tail = entryStart
+		}
+		if prevLen >= 254 {
+			raw = append(raw, 254)
+			var buf [4]byte
+			binary.LittleEndian.PutUint32(buf[:], uint32(prevLen))
+			raw = append(raw, buf[:]...)
+		} else {
+			raw = append(raw, byte(prevLen))
+		}
+		raw = append(raw, byte(len(value)))
+		raw = append(raw, []byte(value)...)
+		prevLen = len(raw) - entryStart
+	}
+	raw = append(raw, 0xff)
+	binary.LittleEndian.PutUint32(raw[:4], uint32(len(raw)))
+	binary.LittleEndian.PutUint32(raw[4:8], uint32(tail))
+	binary.LittleEndian.PutUint16(raw[8:10], uint16(len(values)))
+	return raw
+}
+
+func TestDecodeRedisLegacyZiplists(t *testing.T) {
+	t.Run("list ziplist", func(t *testing.T) {
+		raw := testRedisZiplist(t, "a", "b", "c")
+		body := appendRDBRawString(nil, raw)
+		pos := 0
+		obj, err := decodeRedisRDBObjectAt(body, &pos, redisRDBTypeListZiplist)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pos != len(body) || len(obj.list) != 3 ||
+			string(obj.list[0]) != "a" || string(obj.list[2]) != "c" {
+			t.Fatalf("unexpected list ziplist: pos=%d len=%d list=%q", pos, len(body), obj.list)
+		}
+	})
+
+	t.Run("hash ziplist", func(t *testing.T) {
+		raw := testRedisZiplist(t, "a", "1", "b", "two")
+		body := appendRDBRawString(nil, raw)
+		pos := 0
+		obj, err := decodeRedisRDBObjectAt(body, &pos, redisRDBTypeHashZiplist)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pos != len(body) || len(obj.hash) != 2 ||
+			string(obj.hash[0].Field) != "a" || string(obj.hash[0].Value) != "1" ||
+			string(obj.hash[1].Field) != "b" || string(obj.hash[1].Value) != "two" {
+			t.Fatalf("unexpected hash ziplist: pos=%d len=%d hash=%v", pos, len(body), obj.hash)
+		}
+	})
+
+	t.Run("zset ziplist", func(t *testing.T) {
+		raw := testRedisZiplist(t, "one", "1.5", "two", "-2.25")
+		body := appendRDBRawString(nil, raw)
+		pos := 0
+		obj, err := decodeRedisRDBObjectAt(body, &pos, redisRDBTypeZSetZiplist)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pos != len(body) || len(obj.zset) != 2 ||
+			string(obj.zset[0].Member) != "one" || obj.zset[0].Score != 1.5 ||
+			string(obj.zset[1].Member) != "two" || obj.zset[1].Score != -2.25 {
+			t.Fatalf("unexpected zset ziplist: pos=%d len=%d zset=%v", pos, len(body), obj.zset)
+		}
+	})
+
+	t.Run("legacy quicklist", func(t *testing.T) {
+		body := appendRDBLen(nil, 2)
+		body = appendRDBRawString(body, testRedisZiplist(t, "a", "b"))
+		body = appendRDBRawString(body, testRedisZiplist(t, "c", "d"))
+		pos := 0
+		obj, err := decodeRedisRDBObjectAt(body, &pos, redisRDBTypeListQuicklist)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pos != len(body) || len(obj.list) != 4 ||
+			string(obj.list[0]) != "a" || string(obj.list[3]) != "d" {
+			t.Fatalf("unexpected legacy quicklist: pos=%d len=%d list=%q", pos, len(body), obj.list)
+		}
+	})
+
+	t.Run("ziplist corruption", func(t *testing.T) {
+		raw := testRedisZiplist(t, "a", "b")
+		raw[10] = 1
+		if _, err := decodeRedisZiplist(raw); err == nil {
+			t.Fatal("expected invalid first prevlen rejection")
+		}
+	})
+}
+
 func TestDecodeRedisRDBPlainCollections(t *testing.T) {
 	t.Run("list", func(t *testing.T) {
 		body := appendRDBLen(nil, 3)
