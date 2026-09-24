@@ -199,3 +199,35 @@ func TestWaitAOFCancel(t *testing.T) {
 		t.Fatal("WAITAOF did not cancel")
 	}
 }
+
+func TestSnugReplicaFrameMustPersistBeforeFACK(t *testing.T) {
+	s := New(engine.New())
+	journal := newWaitAOFJournal()
+	s.SetJournal(journal)
+
+	records := []persistence.Record{{Key: []byte("replica:key"), Value: []byte("value")}}
+	s.durableMu.Lock()
+	err := s.applySnugReplicationRecordsLocked(records)
+	s.durableMu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.noteReplicaAOFOffset(123)
+
+	if offset, ok := s.replicaAOFFsyncedOffset(); ok {
+		t.Fatalf("FACK advanced before fsync: offset=%d", offset)
+	}
+
+	journal.syncAll()
+
+	offset, ok := s.replicaAOFFsyncedOffset()
+	if !ok || offset != 123 {
+		t.Fatalf("FACK after fsync offset=%d ok=%v", offset, ok)
+	}
+
+	value, found, wrong := s.store.GetString("replica:key")
+	if !found || wrong || string(value) != "value" {
+		t.Fatalf("replicated value found=%v wrong=%v value=%q", found, wrong, value)
+	}
+}
