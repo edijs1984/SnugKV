@@ -1935,10 +1935,10 @@ func TestChainedReplicationWaitCountsOnlyDirectReplicas(t *testing.T) {
 	primary.server.replication.mu.RUnlock()
 
 	got, err := primary.server.executeReplicationWait(
-		[][]byte{[]byte("WAIT"), []byte("2"), []byte("0")},
+		[][]byte{[]byte("WAIT"), []byte("2"), []byte("100")},
 		primaryTarget,
 		nil,
-		false,
+		true,
 	)
 	if err != nil {
 		t.Fatal(err)
