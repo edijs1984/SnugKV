@@ -769,17 +769,15 @@ func writeReplicationRESPCommand(conn net.Conn, args ...string) error {
 
 func (s *Server) writeReplicationACK(conn net.Conn, ackOffset int64) error {
 	args := []string{"REPLCONF", "ACK", strconv.FormatInt(ackOffset, 10)}
-	if journal, ok := s.journal.(durabilityJournal); ok {
-		appended, synced, _ := journal.DurabilitySnapshot()
-		if appended > 0 && synced >= appended {
-			args = append(args, "FACK", strconv.FormatInt(ackOffset, 10))
-		}
+	if fsyncedOffset, ok := s.replicaAOFFsyncedOffset(); ok {
+		args = append(args, "FACK", strconv.FormatInt(fsyncedOffset, 10))
 	}
 	return writeReplicationRESPCommand(conn, args...)
 }
 
 func (s *Server) startReplicaFollow(host string, port int) {
 	s.stopReplicaFollow()
+	s.resetReplicaAOFTracking()
 	s.replication.setReplica(host, port)
 
 	cancel := make(chan struct{})
@@ -1013,6 +1011,9 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 		err = s.store.Restore(records, true)
 		if err == nil && isRedisRDB {
 			err = s.persistRedisFullSyncLocked(off)
+			if err == nil {
+				s.noteReplicaAOFOffset(off)
+			}
 		}
 		s.durableMu.Unlock()
 		if err != nil {
@@ -1065,6 +1066,7 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 					if err := s.applyRedisReplicationBatch(transaction, targetOffset); err != nil {
 						return err
 					}
+					s.noteReplicaAOFOffset(targetOffset)
 					s.replication.mu.Lock()
 					s.replication.offset = targetOffset
 					s.replication.mu.Unlock()
@@ -1094,6 +1096,7 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 			if err := s.applyRedisReplicationBatch([][][]byte{args}, targetOffset); err != nil {
 				return err
 			}
+			s.noteReplicaAOFOffset(targetOffset)
 			s.replication.mu.Lock()
 			s.replication.offset = targetOffset
 			ackOffset := s.replication.offset
@@ -1159,6 +1162,7 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 				if err := s.applyRedisReplicationBatch([][][]byte{args}, targetOffset); err != nil {
 					return err
 				}
+				s.noteReplicaAOFOffset(targetOffset)
 				s.replication.mu.Lock()
 				s.replication.offset = targetOffset
 				s.replication.mu.Unlock()
