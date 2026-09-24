@@ -49,7 +49,7 @@ func RecoverReplicationCheckpoint(current *ReplicationCheckpoint, records []Reco
 			continue
 		}
 		if record.Replication.Clear {
-			current = nil
+			current = &ReplicationCheckpoint{Clear: true}
 			continue
 		}
 		checkpoint := *record.Replication
