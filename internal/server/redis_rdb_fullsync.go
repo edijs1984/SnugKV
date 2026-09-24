@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -27,6 +28,11 @@ const (
 	redisRDBTypeHashListpackExPreGA   = byte(23)
 	redisRDBTypeHashMetadata          = byte(24)
 	redisRDBTypeHashListpackEx        = byte(25)
+	redisRDBTypeHashTmplLP            = byte(29)
+	redisRDBTypeHashTmplLPRef         = byte(30)
+	redisRDBTypeHashTmplArray         = byte(31)
+	redisRDBTypeHashTmplArrayRef      = byte(32)
+	redisRDBOpcodeHashTemplate = byte(242)
 	redisRDBOpcodeIdle         = byte(248)
 	redisRDBOpcodeFreq         = byte(249)
 	redisRDBOpcodeAux          = byte(250)
@@ -67,7 +73,80 @@ func decodeRedisRDBTextDouble(data []byte, pos *int) (float64, error) {
 	return score, nil
 }
 
+type redisRDBHashTemplate struct {
+	fields [][]byte
+}
+
+func validateRedisRDBTemplateFields(fields [][]byte) error {
+	if len(fields) == 0 {
+		return errors.New("Redis RDB hash template has zero fields")
+	}
+	for i := range fields {
+		if len(fields[i]) == 0 {
+			return errors.New("Redis RDB hash template has empty field")
+		}
+		if i > 0 && bytes.Compare(fields[i-1], fields[i]) >= 0 {
+			return errors.New("Redis RDB hash template fields are not strictly sorted")
+		}
+	}
+	return nil
+}
+
+func decodeRedisRDBTemplateFields(data []byte, pos *int) ([][]byte, error) {
+	fmtValue, encoded, err := readRDBLen(data, pos)
+	if err != nil || encoded || fmtValue > 1 {
+		return nil, errors.New("invalid Redis RDB hash template field format")
+	}
+
+	if fmtValue == 0 {
+		raw, err := decodeRDBString(data, pos)
+		if err != nil {
+			return nil, errors.New("invalid Redis RDB hash template field listpack")
+		}
+		fields, err := decodeRedisListpack(raw)
+		if err != nil {
+			return nil, errors.New("invalid Redis RDB hash template field listpack")
+		}
+		if err := validateRedisRDBTemplateFields(fields); err != nil {
+			return nil, err
+		}
+		return fields, nil
+	}
+
+	count, encoded, err := readRDBLen(data, pos)
+	if err != nil || encoded || count == 0 || count > uint64(len(data)) {
+		return nil, errors.New("invalid Redis RDB hash template field count")
+	}
+	fields := make([][]byte, 0, count)
+	for i := uint64(0); i < count; i++ {
+		field, err := decodeRDBString(data, pos)
+		if err != nil {
+			return nil, errors.New("invalid Redis RDB hash template field")
+		}
+		fields = append(fields, field)
+	}
+	if err := validateRedisRDBTemplateFields(fields); err != nil {
+		return nil, err
+	}
+	return fields, nil
+}
+
+func buildRedisTemplateHash(fields, values [][]byte) (decodedKeyObject, error) {
+	if len(fields) == 0 || len(fields) != len(values) {
+		return decodedKeyObject{}, errors.New("Redis RDB hash template field/value count mismatch")
+	}
+	pairs := make([]engine.HashPair, 0, len(fields))
+	for i := range fields {
+		pairs = append(pairs, engine.HashPair{Field: fields[i], Value: values[i]})
+	}
+	return decodedKeyObject{valueType: engine.TypeHash, hash: pairs}, nil
+}
+
 func decodeRedisRDBObjectAt(data []byte, pos *int, objectType byte) (decodedKeyObject, error) {
+	return decodeRedisRDBObjectAtWithTemplates(data, pos, objectType, nil)
+}
+
+func decodeRedisRDBObjectAtWithTemplates(data []byte, pos *int, objectType byte, templates map[uint64]redisRDBHashTemplate) (decodedKeyObject, error) {
 	switch objectType {
 	case redisRDBTypeList:
 		count, encoded, err := readRDBLen(data, pos)
@@ -262,6 +341,86 @@ func decodeRedisRDBObjectAt(data []byte, pos *int, objectType byte) (decodedKeyO
 			})
 		}
 		return decodedKeyObject{valueType: engine.TypeHash, hash: pairs}, nil
+
+	case redisRDBTypeHashTmplLP:
+		fields, err := decodeRedisRDBTemplateFields(data, pos)
+		if err != nil {
+			return decodedKeyObject{}, err
+		}
+		raw, err := decodeRDBString(data, pos)
+		if err != nil {
+			return decodedKeyObject{}, errors.New("invalid Redis RDB template-listpack values")
+		}
+		values, err := decodeRedisListpack(raw)
+		if err != nil || len(values) != len(fields)+1 {
+			return decodedKeyObject{}, errors.New("invalid Redis RDB template-listpack value count")
+		}
+		if _, err := strconv.ParseInt(string(values[0]), 10, 64); err != nil {
+			return decodedKeyObject{}, errors.New("invalid Redis RDB template-listpack template ID")
+		}
+		return buildRedisTemplateHash(fields, values[1:])
+
+	case redisRDBTypeHashTmplLPRef:
+		if templates == nil {
+			return decodedKeyObject{}, errors.New("Redis RDB template registry unavailable")
+		}
+		raw, err := decodeRDBString(data, pos)
+		if err != nil {
+			return decodedKeyObject{}, errors.New("invalid Redis RDB template-listpack ref")
+		}
+		values, err := decodeRedisListpack(raw)
+		if err != nil || len(values) < 2 {
+			return decodedKeyObject{}, errors.New("invalid Redis RDB template-listpack ref")
+		}
+		idSigned, err := strconv.ParseInt(string(values[0]), 10, 64)
+		if err != nil || idSigned < 0 {
+			return decodedKeyObject{}, errors.New("invalid Redis RDB template-listpack ref ID")
+		}
+		tmpl, ok := templates[uint64(idSigned)]
+		if !ok {
+			return decodedKeyObject{}, errors.New("unknown Redis RDB hash template ID")
+		}
+		if len(values)-1 != len(tmpl.fields) {
+			return decodedKeyObject{}, errors.New("Redis RDB template-listpack ref value count mismatch")
+		}
+		return buildRedisTemplateHash(tmpl.fields, values[1:])
+
+	case redisRDBTypeHashTmplArray:
+		fields, err := decodeRedisRDBTemplateFields(data, pos)
+		if err != nil {
+			return decodedKeyObject{}, err
+		}
+		values := make([][]byte, 0, len(fields))
+		for range fields {
+			value, err := decodeRDBString(data, pos)
+			if err != nil {
+				return decodedKeyObject{}, errors.New("invalid Redis RDB template-array value")
+			}
+			values = append(values, value)
+		}
+		return buildRedisTemplateHash(fields, values)
+
+	case redisRDBTypeHashTmplArrayRef:
+		if templates == nil {
+			return decodedKeyObject{}, errors.New("Redis RDB template registry unavailable")
+		}
+		id, encoded, err := readRDBLen(data, pos)
+		if err != nil || encoded {
+			return decodedKeyObject{}, errors.New("invalid Redis RDB template-array ref ID")
+		}
+		tmpl, ok := templates[id]
+		if !ok {
+			return decodedKeyObject{}, errors.New("unknown Redis RDB hash template ID")
+		}
+		values := make([][]byte, 0, len(tmpl.fields))
+		for range tmpl.fields {
+			value, err := decodeRDBString(data, pos)
+			if err != nil {
+				return decodedKeyObject{}, errors.New("invalid Redis RDB template-array ref value")
+			}
+			values = append(values, value)
+		}
+		return buildRedisTemplateHash(tmpl.fields, values)
 
 	case redisRDBTypeHashZipmap:
 		raw, err := decodeRDBString(data, pos)
@@ -463,12 +622,39 @@ func decodeRedisFullSyncRDB(data []byte) ([]persistence.Record, error) {
 	currentDB := uint64(0)
 	var expiresAtMS int64
 	records := []persistence.Record{{Reset: true}}
+	templates := make(map[uint64]redisRDBHashTemplate)
 
 	for pos < checksumPos {
 		opcode := data[pos]
 		pos++
 
 		switch opcode {
+		case redisRDBOpcodeHashTemplate:
+			id, encoded, err := readRDBLen(data[:checksumPos], &pos)
+			if err != nil || encoded {
+				return nil, errors.New("invalid Redis RDB hash template ID")
+			}
+			if _, exists := templates[id]; exists {
+				return nil, errors.New("duplicate Redis RDB hash template ID")
+			}
+			count, encoded, err := readRDBLen(data[:checksumPos], &pos)
+			if err != nil || encoded || count == 0 || count > uint64(checksumPos-pos) {
+				return nil, errors.New("invalid Redis RDB hash template field count")
+			}
+			fields := make([][]byte, 0, count)
+			for i := uint64(0); i < count; i++ {
+				field, err := decodeRDBString(data[:checksumPos], &pos)
+				if err != nil {
+					return nil, errors.New("invalid Redis RDB hash template field")
+				}
+				fields = append(fields, field)
+			}
+			if err := validateRedisRDBTemplateFields(fields); err != nil {
+				return nil, err
+			}
+			templates[id] = redisRDBHashTemplate{fields: fields}
+			continue
+
 		case redisRDBOpcodeAux:
 			if _, err := decodeRDBString(data[:checksumPos], &pos); err != nil {
 				return nil, errors.New("invalid Redis RDB AUX key")
@@ -546,7 +732,7 @@ func decodeRedisFullSyncRDB(data []byte) ([]persistence.Record, error) {
 		if err != nil {
 			return nil, errors.New("invalid Redis RDB key")
 		}
-		object, err := decodeRedisRDBObjectAt(data[:checksumPos], &pos, opcode)
+		object, err := decodeRedisRDBObjectAtWithTemplates(data[:checksumPos], &pos, opcode, templates)
 		if err != nil {
 			return nil, err
 		}
