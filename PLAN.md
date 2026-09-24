@@ -8,7 +8,7 @@
 - [x] EOF-marker / diskless RDB full-sync framing. Audit: `docs/REPLICATION-DISKLESS-EOF-AUDIT.md`.
 - [ ] Additional RDB object encodings as demanded by real datasets.
 - [x] Replication topology authentication. Audit: `docs/REPLICATION-AUTH-AUDIT.md`.
-- [ ] Replication topology TLS.
+- [x] Replication topology TLS. Audit: `docs/REPLICATION-TLS-AUDIT.md`.
 
 
 This document is the current implementation roadmap. `PROGRESS.md` contains
@@ -385,7 +385,8 @@ lands.
 - [x] Replication Phase 2 core: bounded backlog, Redis next-byte PSYNC offsets, reconnect continuation, and full-resync fallback with exact Redis 8.2 differential parity. Audit: `docs/REPLICATION-PHASE2-DIFFERENTIAL-AUDIT.md`.
 - [x] Replication Phase 2 ACK/observability: REPLCONF ACK handling, monotonic per-replica offsets, lag reporting, replica INFO lines, periodic ACK emission, and exact Redis 8.2 differential parity. Audit: `docs/REPLICATION-ACK-DIFFERENTIAL-AUDIT.md`.
 - [x] Replication Phase 2 hardening: Redis RDB full-sync interoperability, diskless-transfer hardening, authentication topology support. See `docs/REPLICATION-RDB-FULLSYNC-AUDIT.md`, `docs/REPLICATION-DISKLESS-EOF-AUDIT.md`, and `docs/REPLICATION-AUTH-AUDIT.md`.
-- [ ] Replication Phase 2 hardening: TLS topology support and additional RDB encodings as demanded by real datasets.
+- [x] Replication Phase 2 hardening: TLS topology support. Audit: `docs/REPLICATION-TLS-AUDIT.md`.
+- [ ] Replication Phase 2 hardening: additional RDB encodings as demanded by real datasets.
 - [ ] Automatic failover / Sentinel-like behavior.
 - [ ] Cluster/sharding protocol.
 - [ ] Multi-node consistency and recovery model.
