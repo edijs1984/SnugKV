@@ -1,5 +1,10 @@
 ## Realistic workload memory milestone — 2026-09-21
 
+## Authenticated Redis Replication — 2026-09-24
+
+Redis 8.2 -> SnugKV replication is validated with both `requirepass` and ACL username/password authentication. Authentication runs before `REPLCONF`/`PSYNC`, failed credentials are redacted from errors, full sync restores values and TTLs, and the replica remains READONLY. Full race/vet validation is green. See `docs/REPLICATION-AUTH-AUDIT.md`.
+
+
 ## Redis Diskless EOF Full Sync — 2026-09-24
 
 Redis 8.2 -> SnugKV diskless full sync is validated end-to-end using the `$EOF:<40-byte marker>` framing path. The follower advertises `REPLCONF capa eof`, reads the marker-delimited RDB independently of buffer size, preserves the following replication stream, restores snapshot TTLs, transitions to `master_link_status:up`, propagates live writes, and retains READONLY behavior. Full race/vet validation is green. See `docs/REPLICATION-DISKLESS-EOF-AUDIT.md`.
