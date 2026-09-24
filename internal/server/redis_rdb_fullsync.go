@@ -18,6 +18,10 @@ const (
 	redisRDBTypeZSet          = byte(3)
 	redisRDBTypeHash          = byte(4)
 	redisRDBTypeZSet2         = byte(5)
+	redisRDBTypeListZiplist   = byte(10)
+	redisRDBTypeZSetZiplist   = byte(12)
+	redisRDBTypeHashZiplist   = byte(13)
+	redisRDBTypeListQuicklist = byte(14)
 	redisRDBOpcodeIdle         = byte(248)
 	redisRDBOpcodeFreq         = byte(249)
 	redisRDBOpcodeAux          = byte(250)
@@ -157,6 +161,73 @@ func decodeRedisRDBObjectAt(data []byte, pos *int, objectType byte) (decodedKeyO
 			return decodedKeyObject{}, errors.New("invalid Redis RDB string")
 		}
 		return decodedKeyObject{valueType: engine.TypeString, scalar: value}, nil
+
+	case redisRDBTypeListZiplist:
+		raw, err := decodeRDBString(data, pos)
+		if err != nil {
+			return decodedKeyObject{}, errors.New("invalid Redis RDB list ziplist")
+		}
+		values, err := decodeRedisZiplist(raw)
+		if err != nil || len(values) == 0 {
+			return decodedKeyObject{}, errors.New("invalid Redis RDB list ziplist")
+		}
+		return decodedKeyObject{valueType: engine.TypeList, list: values}, nil
+
+	case redisRDBTypeHashZiplist:
+		raw, err := decodeRDBString(data, pos)
+		if err != nil {
+			return decodedKeyObject{}, errors.New("invalid Redis RDB hash ziplist")
+		}
+		values, err := decodeRedisZiplist(raw)
+		if err != nil || len(values) == 0 || len(values)%2 != 0 {
+			return decodedKeyObject{}, errors.New("invalid Redis RDB hash ziplist")
+		}
+		pairs := make([]engine.HashPair, 0, len(values)/2)
+		for i := 0; i < len(values); i += 2 {
+			pairs = append(pairs, engine.HashPair{Field: values[i], Value: values[i+1]})
+		}
+		return decodedKeyObject{valueType: engine.TypeHash, hash: pairs}, nil
+
+	case redisRDBTypeZSetZiplist:
+		raw, err := decodeRDBString(data, pos)
+		if err != nil {
+			return decodedKeyObject{}, errors.New("invalid Redis RDB zset ziplist")
+		}
+		values, err := decodeRedisZiplist(raw)
+		if err != nil || len(values) == 0 || len(values)%2 != 0 {
+			return decodedKeyObject{}, errors.New("invalid Redis RDB zset ziplist")
+		}
+		items := make([]engine.ZSetItem, 0, len(values)/2)
+		for i := 0; i < len(values); i += 2 {
+			score, err := parseZSetScore(values[i+1])
+			if err != nil {
+				return decodedKeyObject{}, errors.New("invalid Redis RDB zset ziplist score")
+			}
+			items = append(items, engine.ZSetItem{Member: values[i], Score: score})
+		}
+		return decodedKeyObject{valueType: engine.TypeZSet, zset: items}, nil
+
+	case redisRDBTypeListQuicklist:
+		nodes, encoded, err := readRDBLen(data, pos)
+		if err != nil || encoded || nodes == 0 || nodes > uint64(len(data)) {
+			return decodedKeyObject{}, errors.New("invalid Redis RDB legacy quicklist")
+		}
+		values := make([][]byte, 0)
+		for i := uint64(0); i < nodes; i++ {
+			raw, err := decodeRDBString(data, pos)
+			if err != nil {
+				return decodedKeyObject{}, errors.New("invalid Redis RDB legacy quicklist node")
+			}
+			node, err := decodeRedisZiplist(raw)
+			if err != nil || len(node) == 0 {
+				return decodedKeyObject{}, errors.New("invalid Redis RDB legacy quicklist ziplist")
+			}
+			values = append(values, node...)
+		}
+		if len(values) == 0 {
+			return decodedKeyObject{}, errors.New("empty Redis RDB legacy quicklist")
+		}
+		return decodedKeyObject{valueType: engine.TypeList, list: values}, nil
 
 	case keyRDBTypeHashListpack:
 		raw, err := decodeRDBString(data, pos)
