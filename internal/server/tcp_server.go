@@ -423,11 +423,19 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 					s.server.replication.unregisterReplica(replicaID)
 					return
 				}
-				if len(replMsg) == 3 &&
+				if len(replMsg) >= 3 &&
 					strings.EqualFold(string(replMsg[0]), "REPLCONF") &&
 					strings.EqualFold(string(replMsg[1]), "ACK") {
 					offset, ackErr := strconv.ParseInt(string(replMsg[2]), 10, 64)
 					if ackErr == nil {
+						if len(replMsg) >= 5 &&
+							strings.EqualFold(string(replMsg[3]), "FACK") {
+							aofOffset, aofErr := strconv.ParseInt(string(replMsg[4]), 10, 64)
+							if aofErr == nil {
+								s.server.replication.acknowledgeReplica(replicaID, offset, aofOffset)
+								continue
+							}
+						}
 						s.server.replication.acknowledgeReplica(replicaID, offset)
 					}
 					continue
@@ -799,6 +807,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 		}
 
 		txSession.waitTargetOffset = clientSession.replicationOffset.Load()
+		txSession.waitAOFSequence = clientSession.durabilitySequence.Load()
 		if handled, txResponse, txErr :=
 			s.server.executeTransactionConnectionCommand(
 				txSession,
@@ -818,6 +827,9 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			if txErr == nil && len(msg) == 1 && strings.EqualFold(string(msg[0]), "EXEC") {
 				if offset := txSession.lastReplicationOffset; offset > clientSession.replicationOffset.Load() {
 					clientSession.replicationOffset.Store(offset)
+				}
+				if seq := txSession.lastDurabilitySequence; seq > clientSession.durabilitySequence.Load() {
+					clientSession.durabilitySequence.Store(seq)
 				}
 			}
 
@@ -900,7 +912,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 		}
 
 		var result []byte
-		if isBlockingListCommand(msg) || isBlockingZSetCommand(msg) || isBlockingStreamCommand(msg) || isReplicationWaitCommand(msg) {
+		if isBlockingListCommand(msg) || isBlockingZSetCommand(msg) || isBlockingStreamCommand(msg) || isReplicationWaitCommand(msg) || isWaitAOFCommand(msg) {
 			disconnected, stopWatch := watchConnectionDisconnect(peer)
 			unblock := clientSession.beginBlocking()
 
@@ -909,6 +921,14 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				result, err = s.server.executeReplicationWait(
 					msg,
 					clientSession.replicationOffset.Load(),
+					cancel,
+					true,
+				)
+			} else if isWaitAOFCommand(msg) {
+				result, err = s.server.executeWaitAOF(
+					msg,
+					clientSession.replicationOffset.Load(),
+					clientSession.durabilitySequence.Load(),
 					cancel,
 					true,
 				)
@@ -938,14 +958,17 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			}
 		} else {
 			var replicationOffset int64
-			result, err = s.server.executeForSessionCapture(
+			var durabilitySequence uint64
+			result, err = s.server.executeForSessionCaptureState(
 				msg,
 				authSession,
 				&replicationOffset,
+				&durabilitySequence,
 			)
 			if err == nil && len(msg) > 0 {
 				if info, ok := commandTable[strings.ToUpper(string(msg[0]))]; ok && info.write {
 					clientSession.replicationOffset.Store(replicationOffset)
+					clientSession.durabilitySequence.Store(durabilitySequence)
 				}
 			}
 		}
