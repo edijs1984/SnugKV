@@ -89,6 +89,7 @@ var commandTable = map[string]commandInfo{
 	"ROLE":        {1, 1, 0, 0, 0, false},
 	"REPLICAOF":   {3, 3, 0, 0, 0, false},
 	"PSYNC":       {3, 3, 0, 0, 0, false},
+	"WAIT":        {3, 3, 0, 0, 0, false},
 	"CONFIG":      {2, 0, 0, 0, 0, false},
 	"CLIENT":      {2, 0, 0, 0, 0, false},
 	"SCAN":        {2, 0, 0, 0, 0, false},
@@ -1401,6 +1402,9 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 
 	case "PSYNC":
 		return nil, errors.New("ERR PSYNC is only valid on a replication connection")
+
+	case "WAIT":
+		return s.executeReplicationWait(args, s.replication.currentOffset(), nil, false)
 
 	case "INFO":
 		section := strings.ToLower(key)
