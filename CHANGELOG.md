@@ -1,5 +1,10 @@
 # Changelog
 
+### Verified — graceful-restart Redis PSYNC continuation
+
+- SnugKV now persists upstream replid/offset/stream-mode state across graceful restart when AOF or snapshot durability is configured. The shutdown path first checkpoints the exact replica dataset, then atomically stores the PSYNC continuation tuple. Live Redis validation resumed with partial synchronization from the next-byte offset and continued replicating new writes after restart. Crash-resume continuity remains a documented future hardening item. Audit: `docs/REPLICATION-RESTART-PSYNC-AUDIT.md`.
+
+
 ### Verified — Redis hash template RDB compatibility
 
 - Added Redis 8.10 hash-template interoperability for RDB types 29–32 and opcode 242, including live diskless full-sync validation for template-listpack and template-array reference formats and live HIMPORT propagation via zero-checksum RESTORE payloads. SnugKV materializes the decoded result as a native HASH. Audit: `docs/REPLICATION-HASH-TEMPLATE-AUDIT.md`.
