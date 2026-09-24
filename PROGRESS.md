@@ -1,5 +1,10 @@
 ## Realistic workload memory milestone — 2026-09-21
 
+## Redis Diskless EOF Full Sync — 2026-09-24
+
+Redis 8.2 -> SnugKV diskless full sync is validated end-to-end using the `$EOF:<40-byte marker>` framing path. The follower advertises `REPLCONF capa eof`, reads the marker-delimited RDB independently of buffer size, preserves the following replication stream, restores snapshot TTLs, transitions to `master_link_status:up`, propagates live writes, and retains READONLY behavior. Full race/vet validation is green. See `docs/REPLICATION-DISKLESS-EOF-AUDIT.md`.
+
+
 ## Redis RDB Full-Sync Interoperability — 2026-09-23
 
 Redis 8.2.9 -> SnugKV full synchronization is validated end-to-end for STRING, HASH listpack, SET intset/listpack, LIST quicklist2, ZSET listpack, STREAM listpacks3, and expiries. SnugKV recognizes Redis `REDISxxxx` snapshots, verifies CRC64, imports DB 0, then consumes the live Redis replication command stream. Live SET/INCR/HSET/RPUSH and `SET ... PX` propagation passed, as did READONLY enforcement. Full race/vet validation is green. EOF-marker/diskless framing, auth/TLS topology, and broader RDB encodings remain open. See `docs/REPLICATION-RDB-FULLSYNC-AUDIT.md`.
