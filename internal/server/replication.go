@@ -1095,6 +1095,10 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 		}
 		s.replication.mu.Lock()
 		s.replication.offset += int64(len(frame))
+		ackOffset := s.replication.offset
 		s.replication.mu.Unlock()
+		if err := writeReplicationRESPCommand(conn, "REPLCONF", "ACK", strconv.FormatInt(ackOffset, 10)); err != nil {
+			return err
+		}
 	}
 }
