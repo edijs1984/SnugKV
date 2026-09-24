@@ -174,7 +174,7 @@ func (s *Server) applyRedisReplicationBatch(commands [][][]byte, checkpointOffse
 			continue
 		}
 		if _, err := s.executePressure(args); err != nil {
-			if len(before) > 0 {
+			if full || len(keys) > 0 {
 				rollback := before
 				if full {
 					rollback = append([]persistence.Record{{Reset: true}}, before...)
