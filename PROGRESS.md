@@ -1,5 +1,10 @@
 ## Realistic workload memory milestone — 2026-09-21
 
+## Broader Redis RDB Encoding Compatibility — 2026-09-24
+
+Extended Redis -> SnugKV full-sync import with plain LIST/SET/HASH/ZSET forms plus legacy ZIPMAP/ZIPLIST/QUICKLIST encodings. Added bounded legacy structure decoders and focused corruption tests. A live Redis 8.10.2 differential full sync forced plain HASH/SET/ZSET_2 and confirmed integer-encoded strings, LZF restoration, and TTL preservation. Full race/vet validation is green. See `docs/REPLICATION-RDB-ENCODINGS-AUDIT.md`.
+
+
 ## TLS Replication — 2026-09-24
 
 Redis -> SnugKV replication is live-validated over verified TLS and mutual TLS. SnugKV requires a CA when upstream TLS is enabled, verifies the server identity, supports optional client certificate/key authentication, retains password/ACL authentication on top of TLS, propagates live writes, and preserves READONLY replica semantics. Full race/vet validation is green. See `docs/REPLICATION-TLS-AUDIT.md`.
