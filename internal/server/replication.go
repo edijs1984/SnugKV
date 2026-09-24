@@ -58,10 +58,11 @@ type replicationState struct {
 	backlog            []replicationBacklogEntry
 
 	nextReplicaID     uint64
-	replicas          map[uint64]func([]byte) error
-	replicaAckOffsets map[uint64]int64
-	replicaAckTimes   map[uint64]time.Time
-	ackChanged        chan struct{}
+	replicas           map[uint64]func([]byte) error
+	replicaAckOffsets  map[uint64]int64
+	replicaAOFOffsets  map[uint64]int64
+	replicaAckTimes    map[uint64]time.Time
+	ackChanged         chan struct{}
 
 	followCancel      chan struct{}
 	followDone        chan struct{}
@@ -177,6 +178,22 @@ func (r *replicationState) waitSnapshot(offset int64) (int, <-chan struct{}) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.replicasAcknowledgedLocked(offset), r.ackChanged
+}
+
+func (r *replicationState) aofReplicasAcknowledgedLocked(offset int64) int {
+	count := 0
+	for id := range r.replicas {
+		if r.replicaAOFOffsets[id] >= offset {
+			count++
+		}
+	}
+	return count
+}
+
+func (r *replicationState) waitAOFSnapshot(offset int64) (int, <-chan struct{}) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.aofReplicasAcknowledgedLocked(offset), r.ackChanged
 }
 
 func (r *replicationState) currentOffset() int64 {
@@ -321,6 +338,9 @@ func (r *replicationState) init() {
 	if r.replicaAckOffsets == nil {
 		r.replicaAckOffsets = make(map[uint64]int64)
 	}
+	if r.replicaAOFOffsets == nil {
+		r.replicaAOFOffsets = make(map[uint64]int64)
+	}
 	if r.replicaAckTimes == nil {
 		r.replicaAckTimes = make(map[uint64]time.Time)
 	}
@@ -407,10 +427,14 @@ func (r *replicationState) registerReplica(write func([]byte) error) (uint64, st
 	if r.replicaAckTimes == nil {
 		r.replicaAckTimes = make(map[uint64]time.Time)
 	}
+	if r.replicaAOFOffsets == nil {
+		r.replicaAOFOffsets = make(map[uint64]int64)
+	}
 	r.nextReplicaID++
 	id := r.nextReplicaID
 	r.replicas[id] = write
 	r.replicaAckOffsets[id] = 0
+	r.replicaAOFOffsets[id] = -1
 	r.replicaAckTimes[id] = time.Now()
 	r.connectedReplicas = len(r.replicas)
 	r.notifyAckChangedLocked()
@@ -421,13 +445,14 @@ func (r *replicationState) unregisterReplica(id uint64) {
 	r.mu.Lock()
 	delete(r.replicas, id)
 	delete(r.replicaAckOffsets, id)
+	delete(r.replicaAOFOffsets, id)
 	delete(r.replicaAckTimes, id)
 	r.connectedReplicas = len(r.replicas)
 	r.notifyAckChangedLocked()
 	r.mu.Unlock()
 }
 
-func (r *replicationState) acknowledgeReplica(id uint64, offset int64) {
+func (r *replicationState) acknowledgeReplica(id uint64, offset int64, aofOffset ...int64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, ok := r.replicas[id]; !ok {
@@ -437,6 +462,12 @@ func (r *replicationState) acknowledgeReplica(id uint64, offset int64) {
 	if current, ok := r.replicaAckOffsets[id]; !ok || offset > current {
 		r.replicaAckOffsets[id] = offset
 		changed = true
+	}
+	if len(aofOffset) > 0 {
+		if current, ok := r.replicaAOFOffsets[id]; !ok || aofOffset[0] > current {
+			r.replicaAOFOffsets[id] = aofOffset[0]
+			changed = true
+		}
 	}
 	r.replicaAckTimes[id] = time.Now()
 	if changed {
