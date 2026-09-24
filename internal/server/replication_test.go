@@ -1,6 +1,8 @@
 package server
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/binary"
 	"net"
 	"strconv"
@@ -365,5 +367,42 @@ func TestDecodeRedisFullSyncRDBRejectsChecksumCorruption(t *testing.T) {
 
 	if _, err := decodeRedisFullSyncRDB(out); err == nil {
 		t.Fatal("expected checksum error")
+	}
+}
+
+
+func TestReadReplicationSnapshotEOFPreservesFollowingStream(t *testing.T) {
+	marker := "0123456789abcdef0123456789abcdef01234567"
+	payload := []byte("REDIS0012payload-0-not-the-marker")
+	wire := []byte("$EOF:" + marker + "\r\n")
+	wire = append(wire, payload...)
+	wire = append(wire, []byte(marker)...)
+	wire = append(wire, []byte("*2\r\n$4\r\nPING\r\n$4\r\nnext\r\n")...)
+
+	reader := bufio.NewReaderSize(bytes.NewReader(wire), 16)
+	got, isRedis, err := readReplicationSnapshot(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !isRedis {
+		t.Fatal("expected Redis RDB snapshot")
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("payload=%q want=%q", got, payload)
+	}
+
+	args, _, err := readRedisReplicationCommand(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(args) != 2 || string(args[0]) != "PING" || string(args[1]) != "next" {
+		t.Fatalf("following command=%q", args)
+	}
+}
+
+func TestReadReplicationSnapshotEOFRejectsBadMarkerLength(t *testing.T) {
+	reader := bufio.NewReader(strings.NewReader("$EOF:short\r\nREDIS0012"))
+	if _, _, err := readReplicationSnapshot(reader); err == nil {
+		t.Fatal("expected marker length error")
 	}
 }
