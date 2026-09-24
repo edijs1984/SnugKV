@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/pem"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -259,6 +260,90 @@ func TestReplicationACKMonotonicAndInfo(t *testing.T) {
 	if !strings.Contains(info, "state=online,offset=123,lag=") {
 		t.Fatalf("INFO replication missing replica offset/lag: %q", info)
 	}
+}
+
+func TestDecodeRedisRDBPlainCollections(t *testing.T) {
+	t.Run("list", func(t *testing.T) {
+		body := appendRDBLen(nil, 3)
+		body = appendRDBRawString(body, []byte("a"))
+		var ok bool
+		body, ok = appendRDBIntegerString(body, []byte("2"))
+		if !ok {
+			t.Fatal("expected integer encoding")
+		}
+		body = appendRDBRawString(body, []byte("c"))
+
+		pos := 0
+		obj, err := decodeRedisRDBObjectAt(body, &pos, redisRDBTypeList)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pos != len(body) || len(obj.list) != 3 ||
+			string(obj.list[0]) != "a" ||
+			string(obj.list[1]) != "2" ||
+			string(obj.list[2]) != "c" {
+			t.Fatalf("unexpected list decode: pos=%d len=%d values=%q", pos, len(body), obj.list)
+		}
+	})
+
+	t.Run("set", func(t *testing.T) {
+		body := appendRDBLen(nil, 3)
+		body = appendRDBRawString(body, []byte("alpha"))
+		body = appendRDBRawString(body, []byte("beta"))
+		body = appendRDBRawString(body, []byte("gamma"))
+
+		pos := 0
+		obj, err := decodeRedisRDBObjectAt(body, &pos, redisRDBTypeSet)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pos != len(body) || len(obj.set) != 3 {
+			t.Fatalf("unexpected set decode: pos=%d len=%d members=%q", pos, len(body), obj.set)
+		}
+	})
+
+	t.Run("hash", func(t *testing.T) {
+		body := appendRDBLen(nil, 2)
+		body = appendRDBRawString(body, []byte("a"))
+		body = appendRDBRawString(body, []byte("1"))
+		body = appendRDBRawString(body, []byte("b"))
+		body = appendRDBRawString(body, []byte("two"))
+
+		pos := 0
+		obj, err := decodeRedisRDBObjectAt(body, &pos, redisRDBTypeHash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pos != len(body) || len(obj.hash) != 2 ||
+			string(obj.hash[0].Field) != "a" ||
+			string(obj.hash[0].Value) != "1" ||
+			string(obj.hash[1].Field) != "b" ||
+			string(obj.hash[1].Value) != "two" {
+			t.Fatalf("unexpected hash decode: pos=%d len=%d pairs=%v", pos, len(body), obj.hash)
+		}
+	})
+
+	t.Run("zset2", func(t *testing.T) {
+		body := appendRDBLen(nil, 2)
+		body = appendRDBRawString(body, []byte("one"))
+		var score [8]byte
+		binary.LittleEndian.PutUint64(score[:], math.Float64bits(1.5))
+		body = append(body, score[:]...)
+		body = appendRDBRawString(body, []byte("two"))
+		binary.LittleEndian.PutUint64(score[:], math.Float64bits(-2.25))
+		body = append(body, score[:]...)
+
+		pos := 0
+		obj, err := decodeRedisRDBObjectAt(body, &pos, redisRDBTypeZSet2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pos != len(body) || len(obj.zset) != 2 ||
+			string(obj.zset[0].Member) != "one" || obj.zset[0].Score != 1.5 ||
+			string(obj.zset[1].Member) != "two" || obj.zset[1].Score != -2.25 {
+			t.Fatalf("unexpected zset decode: pos=%d len=%d items=%v", pos, len(body), obj.zset)
+		}
+	})
 }
 
 func TestDecodeRedisFullSyncRDB(t *testing.T) {
