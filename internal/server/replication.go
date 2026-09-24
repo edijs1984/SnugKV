@@ -531,38 +531,26 @@ func readReplicationEOFDelimited(reader *bufio.Reader, marker []byte) ([]byte, e
 	}
 
 	payload := make([]byte, 0, 64<<10)
-	for {
-		chunk, err := reader.ReadSlice(marker[0])
-		if len(chunk) > 0 {
-			if chunk[len(chunk)-1] == marker[0] {
-				payload = append(payload, chunk[:len(chunk)-1]...)
-				if len(payload) > persistence.MaxFrameBytes {
-					return nil, errors.New("Redis EOF-framed snapshot exceeds limit")
-				}
+	candidate := make([]byte, 0, len(marker))
 
-				if len(marker) == 1 {
-					return payload, nil
-				}
-				rest, peekErr := reader.Peek(len(marker) - 1)
-				if peekErr == nil && bytes.Equal(rest, marker[1:]) {
-					if _, discardErr := reader.Discard(len(marker) - 1); discardErr != nil {
-						return nil, discardErr
-					}
-					return payload, nil
-				}
-				payload = append(payload, marker[0])
-			} else {
-				payload = append(payload, chunk...)
-			}
+	for {
+		b, err := reader.ReadByte()
+		if err != nil {
+			return nil, err
+		}
+		candidate = append(candidate, b)
+
+		for len(candidate) > 0 && !bytes.HasPrefix(marker, candidate) {
+			payload = append(payload, candidate[0])
+			candidate = candidate[1:]
 			if len(payload) > persistence.MaxFrameBytes {
 				return nil, errors.New("Redis EOF-framed snapshot exceeds limit")
 			}
 		}
 
-		if err == nil || errors.Is(err, bufio.ErrBufferFull) {
-			continue
+		if len(candidate) == len(marker) {
+			return payload, nil
 		}
-		return nil, err
 	}
 }
 
