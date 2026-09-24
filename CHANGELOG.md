@@ -1,5 +1,10 @@
 # Changelog
 
+### Verified — Redis hash template RDB compatibility
+
+- Added Redis 8.10 hash-template interoperability for RDB types 29–32 and opcode 242, including live diskless full-sync validation for template-listpack and template-array reference formats and live HIMPORT propagation via zero-checksum RESTORE payloads. SnugKV materializes the decoded result as a native HASH. Audit: `docs/REPLICATION-HASH-TEMPLATE-AUDIT.md`.
+
+
 ### Verified — Redis HFE LISTPACK_EX RDB compatibility
 
 - Added Redis RDB HFE LISTPACK_EX decoding for types 23/25. Live Redis 8.10.2 validation confirmed a real `listpackex` hash full-syncs into SnugKV with exact absolute field-expiration timestamps and persistent fields preserved. Also hardened Redis replication RESP parsing against fragmented CRLF terminators using `io.ReadFull`, fixing a live 14-byte PING reconnect loop.
