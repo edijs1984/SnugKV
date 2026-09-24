@@ -27,13 +27,14 @@ func init() {
 }
 
 type transactionSession struct {
-	server     *Server
-	auth       *authSession
-	multi      bool
-	queueDirty bool
-	queue      [][][]byte
-	watched    map[string]persistence.Record
-	watchDirty bool
+	server                *Server
+	auth                  *authSession
+	multi                 bool
+	queueDirty            bool
+	queue                 [][][]byte
+	watched               map[string]persistence.Record
+	watchDirty            bool
+	lastReplicationOffset int64
 }
 
 type transactionWatchRegistry struct {
@@ -450,6 +451,7 @@ func (session *transactionSession) exec() ([]byte, error) {
 			}
 			if replicate {
 				s.publishReplication(changes)
+				session.lastReplicationOffset = s.replication.currentOffset()
 			}
 		}
 	}
