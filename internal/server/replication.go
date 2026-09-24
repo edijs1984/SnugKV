@@ -791,8 +791,14 @@ func (s *Server) persistRedisFullSyncLocked(checkpointOffset int64) error {
 	if s.journal == nil {
 		return nil
 	}
+	s.replication.mu.RLock()
+	masterHost := s.replication.masterHost
+	masterPort := s.replication.masterPort
+	s.replication.mu.RUnlock()
 	if err := s.journal.Append([]persistence.Record{
-		{Replication: &persistence.ReplicationCheckpoint{Clear: true}},
+		{Replication: &persistence.ReplicationCheckpoint{
+			Clear: true, MasterHost: masterHost, MasterPort: masterPort,
+		}},
 		{Reset: true},
 	}); err != nil {
 		s.durabilityFailed = true
