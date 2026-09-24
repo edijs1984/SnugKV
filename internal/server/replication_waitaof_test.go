@@ -231,3 +231,24 @@ func TestSnugReplicaFrameMustPersistBeforeFACK(t *testing.T) {
 		t.Fatalf("replicated value found=%v wrong=%v value=%q", found, wrong, value)
 	}
 }
+
+func TestWaitAOFCommandMetadata(t *testing.T) {
+	info, ok := commandTable["WAITAOF"]
+	if !ok {
+		t.Fatal("WAITAOF missing from command table")
+	}
+	flags := commandInfoFlags("WAITAOF", info)
+	if len(flags) != 1 || flags[0] != "blocking" {
+		t.Fatalf("WAITAOF flags=%v", flags)
+	}
+	cats := commandInfoACL("WAITAOF", info)
+	want := []string{"@slow", "@blocking", "@connection"}
+	if len(cats) != len(want) {
+		t.Fatalf("WAITAOF ACL=%v", cats)
+	}
+	for i := range want {
+		if cats[i] != want[i] {
+			t.Fatalf("WAITAOF ACL=%v", cats)
+		}
+	}
+}
