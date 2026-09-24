@@ -898,6 +898,35 @@ func TestRedisPartialResyncKeepsRedisStreamMode(t *testing.T) {
 	}
 }
 
+type oneByteReader struct {
+	data []byte
+}
+
+func (r *oneByteReader) Read(p []byte) (int, error) {
+	if len(r.data) == 0 {
+		return 0, io.EOF
+	}
+	p[0] = r.data[0]
+	r.data = r.data[1:]
+	return 1, nil
+}
+
+func TestReadRedisReplicationCommandHandlesFragmentedCRLF(t *testing.T) {
+	wire := []byte("*1\r\n$4\r\nPING\r\n")
+	reader := bufio.NewReaderSize(&oneByteReader{data: wire}, 1)
+
+	args, n, err := readRedisReplicationCommand(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != int64(len(wire)) {
+		t.Fatalf("bytes=%d want=%d", n, len(wire))
+	}
+	if len(args) != 1 || string(args[0]) != "PING" {
+		t.Fatalf("args=%q", args)
+	}
+}
+
 func TestReadReplicationSnapshotEOFPreservesFollowingStream(t *testing.T) {
 	marker := "0123456789abcdef0123456789abcdef01234567"
 	payload := []byte("REDIS0012payload-0-not-the-marker")
