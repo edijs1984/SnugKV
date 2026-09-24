@@ -903,7 +903,15 @@ func (s *Server) applySnugReplicationRecordsLocked(records []persistence.Record)
 	return nil
 }
 
-func (s *Server) persistRedisFullSyncLocked(masterRunID string, checkpointOffset int64, redisStream bool) error {
+func (s *Server) persistRedisFullSyncLocked(checkpointOffset int64) error {
+	s.replication.mu.RLock()
+	masterRunID := s.replication.masterRunID
+	redisStream := s.replication.masterRedisStream
+	s.replication.mu.RUnlock()
+	return s.persistRedisFullSyncStateLocked(masterRunID, checkpointOffset, redisStream)
+}
+
+func (s *Server) persistRedisFullSyncStateLocked(masterRunID string, checkpointOffset int64, redisStream bool) error {
 	if s.journal == nil {
 		return nil
 	}
@@ -1023,7 +1031,7 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 		if isRedisRDB {
 			err = s.store.Restore(records, true)
 			if err == nil {
-				err = s.persistRedisFullSyncLocked(fullResyncRunID, off, redisStream)
+				err = s.persistRedisFullSyncStateLocked(fullResyncRunID, off, redisStream)
 				if err == nil {
 					s.noteReplicaAOFOffset(off)
 				}
