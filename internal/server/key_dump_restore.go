@@ -346,6 +346,14 @@ func buildRestoreRecord(key string, object decodedKeyObject, expiresAtMS int64) 
 		if _, err := tmp.HashSet(tempKey, fields, values); err != nil {
 			return persistence.Record{}, err
 		}
+		for _, pair := range object.hash {
+			if pair.ExpiresAtMS == 0 {
+				continue
+			}
+			if _, err := tmp.HashFieldExpireAt(tempKey, [][]byte{pair.Field}, pair.ExpiresAtMS); err != nil {
+				return persistence.Record{}, err
+			}
+		}
 	case engine.TypeSet:
 		if _, err := tmp.SetAdd(tempKey, object.set); err != nil {
 			return persistence.Record{}, err
