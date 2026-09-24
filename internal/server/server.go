@@ -17,18 +17,18 @@ import (
 )
 
 type Server struct {
-	acl              *ACL
-	aclLog           *ACLLog
-	eviction         string
-	metrics          *stats.Registry
-	metricsEnabled   uint32
-	optimizer        *optimizer.Optimizer
-	store            *engine.Store
-	commands         uint64
-	journal          Journal
-	durableMu        sync.RWMutex
-	durabilityFailed bool
-	watchSessions    atomic.Int32
+	acl                      *ACL
+	aclLog                   *ACLLog
+	eviction                 string
+	metrics                  *stats.Registry
+	metricsEnabled           uint32
+	optimizer                *optimizer.Optimizer
+	store                    *engine.Store
+	commands                 uint64
+	journal                  Journal
+	durableMu                sync.RWMutex
+	durabilityFailed         bool
+	watchSessions            atomic.Int32
 	replication              replicationState
 	replicationMasterUser    string
 	replicationMasterAuth    string
@@ -86,9 +86,9 @@ var commandTable = map[string]commandInfo{
 	"PING":            {1, 2, 0, 0, 0, false}, "ECHO": {2, 2, 0, 0, 0, false}, "QUIT": {1, 1, 0, 0, 0, false},
 	"SELECT": {2, 2, 0, 0, 0, false}, "HELLO": {1, 0, 0, 0, 0, false}, "INFO": {1, 2, 0, 0, 0, false},
 	"DBSIZE": {1, 1, 0, 0, 0, false}, "COMMAND": {1, 0, 0, 0, 0, false},
-	"ROLE": {1, 1, 0, 0, 0, false},
-	"REPLICAOF": {3, 3, 0, 0, 0, false},
-	"PSYNC": {3, 3, 0, 0, 0, false},
+	"ROLE":        {1, 1, 0, 0, 0, false},
+	"REPLICAOF":   {3, 3, 0, 0, 0, false},
+	"PSYNC":       {3, 3, 0, 0, 0, false},
 	"CONFIG":      {2, 0, 0, 0, 0, false},
 	"CLIENT":      {2, 0, 0, 0, 0, false},
 	"SCAN":        {2, 0, 0, 0, 0, false},
@@ -114,21 +114,21 @@ var commandTable = map[string]commandInfo{
 	"INCRBYFLOAT": {3, 3, 1, 1, 1, true},
 	"STRLEN":      {2, 2, 1, 1, 1, false}, "EXPIRE": {3, 4, 1, 1, 1, true}, "PEXPIRE": {3, 4, 1, 1, 1, true},
 	"TTL": {2, 2, 1, 1, 1, false}, "PTTL": {2, 2, 1, 1, 1, false}, "PERSIST": {2, 2, 1, 1, 1, true},
-	"TYPE":      {2, 2, 1, 1, 1, false},
-	"FLUSHDB":   {1, 2, 0, 0, 0, true},
-	"FLUSHALL":  {1, 2, 0, 0, 0, true},
-	"UNLINK":    {2, 0, 1, -1, 1, true},
-	"APPEND":    {3, 3, 1, 1, 1, true},
-	"GETRANGE":  {4, 4, 1, 1, 1, false},
-	"SETRANGE":  {4, 4, 1, 1, 1, true},
-	"GETBIT":    {3, 3, 1, 1, 1, false},
-	"SETBIT":    {4, 4, 1, 1, 1, true},
-	"BITCOUNT":  {2, 5, 1, 1, 1, false},
-	"BITPOS":    {3, 6, 1, 1, 1, false},
-	"BITOP":     {4, 0, 2, -1, 1, true},
-	"JSON.SET":  {4, 5, 1, 1, 1, true},
-	"JSON.GET":  {2, 3, 1, 1, 1, false},
-	"JSON.TYPE": {2, 3, 1, 1, 1, false},
+	"TYPE":           {2, 2, 1, 1, 1, false},
+	"FLUSHDB":        {1, 2, 0, 0, 0, true},
+	"FLUSHALL":       {1, 2, 0, 0, 0, true},
+	"UNLINK":         {2, 0, 1, -1, 1, true},
+	"APPEND":         {3, 3, 1, 1, 1, true},
+	"GETRANGE":       {4, 4, 1, 1, 1, false},
+	"SETRANGE":       {4, 4, 1, 1, 1, true},
+	"GETBIT":         {3, 3, 1, 1, 1, false},
+	"SETBIT":         {4, 4, 1, 1, 1, true},
+	"BITCOUNT":       {2, 5, 1, 1, 1, false},
+	"BITPOS":         {3, 6, 1, 1, 1, false},
+	"BITOP":          {4, 0, 2, -1, 1, true},
+	"JSON.SET":       {4, 5, 1, 1, 1, true},
+	"JSON.GET":       {2, 3, 1, 1, 1, false},
+	"JSON.TYPE":      {2, 3, 1, 1, 1, false},
 	"JSON.DEL":       {2, 3, 1, 1, 1, true},
 	"JSON.NUMINCRBY": {4, 4, 1, 1, 1, true},
 	"JSON.STRLEN":    {2, 3, 1, 1, 1, false},

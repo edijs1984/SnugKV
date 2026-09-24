@@ -14,7 +14,7 @@ import (
 )
 
 type Config struct {
-	SourcePath        string `json:"-"`
+	SourcePath          string `json:"-"`
 	MasterUser          string `json:"masteruser"`
 	MasterAuth          string `json:"masterauth"`
 	MasterTLS           bool   `json:"mastertls"`
@@ -22,28 +22,28 @@ type Config struct {
 	MasterTLSCert       string `json:"mastertls_cert"`
 	MasterTLSKey        string `json:"mastertls_key"`
 	MasterTLSServerName string `json:"mastertls_server_name"`
-	AdminAddr         string `json:"admin_listen"`
-	EvictionPolicy    string `json:"eviction_policy"`
-	MetricsAddr       string `json:"metrics_listen"`
-	Compression       bool   `json:"compression"`
-	JSONShape         bool   `json:"json_shape"`
-	OptimizerMode     string `json:"optimizer_mode"`
-	AOFPath           string `json:"aof_path"`
-	SnapshotPath      string `json:"snapshot_path"`
-	ACLFile           string `json:"acl_file"`
-	Fsync             string `json:"fsync"`
-	MaxMemory         uint64 `json:"max_memory"`
-	GoMemoryLimit     int64  `json:"go_memory_limit"`
-	Encoding          bool   `json:"encoding"`
-	ListenAddr        string `json:"listen"`
-	Shards            int    `json:"shards"`
-	MaxConnections    int    `json:"max_connections"`
-	ReadTimeoutMS     int64  `json:"read_timeout_ms"`
-	WriteTimeoutMS    int64  `json:"write_timeout_ms"`
-	MaxRequestBytes   int    `json:"max_request_bytes"`
-	MaxBulkBytes      int    `json:"max_bulk_bytes"`
-	MaxArguments      int    `json:"max_arguments"`
-	CleanupIntervalMS int64  `json:"cleanup_interval_ms"`
+	AdminAddr           string `json:"admin_listen"`
+	EvictionPolicy      string `json:"eviction_policy"`
+	MetricsAddr         string `json:"metrics_listen"`
+	Compression         bool   `json:"compression"`
+	JSONShape           bool   `json:"json_shape"`
+	OptimizerMode       string `json:"optimizer_mode"`
+	AOFPath             string `json:"aof_path"`
+	SnapshotPath        string `json:"snapshot_path"`
+	ACLFile             string `json:"acl_file"`
+	Fsync               string `json:"fsync"`
+	MaxMemory           uint64 `json:"max_memory"`
+	GoMemoryLimit       int64  `json:"go_memory_limit"`
+	Encoding            bool   `json:"encoding"`
+	ListenAddr          string `json:"listen"`
+	Shards              int    `json:"shards"`
+	MaxConnections      int    `json:"max_connections"`
+	ReadTimeoutMS       int64  `json:"read_timeout_ms"`
+	WriteTimeoutMS      int64  `json:"write_timeout_ms"`
+	MaxRequestBytes     int    `json:"max_request_bytes"`
+	MaxBulkBytes        int    `json:"max_bulk_bytes"`
+	MaxArguments        int    `json:"max_arguments"`
+	CleanupIntervalMS   int64  `json:"cleanup_interval_ms"`
 }
 
 func Default() Config {

@@ -66,7 +66,6 @@ func TestListenerIsolationValidation(t *testing.T) {
 	}
 }
 
-
 func TestReplicationTLSValidation(t *testing.T) {
 	c := Default()
 	c.MasterTLS = true

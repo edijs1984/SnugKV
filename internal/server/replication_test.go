@@ -376,7 +376,6 @@ func TestDecodeRedisFullSyncRDBRejectsChecksumCorruption(t *testing.T) {
 	}
 }
 
-
 func TestReadReplicationSnapshotEOFPreservesFollowingStream(t *testing.T) {
 	marker := "0123456789abcdef0123456789abcdef01234567"
 	payload := []byte("REDIS0012payload-0-not-the-marker")
@@ -412,7 +411,6 @@ func TestReadReplicationSnapshotEOFRejectsBadMarkerLength(t *testing.T) {
 		t.Fatal("expected marker length error")
 	}
 }
-
 
 func TestAuthenticateReplicationUpstreamPassword(t *testing.T) {
 	client, upstream := net.Pipe()
@@ -497,7 +495,6 @@ func TestAuthenticateReplicationUpstreamFailureRedactsCredentials(t *testing.T) 
 		t.Fatalf("credentials leaked in error: %v", err)
 	}
 }
-
 
 func TestDialReplicationUpstreamTLSVerifiesCA(t *testing.T) {
 	upstream := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
