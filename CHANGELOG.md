@@ -1,5 +1,10 @@
 # Changelog
 
+### Verified — authenticated Redis replication
+
+- Redis 8.2 primary authentication is now supported and live-validated for both password-only `AUTH <password>` and ACL `AUTH <username> <password>` upstream handshakes. SnugKV exposes Redis-compatible `masterauth` / `masteruser` settings via config, environment, and CLI. Audit: `docs/REPLICATION-AUTH-AUDIT.md`.
+
+
 ### Verified — Redis diskless EOF full sync
 
 - Redis 8.2 diskless replication using `$EOF:<40-byte marker>` is now supported and live-validated. SnugKV advertises EOF capability, imports the framed RDB without consuming the following command stream, preserves TTLs, continues live replication, and remains READONLY as a replica. Audit: `docs/REPLICATION-DISKLESS-EOF-AUDIT.md`.
