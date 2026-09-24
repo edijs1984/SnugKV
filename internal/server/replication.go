@@ -739,6 +739,12 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 	if err != nil {
 		return err
 	}
+	for strings.TrimSpace(line) == "" {
+		line, err = reader.ReadString('\n')
+		if err != nil {
+			return err
+		}
+	}
 
 	redisStream := false
 	if strings.HasPrefix(line, "+FULLRESYNC ") {
