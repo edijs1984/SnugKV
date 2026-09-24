@@ -10,12 +10,14 @@ import (
 const maxPackedHashBytes = 32 << 20
 
 var packedHashHeader = [...]byte{'S', 'H', 1}
+var packedHashExpiryHeader = [...]byte{'S', 'H', 3}
 
 // HashPair is one binary-safe HASH field/value pair.
 // Packed hashes are stored sorted by Field so reads need no retained Go map.
 type HashPair struct {
-	Field []byte
-	Value []byte
+	Field       []byte
+	Value       []byte
+	ExpiresAtMS int64
 }
 
 // HashStats exposes storage measurements for datatype benchmarks.
@@ -52,9 +54,14 @@ func readHashUvarint(data []byte, offset *int) (uint64, error) {
 	return value, nil
 }
 
+func packedHashHasFieldExpiry(data []byte) bool {
+	return len(data) >= len(packedHashExpiryHeader) &&
+		bytes.Equal(data[:len(packedHashExpiryHeader)], packedHashExpiryHeader[:])
+}
+
 func packedHashCount(data []byte) (int, error) {
 	if len(data) < len(packedHashHeader) ||
-		!bytes.Equal(data[:len(packedHashHeader)], packedHashHeader[:]) {
+		(!bytes.Equal(data[:len(packedHashHeader)], packedHashHeader[:]) && !packedHashHasFieldExpiry(data)) {
 		return 0, errors.New("invalid packed hash")
 	}
 
@@ -69,10 +76,15 @@ func packedHashCount(data []byte) (int, error) {
 
 func encodePackedHash(input []HashPair) ([]byte, error) {
 	pairs := make([]HashPair, len(input))
+	hasFieldExpiry := false
 	for i := range input {
 		pairs[i] = HashPair{
-			Field: append([]byte(nil), input[i].Field...),
-			Value: append([]byte(nil), input[i].Value...),
+			Field:       append([]byte(nil), input[i].Field...),
+			Value:       append([]byte(nil), input[i].Value...),
+			ExpiresAtMS: input[i].ExpiresAtMS,
+		}
+		if input[i].ExpiresAtMS != 0 {
+			hasFieldExpiry = true
 		}
 	}
 
@@ -86,18 +98,30 @@ func encodePackedHash(input []HashPair) ([]byte, error) {
 			return nil, errors.New("duplicate hash field")
 		}
 		capacity += len(pairs[i].Field) + len(pairs[i].Value) + 2*binary.MaxVarintLen64
+		if hasFieldExpiry {
+			capacity += 8
+		}
 		if capacity > maxPackedHashBytes {
 			return nil, errors.New("ERR hash exceeds 32 MiB limit")
 		}
 	}
 
 	out := make([]byte, 0, capacity)
-	out = append(out, packedHashHeader[:]...)
+	if hasFieldExpiry {
+		out = append(out, packedHashExpiryHeader[:]...)
+	} else {
+		out = append(out, packedHashHeader[:]...)
+	}
 	out = appendHashUvarint(out, uint64(len(pairs)))
 
 	for _, pair := range pairs {
 		out = appendHashUvarint(out, uint64(len(pair.Field)))
 		out = appendHashUvarint(out, uint64(len(pair.Value)))
+		if hasFieldExpiry {
+			var expiry [8]byte
+			binary.LittleEndian.PutUint64(expiry[:], uint64(pair.ExpiresAtMS))
+			out = append(out, expiry[:]...)
+		}
 		out = append(out, pair.Field...)
 		out = append(out, pair.Value...)
 	}
@@ -120,7 +144,9 @@ func decodePackedHash(data []byte) ([]HashPair, error) {
 		return nil, err
 	}
 
+	hasFieldExpiry := packedHashHasFieldExpiry(data)
 	pairs := make([]HashPair, 0, count)
+	hasFieldExpiry := packedHashHasFieldExpiry(data)
 	for i := 0; i < count; i++ {
 		fieldLen, err := readHashUvarint(data, &offset)
 		if err != nil {
@@ -129,6 +155,15 @@ func decodePackedHash(data []byte) ([]HashPair, error) {
 		valueLen, err := readHashUvarint(data, &offset)
 		if err != nil {
 			return nil, err
+		}
+
+		var expiresAtMS int64
+		if hasFieldExpiry {
+			if len(data)-offset < 8 {
+				return nil, errors.New("invalid packed hash")
+			}
+			expiresAtMS = int64(binary.LittleEndian.Uint64(data[offset : offset+8]))
+			offset += 8
 		}
 
 		if fieldLen > uint64(len(data)-offset) {
@@ -149,7 +184,7 @@ func decodePackedHash(data []byte) ([]HashPair, error) {
 			return nil, errors.New("invalid packed hash order")
 		}
 
-		pairs = append(pairs, HashPair{Field: field, Value: value})
+		pairs = append(pairs, HashPair{Field: field, Value: value, ExpiresAtMS: expiresAtMS})
 	}
 
 	if offset != len(data) {
@@ -159,7 +194,7 @@ func decodePackedHash(data []byte) ([]HashPair, error) {
 	return pairs, nil
 }
 
-func packedHashLookup(data, target []byte) ([]byte, bool, error) {
+func packedHashLookup(data, target []byte, nowMS int64) ([]byte, bool, error) {
 	count, err := packedHashCount(data)
 	if err != nil {
 		return nil, false, err
@@ -180,6 +215,15 @@ func packedHashLookup(data, target []byte) ([]byte, bool, error) {
 			return nil, false, err
 		}
 
+		var expiresAtMS int64
+		if hasFieldExpiry {
+			if len(data)-offset < 8 {
+				return nil, false, errors.New("invalid packed hash")
+			}
+			expiresAtMS = int64(binary.LittleEndian.Uint64(data[offset : offset+8]))
+			offset += 8
+		}
+
 		if fieldLen > uint64(len(data)-offset) {
 			return nil, false, errors.New("invalid packed hash")
 		}
@@ -194,6 +238,9 @@ func packedHashLookup(data, target []byte) ([]byte, bool, error) {
 
 		cmp := bytes.Compare(field, target)
 		if cmp == 0 {
+			if expiresAtMS != 0 && expiresAtMS <= nowMS {
+				return nil, false, nil
+			}
 			return append([]byte(nil), data[offset:valueEnd]...), true, nil
 		}
 		if cmp > 0 {
@@ -208,11 +255,20 @@ func packedHashLookup(data, target []byte) ([]byte, bool, error) {
 
 func (s *Store) hashEntry(pairs []HashPair, packed []byte) preparedEntry {
 	stored := packed
-	if shapeID, ok := s.hashShapeID(pairs, len(packed)); ok {
+	hasFieldExpiry := false
+	for _, pair := range pairs {
+		if pair.ExpiresAtMS != 0 {
+			hasFieldExpiry = true
+			break
+		}
+	}
+	if !hasFieldExpiry {
+		if shapeID, ok := s.hashShapeID(pairs, len(packed)); ok {
 		shaped := encodeShapedHash(shapeID, pairs)
 		if len(shaped)+hashShapeMinSavings <= len(packed) {
 			stored = shaped
 		}
+	}
 	}
 	return preparedEntry{
 		entry: entry{entryData: entryData{
@@ -306,7 +362,7 @@ func (s *Store) HashGet(key string, field []byte) ([]byte, bool, error) {
 		return nil, false, hashWrongType()
 	}
 
-	return packedHashLookup(s.decode(sh, e), field)
+	return packedHashLookup(s.decode(sh, e), field, s.now().UnixMilli())
 }
 
 func (s *Store) HashLen(key string) (int64, error) {
