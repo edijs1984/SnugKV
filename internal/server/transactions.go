@@ -35,6 +35,7 @@ type transactionSession struct {
 	watched               map[string]persistence.Record
 	watchDirty            bool
 	lastReplicationOffset int64
+	waitTargetOffset       int64
 }
 
 type transactionWatchRegistry struct {
@@ -333,6 +334,13 @@ func (s *Server) executeQueuedBlockingZSetLocked(args [][]byte) ([]byte, error) 
 	return nil, errors.New("ERR unsupported blocking sorted-set command in MULTI")
 }
 
+func (s *Server) executeQueuedCommandLockedForSession(session *transactionSession, args [][]byte) ([]byte, error) {
+	if len(args) > 0 && strings.EqualFold(string(args[0]), "WAIT") {
+		return s.executeReplicationWait(args, session.waitTargetOffset, nil, false)
+	}
+	return s.executeQueuedCommandLocked(args)
+}
+
 func (s *Server) executeQueuedCommandLocked(args [][]byte) ([]byte, error) {
 	if len(args) == 0 {
 		return nil, errors.New("ERR empty command")
@@ -418,7 +426,7 @@ func (session *transactionSession) exec() ([]byte, error) {
 				session.auth,
 				command,
 				func() ([]byte, error) {
-					return s.executeQueuedCommandLocked(command)
+					return s.executeQueuedCommandLockedForSession(session, command)
 				},
 			)
 		}
