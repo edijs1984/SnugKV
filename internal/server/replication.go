@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -12,6 +14,7 @@ import (
 	"hash/crc32"
 	"io"
 	"net"
+	"os"
 	"slices"
 	"snugkv/internal/persistence"
 	"strconv"
@@ -705,6 +708,47 @@ func (s *Server) stopReplicaFollow() {
 	}
 }
 
+func (s *Server) dialReplicationUpstream(host string, port int) (net.Conn, error) {
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
+	if !s.replicationMasterTLS {
+		return net.DialTimeout("tcp", addr, 2*time.Second)
+	}
+
+	caPEM, err := os.ReadFile(s.replicationMasterTLSCA)
+	if err != nil {
+		return nil, fmt.Errorf("replication TLS CA: %w", err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(caPEM) {
+		return nil, errors.New("replication TLS CA contains no valid certificates")
+	}
+
+	serverName := s.replicationMasterTLSSNI
+	if serverName == "" {
+		serverName = host
+	}
+	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		RootCAs:    roots,
+		ServerName: serverName,
+	}
+
+	if s.replicationMasterTLSCert != "" {
+		cert, err := tls.LoadX509KeyPair(s.replicationMasterTLSCert, s.replicationMasterTLSKey)
+		if err != nil {
+			return nil, fmt.Errorf("replication TLS client certificate: %w", err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
+	}
+
+	dialer := &net.Dialer{Timeout: 2 * time.Second}
+	conn, err := tls.DialWithDialer(dialer, "tcp", addr, tlsConfig)
+	if err != nil {
+		return nil, fmt.Errorf("replication TLS handshake failed: %w", err)
+	}
+	return conn, nil
+}
+
 func (s *Server) runReplicaFollow(host string, port int, cancel <-chan struct{}) {
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	for {
@@ -714,7 +758,7 @@ func (s *Server) runReplicaFollow(host string, port int, cancel <-chan struct{})
 		default:
 		}
 
-		conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+		conn, err := s.dialReplicationUpstream(host, port)
 		if err != nil {
 			s.replication.setReplicaDisconnected()
 			select {
