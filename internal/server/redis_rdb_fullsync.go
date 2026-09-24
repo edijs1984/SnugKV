@@ -23,6 +23,8 @@ const (
 	redisRDBTypeZSetZiplist    = byte(12)
 	redisRDBTypeHashZiplist    = byte(13)
 	redisRDBTypeListQuicklist  = byte(14)
+	redisRDBTypeHashMetadataPreGA = byte(22)
+	redisRDBTypeHashMetadata      = byte(24)
 	redisRDBOpcodeIdle         = byte(248)
 	redisRDBOpcodeFreq         = byte(249)
 	redisRDBOpcodeAux          = byte(250)
@@ -162,6 +164,59 @@ func decodeRedisRDBObjectAt(data []byte, pos *int, objectType byte) (decodedKeyO
 			return decodedKeyObject{}, errors.New("invalid Redis RDB string")
 		}
 		return decodedKeyObject{valueType: engine.TypeString, scalar: value}, nil
+
+	case redisRDBTypeHashMetadataPreGA, redisRDBTypeHashMetadata:
+		var minExpire int64
+		if objectType == redisRDBTypeHashMetadata {
+			if len(data)-*pos < 8 {
+				return decodedKeyObject{}, errors.New("truncated Redis RDB hash min expiry")
+			}
+			minExpire = int64(binary.LittleEndian.Uint64(data[*pos : *pos+8]))
+			*pos += 8
+			if minExpire < 0 {
+				return decodedKeyObject{}, errors.New("invalid Redis RDB hash min expiry")
+			}
+		}
+
+		count, encoded, err := readRDBLen(data, pos)
+		if err != nil || encoded || count == 0 || count > uint64(len(data)) {
+			return decodedKeyObject{}, errors.New("invalid Redis RDB hash metadata")
+		}
+		pairs := make([]engine.HashPair, 0, count)
+		for i := uint64(0); i < count; i++ {
+			ttl, ttlEncoded, err := readRDBLen(data, pos)
+			if err != nil || ttlEncoded {
+				return decodedKeyObject{}, errors.New("invalid Redis RDB hash field TTL")
+			}
+
+			var expiresAtMS int64
+			if ttl != 0 {
+				if objectType == redisRDBTypeHashMetadataPreGA {
+					if ttl > uint64(^uint64(0) >> 1) {
+						return decodedKeyObject{}, errors.New("Redis RDB hash field TTL out of range")
+					}
+					expiresAtMS = int64(ttl)
+				} else {
+					if minExpire == 0 || ttl-1 > uint64(int64(^uint64(0)>>1) - minExpire) {
+						return decodedKeyObject{}, errors.New("Redis RDB hash field TTL out of range")
+					}
+					expiresAtMS = minExpire + int64(ttl) - 1
+				}
+			}
+
+			field, err := decodeRDBString(data, pos)
+			if err != nil {
+				return decodedKeyObject{}, errors.New("invalid Redis RDB hash field")
+			}
+			value, err := decodeRDBString(data, pos)
+			if err != nil {
+				return decodedKeyObject{}, errors.New("invalid Redis RDB hash value")
+			}
+			pairs = append(pairs, engine.HashPair{
+				Field: field, Value: value, ExpiresAtMS: expiresAtMS,
+			})
+		}
+		return decodedKeyObject{valueType: engine.TypeHash, hash: pairs}, nil
 
 	case redisRDBTypeHashZipmap:
 		raw, err := decodeRDBString(data, pos)

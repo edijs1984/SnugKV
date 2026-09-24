@@ -33,7 +33,7 @@ func TestPackedHashRoundTripBinarySafe(t *testing.T) {
 		}
 	}
 
-	value, found, err := packedHashLookup(packed, []byte("z"))
+	value, found, err := packedHashLookup(packed, []byte("z"), time.Now().UnixMilli())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,6 +178,83 @@ func TestHashDeleteRemovesEmptyHash(t *testing.T) {
 
 	if _, found := store.ValueTypeOf("hash"); found {
 		t.Fatal("empty hash key should be removed")
+	}
+}
+
+func TestHashFieldExpiryPackedRoundTripAndVisibility(t *testing.T) {
+	store := New()
+	if _, err := store.HashSet(
+		"hfe",
+		[][]byte{[]byte("alive"), []byte("expired"), []byte("persistent")},
+		[][]byte{[]byte("1"), []byte("2"), []byte("3")},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UnixMilli()
+	results, err := store.HashFieldExpireAt(
+		"hfe",
+		[][]byte{[]byte("alive"), []byte("expired")},
+		now+60000,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 || results[0] != 1 || results[1] != 1 {
+		t.Fatalf("expire results = %v", results)
+	}
+	results, err = store.HashFieldExpireAt("hfe", [][]byte{[]byte("expired")}, now-1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0] != 2 {
+		t.Fatalf("immediate expiry result = %v", results)
+	}
+
+	if _, found, err := store.HashGet("hfe", []byte("expired")); err != nil || found {
+		t.Fatalf("expired field found=%v err=%v", found, err)
+	}
+	if value, found, err := store.HashGet("hfe", []byte("alive")); err != nil || !found || string(value) != "1" {
+		t.Fatalf("alive field value=%q found=%v err=%v", value, found, err)
+	}
+
+	ttl, err := store.HashFieldPTTL("hfe", [][]byte{[]byte("alive"), []byte("persistent"), []byte("expired")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ttl) != 3 || ttl[0] <= 0 || ttl[1] != -1 || ttl[2] != -2 {
+		t.Fatalf("field TTLs = %v", ttl)
+	}
+
+	records := store.Export(nil)
+	if len(records) != 1 {
+		t.Fatalf("records = %d, want 1", len(records))
+	}
+	if !packedHashHasFieldExpiry(records[0].Value) {
+		t.Fatalf("expected HFE packed hash header: %x", records[0].Value[:3])
+	}
+
+	restored := New()
+	if err := restored.Restore(records, false); err != nil {
+		t.Fatal(err)
+	}
+	ttl, err = restored.HashFieldPTTL("hfe", [][]byte{[]byte("alive"), []byte("persistent")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ttl[0] <= 0 || ttl[1] != -1 {
+		t.Fatalf("restored field TTLs = %v", ttl)
+	}
+
+	if _, err := restored.HashSet("hfe", [][]byte{[]byte("alive")}, [][]byte{[]byte("updated")}); err != nil {
+		t.Fatal(err)
+	}
+	ttl, err = restored.HashFieldPTTL("hfe", [][]byte{[]byte("alive")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ttl[0] != -1 {
+		t.Fatalf("HSET should clear field TTL, got %v", ttl)
 	}
 }
 

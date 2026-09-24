@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"snugkv/internal/engine"
 )
@@ -29,6 +30,15 @@ var hashCommands = map[string]commandInfo{
 	"HINCRBYFLOAT": {4, 4, 1, 1, 1, true},
 	"HSCAN":        {3, 0, 1, 1, 1, false},
 	"HRANDFIELD":   {2, 4, 1, 1, 1, false},
+	"HEXPIRE":       {6, 0, 1, 1, 1, true},
+	"HPEXPIRE":      {6, 0, 1, 1, 1, true},
+	"HEXPIREAT":     {6, 0, 1, 1, 1, true},
+	"HPEXPIREAT":    {6, 0, 1, 1, 1, true},
+	"HTTL":          {5, 0, 1, 1, 1, false},
+	"HPTTL":         {5, 0, 1, 1, 1, false},
+	"HEXPIRETIME":   {5, 0, 1, 1, 1, false},
+	"HPEXPIRETIME":  {5, 0, 1, 1, 1, false},
+	"HPERSIST":      {5, 0, 1, 1, 1, true},
 }
 
 func init() {
@@ -228,6 +238,64 @@ func (s *Server) executeHash(args [][]byte) ([]byte, error) {
 	case "HRANDFIELD":
 		return s.executeHRandField(args)
 
+	case "HEXPIRE", "HPEXPIRE", "HEXPIREAT", "HPEXPIREAT":
+		when, condition, fields, err := parseHashFieldExpireArgs(cmd, args)
+		if err != nil {
+			return nil, err
+		}
+		results, err := s.store.HashFieldExpireAtCondition(key, fields, when, condition)
+		if err != nil {
+			return nil, err
+		}
+		items := make([][]byte, 0, len(results))
+		for _, result := range results {
+			items = append(items, integer(result))
+		}
+		return array(items...), nil
+
+	case "HTTL", "HPTTL", "HEXPIRETIME", "HPEXPIRETIME":
+		fields, err := parseHashFieldListArgs(args, 2)
+		if err != nil {
+			return nil, err
+		}
+		var results []int64
+		switch cmd {
+		case "HTTL", "HPTTL":
+			results, err = s.store.HashFieldPTTL(key, fields)
+		default:
+			results, err = s.store.HashFieldExpireTime(key, fields)
+		}
+		if err != nil {
+			return nil, err
+		}
+		items := make([][]byte, 0, len(results))
+		for _, result := range results {
+			if result >= 0 {
+				if cmd == "HTTL" {
+					result /= 1000
+				} else if cmd == "HEXPIRETIME" {
+					result /= 1000
+				}
+			}
+			items = append(items, integer(result))
+		}
+		return array(items...), nil
+
+	case "HPERSIST":
+		fields, err := parseHashFieldListArgs(args, 2)
+		if err != nil {
+			return nil, err
+		}
+		results, err := s.store.HashFieldPersist(key, fields)
+		if err != nil {
+			return nil, err
+		}
+		items := make([][]byte, 0, len(results))
+		for _, result := range results {
+			items = append(items, integer(result))
+		}
+		return array(items...), nil
+
 	case "HSCAN":
 		cursor, err := strconv.ParseUint(string(args[2]), 10, 64)
 		if err != nil {
@@ -298,4 +366,91 @@ func hashPairLookup(pairs []engine.HashPair, field []byte) ([]byte, bool) {
 		return nil, false
 	}
 	return pairs[index].Value, true
+}
+
+
+func parseHashFieldListArgs(args [][]byte, fieldsPos int) ([][]byte, error) {
+	if len(args) <= fieldsPos+1 || !strings.EqualFold(string(args[fieldsPos]), "FIELDS") {
+		return nil, errors.New("ERR Mandatory argument FIELDS is missing or not at the right position")
+	}
+	count, err := strconv.Atoi(string(args[fieldsPos+1]))
+	if err != nil || count <= 0 {
+		return nil, errors.New("ERR Number of fields must be a positive integer")
+	}
+	if count != len(args)-(fieldsPos+2) {
+		return nil, errors.New("ERR The `numfields` parameter must match the number of arguments")
+	}
+	return args[fieldsPos+2:], nil
+}
+
+func checkedAddInt64(a, b int64) (int64, bool) {
+	if b > 0 && a > math.MaxInt64-b {
+		return 0, false
+	}
+	if b < 0 && a < math.MinInt64-b {
+		return 0, false
+	}
+	return a + b, true
+}
+
+func checkedMul1000(value int64) (int64, bool) {
+	if value > math.MaxInt64/1000 || value < math.MinInt64/1000 {
+		return 0, false
+	}
+	return value * 1000, true
+}
+
+func parseHashFieldExpireArgs(cmd string, args [][]byte) (int64, string, [][]byte, error) {
+	raw, err := strconv.ParseInt(string(args[2]), 10, 64)
+	if err != nil {
+		return 0, "", nil, errors.New("ERR value is not an integer or out of range")
+	}
+
+	fieldsPos := 3
+	condition := ""
+	if fieldsPos < len(args) {
+		switch strings.ToUpper(string(args[fieldsPos])) {
+		case "NX", "XX", "GT", "LT":
+			condition = strings.ToUpper(string(args[fieldsPos]))
+			fieldsPos++
+		}
+	}
+	fields, err := parseHashFieldListArgs(args, fieldsPos)
+	if err != nil {
+		return 0, "", nil, err
+	}
+
+	nowMS := time.Now().UnixMilli()
+	switch cmd {
+	case "HEXPIRE":
+		delta, ok := checkedMul1000(raw)
+		if !ok {
+			return 0, "", nil, errors.New("ERR invalid expire time in 'hexpire' command")
+		}
+		whenMS, ok := checkedAddInt64(nowMS, delta)
+		if !ok {
+			return 0, "", nil, errors.New("ERR invalid expire time in 'hexpire' command")
+		}
+		return whenMS, condition, fields, nil
+
+	case "HPEXPIRE":
+		whenMS, ok := checkedAddInt64(nowMS, raw)
+		if !ok {
+			return 0, "", nil, errors.New("ERR invalid expire time in 'hpexpire' command")
+		}
+		return whenMS, condition, fields, nil
+
+	case "HEXPIREAT":
+		whenMS, ok := checkedMul1000(raw)
+		if !ok {
+			return 0, "", nil, errors.New("ERR invalid expire time in 'hexpireat' command")
+		}
+		return whenMS, condition, fields, nil
+
+	case "HPEXPIREAT":
+		return raw, condition, fields, nil
+
+	default:
+		return 0, "", nil, errors.New("ERR unsupported hash field expiry command")
+	}
 }

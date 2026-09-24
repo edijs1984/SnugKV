@@ -61,9 +61,10 @@ type replicationState struct {
 	replicaAckOffsets map[uint64]int64
 	replicaAckTimes   map[uint64]time.Time
 
-	followCancel chan struct{}
-	followDone   chan struct{}
-	masterRunID  string
+	followCancel      chan struct{}
+	followDone        chan struct{}
+	masterRunID       string
+	masterRedisStream bool
 }
 
 type replicationSnapshot struct {
@@ -104,6 +105,7 @@ func (r *replicationState) setReplica(host string, port int) {
 	r.mu.Lock()
 	if r.masterHost != host || r.masterPort != port {
 		r.masterRunID = ""
+		r.masterRedisStream = false
 		r.offset = 0
 	}
 	r.role = replicationReplica
@@ -140,6 +142,7 @@ func (r *replicationState) promote() {
 	r.masterLinkStatus = ""
 	r.masterSyncInProgress = false
 	r.masterRunID = ""
+	r.masterRedisStream = false
 	r.mu.Unlock()
 }
 
@@ -853,6 +856,11 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 		} else {
 			records, err = decodeReplicationFrame(snapshot)
 		}
+		if err == nil {
+			s.replication.mu.Lock()
+			s.replication.masterRedisStream = redisStream
+			s.replication.mu.Unlock()
+		}
 		if err != nil {
 			return err
 		}
@@ -862,7 +870,11 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 		if err != nil {
 			return err
 		}
-	} else if !strings.HasPrefix(line, "+CONTINUE") {
+	} else if strings.HasPrefix(line, "+CONTINUE") {
+		s.replication.mu.RLock()
+		redisStream = s.replication.masterRedisStream
+		s.replication.mu.RUnlock()
+	} else {
 		return errors.New("master did not provide FULLRESYNC or CONTINUE")
 	}
 

@@ -33,6 +33,7 @@ func (s *Store) HashSetNX(key string, field, value []byte) (bool, error) {
 		if err != nil {
 			return false, err
 		}
+		pairs = liveHashPairs(pairs, now.UnixMilli())
 		expiresAt = sh.expirationAt(key, old)
 	}
 

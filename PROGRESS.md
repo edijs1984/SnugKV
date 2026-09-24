@@ -1,3 +1,8 @@
+## Redis Hash Field Expiration — 2026-09-24
+
+Implemented Redis-compatible hash-field TTL commands (`HEXPIRE`, `HPEXPIRE`, `HEXPIREAT`, `HPEXPIREAT`, `HTTL`, `HPTTL`, `HEXPIRETIME`, `HPEXPIRETIME`, `HPERSIST`) including NX/XX/GT/LT per-field semantics. Added Redis RDB HFE hashtable metadata decoding for types 22/24 and live-validated exact absolute field expirations from Redis 8.10.2. Live testing also found and fixed Redis `+CONTINUE` reconnect handling so partial resync preserves Redis RESP stream mode. Process-restart PSYNC state persistence and LISTPACK_EX HFE formats remain open. See `docs/HASH-FIELD-EXPIRATION-AUDIT.md`.
+
+
 ## Realistic workload memory milestone — 2026-09-21
 
 ## Broader Redis RDB Encoding Compatibility — 2026-09-24

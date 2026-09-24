@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"errors"
 	"bytes"
 	"encoding/binary"
 	"encoding/pem"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"snugkv/internal/engine"
+	"snugkv/internal/persistence"
 )
 
 func waitReplication(t *testing.T, fn func() bool) {
@@ -403,6 +405,76 @@ func TestDecodeRedisLegacyZiplists(t *testing.T) {
 	})
 }
 
+func TestDecodeRedisRDBHashFieldExpirationMetadata(t *testing.T) {
+	minExpire := time.Now().Add(2 * time.Minute).UnixMilli()
+
+	body := make([]byte, 8)
+	binary.LittleEndian.PutUint64(body[:8], uint64(minExpire))
+	body = appendRDBLen(body, 3)
+
+	// Field a expires exactly at minExpire: relative TTL is 1.
+	body = appendRDBLen(body, 1)
+	body = appendRDBRawString(body, []byte("a"))
+	body = appendRDBRawString(body, []byte("one"))
+
+	// Field b has no TTL.
+	body = appendRDBLen(body, 0)
+	body = appendRDBRawString(body, []byte("b"))
+	body = appendRDBRawString(body, []byte("two"))
+
+	// Field c expires 5 seconds after minExpire: delta + 1.
+	body = appendRDBLen(body, 5001)
+	body = appendRDBRawString(body, []byte("c"))
+	body = appendRDBRawString(body, []byte("three"))
+
+	pos := 0
+	obj, err := decodeRedisRDBObjectAt(body, &pos, redisRDBTypeHashMetadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pos != len(body) || len(obj.hash) != 3 {
+		t.Fatalf("decode pos=%d len=%d pairs=%v", pos, len(body), obj.hash)
+	}
+	if obj.hash[0].ExpiresAtMS != minExpire ||
+		obj.hash[1].ExpiresAtMS != 0 ||
+		obj.hash[2].ExpiresAtMS != minExpire+5000 {
+		t.Fatalf("unexpected field expiries: %+v", obj.hash)
+	}
+
+	record, err := buildRestoreRecord("rdb:hfe", obj, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := engine.New()
+	if err := store.Restore([]persistence.Record{record}, true); err != nil {
+		t.Fatal(err)
+	}
+	ttl, err := store.HashFieldPTTL("rdb:hfe", [][]byte{[]byte("a"), []byte("b"), []byte("c")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ttl) != 3 || ttl[0] <= 0 || ttl[1] != -1 || ttl[2] <= ttl[0] {
+		t.Fatalf("restored field TTLs = %v", ttl)
+	}
+}
+
+func TestDecodeRedisRDBHashFieldExpirationMetadataPreGA(t *testing.T) {
+	expireAt := time.Now().Add(2 * time.Minute).UnixMilli()
+	body := appendRDBLen(nil, 1)
+	body = appendRDBLen(body, uint64(expireAt))
+	body = appendRDBRawString(body, []byte("field"))
+	body = appendRDBRawString(body, []byte("value"))
+
+	pos := 0
+	obj, err := decodeRedisRDBObjectAt(body, &pos, redisRDBTypeHashMetadataPreGA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pos != len(body) || len(obj.hash) != 1 || obj.hash[0].ExpiresAtMS != expireAt {
+		t.Fatalf("unexpected PRE_GA decode: pos=%d len=%d hash=%+v", pos, len(body), obj.hash)
+	}
+}
+
 func TestDecodeRedisRDBPlainCollections(t *testing.T) {
 	t.Run("list", func(t *testing.T) {
 		body := appendRDBLen(nil, 3)
@@ -633,6 +705,88 @@ func TestDecodeRedisFullSyncRDBRejectsChecksumCorruption(t *testing.T) {
 
 	if _, err := decodeRedisFullSyncRDB(out); err == nil {
 		t.Fatal("expected checksum error")
+	}
+}
+
+func TestRedisPartialResyncKeepsRedisStreamMode(t *testing.T) {
+	s := New(engine.New())
+	s.replication.setReplica("127.0.0.1", 6379)
+	s.replication.mu.Lock()
+	s.replication.masterRunID = "0123456789012345678901234567890123456789"
+	s.replication.offset = 100
+	s.replication.masterRedisStream = true
+	s.replication.mu.Unlock()
+
+	client, upstream := net.Pipe()
+	defer client.Close()
+	defer upstream.Close()
+
+	upstreamDone := make(chan error, 1)
+	go func() {
+		reader := bufio.NewReader(upstream)
+
+		args, _, err := readRedisReplicationCommand(reader)
+		if err != nil {
+			upstreamDone <- err
+			return
+		}
+		if len(args) != 3 || string(args[0]) != "REPLCONF" || string(args[1]) != "capa" || string(args[2]) != "eof" {
+			upstreamDone <- fmt.Errorf("unexpected REPLCONF: %q", args)
+			return
+		}
+		if _, err := upstream.Write([]byte("+OK\r\n")); err != nil {
+			upstreamDone <- err
+			return
+		}
+
+		args, _, err = readRedisReplicationCommand(reader)
+		if err != nil {
+			upstreamDone <- err
+			return
+		}
+		if len(args) != 3 || string(args[0]) != "PSYNC" ||
+			string(args[1]) != "0123456789012345678901234567890123456789" ||
+			string(args[2]) != "101" {
+			upstreamDone <- fmt.Errorf("unexpected PSYNC: %q", args)
+			return
+		}
+
+		wire := []byte("+CONTINUE\r\n")
+		wire = append(wire, []byte("*3\r\n$3\r\nSET\r\n$11\r\npartial:key\r\n$2\r\nok\r\n")...)
+		if _, err := upstream.Write(wire); err != nil {
+			upstreamDone <- err
+			return
+		}
+
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			value, found, wrong := s.store.GetString("partial:key")
+			if found && !wrong && string(value) == "ok" {
+				upstreamDone <- nil
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		upstreamDone <- errors.New("partial-resync Redis command was not applied")
+	}()
+
+	cancel := make(chan struct{})
+	consumeDone := make(chan error, 1)
+	go func() {
+		consumeDone <- s.consumeReplicationConnection(client, cancel)
+	}()
+
+	if err := <-upstreamDone; err != nil {
+		close(cancel)
+		t.Fatal(err)
+	}
+
+	close(cancel)
+	_ = client.Close()
+	select {
+	case <-consumeDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("replication consumer did not stop")
 	}
 }
 
