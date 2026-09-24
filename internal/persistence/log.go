@@ -30,7 +30,7 @@ type ReplicationCheckpoint struct {
 // Key is bytes rather than string so JSON does not normalize invalid UTF-8 keys.
 type Record struct {
 	Reset       bool                   `json:"reset,omitempty"`
-	Key         []byte                 `json:"key,omitempty"`
+	Key         []byte                 `json:"key"`
 	Value       []byte                 `json:"value,omitempty"`
 	ExpiresAtMS int64                  `json:"expires_at_ms,omitempty"`
 	Deleted     bool                   `json:"deleted,omitempty"`
