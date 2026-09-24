@@ -54,6 +54,10 @@ func (s *TCPServer) ConfigureReplicationPersistenceRecovered(
 	replicationPersistencePaths.Store(s.server, path)
 
 	var state replicationPersistenceState
+	if recovered != nil && recovered.Clear {
+		_ = s.server.clearReplicationPersistence()
+		return nil
+	}
 	if recovered != nil {
 		state = replicationPersistenceState{
 			Version:     replicationPersistenceVersion,
