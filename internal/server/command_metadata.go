@@ -573,6 +573,9 @@ func commandInfoFlags(
 	case "TOUCH":
 		return []string{"readonly", "fast"}
 
+	case "WAIT", "WAITAOF":
+		return []string{"blocking"}
+
 	case "EXPIRE", "PERSIST", "HDEL", "SREM", "LPOP", "ZREM", "XDEL":
 		return []string{"write", "fast"}
 
@@ -688,6 +691,13 @@ func commandInfoACL(
 			"@read",
 			"@string",
 			"@fast",
+		}
+
+	case "WAIT", "WAITAOF":
+		return []string{
+			"@slow",
+			"@blocking",
+			"@connection",
 		}
 
 	case "SET":
