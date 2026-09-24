@@ -383,6 +383,23 @@ func parseHashFieldListArgs(args [][]byte, fieldsPos int) ([][]byte, error) {
 	return args[fieldsPos+2:], nil
 }
 
+func checkedAddInt64(a, b int64) (int64, bool) {
+	if b > 0 && a > math.MaxInt64-b {
+		return 0, false
+	}
+	if b < 0 && a < math.MinInt64-b {
+		return 0, false
+	}
+	return a + b, true
+}
+
+func checkedMul1000(value int64) (int64, bool) {
+	if value > math.MaxInt64/1000 || value < math.MinInt64/1000 {
+		return 0, false
+	}
+	return value * 1000, true
+}
+
 func parseHashFieldExpireArgs(cmd string, args [][]byte) (int64, [][]byte, error) {
 	raw, err := strconv.ParseInt(string(args[2]), 10, 64)
 	if err != nil {
@@ -402,27 +419,36 @@ func parseHashFieldExpireArgs(cmd string, args [][]byte) (int64, [][]byte, error
 	}
 
 	nowMS := time.Now().UnixMilli()
-	var whenMS int64
 	switch cmd {
 	case "HEXPIRE":
-		if raw > (int64(^uint64(0)>>1)-nowMS)/1000 || raw < (-(int64(^uint64(0)>>1))-nowMS)/1000 {
+		delta, ok := checkedMul1000(raw)
+		if !ok {
 			return 0, nil, errors.New("ERR invalid expire time in 'hexpire' command")
 		}
-		whenMS = nowMS + raw*1000
+		whenMS, ok := checkedAddInt64(nowMS, delta)
+		if !ok {
+			return 0, nil, errors.New("ERR invalid expire time in 'hexpire' command")
+		}
+		return whenMS, fields, nil
+
 	case "HPEXPIRE":
-		if raw > int64(^uint64(0)>>1)-nowMS || raw < -int64(^uint64(0)>>1)-nowMS {
+		whenMS, ok := checkedAddInt64(nowMS, raw)
+		if !ok {
 			return 0, nil, errors.New("ERR invalid expire time in 'hpexpire' command")
 		}
-		whenMS = nowMS + raw
+		return whenMS, fields, nil
+
 	case "HEXPIREAT":
-		if raw > int64(^uint64(0)>>1)/1000 || raw < -int64(^uint64(0)>>1)/1000 {
+		whenMS, ok := checkedMul1000(raw)
+		if !ok {
 			return 0, nil, errors.New("ERR invalid expire time in 'hexpireat' command")
 		}
-		whenMS = raw * 1000
+		return whenMS, fields, nil
+
 	case "HPEXPIREAT":
-		whenMS = raw
+		return raw, fields, nil
+
 	default:
 		return 0, nil, errors.New("ERR unsupported hash field expiry command")
 	}
-	return whenMS, fields, nil
 }
