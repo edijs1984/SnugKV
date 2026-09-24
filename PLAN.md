@@ -12,6 +12,7 @@
 - [x] Redis hash-field expiration command surface and Redis RDB HFE hashtable metadata (types 22/24). Audit: `docs/HASH-FIELD-EXPIRATION-AUDIT.md`.
 - [x] Replication topology authentication. Audit: `docs/REPLICATION-AUTH-AUDIT.md`.
 - [x] Replication topology TLS. Audit: `docs/REPLICATION-TLS-AUDIT.md`.
+- [x] Graceful-restart Redis PSYNC continuation with durable replid/offset sidecar. Audit: `docs/REPLICATION-RESTART-PSYNC-AUDIT.md`.
 
 
 This document is the current implementation roadmap. `PROGRESS.md` contains
