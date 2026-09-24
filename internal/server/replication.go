@@ -1079,7 +1079,7 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 			return peekErr
 		}
 		if len(first) == 1 && first[0] == '*' {
-			args, _, commandErr := readRedisReplicationCommand(reader)
+			args, streamBytes, commandErr := readRedisReplicationCommand(reader)
 			if commandErr != nil {
 				return commandErr
 			}
@@ -1104,12 +1104,22 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 			s.replication.masterRedisStream = true
 			s.replication.mu.Unlock()
 			if len(args) > 0 {
+				cmd := strings.ToUpper(string(args[0]))
+				if cmd == "MULTI" {
+					transaction = make([][][]byte, 0)
+					transactionBytes = streamBytes
+					continue
+				}
+
 				s.replication.mu.RLock()
-				targetOffset := s.replication.offset
+				targetOffset := s.replication.offset + streamBytes
 				s.replication.mu.RUnlock()
 				if err := s.applyRedisReplicationBatch([][][]byte{args}, targetOffset); err != nil {
 					return err
 				}
+				s.replication.mu.Lock()
+				s.replication.offset = targetOffset
+				s.replication.mu.Unlock()
 			}
 			continue
 		}
