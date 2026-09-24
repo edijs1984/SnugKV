@@ -416,3 +416,43 @@ func TestReplicaAOFPersistenceFailurePreventsLaterReplicationApply(t *testing.T)
 		t.Fatal("second replication frame mutated store")
 	}
 }
+
+func TestWaitAOFWakesOnReplicaTopologyLoss(t *testing.T) {
+	s := New(engine.New())
+
+	id, _, _ := s.replication.registerReplica(func([]byte) error { return nil })
+	defer s.replication.unregisterReplica(id)
+
+	done := make(chan struct {
+		reply string
+		err   error
+	}, 1)
+	go func() {
+		reply, err := s.executeWaitAOF(
+			[][]byte{[]byte("WAITAOF"), []byte("0"), []byte("1"), []byte("1000")},
+			100,
+			0,
+			nil,
+			true,
+		)
+		done <- struct {
+			reply string
+			err   error
+		}{string(reply), err}
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	s.replication.unregisterReplica(id)
+
+	select {
+	case result := <-done:
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		if result.reply != "*2\r\n:0\r\n:0\r\n" {
+			t.Fatalf("WAITAOF after replica removal=%q", result.reply)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("WAITAOF did not wake after replica topology change")
+	}
+}
