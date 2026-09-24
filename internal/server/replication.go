@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"log"
 	"net"
 	"os"
 	"slices"
@@ -777,6 +778,7 @@ func (s *Server) runReplicaFollow(host string, port int, cancel <-chan struct{})
 		if err == nil {
 			return
 		}
+		log.Printf("replication upstream %s:%d: %v", host, port, err)
 		select {
 		case <-cancel:
 			return
@@ -950,6 +952,27 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 					return err
 				}
 			}
+			continue
+		}
+
+		first, peekErr := reader.Peek(1)
+		if netErr, ok := peekErr.(net.Error); ok && netErr.Timeout() {
+			s.replication.mu.RLock()
+			ackOffset := s.replication.offset
+			s.replication.mu.RUnlock()
+			if writeErr := writeReplicationRESPCommand(conn, "REPLCONF", "ACK", strconv.FormatInt(ackOffset, 10)); writeErr != nil {
+				return writeErr
+			}
+			continue
+		}
+		if peekErr != nil {
+			return peekErr
+		}
+		if len(first) == 1 && first[0] == '*' {
+			redisStream = true
+			s.replication.mu.Lock()
+			s.replication.masterRedisStream = true
+			s.replication.mu.Unlock()
 			continue
 		}
 

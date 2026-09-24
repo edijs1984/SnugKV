@@ -20,6 +20,7 @@ const (
 	keyRDBTypeSetListpack    = byte(20)
 	keyRDBTypeStreamListpacks3 = byte(21)
 	keyRDBVersion            = functionRDBVersion
+	keyRDBMaxAcceptedVersion = uint16(redisRDBMaxSupportedVersion)
 )
 
 var keyDumpRestoreCommands = map[string]commandInfo{
@@ -102,11 +103,11 @@ func verifyKeyDumpPayload(data []byte) ([]byte, error) {
 
 	trailer := len(data) - 10
 	version := binary.LittleEndian.Uint16(data[trailer : trailer+2])
-	if version == 0 || version > keyRDBVersion {
+	if version == 0 || version > keyRDBMaxAcceptedVersion {
 		return nil, errors.New("ERR DUMP payload version or checksum are wrong")
 	}
 	wantChecksum := binary.LittleEndian.Uint64(data[trailer+2:])
-	if redisCRC64(data[:trailer+2]) != wantChecksum {
+	if wantChecksum != 0 && redisCRC64(data[:trailer+2]) != wantChecksum {
 		return nil, errors.New("ERR DUMP payload version or checksum are wrong")
 	}
 	return data[:trailer], nil
@@ -311,6 +312,13 @@ func decodeKeyDumpObject(data []byte) (decodedKeyObject, error) {
 			items = append(items, engine.ZSetItem{Member: values[i], Score: score})
 		}
 		return decodedKeyObject{valueType: engine.TypeZSet, zset: items}, nil
+
+	case redisRDBTypeHashTmplLP, redisRDBTypeHashTmplArray:
+		object, err := decodeRedisRDBObjectAtWithTemplates(body, &pos, body[0], nil)
+		if err != nil || pos != len(body) {
+			return decodedKeyObject{}, errors.New("ERR Bad data format")
+		}
+		return object, nil
 
 	case keyRDBTypeStreamListpacks3:
 		snapshot, err := decodeStreamDump(body, &pos)

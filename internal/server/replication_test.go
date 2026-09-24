@@ -584,6 +584,204 @@ func TestDecodeRedisRDBHashFieldExpirationListpackRejectsCorruption(t *testing.T
 	})
 }
 
+func TestDecodeRedisRDBHashTemplateFormats(t *testing.T) {
+	fields := [][]byte{[]byte("a"), []byte("b")}
+	templates := map[uint64]redisRDBHashTemplate{
+		7: {fields: fields},
+	}
+
+	t.Run("tmpl lp self contained", func(t *testing.T) {
+		body := appendRDBLen(nil, 1)
+		body = appendRDBLen(body, uint64(len(fields)))
+		for _, field := range fields {
+			body = appendRDBRawString(body, field)
+		}
+		lp, err := encodeRedisListpack([][]byte{
+			[]byte("7"), []byte("one"), []byte("two"),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		body = appendRDBRawString(body, lp)
+
+		pos := 0
+		obj, err := decodeRedisRDBObjectAtWithTemplates(body, &pos, redisRDBTypeHashTmplLP, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pos != len(body) || len(obj.hash) != 2 ||
+			string(obj.hash[0].Field) != "a" || string(obj.hash[0].Value) != "one" ||
+			string(obj.hash[1].Field) != "b" || string(obj.hash[1].Value) != "two" {
+			t.Fatalf("unexpected TMPL_LP decode: pos=%d len=%d hash=%+v", pos, len(body), obj.hash)
+		}
+	})
+
+	t.Run("tmpl lp ref", func(t *testing.T) {
+		lp, err := encodeRedisListpack([][]byte{
+			[]byte("7"), []byte("one"), []byte("two"),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := appendRDBRawString(nil, lp)
+
+		pos := 0
+		obj, err := decodeRedisRDBObjectAtWithTemplates(body, &pos, redisRDBTypeHashTmplLPRef, templates)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pos != len(body) || len(obj.hash) != 2 ||
+			string(obj.hash[0].Field) != "a" || string(obj.hash[0].Value) != "one" ||
+			string(obj.hash[1].Field) != "b" || string(obj.hash[1].Value) != "two" {
+			t.Fatalf("unexpected TMPL_LP_REF decode: pos=%d len=%d hash=%+v", pos, len(body), obj.hash)
+		}
+	})
+
+	t.Run("tmpl array self contained", func(t *testing.T) {
+		body := appendRDBLen(nil, 1)
+		body = appendRDBLen(body, uint64(len(fields)))
+		for _, field := range fields {
+			body = appendRDBRawString(body, field)
+		}
+		body = appendRDBRawString(body, []byte("one"))
+		body = appendRDBRawString(body, []byte("two"))
+
+		pos := 0
+		obj, err := decodeRedisRDBObjectAtWithTemplates(body, &pos, redisRDBTypeHashTmplArray, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pos != len(body) || len(obj.hash) != 2 ||
+			string(obj.hash[0].Field) != "a" || string(obj.hash[0].Value) != "one" ||
+			string(obj.hash[1].Field) != "b" || string(obj.hash[1].Value) != "two" {
+			t.Fatalf("unexpected TMPL_ARRAY decode: pos=%d len=%d hash=%+v", pos, len(body), obj.hash)
+		}
+	})
+
+	t.Run("tmpl array ref", func(t *testing.T) {
+		body := appendRDBLen(nil, 7)
+		body = appendRDBRawString(body, []byte("one"))
+		body = appendRDBRawString(body, []byte("two"))
+
+		pos := 0
+		obj, err := decodeRedisRDBObjectAtWithTemplates(body, &pos, redisRDBTypeHashTmplArrayRef, templates)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pos != len(body) || len(obj.hash) != 2 ||
+			string(obj.hash[0].Field) != "a" || string(obj.hash[0].Value) != "one" ||
+			string(obj.hash[1].Field) != "b" || string(obj.hash[1].Value) != "two" {
+			t.Fatalf("unexpected TMPL_ARRAY_REF decode: pos=%d len=%d hash=%+v", pos, len(body), obj.hash)
+		}
+	})
+}
+
+func TestValidateRedisRDBTemplateFieldsUsesRedisLengthThenBytesOrder(t *testing.T) {
+	if err := validateRedisRDBTemplateFields([][]byte{
+		[]byte("age"),
+		[]byte("name"),
+		[]byte("email"),
+	}); err != nil {
+		t.Fatalf("valid Redis template order rejected: %v", err)
+	}
+
+	if err := validateRedisRDBTemplateFields([][]byte{
+		[]byte("age"),
+		[]byte("email"),
+		[]byte("name"),
+	}); err == nil {
+		t.Fatal("expected invalid Redis template order")
+	}
+}
+
+func TestDecodeRedisRDBHashTemplateRejectsInvalidRefs(t *testing.T) {
+	t.Run("unknown id", func(t *testing.T) {
+		body := appendRDBLen(nil, 99)
+		body = appendRDBRawString(body, []byte("value"))
+		pos := 0
+		if _, err := decodeRedisRDBObjectAtWithTemplates(body, &pos, redisRDBTypeHashTmplArrayRef, map[uint64]redisRDBHashTemplate{}); err == nil {
+			t.Fatal("expected unknown template id rejection")
+		}
+	})
+
+	t.Run("unsorted fields", func(t *testing.T) {
+		body := appendRDBLen(nil, 1)
+		body = appendRDBLen(body, 2)
+		body = appendRDBRawString(body, []byte("b"))
+		body = appendRDBRawString(body, []byte("a"))
+		body = appendRDBRawString(body, []byte("one"))
+		body = appendRDBRawString(body, []byte("two"))
+		pos := 0
+		if _, err := decodeRedisRDBObjectAtWithTemplates(body, &pos, redisRDBTypeHashTmplArray, nil); err == nil {
+			t.Fatal("expected unsorted template field rejection")
+		}
+	})
+}
+
+func TestDecodeRedisFullSyncRDBHashTemplateRegistry(t *testing.T) {
+	rdb := []byte("REDIS0016")
+
+	rdb = append(rdb, redisRDBOpcodeHashTemplate)
+	rdb = appendRDBLen(rdb, 7)
+	rdb = appendRDBLen(rdb, 2)
+	rdb = appendRDBRawString(rdb, []byte("a"))
+	rdb = appendRDBRawString(rdb, []byte("b"))
+
+	rdb = append(rdb, redisRDBOpcodeSelectDB)
+	rdb = appendRDBLen(rdb, 0)
+	rdb = append(rdb, redisRDBOpcodeResizeDB)
+	rdb = appendRDBLen(rdb, 2)
+	rdb = appendRDBLen(rdb, 0)
+
+	lp, err := encodeRedisListpack([][]byte{
+		[]byte("7"), []byte("one"), []byte("two"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rdb = append(rdb, redisRDBTypeHashTmplLPRef)
+	rdb = appendRDBRawString(rdb, []byte("tmpl:lp"))
+	rdb = appendRDBRawString(rdb, lp)
+
+	rdb = append(rdb, redisRDBTypeHashTmplArrayRef)
+	rdb = appendRDBRawString(rdb, []byte("tmpl:array"))
+	rdb = appendRDBLen(rdb, 7)
+	rdb = appendRDBRawString(rdb, []byte("three"))
+	rdb = appendRDBRawString(rdb, []byte("four"))
+
+	rdb = append(rdb, redisRDBOpcodeEOF)
+	var checksum [8]byte
+	binary.LittleEndian.PutUint64(checksum[:], redisCRC64(rdb))
+	rdb = append(rdb, checksum[:]...)
+
+	records, err := decodeRedisFullSyncRDB(rdb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := engine.New()
+	if err := store.Restore(records, true); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := store.HashGetAll("tmpl:lp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || string(got[0].Field) != "a" || string(got[0].Value) != "one" ||
+		string(got[1].Field) != "b" || string(got[1].Value) != "two" {
+		t.Fatalf("tmpl:lp = %+v", got)
+	}
+
+	got, err = store.HashGetAll("tmpl:array")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || string(got[0].Field) != "a" || string(got[0].Value) != "three" ||
+		string(got[1].Field) != "b" || string(got[1].Value) != "four" {
+		t.Fatalf("tmpl:array = %+v", got)
+	}
+}
+
 func TestDecodeRedisRDBPlainCollections(t *testing.T) {
 	t.Run("list", func(t *testing.T) {
 		body := appendRDBLen(nil, 3)
@@ -910,6 +1108,92 @@ func (r *oneByteReader) Read(p []byte) (int, error) {
 	p[0] = r.data[0]
 	r.data = r.data[1:]
 	return 1, nil
+}
+
+func TestRedisPartialResyncRecoversRedisStreamMode(t *testing.T) {
+	s := New(engine.New())
+	s.replication.setReplica("127.0.0.1", 6379)
+	s.replication.mu.Lock()
+	s.replication.masterRunID = "0123456789012345678901234567890123456789"
+	s.replication.offset = 100
+	s.replication.masterRedisStream = false
+	s.replication.mu.Unlock()
+
+	client, upstream := net.Pipe()
+	defer client.Close()
+	defer upstream.Close()
+
+	upstreamDone := make(chan error, 1)
+	go func() {
+		reader := bufio.NewReader(upstream)
+
+		args, _, err := readRedisReplicationCommand(reader)
+		if err != nil {
+			upstreamDone <- err
+			return
+		}
+		if len(args) != 3 || string(args[0]) != "REPLCONF" {
+			upstreamDone <- fmt.Errorf("unexpected REPLCONF: %q", args)
+			return
+		}
+		if _, err := upstream.Write([]byte("+OK\r\n")); err != nil {
+			upstreamDone <- err
+			return
+		}
+
+		args, _, err = readRedisReplicationCommand(reader)
+		if err != nil {
+			upstreamDone <- err
+			return
+		}
+		if len(args) != 3 || string(args[0]) != "PSYNC" {
+			upstreamDone <- fmt.Errorf("unexpected PSYNC: %q", args)
+			return
+		}
+
+		wire := []byte("+CONTINUE\r\n*3\r\n$3\r\nSET\r\n$11\r\npartial:key\r\n$2\r\nok\r\n")
+		if _, err := upstream.Write(wire); err != nil {
+			upstreamDone <- err
+			return
+		}
+
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			value, found, wrong := s.store.GetString("partial:key")
+			if found && !wrong && string(value) == "ok" {
+				s.replication.mu.RLock()
+				mode := s.replication.masterRedisStream
+				s.replication.mu.RUnlock()
+				if !mode {
+					upstreamDone <- errors.New("Redis stream mode was not recovered")
+					return
+				}
+				upstreamDone <- nil
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		upstreamDone <- errors.New("partial-resync Redis command was not applied")
+	}()
+
+	cancel := make(chan struct{})
+	consumeDone := make(chan error, 1)
+	go func() {
+		consumeDone <- s.consumeReplicationConnection(client, cancel)
+	}()
+
+	if err := <-upstreamDone; err != nil {
+		close(cancel)
+		t.Fatal(err)
+	}
+
+	close(cancel)
+	_ = client.Close()
+	select {
+	case <-consumeDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("replication consumer did not stop")
+	}
 }
 
 func TestReadRedisReplicationCommandHandlesFragmentedCRLF(t *testing.T) {
