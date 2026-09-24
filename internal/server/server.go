@@ -1383,7 +1383,13 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		if detach {
 			s.stopReplicaFollow()
 			s.replication.promote()
+			if clearErr := s.clearReplicationPersistence(); clearErr != nil {
+				return nil, errors.New("ERR replication persistence update failed")
+			}
 			return []byte("+OK\r\n"), nil
+		}
+		if clearErr := s.clearReplicationPersistence(); clearErr != nil {
+			return nil, errors.New("ERR replication persistence update failed")
 		}
 		s.startReplicaFollow(host, port)
 		return []byte("+OK\r\n"), nil
