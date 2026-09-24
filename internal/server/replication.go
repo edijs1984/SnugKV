@@ -955,6 +955,14 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 			continue
 		}
 
+		if first, peekErr := reader.Peek(1); peekErr == nil && len(first) == 1 && first[0] == '*' {
+			redisStream = true
+			s.replication.mu.Lock()
+			s.replication.masterRedisStream = true
+			s.replication.mu.Unlock()
+			continue
+		}
+
 		frame, err := readReplicationRESP(reader)
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			s.replication.mu.RLock()
