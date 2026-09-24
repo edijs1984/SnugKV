@@ -23,6 +23,8 @@ const (
 	redisRDBTypeZSetZiplist    = byte(12)
 	redisRDBTypeHashZiplist    = byte(13)
 	redisRDBTypeListQuicklist  = byte(14)
+	redisRDBTypeHashMetadataPreGA = byte(22)
+	redisRDBTypeHashMetadata      = byte(24)
 	redisRDBOpcodeIdle         = byte(248)
 	redisRDBOpcodeFreq         = byte(249)
 	redisRDBOpcodeAux          = byte(250)
