@@ -185,6 +185,23 @@ func (r *replicationState) currentOffset() int64 {
 	return r.offset
 }
 
+func (r *replicationState) requestReplicaACKs() {
+	payload := []byte("*3\r\n$8\r\nREPLCONF\r\n$6\r\nGETACK\r\n$1\r\n*\r\n")
+
+	r.mu.RLock()
+	targets := make(map[uint64]func([]byte) error, len(r.replicas))
+	for id, write := range r.replicas {
+		targets[id] = write
+	}
+	r.mu.RUnlock()
+
+	for id, write := range targets {
+		if err := write(payload); err != nil {
+			r.unregisterReplica(id)
+		}
+	}
+}
+
 func (r *replicationState) isReadOnlyReplica() bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -1062,10 +1079,38 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 			return peekErr
 		}
 		if len(first) == 1 && first[0] == '*' {
+			args, _, commandErr := readRedisReplicationCommand(reader)
+			if commandErr != nil {
+				return commandErr
+			}
+			if len(args) >= 3 &&
+				strings.EqualFold(string(args[0]), "REPLCONF") &&
+				strings.EqualFold(string(args[1]), "GETACK") {
+				s.replication.mu.RLock()
+				ackOffset := s.replication.offset
+				s.replication.mu.RUnlock()
+				if err := writeReplicationRESPCommand(conn, "REPLCONF", "ACK", strconv.FormatInt(ackOffset, 10)); err != nil {
+					return err
+				}
+				continue
+			}
+
+			// A non-control RESP command means this is actually a Redis command
+			// stream (for example a recovered CONTINUE whose stream mode was not
+			// persisted by an older SnugKV version). Switch modes and apply this
+			// already-consumed command before continuing.
 			redisStream = true
 			s.replication.mu.Lock()
 			s.replication.masterRedisStream = true
 			s.replication.mu.Unlock()
+			if len(args) > 0 {
+				s.replication.mu.RLock()
+				targetOffset := s.replication.offset
+				s.replication.mu.RUnlock()
+				if err := s.applyRedisReplicationBatch([][][]byte{args}, targetOffset); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 
@@ -1095,10 +1140,6 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 		}
 		s.replication.mu.Lock()
 		s.replication.offset += int64(len(frame))
-		ackOffset := s.replication.offset
 		s.replication.mu.Unlock()
-		if err := writeReplicationRESPCommand(conn, "REPLCONF", "ACK", strconv.FormatInt(ackOffset, 10)); err != nil {
-			return err
-		}
 	}
 }
