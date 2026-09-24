@@ -17,13 +17,19 @@ func parseWaitArguments(args [][]byte) (int, time.Duration, error) {
 	}
 
 	replicas64, err := strconv.ParseInt(string(args[1]), 10, 64)
-	if err != nil || replicas64 < 0 || replicas64 > int64(^uint(0)>>1) {
+	if err != nil {
+		return 0, 0, errors.New("ERR value is not an integer or out of range")
+	}
+	if strconv.IntSize == 32 && (replicas64 > int64(^uint32(0)>>1) || replicas64 < -int64(^uint32(0)>>1)-1) {
 		return 0, 0, errors.New("ERR value is not an integer or out of range")
 	}
 
 	timeoutMS, err := strconv.ParseInt(string(args[2]), 10, 64)
-	if err != nil || timeoutMS < 0 {
+	if err != nil {
 		return 0, 0, errors.New("ERR timeout is not an integer or out of range")
+	}
+	if timeoutMS < 0 {
+		return 0, 0, errors.New("ERR timeout is negative")
 	}
 	if timeoutMS > int64((1<<63-1)/int64(time.Millisecond)) {
 		return 0, 0, errors.New("ERR timeout is out of range")
@@ -49,10 +55,15 @@ func (s *Server) executeReplicationWait(
 		defer timer.Stop()
 	}
 
+	requestedACK := false
 	for {
 		count, changed := s.replication.waitSnapshot(targetOffset)
 		if count >= numReplicas || !allowBlock {
 			return integer(int64(count)), nil
+		}
+		if !requestedACK {
+			requestedACK = true
+			s.replication.requestReplicaACKs()
 		}
 
 		select {
