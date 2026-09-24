@@ -798,6 +798,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			}
 		}
 
+		txSession.waitTargetOffset = clientSession.replicationOffset.Load()
 		if handled, txResponse, txErr :=
 			s.server.executeTransactionConnectionCommand(
 				txSession,
@@ -812,6 +813,12 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				txResponse,
 			) != nil {
 				return
+			}
+
+			if txErr == nil && len(msg) == 1 && strings.EqualFold(string(msg[0]), "EXEC") {
+				if offset := txSession.lastReplicationOffset; offset > clientSession.replicationOffset.Load() {
+					clientSession.replicationOffset.Store(offset)
+				}
 			}
 
 			continue
@@ -893,16 +900,25 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 		}
 
 		var result []byte
-		if isBlockingListCommand(msg) || isBlockingZSetCommand(msg) || isBlockingStreamCommand(msg) {
+		if isBlockingListCommand(msg) || isBlockingZSetCommand(msg) || isBlockingStreamCommand(msg) || isReplicationWaitCommand(msg) {
 			disconnected, stopWatch := watchConnectionDisconnect(peer)
 			unblock := clientSession.beginBlocking()
 
 			cancel, stopMerge := mergeClientCancel(disconnected, unblock)
-			result, err = s.server.executeWithCancelForSession(
-				msg,
-				cancel,
-				authSession,
-			)
+			if isReplicationWaitCommand(msg) {
+				result, err = s.server.executeReplicationWait(
+					msg,
+					clientSession.replicationOffset.Load(),
+					cancel,
+					true,
+				)
+			} else {
+				result, err = s.server.executeWithCancelForSession(
+					msg,
+					cancel,
+					authSession,
+				)
+			}
 
 			stopMerge()
 			stopWatch()
@@ -921,10 +937,17 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				return
 			}
 		} else {
-			result, err = s.server.executeForSession(
+			var replicationOffset int64
+			result, err = s.server.executeForSessionCapture(
 				msg,
 				authSession,
+				&replicationOffset,
 			)
+			if err == nil && len(msg) > 0 {
+				if info, ok := commandTable[strings.ToUpper(string(msg[0]))]; ok && info.write {
+					clientSession.replicationOffset.Store(replicationOffset)
+				}
+			}
 		}
 		if err != nil {
 			result = errorResponse(err)
