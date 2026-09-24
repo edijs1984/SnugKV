@@ -18,6 +18,7 @@ const (
 	redisRDBTypeZSet          = byte(3)
 	redisRDBTypeHash          = byte(4)
 	redisRDBTypeZSet2         = byte(5)
+	redisRDBTypeHashZipmap    = byte(9)
 	redisRDBTypeListZiplist   = byte(10)
 	redisRDBTypeZSetZiplist   = byte(12)
 	redisRDBTypeHashZiplist   = byte(13)
@@ -161,6 +162,17 @@ func decodeRedisRDBObjectAt(data []byte, pos *int, objectType byte) (decodedKeyO
 			return decodedKeyObject{}, errors.New("invalid Redis RDB string")
 		}
 		return decodedKeyObject{valueType: engine.TypeString, scalar: value}, nil
+
+	case redisRDBTypeHashZipmap:
+		raw, err := decodeRDBString(data, pos)
+		if err != nil {
+			return decodedKeyObject{}, errors.New("invalid Redis RDB hash zipmap")
+		}
+		pairs, err := decodeRedisZipmap(raw)
+		if err != nil || len(pairs) == 0 {
+			return decodedKeyObject{}, errors.New("invalid Redis RDB hash zipmap")
+		}
+		return decodedKeyObject{valueType: engine.TypeHash, hash: pairs}, nil
 
 	case redisRDBTypeListZiplist:
 		raw, err := decodeRDBString(data, pos)
