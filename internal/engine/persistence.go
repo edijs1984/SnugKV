@@ -89,6 +89,9 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 		}
 	}
 	for _, record := range records {
+		if record.Replication != nil {
+			continue
+		}
 		if len(record.Value) > 32<<20 {
 			return errors.New("ERR recovered value exceeds 32 MiB limit")
 		}
@@ -102,6 +105,9 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 	updates := make(map[string]preparedEntry)
 	deletions := make(map[string]bool)
 	for _, record := range records {
+		if record.Replication != nil {
+			continue
+		}
 		key := string(record.Key)
 		if record.Deleted || record.ExpiresAtMS != 0 && record.ExpiresAtMS <= now.UnixMilli() {
 			deletions[key] = true
