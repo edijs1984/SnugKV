@@ -107,7 +107,7 @@ func verifyKeyDumpPayload(data []byte) ([]byte, error) {
 		return nil, errors.New("ERR DUMP payload version or checksum are wrong")
 	}
 	wantChecksum := binary.LittleEndian.Uint64(data[trailer+2:])
-	if redisCRC64(data[:trailer+2]) != wantChecksum {
+	if wantChecksum != 0 && redisCRC64(data[:trailer+2]) != wantChecksum {
 		return nil, errors.New("ERR DUMP payload version or checksum are wrong")
 	}
 	return data[:trailer], nil
