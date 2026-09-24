@@ -239,11 +239,11 @@ func (s *Server) executeHash(args [][]byte) ([]byte, error) {
 		return s.executeHRandField(args)
 
 	case "HEXPIRE", "HPEXPIRE", "HEXPIREAT", "HPEXPIREAT":
-		when, fields, err := parseHashFieldExpireArgs(cmd, args)
+		when, condition, fields, err := parseHashFieldExpireArgs(cmd, args)
 		if err != nil {
 			return nil, err
 		}
-		results, err := s.store.HashFieldExpireAt(key, fields, when)
+		results, err := s.store.HashFieldExpireAtCondition(key, fields, when, condition)
 		if err != nil {
 			return nil, err
 		}
@@ -400,22 +400,24 @@ func checkedMul1000(value int64) (int64, bool) {
 	return value * 1000, true
 }
 
-func parseHashFieldExpireArgs(cmd string, args [][]byte) (int64, [][]byte, error) {
+func parseHashFieldExpireArgs(cmd string, args [][]byte) (int64, string, [][]byte, error) {
 	raw, err := strconv.ParseInt(string(args[2]), 10, 64)
 	if err != nil {
-		return 0, nil, errors.New("ERR value is not an integer or out of range")
+		return 0, "", nil, errors.New("ERR value is not an integer or out of range")
 	}
 
 	fieldsPos := 3
+	condition := ""
 	if fieldsPos < len(args) {
 		switch strings.ToUpper(string(args[fieldsPos])) {
 		case "NX", "XX", "GT", "LT":
-			return 0, nil, errors.New("ERR conditional hash field expiry options are not supported yet")
+			condition = strings.ToUpper(string(args[fieldsPos]))
+			fieldsPos++
 		}
 	}
 	fields, err := parseHashFieldListArgs(args, fieldsPos)
 	if err != nil {
-		return 0, nil, err
+		return 0, "", nil, err
 	}
 
 	nowMS := time.Now().UnixMilli()
@@ -423,32 +425,32 @@ func parseHashFieldExpireArgs(cmd string, args [][]byte) (int64, [][]byte, error
 	case "HEXPIRE":
 		delta, ok := checkedMul1000(raw)
 		if !ok {
-			return 0, nil, errors.New("ERR invalid expire time in 'hexpire' command")
+			return 0, "", nil, errors.New("ERR invalid expire time in 'hexpire' command")
 		}
 		whenMS, ok := checkedAddInt64(nowMS, delta)
 		if !ok {
-			return 0, nil, errors.New("ERR invalid expire time in 'hexpire' command")
+			return 0, "", nil, errors.New("ERR invalid expire time in 'hexpire' command")
 		}
-		return whenMS, fields, nil
+		return whenMS, condition, fields, nil
 
 	case "HPEXPIRE":
 		whenMS, ok := checkedAddInt64(nowMS, raw)
 		if !ok {
-			return 0, nil, errors.New("ERR invalid expire time in 'hpexpire' command")
+			return 0, "", nil, errors.New("ERR invalid expire time in 'hpexpire' command")
 		}
-		return whenMS, fields, nil
+		return whenMS, condition, fields, nil
 
 	case "HEXPIREAT":
 		whenMS, ok := checkedMul1000(raw)
 		if !ok {
-			return 0, nil, errors.New("ERR invalid expire time in 'hexpireat' command")
+			return 0, "", nil, errors.New("ERR invalid expire time in 'hexpireat' command")
 		}
-		return whenMS, fields, nil
+		return whenMS, condition, fields, nil
 
 	case "HPEXPIREAT":
-		return raw, fields, nil
+		return raw, condition, fields, nil
 
 	default:
-		return 0, nil, errors.New("ERR unsupported hash field expiry command")
+		return 0, "", nil, errors.New("ERR unsupported hash field expiry command")
 	}
 }
