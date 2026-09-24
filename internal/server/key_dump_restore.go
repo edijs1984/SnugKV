@@ -19,7 +19,7 @@ const (
 	keyRDBTypeListQuicklist2 = byte(18)
 	keyRDBTypeSetListpack    = byte(20)
 	keyRDBTypeStreamListpacks3 = byte(21)
-	keyRDBVersion            = functionRDBVersion
+	keyRDBVersion            = uint16(redisRDBMaxSupportedVersion)
 )
 
 var keyDumpRestoreCommands = map[string]commandInfo{
@@ -311,6 +311,13 @@ func decodeKeyDumpObject(data []byte) (decodedKeyObject, error) {
 			items = append(items, engine.ZSetItem{Member: values[i], Score: score})
 		}
 		return decodedKeyObject{valueType: engine.TypeZSet, zset: items}, nil
+
+	case redisRDBTypeHashTmplLP, redisRDBTypeHashTmplArray:
+		object, err := decodeRedisRDBObjectAtWithTemplates(body, &pos, body[0], nil)
+		if err != nil || pos != len(body) {
+			return decodedKeyObject{}, errors.New("ERR Bad data format")
+		}
+		return object, nil
 
 	case keyRDBTypeStreamListpacks3:
 		snapshot, err := decodeStreamDump(body, &pos)
