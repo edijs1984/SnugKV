@@ -326,3 +326,93 @@ func TestWaitAOFSurvivesReplicaReconnect(t *testing.T) {
 		t.Fatal("WAITAOF did not complete after replacement replica FACK")
 	}
 }
+
+type failingWaitAOFJournal struct {
+	mu      sync.Mutex
+	appends int
+	failAt  int
+	changed chan struct{}
+}
+
+func newFailingWaitAOFJournal(failAt int) *failingWaitAOFJournal {
+	return &failingWaitAOFJournal{
+		failAt:  failAt,
+		changed: make(chan struct{}),
+	}
+}
+
+func (j *failingWaitAOFJournal) Append([]persistence.Record) error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.appends++
+	if j.appends >= j.failAt {
+		return errors.New("forced append failure")
+	}
+	return nil
+}
+
+func (j *failingWaitAOFJournal) DurabilitySnapshot() (uint64, uint64, <-chan struct{}) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	appended := uint64(j.appends)
+	if j.appends >= j.failAt {
+		appended--
+	}
+	return appended, appended, j.changed
+}
+
+func TestReplicaAOFPersistenceFailureDoesNotAdvanceFACK(t *testing.T) {
+	s := New(engine.New())
+	journal := newFailingWaitAOFJournal(1)
+	s.SetJournal(journal)
+
+	records := []persistence.Record{{Key: []byte("replica:fail"), Value: []byte("value")}}
+
+	s.durableMu.Lock()
+	err := s.applySnugReplicationRecordsLocked(records)
+	s.durableMu.Unlock()
+	if err == nil {
+		t.Fatal("expected replica persistence failure")
+	}
+
+	if !s.durabilityFailed {
+		t.Fatal("replica persistence failure did not mark durability unavailable")
+	}
+
+	if _, found, _ := s.store.GetString("replica:fail"); found {
+		t.Fatal("replica applied data after failed AOF append")
+	}
+
+	s.noteReplicaAOFOffset(100)
+	if offset, ok := s.replicaAOFFsyncedOffset(); ok {
+		t.Fatalf("FACK advanced after failed persistence: offset=%d", offset)
+	}
+}
+
+func TestReplicaAOFPersistenceFailurePreventsLaterReplicationApply(t *testing.T) {
+	s := New(engine.New())
+	journal := newFailingWaitAOFJournal(1)
+	s.SetJournal(journal)
+
+	first := []persistence.Record{{Key: []byte("replica:first"), Value: []byte("one")}}
+	second := []persistence.Record{{Key: []byte("replica:second"), Value: []byte("two")}}
+
+	s.durableMu.Lock()
+	err1 := s.applySnugReplicationRecordsLocked(first)
+	err2 := s.applySnugReplicationRecordsLocked(second)
+	s.durableMu.Unlock()
+
+	if err1 == nil {
+		t.Fatal("first replication append unexpectedly succeeded")
+	}
+	if err2 == nil || err2.Error() != "ERR persistence is unavailable; restart after repairing storage" {
+		t.Fatalf("second replication err=%v", err2)
+	}
+
+	if _, found, _ := s.store.GetString("replica:first"); found {
+		t.Fatal("first failed replication frame mutated store")
+	}
+	if _, found, _ := s.store.GetString("replica:second"); found {
+		t.Fatal("second replication frame mutated store")
+	}
+}
