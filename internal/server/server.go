@@ -29,7 +29,9 @@ type Server struct {
 	durableMu        sync.RWMutex
 	durabilityFailed bool
 	watchSessions    atomic.Int32
-	replication     replicationState
+	replication          replicationState
+	replicationMasterUser string
+	replicationMasterAuth string
 
 	// executionACLUsername / executionACLArgs are valid only while durableMu is
 	// held. TCP and transaction execution populate them so dynamic command

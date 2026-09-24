@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"net"
 	"strconv"
 	"strings"
@@ -404,5 +405,90 @@ func TestReadReplicationSnapshotEOFRejectsBadMarkerLength(t *testing.T) {
 	reader := bufio.NewReader(strings.NewReader("$EOF:short\r\nREDIS0012"))
 	if _, _, err := readReplicationSnapshot(reader); err == nil {
 		t.Fatal("expected marker length error")
+	}
+}
+
+
+func TestAuthenticateReplicationUpstreamPassword(t *testing.T) {
+	client, upstream := net.Pipe()
+	defer client.Close()
+	defer upstream.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		reader := bufio.NewReader(upstream)
+		args, _, err := readRedisReplicationCommand(reader)
+		if err != nil {
+			done <- err
+			return
+		}
+		if len(args) != 2 || string(args[0]) != "AUTH" || string(args[1]) != "secret" {
+			done <- fmt.Errorf("unexpected AUTH command: %q", args)
+			return
+		}
+		_, err = upstream.Write([]byte("+OK\r\n"))
+		done <- err
+	}()
+
+	reader := bufio.NewReader(client)
+	if err := authenticateReplicationUpstream(client, reader, "", "secret"); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAuthenticateReplicationUpstreamACL(t *testing.T) {
+	client, upstream := net.Pipe()
+	defer client.Close()
+	defer upstream.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		reader := bufio.NewReader(upstream)
+		args, _, err := readRedisReplicationCommand(reader)
+		if err != nil {
+			done <- err
+			return
+		}
+		if len(args) != 3 ||
+			string(args[0]) != "AUTH" ||
+			string(args[1]) != "replica-user" ||
+			string(args[2]) != "replica-password" {
+			done <- fmt.Errorf("unexpected AUTH command: %q", args)
+			return
+		}
+		_, err = upstream.Write([]byte("+OK\r\n"))
+		done <- err
+	}()
+
+	reader := bufio.NewReader(client)
+	if err := authenticateReplicationUpstream(client, reader, "replica-user", "replica-password"); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAuthenticateReplicationUpstreamFailureRedactsCredentials(t *testing.T) {
+	client, upstream := net.Pipe()
+	defer client.Close()
+	defer upstream.Close()
+
+	go func() {
+		reader := bufio.NewReader(upstream)
+		_, _, _ = readRedisReplicationCommand(reader)
+		_, _ = upstream.Write([]byte("-WRONGPASS invalid username-password pair\r\n"))
+	}()
+
+	reader := bufio.NewReader(client)
+	err := authenticateReplicationUpstream(client, reader, "private-user", "private-password")
+	if err == nil {
+		t.Fatal("expected authentication failure")
+	}
+	if strings.Contains(err.Error(), "private-user") || strings.Contains(err.Error(), "private-password") {
+		t.Fatalf("credentials leaked in error: %v", err)
 	}
 }

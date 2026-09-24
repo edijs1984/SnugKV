@@ -40,6 +40,8 @@ func main() {
 	}
 	flag.StringVar(&path, "config", path, "strict JSON configuration file")
 	flag.StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, "TCP listen address")
+	flag.StringVar(&cfg.MasterUser, "masteruser", cfg.MasterUser, "replication upstream ACL username (optional)")
+	flag.StringVar(&cfg.MasterAuth, "masterauth", cfg.MasterAuth, "replication upstream password (optional)")
 	flag.IntVar(&cfg.Shards, "shards", cfg.Shards, "power-of-two shard count")
 	flag.IntVar(&cfg.MaxConnections, "max-connections", cfg.MaxConnections, "maximum simultaneous clients")
 	flag.Int64Var(&cfg.ReadTimeoutMS, "read-timeout-ms", cfg.ReadTimeoutMS, "request deadline in milliseconds")

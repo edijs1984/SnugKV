@@ -60,6 +60,8 @@ func ListenWithJournal(c config.Config, store *engine.Store, journal Journal) (*
 
 	s.server.configAppendFsync = c.Fsync
 	s.server.configACLFile = c.ACLFile
+	s.server.replicationMasterUser = c.MasterUser
+	s.server.replicationMasterAuth = c.MasterAuth
 
 	// Redis loads the configured ACL file during startup. A configured ACL
 	// file is authoritative: if it cannot be read or parsed, startup must fail

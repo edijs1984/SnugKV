@@ -631,6 +631,35 @@ func readReplicationRESP(reader *bufio.Reader) ([]byte, error) {
 	return payload, nil
 }
 
+func authenticateReplicationUpstream(conn net.Conn, reader *bufio.Reader, username, password string) error {
+	if password == "" {
+		return nil
+	}
+
+	args := []string{"AUTH"}
+	if username != "" {
+		args = append(args, username)
+	}
+	args = append(args, password)
+
+	if err := writeReplicationRESPCommand(conn, args...); err != nil {
+		return err
+	}
+
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return err
+	}
+	line = strings.TrimSpace(line)
+	if strings.HasPrefix(line, "+OK") {
+		return nil
+	}
+	if strings.HasPrefix(line, "-") {
+		return errors.New("replication upstream authentication failed")
+	}
+	return errors.New("invalid replication upstream AUTH response")
+}
+
 func writeReplicationRESPCommand(conn net.Conn, args ...string) error {
 	var buf bytes.Buffer
 	fmt.Fprintf(&buf, "*%d\r\n", len(args))
@@ -720,6 +749,15 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 		requestedOffset = -1
 	}
 	reader := bufio.NewReader(conn)
+
+	if err := authenticateReplicationUpstream(
+		conn,
+		reader,
+		s.replicationMasterUser,
+		s.replicationMasterAuth,
+	); err != nil {
+		return err
+	}
 
 	// Redis uses EOF-delimited diskless full sync only when the replica advertises
 	// the EOF capability. Older SnugKV primaries may reject pre-PSYNC REPLCONF;
