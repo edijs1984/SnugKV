@@ -676,6 +676,24 @@ func TestDecodeRedisRDBHashTemplateFormats(t *testing.T) {
 	})
 }
 
+func TestValidateRedisRDBTemplateFieldsUsesRedisLengthThenBytesOrder(t *testing.T) {
+	if err := validateRedisRDBTemplateFields([][]byte{
+		[]byte("age"),
+		[]byte("name"),
+		[]byte("email"),
+	}); err != nil {
+		t.Fatalf("valid Redis template order rejected: %v", err)
+	}
+
+	if err := validateRedisRDBTemplateFields([][]byte{
+		[]byte("age"),
+		[]byte("email"),
+		[]byte("name"),
+	}); err == nil {
+		t.Fatal("expected invalid Redis template order")
+	}
+}
+
 func TestDecodeRedisRDBHashTemplateRejectsInvalidRefs(t *testing.T) {
 	t.Run("unknown id", func(t *testing.T) {
 		body := appendRDBLen(nil, 99)
