@@ -58,14 +58,17 @@ func RecoverReplicationCheckpoint(current *ReplicationCheckpoint, records []Reco
 	return current
 }
 type Log struct {
-	lock   *os.File
-	mu     sync.Mutex
-	file   *os.File
-	policy string
-	failed error
-	stop   chan struct{}
-	done   chan struct{}
-	once   sync.Once
+	lock        *os.File
+	mu          sync.Mutex
+	file        *os.File
+	policy      string
+	failed      error
+	appendedSeq uint64
+	syncedSeq   uint64
+	syncChanged chan struct{}
+	stop        chan struct{}
+	done        chan struct{}
+	once        sync.Once
 }
 
 func Open(path, policy string) (*Log, error) {
@@ -113,11 +116,12 @@ func Open(path, policy string) (*Log, error) {
 	}
 	success = true
 	l := &Log{
-		lock:   lock,
-		file:   f,
-		policy: policy,
-		stop:   make(chan struct{}),
-		done:   make(chan struct{}),
+		lock:        lock,
+		file:        f,
+		policy:      policy,
+		syncChanged: make(chan struct{}),
+		stop:        make(chan struct{}),
+		done:        make(chan struct{}),
 	}
 
 	// Keep one lightweight sync loop alive for the lifetime of the log.
@@ -143,6 +147,9 @@ func (l *Log) syncLoop() {
 				l.policy == "everysec" {
 
 				l.failed = l.file.Sync()
+				if l.failed == nil {
+					l.markSyncedLocked()
+				}
 			}
 
 			l.mu.Unlock()
@@ -162,6 +169,24 @@ func (l *Log) Policy() string {
 	defer l.mu.Unlock()
 
 	return l.policy
+}
+
+func (l *Log) markSyncedLocked() {
+	if l.syncedSeq >= l.appendedSeq {
+		return
+	}
+	l.syncedSeq = l.appendedSeq
+	close(l.syncChanged)
+	l.syncChanged = make(chan struct{})
+}
+
+// DurabilitySnapshot reports the latest successful append sequence, the latest
+// sequence known to have crossed a real fsync boundary, and a channel closed
+// whenever synced progress advances.
+func (l *Log) DurabilitySnapshot() (appended, synced uint64, changed <-chan struct{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.appendedSeq, l.syncedSeq, l.syncChanged
 }
 
 // SetPolicy changes the runtime AOF fsync policy.
@@ -190,6 +215,7 @@ func (l *Log) SetPolicy(policy string) error {
 			l.failed = err
 			return err
 		}
+		l.markSyncedLocked()
 	}
 
 	l.policy = policy
@@ -207,8 +233,12 @@ func (l *Log) Append(records []Record) error {
 		l.failed = err
 		return err
 	}
+	l.appendedSeq++
 	if l.policy == "always" {
 		l.failed = l.file.Sync()
+		if l.failed == nil {
+			l.markSyncedLocked()
+		}
 	}
 	return l.failed
 }
@@ -220,6 +250,9 @@ func (l *Log) Close() error {
 		defer l.mu.Unlock()
 		if l.failed == nil {
 			l.failed = l.file.Sync()
+			if l.failed == nil {
+				l.markSyncedLocked()
+			}
 		}
 		defer l.lock.Close()
 		if err := l.file.Close(); l.failed == nil {
