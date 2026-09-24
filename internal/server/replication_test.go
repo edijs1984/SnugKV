@@ -4,8 +4,13 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
+	"encoding/pem"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -490,5 +495,62 @@ func TestAuthenticateReplicationUpstreamFailureRedactsCredentials(t *testing.T) 
 	}
 	if strings.Contains(err.Error(), "private-user") || strings.Contains(err.Error(), "private-password") {
 		t.Fatalf("credentials leaked in error: %v", err)
+	}
+}
+
+
+func TestDialReplicationUpstreamTLSVerifiesCA(t *testing.T) {
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer upstream.Close()
+
+	cert := upstream.Certificate()
+	caPath := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	host, portText, err := net.SplitHostPort(strings.TrimPrefix(upstream.URL, "https://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	serverName := ""
+	if len(cert.DNSNames) > 0 {
+		serverName = cert.DNSNames[0]
+	} else if len(cert.IPAddresses) > 0 {
+		serverName = cert.IPAddresses[0].String()
+	} else {
+		t.Fatal("test TLS certificate has no usable server identity")
+	}
+
+	s := New(engine.New())
+	s.replicationMasterTLS = true
+	s.replicationMasterTLSCA = caPath
+	s.replicationMasterTLSSNI = serverName
+
+	conn, err := s.dialReplicationUpstream(host, port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.Close()
+}
+
+func TestDialReplicationUpstreamTLSRejectsInvalidCA(t *testing.T) {
+	caPath := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caPath, []byte("not a certificate"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	s := New(engine.New())
+	s.replicationMasterTLS = true
+	s.replicationMasterTLSCA = caPath
+
+	_, err := s.dialReplicationUpstream("127.0.0.1", 1)
+	if err == nil || !strings.Contains(err.Error(), "no valid certificates") {
+		t.Fatalf("expected invalid CA rejection, got %v", err)
 	}
 }
