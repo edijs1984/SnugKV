@@ -145,3 +145,111 @@ func (s *Store) HashFieldPTTL(key string, fields [][]byte) ([]int64, error) {
 	}
 	return out, nil
 }
+
+
+// HashFieldExpireTime returns absolute millisecond field expiration times:
+// -2 missing/expired field, -1 no field TTL, otherwise Unix time in milliseconds.
+func (s *Store) HashFieldExpireTime(key string, fields [][]byte) ([]int64, error) {
+	sh := s.shardFor(key)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
+
+	now := s.now()
+	e, ok := sh.get(key)
+	if !ok || sh.expired(key, e, now) {
+		out := make([]int64, len(fields))
+		for i := range out {
+			out[i] = -2
+		}
+		return out, nil
+	}
+	if e.valueType != TypeHash {
+		return nil, hashWrongType()
+	}
+
+	pairs, err := decodePackedHash(s.decode(sh, e))
+	if err != nil {
+		return nil, err
+	}
+	nowMS := now.UnixMilli()
+	out := make([]int64, len(fields))
+	for i, field := range fields {
+		idx := sort.Search(len(pairs), func(j int) bool {
+			return bytes.Compare(pairs[j].Field, field) >= 0
+		})
+		if idx >= len(pairs) || !bytes.Equal(pairs[idx].Field, field) ||
+			(pairs[idx].ExpiresAtMS != 0 && pairs[idx].ExpiresAtMS <= nowMS) {
+			out[i] = -2
+			continue
+		}
+		if pairs[idx].ExpiresAtMS == 0 {
+			out[i] = -1
+			continue
+		}
+		out[i] = pairs[idx].ExpiresAtMS
+	}
+	return out, nil
+}
+
+// HashFieldPersist removes expiration from HASH fields.
+// Results: -2 missing/expired field, -1 field exists without TTL, 1 TTL removed.
+func (s *Store) HashFieldPersist(key string, fields [][]byte) ([]int64, error) {
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	now := s.now()
+	e, ok := sh.get(key)
+	if !ok || sh.expired(key, e, now) {
+		if ok {
+			s.remove(sh, key)
+		}
+		out := make([]int64, len(fields))
+		for i := range out {
+			out[i] = -2
+		}
+		return out, nil
+	}
+	if e.valueType != TypeHash {
+		return nil, hashWrongType()
+	}
+
+	pairs, err := decodePackedHash(s.decode(sh, e))
+	if err != nil {
+		return nil, err
+	}
+	pairs = liveHashPairs(pairs, now.UnixMilli())
+
+	out := make([]int64, len(fields))
+	changed := false
+	for i, field := range fields {
+		idx := sort.Search(len(pairs), func(j int) bool {
+			return bytes.Compare(pairs[j].Field, field) >= 0
+		})
+		if idx >= len(pairs) || !bytes.Equal(pairs[idx].Field, field) {
+			out[i] = -2
+			continue
+		}
+		if pairs[idx].ExpiresAtMS == 0 {
+			out[i] = -1
+			continue
+		}
+		pairs[idx].ExpiresAtMS = 0
+		out[i] = 1
+		changed = true
+	}
+	if !changed {
+		return out, nil
+	}
+
+	packed, err := encodePackedHash(pairs)
+	if err != nil {
+		return nil, err
+	}
+	updated := s.hashEntry(pairs, packed)
+	updated.expiresAt = sh.expirationAt(key, e)
+	if err := s.publish(sh, key, updated); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
