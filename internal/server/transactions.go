@@ -35,7 +35,9 @@ type transactionSession struct {
 	watched               map[string]persistence.Record
 	watchDirty            bool
 	lastReplicationOffset int64
+	lastDurabilitySequence uint64
 	waitTargetOffset       int64
+	waitAOFSequence        uint64
 }
 
 type transactionWatchRegistry struct {
@@ -338,6 +340,9 @@ func (s *Server) executeQueuedCommandLockedForSession(session *transactionSessio
 	if len(args) > 0 && strings.EqualFold(string(args[0]), "WAIT") {
 		return s.executeReplicationWait(args, session.waitTargetOffset, nil, false)
 	}
+	if len(args) > 0 && strings.EqualFold(string(args[0]), "WAITAOF") {
+		return s.executeWaitAOF(args, session.waitTargetOffset, session.waitAOFSequence, nil, false)
+	}
 	return s.executeQueuedCommandLocked(args)
 }
 
@@ -460,6 +465,10 @@ func (session *transactionSession) exec() ([]byte, error) {
 			if replicate {
 				s.publishReplication(changes)
 				session.lastReplicationOffset = s.replication.currentOffset()
+			}
+			if journal, ok := s.journal.(durabilityJournal); ok {
+				appended, _, _ := journal.DurabilitySnapshot()
+				session.lastDurabilitySequence = appended
 			}
 		}
 	}
