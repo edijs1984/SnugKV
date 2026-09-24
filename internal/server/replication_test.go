@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"io"
 	"errors"
 	"bytes"
 	"encoding/binary"
