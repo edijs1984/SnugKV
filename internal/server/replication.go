@@ -61,6 +61,7 @@ type replicationState struct {
 	replicas          map[uint64]func([]byte) error
 	replicaAckOffsets map[uint64]int64
 	replicaAckTimes   map[uint64]time.Time
+	ackChanged        chan struct{}
 
 	followCancel      chan struct{}
 	followDone        chan struct{}
@@ -151,6 +152,54 @@ func (r *replicationState) setConnectedReplicas(n int) {
 	r.mu.Lock()
 	r.connectedReplicas = n
 	r.mu.Unlock()
+}
+
+func (r *replicationState) notifyAckChangedLocked() {
+	if r.ackChanged == nil {
+		r.ackChanged = make(chan struct{})
+		return
+	}
+	close(r.ackChanged)
+	r.ackChanged = make(chan struct{})
+}
+
+func (r *replicationState) replicasAcknowledgedLocked(offset int64) int {
+	count := 0
+	for id := range r.replicas {
+		if r.replicaAckOffsets[id] >= offset {
+			count++
+		}
+	}
+	return count
+}
+
+func (r *replicationState) waitSnapshot(offset int64) (int, <-chan struct{}) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.replicasAcknowledgedLocked(offset), r.ackChanged
+}
+
+func (r *replicationState) currentOffset() int64 {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.offset
+}
+
+func (r *replicationState) requestReplicaACKs() {
+	payload := []byte("*3\r\n$8\r\nREPLCONF\r\n$6\r\nGETACK\r\n$1\r\n*\r\n")
+
+	r.mu.RLock()
+	targets := make(map[uint64]func([]byte) error, len(r.replicas))
+	for id, write := range r.replicas {
+		targets[id] = write
+	}
+	r.mu.RUnlock()
+
+	for id, write := range targets {
+		if err := write(payload); err != nil {
+			r.unregisterReplica(id)
+		}
+	}
 }
 
 func (r *replicationState) isReadOnlyReplica() bool {
@@ -275,6 +324,9 @@ func (r *replicationState) init() {
 	if r.replicaAckTimes == nil {
 		r.replicaAckTimes = make(map[uint64]time.Time)
 	}
+	if r.ackChanged == nil {
+		r.ackChanged = make(chan struct{})
+	}
 	if r.backlogSize == 0 {
 		r.backlogSize = 1024 * 1024
 	}
@@ -361,6 +413,7 @@ func (r *replicationState) registerReplica(write func([]byte) error) (uint64, st
 	r.replicaAckOffsets[id] = 0
 	r.replicaAckTimes[id] = time.Now()
 	r.connectedReplicas = len(r.replicas)
+	r.notifyAckChangedLocked()
 	return id, r.runID, r.offset
 }
 
@@ -370,6 +423,7 @@ func (r *replicationState) unregisterReplica(id uint64) {
 	delete(r.replicaAckOffsets, id)
 	delete(r.replicaAckTimes, id)
 	r.connectedReplicas = len(r.replicas)
+	r.notifyAckChangedLocked()
 	r.mu.Unlock()
 }
 
@@ -379,10 +433,15 @@ func (r *replicationState) acknowledgeReplica(id uint64, offset int64) {
 	if _, ok := r.replicas[id]; !ok {
 		return
 	}
+	changed := false
 	if current, ok := r.replicaAckOffsets[id]; !ok || offset > current {
 		r.replicaAckOffsets[id] = offset
+		changed = true
 	}
 	r.replicaAckTimes[id] = time.Now()
+	if changed {
+		r.notifyAckChangedLocked()
+	}
 }
 
 func (r *replicationState) replicaInfoLines() string {
@@ -1020,10 +1079,48 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 			return peekErr
 		}
 		if len(first) == 1 && first[0] == '*' {
+			args, streamBytes, commandErr := readRedisReplicationCommand(reader)
+			if commandErr != nil {
+				return commandErr
+			}
+			if len(args) >= 3 &&
+				strings.EqualFold(string(args[0]), "REPLCONF") &&
+				strings.EqualFold(string(args[1]), "GETACK") {
+				s.replication.mu.RLock()
+				ackOffset := s.replication.offset
+				s.replication.mu.RUnlock()
+				if err := writeReplicationRESPCommand(conn, "REPLCONF", "ACK", strconv.FormatInt(ackOffset, 10)); err != nil {
+					return err
+				}
+				continue
+			}
+
+			// A non-control RESP command means this is actually a Redis command
+			// stream (for example a recovered CONTINUE whose stream mode was not
+			// persisted by an older SnugKV version). Switch modes and apply this
+			// already-consumed command before continuing.
 			redisStream = true
 			s.replication.mu.Lock()
 			s.replication.masterRedisStream = true
 			s.replication.mu.Unlock()
+			if len(args) > 0 {
+				cmd := strings.ToUpper(string(args[0]))
+				if cmd == "MULTI" {
+					transaction = make([][][]byte, 0)
+					transactionBytes = streamBytes
+					continue
+				}
+
+				s.replication.mu.RLock()
+				targetOffset := s.replication.offset + streamBytes
+				s.replication.mu.RUnlock()
+				if err := s.applyRedisReplicationBatch([][][]byte{args}, targetOffset); err != nil {
+					return err
+				}
+				s.replication.mu.Lock()
+				s.replication.offset = targetOffset
+				s.replication.mu.Unlock()
+			}
 			continue
 		}
 

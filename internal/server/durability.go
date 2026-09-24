@@ -260,9 +260,25 @@ func (s *Server) executeDurable(args [][]byte) ([]byte, error) {
 	return s.executeDurableForSession(args, nil)
 }
 
+func (s *Server) executeForSessionCapture(
+	args [][]byte,
+	session *authSession,
+	replicationOffset *int64,
+) ([]byte, error) {
+	return s.executeDurableForSessionCapture(args, session, replicationOffset)
+}
+
 func (s *Server) executeDurableForSession(
 	args [][]byte,
 	session *authSession,
+) ([]byte, error) {
+	return s.executeDurableForSessionCapture(args, session, nil)
+}
+
+func (s *Server) executeDurableForSessionCapture(
+	args [][]byte,
+	session *authSession,
+	replicationOffset *int64,
 ) ([]byte, error) {
 	if len(args) > 0 {
 		if info, ok := commandTable[strings.ToUpper(string(args[0]))]; ok && info.write && s.replication.isReadOnlyReplica() {
@@ -287,23 +303,29 @@ func (s *Server) executeDurableForSession(
 	s.durableMu.Lock()
 	defer s.durableMu.Unlock()
 
-	return s.withExecutionACLContextLocked(session, args, func() ([]byte, error) {
+	result, err := s.withExecutionACLContextLocked(session, args, func() ([]byte, error) {
 
-	finishRunning := func() {}
-	if isFunctionCallCommand(args) {
-		finishRunning = beginRunningFunction(s, args)
-	}
-	defer finishRunning()
+		finishRunning := func() {}
+		if isFunctionCallCommand(args) {
+			finishRunning = beginRunningFunction(s, args)
+		}
+		defer finishRunning()
 
-	// WATCH must observe every logical change, including a change that is later
-	// restored to the original value by another command. Refresh both before and
-	// after each serialized command so expiration cleanup that happened between
-	// commands is also visible.
-	s.refreshWatchesLocked()
-	result, err := s.executeDurableLocked(args)
-	s.refreshWatchesLocked()
-	return result, err
+		// WATCH must observe every logical change, including a change that is later
+		// restored to the original value by another command. Refresh both before and
+		// after each serialized command so expiration cleanup that happened between
+		// commands is also visible.
+		s.refreshWatchesLocked()
+		result, err := s.executeDurableLocked(args)
+		s.refreshWatchesLocked()
+		return result, err
 	})
+	if err == nil && replicationOffset != nil && len(args) > 0 {
+		if info, ok := commandTable[strings.ToUpper(string(args[0]))]; ok && info.write {
+			*replicationOffset = s.replication.currentOffset()
+		}
+	}
+	return result, err
 }
 
 // executeDurableLocked executes one command while durableMu is already held.
