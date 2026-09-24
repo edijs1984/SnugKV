@@ -17,10 +17,15 @@ func liveHashPairs(pairs []HashPair, nowMS int64) []HashPair {
 	return out
 }
 
-// HashFieldExpireAt applies an absolute millisecond expiration to HASH fields.
-// Results follow Redis HPEXPIREAT's unconditional result codes:
-// -2 missing field/key, 1 expiry set, 2 field deleted because expiry is in the past.
+// HashFieldExpireAt applies an unconditional absolute millisecond expiration to HASH fields.
 func (s *Store) HashFieldExpireAt(key string, fields [][]byte, whenMS int64) ([]int64, error) {
+	return s.HashFieldExpireAtCondition(key, fields, whenMS, "")
+}
+
+// HashFieldExpireAtCondition applies an absolute millisecond expiration with
+// Redis-compatible NX/XX/GT/LT semantics.
+// Results: -2 missing field/key, 0 condition not met, 1 expiry set, 2 field deleted.
+func (s *Store) HashFieldExpireAtCondition(key string, fields [][]byte, whenMS int64, condition string) ([]int64, error) {
 	if len(fields) == 0 {
 		return nil, errors.New("ERR no hash fields")
 	}
@@ -62,6 +67,33 @@ func (s *Store) HashFieldExpireAt(key string, fields [][]byte, whenMS int64) ([]
 			results[i] = -2
 			continue
 		}
+		current := pairs[idx].ExpiresAtMS
+		switch condition {
+		case "":
+		case "NX":
+			if current != 0 {
+				results[i] = 0
+				continue
+			}
+		case "XX":
+			if current == 0 {
+				results[i] = 0
+				continue
+			}
+		case "GT":
+			if current == 0 || current >= whenMS {
+				results[i] = 0
+				continue
+			}
+		case "LT":
+			if current != 0 && current <= whenMS {
+				results[i] = 0
+				continue
+			}
+		default:
+			return nil, errors.New("ERR invalid hash field expiry condition")
+		}
+
 		changed = true
 		if whenMS <= now.UnixMilli() {
 			results[i] = 2
