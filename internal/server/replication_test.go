@@ -1587,3 +1587,149 @@ func TestInterruptedFullResyncDoesNotAdvanceContinuationState(t *testing.T) {
 		t.Fatal("stream mode changed after interrupted FULLRESYNC")
 	}
 }
+
+func TestInterruptedPartialResyncDoesNotAdvancePastIncompleteSnugFrame(t *testing.T) {
+	s := New(engine.New())
+	s.replication.init()
+	s.replication.mu.Lock()
+	s.replication.masterRunID = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	s.replication.offset = 20
+	s.replication.masterRedisStream = false
+	s.replication.mu.Unlock()
+
+	records := []persistence.Record{{Key: []byte("partial:ok"), Value: []byte("one")}}
+	frame, err := encodeReplicationFrame(records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := replicationBulk(frame)
+
+	client, server := net.Pipe()
+	defer client.Close()
+
+	serverDone := make(chan struct{})
+	go func() {
+		defer close(serverDone)
+		defer server.Close()
+
+		buf := make([]byte, 1024)
+		_ = server.SetReadDeadline(time.Now().Add(time.Second))
+		if _, err := server.Read(buf); err != nil {
+			return
+		}
+		if _, err := server.Write([]byte("+OK\r\n")); err != nil {
+			return
+		}
+
+		_ = server.SetReadDeadline(time.Now().Add(time.Second))
+		if _, err := server.Read(buf); err != nil {
+			return
+		}
+		if _, err := server.Write([]byte("+CONTINUE\r\n")); err != nil {
+			return
+		}
+
+		if _, err := server.Write(payload); err != nil {
+			return
+		}
+
+		// Begin a second bulk frame, then disconnect before its body completes.
+		_, _ = server.Write([]byte("$100\r\npartial"))
+	}()
+
+	err = s.consumeReplicationConnection(client, make(chan struct{}))
+	if err == nil {
+		t.Fatal("expected interrupted partial resync error")
+	}
+	<-serverDone
+
+	v, found, wrong := s.store.GetString("partial:ok")
+	if !found || wrong || string(v) != "one" {
+		t.Fatalf("complete replay frame was not applied: found=%v wrong=%v value=%q", found, wrong, v)
+	}
+
+	s.replication.mu.RLock()
+	offset := s.replication.offset
+	runID := s.replication.masterRunID
+	s.replication.mu.RUnlock()
+
+	wantOffset := int64(20 + len(frame))
+	if offset != wantOffset {
+		t.Fatalf("offset=%d want=%d after interrupted trailing frame", offset, wantOffset)
+	}
+	if runID != "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" {
+		t.Fatalf("runid changed during partial replay: %q", runID)
+	}
+}
+
+func TestInterruptedPartialResyncDoesNotAdvancePastIncompleteRedisCommand(t *testing.T) {
+	s := New(engine.New())
+	s.replication.init()
+	s.replication.mu.Lock()
+	s.replication.masterRunID = "cccccccccccccccccccccccccccccccccccccccc"
+	s.replication.offset = 40
+	s.replication.masterRedisStream = true
+	s.replication.mu.Unlock()
+
+	complete := []byte("*3\r\n$3\r\nSET\r\n$11\r\npartial:cmd\r\n$3\r\none\r\n")
+
+	client, server := net.Pipe()
+	defer client.Close()
+
+	serverDone := make(chan struct{})
+	go func() {
+		defer close(serverDone)
+		defer server.Close()
+
+		buf := make([]byte, 1024)
+		_ = server.SetReadDeadline(time.Now().Add(time.Second))
+		if _, err := server.Read(buf); err != nil {
+			return
+		}
+		if _, err := server.Write([]byte("+OK\r\n")); err != nil {
+			return
+		}
+
+		_ = server.SetReadDeadline(time.Now().Add(time.Second))
+		if _, err := server.Read(buf); err != nil {
+			return
+		}
+		if _, err := server.Write([]byte("+CONTINUE\r\n")); err != nil {
+			return
+		}
+
+		if _, err := server.Write(complete); err != nil {
+			return
+		}
+
+		// Start a second Redis command and drop the connection mid-bulk.
+		_, _ = server.Write([]byte("*3\r\n$3\r\nSET\r\n$12\r\npartial:bad\r\n$10\r\nabc"))
+	}()
+
+	err := s.consumeReplicationConnection(client, make(chan struct{}))
+	if err == nil {
+		t.Fatal("expected interrupted Redis partial resync error")
+	}
+	<-serverDone
+
+	v, found, wrong := s.store.GetString("partial:cmd")
+	if !found || wrong || string(v) != "one" {
+		t.Fatalf("complete Redis replay command was not applied: found=%v wrong=%v value=%q", found, wrong, v)
+	}
+	if _, found, _ := s.store.GetString("partial:bad"); found {
+		t.Fatal("incomplete Redis replay command mutated store")
+	}
+
+	s.replication.mu.RLock()
+	offset := s.replication.offset
+	runID := s.replication.masterRunID
+	s.replication.mu.RUnlock()
+
+	wantOffset := int64(40 + len(complete))
+	if offset != wantOffset {
+		t.Fatalf("offset=%d want=%d after interrupted Redis command", offset, wantOffset)
+	}
+	if runID != "cccccccccccccccccccccccccccccccccccccccc" {
+		t.Fatalf("runid changed during Redis partial replay: %q", runID)
+	}
+}
