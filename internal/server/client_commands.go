@@ -36,8 +36,9 @@ type clientSession struct {
 	protocol atomic.Int32
 
 	createdAt time.Time
-	lastSeen  atomic.Int64
-	lastCmd   atomic.Pointer[string]
+	lastSeen          atomic.Int64
+	lastCmd           atomic.Pointer[string]
+	replicationOffset atomic.Int64
 
 	blocked     bool
 	unblockCh   chan struct{}
