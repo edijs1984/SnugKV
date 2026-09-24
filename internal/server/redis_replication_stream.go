@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"snugkv/internal/persistence"
 	"strconv"
 	"strings"
 )
@@ -67,12 +68,88 @@ func readRedisReplicationCommand(reader *bufio.Reader) ([][]byte, int64, error) 
 	return args, count, nil
 }
 
-func (s *Server) applyRedisReplicationBatch(commands [][][]byte) error {
+func redisReplicationAffectedKeys(commands [][][]byte) (keys []string, full bool) {
+	seen := make(map[string]struct{})
+	add := func(key string) {
+		if key == "" {
+			return
+		}
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		keys = append(keys, key)
+	}
+
+	for _, args := range commands {
+		if len(args) == 0 {
+			continue
+		}
+		cmd := strings.ToUpper(string(args[0]))
+		switch cmd {
+		case "PING", "SELECT", "REPLCONF":
+			continue
+		case "FLUSHDB", "FLUSHALL":
+			return nil, true
+		}
+		if isScriptEvalCommand(args) || isWritableFunctionCallCommand(args) || cmd == "MIGRATE" {
+			return nil, true
+		}
+		if cmd == "SORT" {
+			if destination, ok := sortStoreDestination(args); ok {
+				add(destination)
+			}
+			continue
+		}
+		if cmd == "COPY" && len(args) >= 3 {
+			add(string(args[2]))
+			continue
+		}
+		if cmd == "ZMPOP" {
+			for _, key := range zsetMPopKeys(args) {
+				add(key)
+			}
+			continue
+		}
+		if cmd == "XREADGROUP" {
+			for _, key := range streamGroupReadKeys(args) {
+				add(key)
+			}
+			continue
+		}
+
+		info, ok := commandTable[cmd]
+		if !ok || !info.write {
+			continue
+		}
+		if info.first <= 0 {
+			return nil, true
+		}
+		last := info.last
+		if last < 0 {
+			last = len(args) + last
+		}
+		for i := info.first; i <= last && i < len(args); i += info.step {
+			add(string(args[i]))
+		}
+	}
+	return keys, false
+}
+
+func (s *Server) applyRedisReplicationBatch(commands [][][]byte, checkpointOffset int64) error {
 	if len(commands) == 0 {
 		return nil
 	}
 	s.durableMu.Lock()
 	defer s.durableMu.Unlock()
+
+	keys, full := redisReplicationAffectedKeys(commands)
+	var before []persistence.Record
+	if full {
+		before = s.store.Export(nil)
+	} else if len(keys) > 0 {
+		before = s.store.Export(keys)
+	}
 
 	s.refreshWatchesLocked()
 	for _, args := range commands {
@@ -92,9 +169,47 @@ func (s *Server) applyRedisReplicationBatch(commands [][][]byte) error {
 			continue
 		}
 		if _, err := s.executePressure(args); err != nil {
+			if len(before) > 0 {
+				rollback := before
+				if full {
+					rollback = append([]persistence.Record{{Reset: true}}, before...)
+				}
+				_ = s.store.Restore(rollback, true)
+			}
 			return fmt.Errorf("apply Redis replication command %s: %w", cmd, err)
 		}
 	}
 	s.refreshWatchesLocked()
+
+	if s.journal == nil {
+		return nil
+	}
+
+	var after []persistence.Record
+	if full {
+		after = s.store.Export(nil)
+	} else if len(keys) > 0 {
+		after = s.store.Export(keys)
+	}
+	changes := persistenceDiff(before, after)
+	if len(changes) == 0 {
+		return nil
+	}
+	checkpoint := s.replicationCheckpointForOffset(checkpointOffset, true)
+	if checkpoint == nil {
+		return errors.New("missing replication checkpoint state")
+	}
+	records := append(changes, persistence.Record{Replication: checkpoint})
+	if err := s.journal.Append(records); err != nil {
+		s.durabilityFailed = true
+		rollback := before
+		if full {
+			rollback = append([]persistence.Record{{Reset: true}}, before...)
+		}
+		if rollbackErr := s.store.Restore(rollback, true); rollbackErr != nil {
+			return errors.New("replication persistence and rollback failed")
+		}
+		return errors.New("replication persistence append failed")
+	}
 	return nil
 }
