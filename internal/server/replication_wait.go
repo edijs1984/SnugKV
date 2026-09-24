@@ -55,16 +55,16 @@ func (s *Server) executeReplicationWait(
 		defer timer.Stop()
 	}
 
-	requestedACK := false
 	for {
 		count, changed := s.replication.waitSnapshot(targetOffset)
 		if count >= numReplicas || !allowBlock {
 			return integer(int64(count)), nil
 		}
-		if !requestedACK {
-			requestedACK = true
-			s.replication.requestReplicaACKs()
-		}
+
+		// Topology and ACK progress share the same change notification. Ask the
+		// currently connected replica set again after every such change so a
+		// replacement connection can satisfy an already-blocked WAIT.
+		s.replication.requestReplicaACKs()
 
 		select {
 		case <-changed:
