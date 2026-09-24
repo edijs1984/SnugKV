@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"log"
 	"net"
 	"os"
 	"slices"
@@ -777,6 +778,7 @@ func (s *Server) runReplicaFollow(host string, port int, cancel <-chan struct{})
 		if err == nil {
 			return
 		}
+		log.Printf("replication upstream %s:%d: %v", host, port, err)
 		select {
 		case <-cancel:
 			return
