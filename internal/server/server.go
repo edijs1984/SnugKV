@@ -1380,7 +1380,11 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := s.persistReplicationCheckpointClearLocked(); err != nil {
+		clearHost, clearPort := host, port
+		if detach {
+			clearHost, clearPort = "", 0
+		}
+		if err := s.persistReplicationCheckpointClearLocked(clearHost, clearPort); err != nil {
 			s.durabilityFailed = true
 			return nil, errors.New("ERR replication persistence update failed")
 		}
