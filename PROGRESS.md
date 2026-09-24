@@ -1,3 +1,7 @@
+## Redis Hash Template RDB Compatibility — 2026-09-24
+
+Added Redis 8.10 hash-template RDB support for self-contained DUMP/RESTORE types 29/31, full-RDB reference types 30/32, and template registry opcode 242. SnugKV materializes imported template hashes as ordinary native HASH values. Live Redis -> SnugKV diskless full sync passed for both template-listpack and template-array reference forms, and live HIMPORT propagation passed through Redis's zero-checksum RESTORE payload path while keeping the replication link up. The audit also fixed Redis template field ordering parity (sdscmplen: length first, then bytes) and hardened +CONTINUE Redis stream-mode recovery. See `docs/REPLICATION-HASH-TEMPLATE-AUDIT.md`.
+
 ## Redis HFE LISTPACK_EX RDB Compatibility — 2026-09-24
 
 Added Redis RDB hash-field-expiration LISTPACK_EX decoding for types 23 and 25. The payload is decoded as field/value/absolute-expiry-ms triplets, with zero representing no field TTL; type 25 additionally consumes Redis' 8-byte min-expiry prefix. A live Redis 8.10.2 hash confirmed `OBJECT ENCODING listpackex`, and Redis -> SnugKV full sync preserved exact absolute expirations for expiring fields and `-1` for the persistent field. During live partial-resync testing, a second TCP fragmentation bug was found in the Redis replication RESP parser: the 2-byte CRLF terminator used a single `Read`, which could short-read and trigger a reconnect loop on a 14-byte replication PING. The parser now uses `io.ReadFull`, with a one-byte-at-a-time regression test.
