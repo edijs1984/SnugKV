@@ -1387,3 +1387,143 @@ func TestDialReplicationUpstreamTLSRejectsInvalidCA(t *testing.T) {
 		t.Fatalf("expected invalid CA rejection, got %v", err)
 	}
 }
+
+func TestReplicationBacklogBoundaryOffsets(t *testing.T) {
+	s := New(engine.New())
+	r := &s.replication
+
+	r.mu.Lock()
+	r.runID = "0123456789012345678901234567890123456789"
+	r.backlogSize = 12
+	r.backlogActive = true
+	r.offset = 0
+	r.backlogFirstOffset = 1
+
+	for _, frame := range [][]byte{
+		[]byte("aaaa"),
+		[]byte("bbbb"),
+		[]byte("cccc"),
+		[]byte("dddd"),
+	} {
+		r.appendBacklogLocked(frame, append([]byte("$x\r\n"), frame...))
+	}
+
+	first := r.backlogFirstOffset
+	lastPlusOne := r.offset + 1
+	runID := r.runID
+	r.mu.Unlock()
+
+	if first <= 1 {
+		t.Fatalf("expected backlog eviction, first=%d", first)
+	}
+
+	r.mu.RLock()
+	payloads, ok := r.partialSyncPayloadLocked(runID, first)
+	r.mu.RUnlock()
+	if !ok || len(payloads) == 0 {
+		t.Fatalf("exact first backlog offset rejected: first=%d ok=%v payloads=%d", first, ok, len(payloads))
+	}
+
+	r.mu.RLock()
+	_, ok = r.partialSyncPayloadLocked(runID, first-1)
+	r.mu.RUnlock()
+	if ok {
+		t.Fatalf("expired backlog offset %d unexpectedly accepted", first-1)
+	}
+
+	r.mu.RLock()
+	payloads, ok = r.partialSyncPayloadLocked(runID, lastPlusOne)
+	r.mu.RUnlock()
+	if !ok {
+		t.Fatalf("master offset + 1 rejected: %d", lastPlusOne)
+	}
+	if len(payloads) != 0 {
+		t.Fatalf("master offset + 1 returned %d payloads", len(payloads))
+	}
+
+	r.mu.RLock()
+	_, ok = r.partialSyncPayloadLocked(runID, lastPlusOne+1)
+	r.mu.RUnlock()
+	if ok {
+		t.Fatalf("offset beyond master+1 unexpectedly accepted")
+	}
+}
+
+func TestReplicationPartialResyncReplaysFromContainingBacklogEntry(t *testing.T) {
+	s := New(engine.New())
+	r := &s.replication
+
+	r.mu.Lock()
+	r.runID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	r.backlogSize = 1024
+	r.backlogActive = true
+	r.offset = 0
+	r.backlogFirstOffset = 1
+
+	firstFrame := []byte("123456")
+	secondFrame := []byte("abcdef")
+	firstPayload := []byte("payload-one")
+	secondPayload := []byte("payload-two")
+
+	r.appendBacklogLocked(firstFrame, firstPayload)
+	firstStart := r.backlog[0].startOffset
+	firstEnd := r.backlog[0].endOffset
+	r.appendBacklogLocked(secondFrame, secondPayload)
+	runID := r.runID
+	r.mu.Unlock()
+
+	insideFirst := firstStart + 2
+	if insideFirst > firstEnd {
+		t.Fatalf("bad test setup: inside=%d end=%d", insideFirst, firstEnd)
+	}
+
+	r.mu.RLock()
+	payloads, ok := r.partialSyncPayloadLocked(runID, insideFirst)
+	r.mu.RUnlock()
+	if !ok {
+		t.Fatal("partial sync from inside retained entry rejected")
+	}
+	if len(payloads) != 2 {
+		t.Fatalf("payload count=%d want=2", len(payloads))
+	}
+	if !bytes.Equal(payloads[0], firstPayload) || !bytes.Equal(payloads[1], secondPayload) {
+		t.Fatalf("unexpected replay payloads: %q", payloads)
+	}
+}
+
+func TestReplicationBacklogFirstOffsetTracksEvictionExactly(t *testing.T) {
+	s := New(engine.New())
+	r := &s.replication
+
+	r.mu.Lock()
+	r.backlogSize = 10
+	r.backlogActive = true
+	r.offset = 0
+	r.backlogFirstOffset = 1
+
+	r.appendBacklogLocked([]byte("123456"), []byte("one"))
+	firstEnd := r.backlog[0].endOffset
+
+	r.appendBacklogLocked([]byte("abcdef"), []byte("two"))
+
+	if len(r.backlog) != 1 {
+		got := len(r.backlog)
+		r.mu.Unlock()
+		t.Fatalf("backlog entries=%d want=1", got)
+	}
+	wantFirst := firstEnd + 1
+	gotFirst := r.backlogFirstOffset
+	gotBytes := r.backlogBytes
+	gotOffset := r.offset
+	r.mu.Unlock()
+
+	if gotFirst != wantFirst {
+		t.Fatalf("backlogFirstOffset=%d want=%d", gotFirst, wantFirst)
+	}
+	if gotBytes != 6 {
+		t.Fatalf("backlogBytes=%d want=6", gotBytes)
+	}
+	if gotOffset != 12 {
+		t.Fatalf("master offset=%d want=12", gotOffset)
+	}
+}
