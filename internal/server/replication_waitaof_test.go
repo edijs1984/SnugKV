@@ -417,19 +417,19 @@ func TestReplicaAOFPersistenceFailurePreventsLaterReplicationApply(t *testing.T)
 	}
 }
 
-func TestWaitAOFWakesOnReplicaTopologyLoss(t *testing.T) {
+func TestWaitAOFReplicaTopologyLossKeepsWaitingUntilTimeout(t *testing.T) {
 	s := New(engine.New())
 
 	id, _, _ := s.replication.registerReplica(func([]byte) error { return nil })
-	defer s.replication.unregisterReplica(id)
 
+	started := time.Now()
 	done := make(chan struct {
 		reply string
 		err   error
 	}, 1)
 	go func() {
 		reply, err := s.executeWaitAOF(
-			[][]byte{[]byte("WAITAOF"), []byte("0"), []byte("1"), []byte("1000")},
+			[][]byte{[]byte("WAITAOF"), []byte("0"), []byte("1"), []byte("100")},
 			100,
 			0,
 			nil,
@@ -446,13 +446,16 @@ func TestWaitAOFWakesOnReplicaTopologyLoss(t *testing.T) {
 
 	select {
 	case result := <-done:
+		if elapsed := time.Since(started); elapsed < 70*time.Millisecond {
+			t.Fatalf("WAITAOF returned too early after replica topology loss: %v", elapsed)
+		}
 		if result.err != nil {
 			t.Fatal(result.err)
 		}
 		if result.reply != "*2\r\n:0\r\n:0\r\n" {
-			t.Fatalf("WAITAOF after replica removal=%q", result.reply)
+			t.Fatalf("WAITAOF after timeout=%q", result.reply)
 		}
-	case <-time.After(250 * time.Millisecond):
-		t.Fatal("WAITAOF did not wake after replica topology change")
+	case <-time.After(time.Second):
+		t.Fatal("WAITAOF did not time out after replica topology loss")
 	}
 }
