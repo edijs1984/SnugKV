@@ -536,6 +536,27 @@ func replicationBulk(payload []byte) []byte {
 	return out
 }
 
+func (s *Server) forwardReplicatedSnugFrame(frame []byte) int64 {
+	payload := replicationBulk(frame)
+
+	s.replication.mu.Lock()
+	s.replication.appendBacklogLocked(frame, payload)
+	replicatedOffset := s.replication.offset
+	targets := make(map[uint64]func([]byte) error, len(s.replication.replicas))
+	for id, write := range s.replication.replicas {
+		targets[id] = write
+	}
+	s.replication.mu.Unlock()
+
+	for id, write := range targets {
+		if err := write(payload); err != nil {
+			s.replication.unregisterReplica(id)
+		}
+	}
+
+	return replicatedOffset
+}
+
 func (s *Server) publishReplication(records []persistence.Record) {
 	if len(records) == 0 {
 		return
@@ -904,6 +925,14 @@ func (s *Server) applySnugReplicationRecordsLocked(records []persistence.Record)
 }
 
 func (s *Server) persistRedisFullSyncLocked(checkpointOffset int64) error {
+	s.replication.mu.RLock()
+	masterRunID := s.replication.masterRunID
+	redisStream := s.replication.masterRedisStream
+	s.replication.mu.RUnlock()
+	return s.persistRedisFullSyncStateLocked(masterRunID, checkpointOffset, redisStream)
+}
+
+func (s *Server) persistRedisFullSyncStateLocked(masterRunID string, checkpointOffset int64, redisStream bool) error {
 	if s.journal == nil {
 		return nil
 	}
@@ -934,9 +963,12 @@ func (s *Server) persistRedisFullSyncLocked(checkpointOffset int64) error {
 		}
 	}
 
-	checkpoint := s.replicationCheckpointForOffset(checkpointOffset, true)
-	if checkpoint == nil {
-		return errors.New("missing replication full-sync checkpoint state")
+	checkpoint := &persistence.ReplicationCheckpoint{
+		MasterHost:  masterHost,
+		MasterPort:  masterPort,
+		MasterRunID: masterRunID,
+		Offset:      checkpointOffset,
+		RedisStream: redisStream,
 	}
 	if err := s.journal.Append([]persistence.Record{{Replication: checkpoint}}); err != nil {
 		s.durabilityFailed = true
@@ -1000,10 +1032,7 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 		if parseErr != nil {
 			return errors.New("invalid FULLRESYNC offset")
 		}
-		s.replication.mu.Lock()
-		s.replication.masterRunID = parts[1]
-		s.replication.offset = off
-		s.replication.mu.Unlock()
+		fullResyncRunID := parts[1]
 
 		snapshot, isRedisRDB, err := readReplicationSnapshot(reader)
 		if err != nil {
@@ -1016,11 +1045,6 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 		} else {
 			records, err = decodeReplicationFrame(snapshot)
 		}
-		if err == nil {
-			s.replication.mu.Lock()
-			s.replication.masterRedisStream = redisStream
-			s.replication.mu.Unlock()
-		}
 		if err != nil {
 			return err
 		}
@@ -1028,7 +1052,7 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 		if isRedisRDB {
 			err = s.store.Restore(records, true)
 			if err == nil {
-				err = s.persistRedisFullSyncLocked(off)
+				err = s.persistRedisFullSyncStateLocked(fullResyncRunID, off, redisStream)
 				if err == nil {
 					s.noteReplicaAOFOffset(off)
 				}
@@ -1043,6 +1067,14 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 		if err != nil {
 			return err
 		}
+
+		// Commit the new PSYNC continuation identity only after the full
+		// snapshot has been decoded, applied and (when enabled) persisted.
+		s.replication.mu.Lock()
+		s.replication.masterRunID = fullResyncRunID
+		s.replication.offset = off
+		s.replication.masterRedisStream = redisStream
+		s.replication.mu.Unlock()
 	} else if strings.HasPrefix(line, "+CONTINUE") {
 		s.replication.mu.RLock()
 		redisStream = s.replication.masterRedisStream
@@ -1217,10 +1249,10 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 		if err != nil {
 			return err
 		}
-		s.replication.mu.Lock()
-		s.replication.offset += int64(len(frame))
-		replicatedOffset := s.replication.offset
-		s.replication.mu.Unlock()
+		// Preserve the exact upstream Snug frame when serving downstream
+		// replicas. This keeps chained PSYNC byte offsets aligned across hops
+		// while advancing the middle node's offset exactly once.
+		replicatedOffset := s.forwardReplicatedSnugFrame(frame)
 		s.noteReplicaAOFOffset(replicatedOffset)
 	}
 }

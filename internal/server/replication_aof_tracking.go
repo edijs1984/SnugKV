@@ -6,11 +6,17 @@ type replicaDurabilityPoint struct {
 }
 
 func (s *Server) noteReplicaAOFOffset(offset int64) {
+	if s.durabilityFailed {
+		return
+	}
 	journal, ok := s.journal.(durabilityJournal)
 	if !ok {
 		return
 	}
 	appended, _, _ := journal.DurabilitySnapshot()
+	if appended == 0 {
+		return
+	}
 
 	s.replicaDurabilityMu.Lock()
 	defer s.replicaDurabilityMu.Unlock()
@@ -29,6 +35,9 @@ func (s *Server) noteReplicaAOFOffset(offset int64) {
 }
 
 func (s *Server) replicaAOFFsyncedOffset() (int64, bool) {
+	if s.durabilityFailed {
+		return 0, false
+	}
 	journal, ok := s.journal.(durabilityJournal)
 	if !ok {
 		return 0, false

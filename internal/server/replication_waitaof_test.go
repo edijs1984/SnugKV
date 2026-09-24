@@ -1,6 +1,7 @@
 package server
 
 import (
+	"strings"
 	"errors"
 	"sync"
 	"testing"
@@ -250,5 +251,211 @@ func TestWaitAOFCommandMetadata(t *testing.T) {
 		if cats[i] != want[i] {
 			t.Fatalf("WAITAOF ACL=%v", cats)
 		}
+	}
+}
+
+func TestWaitAOFSurvivesReplicaReconnect(t *testing.T) {
+	s := New(engine.New())
+
+	firstRequested := make(chan struct{}, 1)
+	firstID, _, _ := s.replication.registerReplica(func(payload []byte) error {
+		if strings.Contains(string(payload), "GETACK") {
+			select {
+			case firstRequested <- struct{}{}:
+			default:
+			}
+		}
+		return nil
+	})
+
+	done := make(chan struct {
+		reply string
+		err   error
+	}, 1)
+	go func() {
+		reply, err := s.executeWaitAOF(
+			[][]byte{[]byte("WAITAOF"), []byte("0"), []byte("1"), []byte("1000")},
+			120,
+			0,
+			nil,
+			true,
+		)
+		done <- struct {
+			reply string
+			err   error
+		}{string(reply), err}
+	}()
+
+	select {
+	case <-firstRequested:
+	case <-time.After(time.Second):
+		t.Fatal("initial replica did not receive GETACK")
+	}
+
+	s.replication.unregisterReplica(firstID)
+
+	secondRequested := make(chan struct{}, 1)
+	secondID, _, _ := s.replication.registerReplica(func(payload []byte) error {
+		if strings.Contains(string(payload), "GETACK") {
+			select {
+			case secondRequested <- struct{}{}:
+			default:
+			}
+		}
+		return nil
+	})
+	defer s.replication.unregisterReplica(secondID)
+
+	select {
+	case <-secondRequested:
+	case <-time.After(time.Second):
+		t.Fatal("replacement replica did not receive GETACK")
+	}
+
+	s.replication.acknowledgeReplica(secondID, 120, 120)
+
+	select {
+	case result := <-done:
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		if result.reply != "*2\r\n:0\r\n:1\r\n" {
+			t.Fatalf("WAITAOF=%q", result.reply)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("WAITAOF did not complete after replacement replica FACK")
+	}
+}
+
+type failingWaitAOFJournal struct {
+	mu      sync.Mutex
+	appends int
+	failAt  int
+	changed chan struct{}
+}
+
+func newFailingWaitAOFJournal(failAt int) *failingWaitAOFJournal {
+	return &failingWaitAOFJournal{
+		failAt:  failAt,
+		changed: make(chan struct{}),
+	}
+}
+
+func (j *failingWaitAOFJournal) Append([]persistence.Record) error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.appends++
+	if j.appends >= j.failAt {
+		return errors.New("forced append failure")
+	}
+	return nil
+}
+
+func (j *failingWaitAOFJournal) DurabilitySnapshot() (uint64, uint64, <-chan struct{}) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	appended := uint64(j.appends)
+	if j.appends >= j.failAt {
+		appended--
+	}
+	return appended, appended, j.changed
+}
+
+func TestReplicaAOFPersistenceFailureDoesNotAdvanceFACK(t *testing.T) {
+	s := New(engine.New())
+	journal := newFailingWaitAOFJournal(1)
+	s.SetJournal(journal)
+
+	records := []persistence.Record{{Key: []byte("replica:fail"), Value: []byte("value")}}
+
+	s.durableMu.Lock()
+	err := s.applySnugReplicationRecordsLocked(records)
+	s.durableMu.Unlock()
+	if err == nil {
+		t.Fatal("expected replica persistence failure")
+	}
+
+	if !s.durabilityFailed {
+		t.Fatal("replica persistence failure did not mark durability unavailable")
+	}
+
+	if _, found, _ := s.store.GetString("replica:fail"); found {
+		t.Fatal("replica applied data after failed AOF append")
+	}
+
+	s.noteReplicaAOFOffset(100)
+	if offset, ok := s.replicaAOFFsyncedOffset(); ok {
+		t.Fatalf("FACK advanced after failed persistence: offset=%d", offset)
+	}
+}
+
+func TestReplicaAOFPersistenceFailurePreventsLaterReplicationApply(t *testing.T) {
+	s := New(engine.New())
+	journal := newFailingWaitAOFJournal(1)
+	s.SetJournal(journal)
+
+	first := []persistence.Record{{Key: []byte("replica:first"), Value: []byte("one")}}
+	second := []persistence.Record{{Key: []byte("replica:second"), Value: []byte("two")}}
+
+	s.durableMu.Lock()
+	err1 := s.applySnugReplicationRecordsLocked(first)
+	err2 := s.applySnugReplicationRecordsLocked(second)
+	s.durableMu.Unlock()
+
+	if err1 == nil {
+		t.Fatal("first replication append unexpectedly succeeded")
+	}
+	if err2 == nil || err2.Error() != "ERR persistence is unavailable; restart after repairing storage" {
+		t.Fatalf("second replication err=%v", err2)
+	}
+
+	if _, found, _ := s.store.GetString("replica:first"); found {
+		t.Fatal("first failed replication frame mutated store")
+	}
+	if _, found, _ := s.store.GetString("replica:second"); found {
+		t.Fatal("second replication frame mutated store")
+	}
+}
+
+func TestWaitAOFReplicaTopologyLossKeepsWaitingUntilTimeout(t *testing.T) {
+	s := New(engine.New())
+
+	id, _, _ := s.replication.registerReplica(func([]byte) error { return nil })
+
+	started := time.Now()
+	done := make(chan struct {
+		reply string
+		err   error
+	}, 1)
+	go func() {
+		reply, err := s.executeWaitAOF(
+			[][]byte{[]byte("WAITAOF"), []byte("0"), []byte("1"), []byte("100")},
+			100,
+			0,
+			nil,
+			true,
+		)
+		done <- struct {
+			reply string
+			err   error
+		}{string(reply), err}
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	s.replication.unregisterReplica(id)
+
+	select {
+	case result := <-done:
+		if elapsed := time.Since(started); elapsed < 70*time.Millisecond {
+			t.Fatalf("WAITAOF returned too early after replica topology loss: %v", elapsed)
+		}
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		if result.reply != "*2\r\n:0\r\n:0\r\n" {
+			t.Fatalf("WAITAOF after timeout=%q", result.reply)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("WAITAOF did not time out after replica topology loss")
 	}
 }

@@ -90,15 +90,15 @@ func (s *Server) executeWaitAOF(
 		defer timer.Stop()
 	}
 
-	requestedACK := false
 	for {
 		local, localChanged := s.localAOFAcknowledged(targetSequence)
 		replicas, replicaChanged := s.replication.waitAOFSnapshot(targetOffset)
 		if (local >= numLocal && replicas >= numReplicas) || !allowBlock {
 			return waitAOFReply(local, replicas), nil
 		}
-		if numReplicas > replicas && !requestedACK {
-			requestedACK = true
+		if numReplicas > replicas {
+			// Re-issue GETACK after replica topology/ACK changes so a newly
+			// reconnected replica can satisfy an already-blocked WAITAOF.
 			s.replication.requestReplicaACKs()
 		}
 

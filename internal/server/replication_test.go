@@ -1387,3 +1387,605 @@ func TestDialReplicationUpstreamTLSRejectsInvalidCA(t *testing.T) {
 		t.Fatalf("expected invalid CA rejection, got %v", err)
 	}
 }
+
+func TestReplicationBacklogBoundaryOffsets(t *testing.T) {
+	s := New(engine.New())
+	r := &s.replication
+
+	r.mu.Lock()
+	r.runID = "0123456789012345678901234567890123456789"
+	r.backlogSize = 12
+	r.backlogActive = true
+	r.offset = 0
+	r.backlogFirstOffset = 1
+
+	for _, frame := range [][]byte{
+		[]byte("aaaa"),
+		[]byte("bbbb"),
+		[]byte("cccc"),
+		[]byte("dddd"),
+	} {
+		r.appendBacklogLocked(frame, append([]byte("$x\r\n"), frame...))
+	}
+
+	first := r.backlogFirstOffset
+	lastPlusOne := r.offset + 1
+	runID := r.runID
+	r.mu.Unlock()
+
+	if first <= 1 {
+		t.Fatalf("expected backlog eviction, first=%d", first)
+	}
+
+	r.mu.RLock()
+	payloads, ok := r.partialSyncPayloadLocked(runID, first)
+	r.mu.RUnlock()
+	if !ok || len(payloads) == 0 {
+		t.Fatalf("exact first backlog offset rejected: first=%d ok=%v payloads=%d", first, ok, len(payloads))
+	}
+
+	r.mu.RLock()
+	_, ok = r.partialSyncPayloadLocked(runID, first-1)
+	r.mu.RUnlock()
+	if ok {
+		t.Fatalf("expired backlog offset %d unexpectedly accepted", first-1)
+	}
+
+	r.mu.RLock()
+	payloads, ok = r.partialSyncPayloadLocked(runID, lastPlusOne)
+	r.mu.RUnlock()
+	if !ok {
+		t.Fatalf("master offset + 1 rejected: %d", lastPlusOne)
+	}
+	if len(payloads) != 0 {
+		t.Fatalf("master offset + 1 returned %d payloads", len(payloads))
+	}
+
+	r.mu.RLock()
+	_, ok = r.partialSyncPayloadLocked(runID, lastPlusOne+1)
+	r.mu.RUnlock()
+	if ok {
+		t.Fatalf("offset beyond master+1 unexpectedly accepted")
+	}
+}
+
+func TestReplicationPartialResyncReplaysFromContainingBacklogEntry(t *testing.T) {
+	s := New(engine.New())
+	r := &s.replication
+
+	r.mu.Lock()
+	r.runID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	r.backlogSize = 1024
+	r.backlogActive = true
+	r.offset = 0
+	r.backlogFirstOffset = 1
+
+	firstFrame := []byte("123456")
+	secondFrame := []byte("abcdef")
+	firstPayload := []byte("payload-one")
+	secondPayload := []byte("payload-two")
+
+	r.appendBacklogLocked(firstFrame, firstPayload)
+	firstStart := r.backlog[0].startOffset
+	firstEnd := r.backlog[0].endOffset
+	r.appendBacklogLocked(secondFrame, secondPayload)
+	runID := r.runID
+	r.mu.Unlock()
+
+	insideFirst := firstStart + 2
+	if insideFirst > firstEnd {
+		t.Fatalf("bad test setup: inside=%d end=%d", insideFirst, firstEnd)
+	}
+
+	r.mu.RLock()
+	payloads, ok := r.partialSyncPayloadLocked(runID, insideFirst)
+	r.mu.RUnlock()
+	if !ok {
+		t.Fatal("partial sync from inside retained entry rejected")
+	}
+	if len(payloads) != 2 {
+		t.Fatalf("payload count=%d want=2", len(payloads))
+	}
+	if !bytes.Equal(payloads[0], firstPayload) || !bytes.Equal(payloads[1], secondPayload) {
+		t.Fatalf("unexpected replay payloads: %q", payloads)
+	}
+}
+
+func TestReplicationBacklogFirstOffsetTracksEvictionExactly(t *testing.T) {
+	s := New(engine.New())
+	r := &s.replication
+
+	r.mu.Lock()
+	r.backlogSize = 10
+	r.backlogActive = true
+	r.offset = 0
+	r.backlogFirstOffset = 1
+
+	r.appendBacklogLocked([]byte("123456"), []byte("one"))
+	firstEnd := r.backlog[0].endOffset
+
+	r.appendBacklogLocked([]byte("abcdef"), []byte("two"))
+
+	if len(r.backlog) != 1 {
+		got := len(r.backlog)
+		r.mu.Unlock()
+		t.Fatalf("backlog entries=%d want=1", got)
+	}
+	wantFirst := firstEnd + 1
+	gotFirst := r.backlogFirstOffset
+	gotBytes := r.backlogBytes
+	gotOffset := r.offset
+	r.mu.Unlock()
+
+	if gotFirst != wantFirst {
+		t.Fatalf("backlogFirstOffset=%d want=%d", gotFirst, wantFirst)
+	}
+	if gotBytes != 6 {
+		t.Fatalf("backlogBytes=%d want=6", gotBytes)
+	}
+	if gotOffset != 12 {
+		t.Fatalf("master offset=%d want=12", gotOffset)
+	}
+}
+
+func TestInterruptedFullResyncDoesNotAdvanceContinuationState(t *testing.T) {
+	s := New(engine.New())
+	s.replication.init()
+	s.replication.mu.Lock()
+	s.replication.masterRunID = "oldoldoldoldoldoldoldoldoldoldoldoldoldold"
+	s.replication.offset = 10
+	s.replication.masterRedisStream = false
+	s.replication.mu.Unlock()
+
+	client, server := net.Pipe()
+	defer client.Close()
+
+	serverDone := make(chan struct{})
+	go func() {
+		defer close(serverDone)
+		defer server.Close()
+
+		buf := make([]byte, 1024)
+		_ = server.SetReadDeadline(time.Now().Add(time.Second))
+		if _, err := server.Read(buf); err != nil {
+			return
+		}
+		if _, err := server.Write([]byte("+OK\r\n")); err != nil {
+			return
+		}
+
+		_ = server.SetReadDeadline(time.Now().Add(time.Second))
+		if _, err := server.Read(buf); err != nil {
+			return
+		}
+
+		const newRunID = "newnewnewnewnewnewnewnewnewnewnewnewnewnew"
+		if _, err := server.Write([]byte("+FULLRESYNC " + newRunID + " 50\r\n$100\r\npartial")); err != nil {
+			return
+		}
+	}()
+
+	err := s.consumeReplicationConnection(client, make(chan struct{}))
+	if err == nil {
+		t.Fatal("expected interrupted FULLRESYNC error")
+	}
+	<-serverDone
+
+	s.replication.mu.RLock()
+	runID := s.replication.masterRunID
+	offset := s.replication.offset
+	redisStream := s.replication.masterRedisStream
+	s.replication.mu.RUnlock()
+
+	if runID != "oldoldoldoldoldoldoldoldoldoldoldoldoldold" {
+		t.Fatalf("masterRunID advanced after interrupted FULLRESYNC: %q", runID)
+	}
+	if offset != 10 {
+		t.Fatalf("offset advanced after interrupted FULLRESYNC: %d", offset)
+	}
+	if redisStream {
+		t.Fatal("stream mode changed after interrupted FULLRESYNC")
+	}
+}
+
+func TestInterruptedPartialResyncDoesNotAdvancePastIncompleteSnugFrame(t *testing.T) {
+	s := New(engine.New())
+	s.replication.init()
+	s.replication.mu.Lock()
+	s.replication.masterRunID = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	s.replication.offset = 20
+	s.replication.masterRedisStream = false
+	s.replication.mu.Unlock()
+
+	records := []persistence.Record{{Key: []byte("partial:ok"), Value: []byte("one")}}
+	frame, err := encodeReplicationFrame(records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := replicationBulk(frame)
+
+	client, server := net.Pipe()
+	defer client.Close()
+
+	serverDone := make(chan struct{})
+	go func() {
+		defer close(serverDone)
+		defer server.Close()
+
+		buf := make([]byte, 1024)
+		_ = server.SetReadDeadline(time.Now().Add(time.Second))
+		if _, err := server.Read(buf); err != nil {
+			return
+		}
+		if _, err := server.Write([]byte("+OK\r\n")); err != nil {
+			return
+		}
+
+		_ = server.SetReadDeadline(time.Now().Add(time.Second))
+		if _, err := server.Read(buf); err != nil {
+			return
+		}
+		if _, err := server.Write([]byte("+CONTINUE\r\n")); err != nil {
+			return
+		}
+
+		if _, err := server.Write(payload); err != nil {
+			return
+		}
+
+		// Begin a second bulk frame, then disconnect before its body completes.
+		_, _ = server.Write([]byte("$100\r\npartial"))
+	}()
+
+	err = s.consumeReplicationConnection(client, make(chan struct{}))
+	if err == nil {
+		t.Fatal("expected interrupted partial resync error")
+	}
+	<-serverDone
+
+	v, found, wrong := s.store.GetString("partial:ok")
+	if !found || wrong || string(v) != "one" {
+		t.Fatalf("complete replay frame was not applied: found=%v wrong=%v value=%q", found, wrong, v)
+	}
+
+	s.replication.mu.RLock()
+	offset := s.replication.offset
+	runID := s.replication.masterRunID
+	s.replication.mu.RUnlock()
+
+	wantOffset := int64(20 + len(frame))
+	if offset != wantOffset {
+		t.Fatalf("offset=%d want=%d after interrupted trailing frame", offset, wantOffset)
+	}
+	if runID != "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" {
+		t.Fatalf("runid changed during partial replay: %q", runID)
+	}
+}
+
+func TestInterruptedPartialResyncDoesNotAdvancePastIncompleteRedisCommand(t *testing.T) {
+	s := New(engine.New())
+	s.replication.init()
+	s.replication.mu.Lock()
+	s.replication.masterRunID = "cccccccccccccccccccccccccccccccccccccccc"
+	s.replication.offset = 40
+	s.replication.masterRedisStream = true
+	s.replication.mu.Unlock()
+
+	complete := []byte("*3\r\n$3\r\nSET\r\n$11\r\npartial:cmd\r\n$3\r\none\r\n")
+
+	client, server := net.Pipe()
+	defer client.Close()
+
+	serverDone := make(chan struct{})
+	go func() {
+		defer close(serverDone)
+		defer server.Close()
+
+		buf := make([]byte, 1024)
+		_ = server.SetReadDeadline(time.Now().Add(time.Second))
+		if _, err := server.Read(buf); err != nil {
+			return
+		}
+		if _, err := server.Write([]byte("+OK\r\n")); err != nil {
+			return
+		}
+
+		_ = server.SetReadDeadline(time.Now().Add(time.Second))
+		if _, err := server.Read(buf); err != nil {
+			return
+		}
+		if _, err := server.Write([]byte("+CONTINUE\r\n")); err != nil {
+			return
+		}
+
+		if _, err := server.Write(complete); err != nil {
+			return
+		}
+
+		// Start a second Redis command and drop the connection mid-bulk.
+		_, _ = server.Write([]byte("*3\r\n$3\r\nSET\r\n$12\r\npartial:bad\r\n$10\r\nabc"))
+	}()
+
+	err := s.consumeReplicationConnection(client, make(chan struct{}))
+	if err == nil {
+		t.Fatal("expected interrupted Redis partial resync error")
+	}
+	<-serverDone
+
+	v, found, wrong := s.store.GetString("partial:cmd")
+	if !found || wrong || string(v) != "one" {
+		t.Fatalf("complete Redis replay command was not applied: found=%v wrong=%v value=%q", found, wrong, v)
+	}
+	if _, found, _ := s.store.GetString("partial:bad"); found {
+		t.Fatal("incomplete Redis replay command mutated store")
+	}
+
+	s.replication.mu.RLock()
+	offset := s.replication.offset
+	runID := s.replication.masterRunID
+	s.replication.mu.RUnlock()
+
+	wantOffset := int64(40 + len(complete))
+	if offset != wantOffset {
+		t.Fatalf("offset=%d want=%d after interrupted Redis command", offset, wantOffset)
+	}
+	if runID != "cccccccccccccccccccccccccccccccccccccccc" {
+		t.Fatalf("runid changed during Redis partial replay: %q", runID)
+	}
+}
+
+func TestChainedReplicationPrimaryReplicaReplica(t *testing.T) {
+	primary, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer primary.Close()
+
+	middle, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer middle.Close()
+
+	leaf, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer leaf.Close()
+
+	primaryAddr := primary.listener.Addr().(*net.TCPAddr)
+	if _, err := middle.server.Execute([][]byte{
+		[]byte("REPLICAOF"), []byte("127.0.0.1"), []byte(strconv.Itoa(primaryAddr.Port)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	waitReplication(t, func() bool {
+		return middle.server.replication.snapshot().masterLinkStatus == "up"
+	})
+
+	middleAddr := middle.listener.Addr().(*net.TCPAddr)
+	if _, err := leaf.server.Execute([][]byte{
+		[]byte("REPLICAOF"), []byte("127.0.0.1"), []byte(strconv.Itoa(middleAddr.Port)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	waitReplication(t, func() bool {
+		return leaf.server.replication.snapshot().masterLinkStatus == "up"
+	})
+	waitReplication(t, func() bool {
+		return middle.server.replication.snapshot().connectedReplicas == 1
+	})
+
+	if _, err := primary.server.Execute([][]byte{
+		[]byte("SET"), []byte("chain:key"), []byte("value"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	waitReplication(t, func() bool {
+		v, found, wrong := middle.server.store.GetString("chain:key")
+		return found && !wrong && string(v) == "value"
+	})
+	waitReplication(t, func() bool {
+		v, found, wrong := leaf.server.store.GetString("chain:key")
+		return found && !wrong && string(v) == "value"
+	})
+
+	if state := primary.server.replication.snapshot(); state.connectedReplicas != 1 {
+		t.Fatalf("primary connected replicas=%d want=1", state.connectedReplicas)
+	}
+	if state := middle.server.replication.snapshot(); state.connectedReplicas != 1 {
+		t.Fatalf("middle connected replicas=%d want=1", state.connectedReplicas)
+	}
+}
+
+func TestChainedReplicationLeafReconnectsThroughMiddle(t *testing.T) {
+	primary, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer primary.Close()
+
+	middle, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer middle.Close()
+
+	leaf, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer leaf.Close()
+
+	primaryAddr := primary.listener.Addr().(*net.TCPAddr)
+	middleAddr := middle.listener.Addr().(*net.TCPAddr)
+
+	if _, err := middle.server.Execute([][]byte{
+		[]byte("REPLICAOF"), []byte("127.0.0.1"), []byte(strconv.Itoa(primaryAddr.Port)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitReplication(t, func() bool {
+		return middle.server.replication.snapshot().masterLinkStatus == "up"
+	})
+
+	if _, err := leaf.server.Execute([][]byte{
+		[]byte("REPLICAOF"), []byte("127.0.0.1"), []byte(strconv.Itoa(middleAddr.Port)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitReplication(t, func() bool {
+		return leaf.server.replication.snapshot().masterLinkStatus == "up"
+	})
+
+	if _, err := primary.server.Execute([][]byte{
+		[]byte("SET"), []byte("chain:before"), []byte("one"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitReplication(t, func() bool {
+		v, found, wrong := leaf.server.store.GetString("chain:before")
+		return found && !wrong && string(v) == "one"
+	})
+
+	leaf.server.stopReplicaFollow()
+	waitReplication(t, func() bool {
+		return middle.server.replication.snapshot().connectedReplicas == 0
+	})
+
+	if _, err := primary.server.Execute([][]byte{
+		[]byte("SET"), []byte("chain:during"), []byte("two"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitReplication(t, func() bool {
+		v, found, wrong := middle.server.store.GetString("chain:during")
+		return found && !wrong && string(v) == "two"
+	})
+
+	leaf.server.startReplicaFollow("127.0.0.1", middleAddr.Port)
+	waitReplication(t, func() bool {
+		return leaf.server.replication.snapshot().masterLinkStatus == "up"
+	})
+	waitReplication(t, func() bool {
+		v, found, wrong := leaf.server.store.GetString("chain:during")
+		return found && !wrong && string(v) == "two"
+	})
+}
+
+func TestChainedReplicationWaitCountsOnlyDirectReplicas(t *testing.T) {
+	primary, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer primary.Close()
+
+	middle, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer middle.Close()
+
+	leaf, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer leaf.Close()
+
+	primaryAddr := primary.listener.Addr().(*net.TCPAddr)
+	middleAddr := middle.listener.Addr().(*net.TCPAddr)
+
+	if _, err := middle.server.Execute([][]byte{
+		[]byte("REPLICAOF"), []byte("127.0.0.1"), []byte(strconv.Itoa(primaryAddr.Port)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitReplication(t, func() bool {
+		return middle.server.replication.snapshot().masterLinkStatus == "up"
+	})
+
+	if _, err := leaf.server.Execute([][]byte{
+		[]byte("REPLICAOF"), []byte("127.0.0.1"), []byte(strconv.Itoa(middleAddr.Port)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitReplication(t, func() bool {
+		return leaf.server.replication.snapshot().masterLinkStatus == "up"
+	})
+	waitReplication(t, func() bool {
+		return primary.server.replication.snapshot().connectedReplicas == 1 &&
+			middle.server.replication.snapshot().connectedReplicas == 1
+	})
+
+	if _, err := primary.server.Execute([][]byte{
+		[]byte("SET"), []byte("chain:wait"), []byte("one"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitReplication(t, func() bool {
+		v, found, wrong := leaf.server.store.GetString("chain:wait")
+		return found && !wrong && string(v) == "one"
+	})
+
+	primary.server.replication.mu.RLock()
+	primaryTarget := primary.server.replication.offset
+	primary.server.replication.mu.RUnlock()
+
+	got, err := primary.server.executeReplicationWait(
+		[][]byte{[]byte("WAIT"), []byte("2"), []byte("100")},
+		primaryTarget,
+		nil,
+		true,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != ":1\r\n" {
+		t.Fatalf("primary WAIT counted transitive replica: %q", got)
+	}
+
+	middle.server.replication.mu.RLock()
+	middleTarget := middle.server.replication.offset
+	middle.server.replication.mu.RUnlock()
+
+	got, err = middle.server.executeReplicationWait(
+		[][]byte{[]byte("WAIT"), []byte("1"), []byte("1000")},
+		middleTarget,
+		nil,
+		true,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != ":1\r\n" {
+		t.Fatalf("middle WAIT did not count direct leaf: %q", got)
+	}
+}
+
+func TestChainedReplicationWAITAOFCountsOnlyDirectFACKs(t *testing.T) {
+	s := New(engine.New())
+
+	middleID, _, _ := s.replication.registerReplica(func([]byte) error { return nil })
+	defer s.replication.unregisterReplica(middleID)
+
+	// Simulate the direct replica acknowledging both application and durable
+	// persistence. A transitive leaf must not inflate the primary's count.
+	s.replication.acknowledgeReplica(middleID, 200, 200)
+
+	got, err := s.executeWaitAOF(
+		[][]byte{[]byte("WAITAOF"), []byte("0"), []byte("2"), []byte("0")},
+		200,
+		0,
+		nil,
+		false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "*2\r\n:0\r\n:1\r\n" {
+		t.Fatalf("WAITAOF counted transitive replica: %q", got)
+	}
+}
