@@ -310,6 +310,7 @@ func (s *Store) HashSet(key string, fields, values [][]byte) (int64, error) {
 		if err != nil {
 			return 0, err
 		}
+		pairs = liveHashPairs(pairs, now.UnixMilli())
 		expiresAt = sh.expirationAt(key, old)
 	}
 
@@ -322,6 +323,7 @@ func (s *Store) HashSet(key string, fields, values [][]byte) (int64, error) {
 		value := append([]byte(nil), values[i]...)
 		if index < len(pairs) && bytes.Equal(pairs[index].Field, field) {
 			pairs[index].Value = value
+			pairs[index].ExpiresAtMS = 0
 			continue
 		}
 
@@ -378,8 +380,12 @@ func (s *Store) HashLen(key string) (int64, error) {
 		return 0, hashWrongType()
 	}
 
-	count, err := packedHashCount(s.decode(sh, e))
-	return int64(count), err
+	pairs, err := decodePackedHash(s.decode(sh, e))
+	if err != nil {
+		return 0, err
+	}
+	pairs = liveHashPairs(pairs, s.now().UnixMilli())
+	return int64(len(pairs)), nil
 }
 
 func (s *Store) HashGetAll(key string) ([]HashPair, error) {
@@ -395,7 +401,11 @@ func (s *Store) HashGetAll(key string) ([]HashPair, error) {
 		return nil, hashWrongType()
 	}
 
-	return decodePackedHash(s.decode(sh, e))
+	pairs, err := decodePackedHash(s.decode(sh, e))
+	if err != nil {
+		return nil, err
+	}
+	return liveHashPairs(pairs, s.now().UnixMilli()), nil
 }
 
 func (s *Store) HashDel(key string, fields [][]byte) (int64, error) {
@@ -422,6 +432,7 @@ func (s *Store) HashDel(key string, fields [][]byte) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	pairs = liveHashPairs(pairs, s.now().UnixMilli())
 
 	remove := make(map[string]struct{}, len(fields))
 	for _, field := range fields {
@@ -478,6 +489,7 @@ func (s *Store) HashStorageStats(key string) (HashStats, bool, error) {
 	if err != nil {
 		return HashStats{}, false, err
 	}
+	pairs = liveHashPairs(pairs, s.now().UnixMilli())
 
 	encoding := "packed"
 	if isShapedHash(physical) {
