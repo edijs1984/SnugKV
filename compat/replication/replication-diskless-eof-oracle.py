@@ -20,11 +20,11 @@ def resp_command(sock, *args):
 def read_resp(reader):
     p = reader.read(1)
     if p == b"+":
-        return reader.readline()[:-2].decode()
+        return reader.readline().rstrip(b"\r\n").decode()
     if p == b"-":
-        raise RuntimeError(reader.readline()[:-2].decode())
+        raise RuntimeError(reader.readline().rstrip(b"\r\n").decode())
     if p == b":":
-        return int(reader.readline()[:-2])
+        return int(reader.readline().rstrip(b"\r\n"))
     if p == b"$":
         n = int(reader.readline()[:-2])
         if n < 0:
@@ -87,6 +87,8 @@ try:
         resp_command(repl, "PSYNC", "?", "-1")
 
         full = repl_reader.readline()
+        while full in (b"\n", b"\r\n"):
+            full = repl_reader.readline()
         if not full.startswith(b"+FULLRESYNC "):
             raise RuntimeError("expected FULLRESYNC, got %r" % full)
 
