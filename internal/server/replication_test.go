@@ -1527,3 +1527,63 @@ func TestReplicationBacklogFirstOffsetTracksEvictionExactly(t *testing.T) {
 		t.Fatalf("master offset=%d want=12", gotOffset)
 	}
 }
+
+func TestInterruptedFullResyncDoesNotAdvanceContinuationState(t *testing.T) {
+	s := New(engine.New())
+	s.replication.init()
+	s.replication.mu.Lock()
+	s.replication.masterRunID = "oldoldoldoldoldoldoldoldoldoldoldoldoldold"
+	s.replication.offset = 10
+	s.replication.masterRedisStream = false
+	s.replication.mu.Unlock()
+
+	client, server := net.Pipe()
+	defer client.Close()
+
+	serverDone := make(chan struct{})
+	go func() {
+		defer close(serverDone)
+		defer server.Close()
+
+		buf := make([]byte, 1024)
+		_ = server.SetReadDeadline(time.Now().Add(time.Second))
+		if _, err := server.Read(buf); err != nil {
+			return
+		}
+		if _, err := server.Write([]byte("+OK\r\n")); err != nil {
+			return
+		}
+
+		_ = server.SetReadDeadline(time.Now().Add(time.Second))
+		if _, err := server.Read(buf); err != nil {
+			return
+		}
+
+		const newRunID = "newnewnewnewnewnewnewnewnewnewnewnewnewnew"
+		if _, err := server.Write([]byte("+FULLRESYNC " + newRunID + " 50\r\n$100\r\npartial")); err != nil {
+			return
+		}
+	}()
+
+	err := s.consumeReplicationConnection(client, make(chan struct{}))
+	if err == nil {
+		t.Fatal("expected interrupted FULLRESYNC error")
+	}
+	<-serverDone
+
+	s.replication.mu.RLock()
+	runID := s.replication.masterRunID
+	offset := s.replication.offset
+	redisStream := s.replication.masterRedisStream
+	s.replication.mu.RUnlock()
+
+	if runID != "oldoldoldoldoldoldoldoldoldoldoldoldoldold" {
+		t.Fatalf("masterRunID advanced after interrupted FULLRESYNC: %q", runID)
+	}
+	if offset != 10 {
+		t.Fatalf("offset advanced after interrupted FULLRESYNC: %d", offset)
+	}
+	if redisStream {
+		t.Fatal("stream mode changed after interrupted FULLRESYNC")
+	}
+}
