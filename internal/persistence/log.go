@@ -18,14 +18,45 @@ import (
 const magic = "MCLOG001"
 const MaxFrameBytes = 128 << 20
 
+type ReplicationCheckpoint struct {
+	MasterHost  string `json:"master_host,omitempty"`
+	MasterPort  int    `json:"master_port,omitempty"`
+	MasterRunID string `json:"master_run_id,omitempty"`
+	Offset      int64  `json:"offset,omitempty"`
+	RedisStream bool   `json:"redis_stream,omitempty"`
+	Clear       bool   `json:"clear,omitempty"`
+}
+
 // Key is bytes rather than string so JSON does not normalize invalid UTF-8 keys.
 type Record struct {
-	Reset       bool   `json:"reset,omitempty"`
-	Key         []byte `json:"key"`
-	Value       []byte `json:"value,omitempty"`
-	ExpiresAtMS int64  `json:"expires_at_ms,omitempty"`
-	Deleted     bool   `json:"deleted,omitempty"`
-	ValueType   uint8  `json:"value_type,omitempty"`
+	Reset       bool                   `json:"reset,omitempty"`
+	Key         []byte                 `json:"key,omitempty"`
+	Value       []byte                 `json:"value,omitempty"`
+	ExpiresAtMS int64                  `json:"expires_at_ms,omitempty"`
+	Deleted     bool                   `json:"deleted,omitempty"`
+	ValueType   uint8                  `json:"value_type,omitempty"`
+	Replication *ReplicationCheckpoint `json:"replication,omitempty"`
+}
+
+// RecoverReplicationCheckpoint advances crash-recovery replication metadata in
+// the same order as logical persistence frames. A reset invalidates any earlier
+// continuation tuple until a later checkpoint record is encountered.
+func RecoverReplicationCheckpoint(current *ReplicationCheckpoint, records []Record) *ReplicationCheckpoint {
+	for _, record := range records {
+		if record.Reset {
+			current = nil
+		}
+		if record.Replication == nil {
+			continue
+		}
+		if record.Replication.Clear {
+			current = nil
+			continue
+		}
+		checkpoint := *record.Replication
+		current = &checkpoint
+	}
+	return current
 }
 type Log struct {
 	lock   *os.File
