@@ -55,7 +55,7 @@ func readRedisReplicationCommand(reader *bufio.Reader) ([][]byte, int64, error) 
 		}
 		count += int64(n)
 		var crlf [2]byte
-		if _, err := reader.Read(crlf[:]); err != nil {
+		if _, err := io.ReadFull(reader, crlf[:]); err != nil {
 			return nil, 0, err
 		}
 		count += 2
