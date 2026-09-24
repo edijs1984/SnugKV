@@ -767,6 +767,17 @@ func writeReplicationRESPCommand(conn net.Conn, args ...string) error {
 	return err
 }
 
+func (s *Server) writeReplicationACK(conn net.Conn, ackOffset int64) error {
+	args := []string{"REPLCONF", "ACK", strconv.FormatInt(ackOffset, 10)}
+	if journal, ok := s.journal.(durabilityJournal); ok {
+		appended, synced, _ := journal.DurabilitySnapshot()
+		if appended > 0 && synced >= appended {
+			args = append(args, "FACK", strconv.FormatInt(ackOffset, 10))
+		}
+	}
+	return writeReplicationRESPCommand(conn, args...)
+}
+
 func (s *Server) startReplicaFollow(host string, port int) {
 	s.stopReplicaFollow()
 	s.replication.setReplica(host, port)
@@ -1032,7 +1043,7 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 				s.replication.mu.RLock()
 				ackOffset := s.replication.offset
 				s.replication.mu.RUnlock()
-				if writeErr := writeReplicationRESPCommand(conn, "REPLCONF", "ACK", strconv.FormatInt(ackOffset, 10)); writeErr != nil {
+				if writeErr := s.writeReplicationACK(conn, ackOffset); writeErr != nil {
 					return writeErr
 				}
 				continue
@@ -1089,7 +1100,7 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 			s.replication.mu.Unlock()
 
 			if cmd == "REPLCONF" && len(args) >= 3 && strings.EqualFold(string(args[1]), "GETACK") {
-				if err := writeReplicationRESPCommand(conn, "REPLCONF", "ACK", strconv.FormatInt(ackOffset, 10)); err != nil {
+				if err := s.writeReplicationACK(conn, ackOffset); err != nil {
 					return err
 				}
 			}
@@ -1101,7 +1112,7 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 			s.replication.mu.RLock()
 			ackOffset := s.replication.offset
 			s.replication.mu.RUnlock()
-			if writeErr := writeReplicationRESPCommand(conn, "REPLCONF", "ACK", strconv.FormatInt(ackOffset, 10)); writeErr != nil {
+			if writeErr := s.writeReplicationACK(conn, ackOffset); writeErr != nil {
 				return writeErr
 			}
 			continue
@@ -1120,7 +1131,7 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 				s.replication.mu.RLock()
 				ackOffset := s.replication.offset
 				s.replication.mu.RUnlock()
-				if err := writeReplicationRESPCommand(conn, "REPLCONF", "ACK", strconv.FormatInt(ackOffset, 10)); err != nil {
+				if err := s.writeReplicationACK(conn, ackOffset); err != nil {
 					return err
 				}
 				continue
@@ -1160,7 +1171,7 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 			s.replication.mu.RLock()
 			ackOffset := s.replication.offset
 			s.replication.mu.RUnlock()
-			if writeErr := writeReplicationRESPCommand(conn, "REPLCONF", "ACK", strconv.FormatInt(ackOffset, 10)); writeErr != nil {
+			if writeErr := s.writeReplicationACK(conn, ackOffset); writeErr != nil {
 				return writeErr
 			}
 			continue
