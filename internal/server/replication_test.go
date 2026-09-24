@@ -403,6 +403,76 @@ func TestDecodeRedisLegacyZiplists(t *testing.T) {
 	})
 }
 
+func TestDecodeRedisRDBHashFieldExpirationMetadata(t *testing.T) {
+	minExpire := time.Now().Add(2 * time.Minute).UnixMilli()
+
+	body := make([]byte, 8)
+	binary.LittleEndian.PutUint64(body[:8], uint64(minExpire))
+	body = appendRDBLen(body, 3)
+
+	// Field a expires exactly at minExpire: relative TTL is 1.
+	body = appendRDBLen(body, 1)
+	body = appendRDBRawString(body, []byte("a"))
+	body = appendRDBRawString(body, []byte("one"))
+
+	// Field b has no TTL.
+	body = appendRDBLen(body, 0)
+	body = appendRDBRawString(body, []byte("b"))
+	body = appendRDBRawString(body, []byte("two"))
+
+	// Field c expires 5 seconds after minExpire: delta + 1.
+	body = appendRDBLen(body, 5001)
+	body = appendRDBRawString(body, []byte("c"))
+	body = appendRDBRawString(body, []byte("three"))
+
+	pos := 0
+	obj, err := decodeRedisRDBObjectAt(body, &pos, redisRDBTypeHashMetadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pos != len(body) || len(obj.hash) != 3 {
+		t.Fatalf("decode pos=%d len=%d pairs=%v", pos, len(body), obj.hash)
+	}
+	if obj.hash[0].ExpiresAtMS != minExpire ||
+		obj.hash[1].ExpiresAtMS != 0 ||
+		obj.hash[2].ExpiresAtMS != minExpire+5000 {
+		t.Fatalf("unexpected field expiries: %+v", obj.hash)
+	}
+
+	record, err := buildRestoreRecord("rdb:hfe", obj, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := engine.New()
+	if err := store.Restore([]persistence.Record{record}, true); err != nil {
+		t.Fatal(err)
+	}
+	ttl, err := store.HashFieldPTTL("rdb:hfe", [][]byte{[]byte("a"), []byte("b"), []byte("c")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ttl) != 3 || ttl[0] <= 0 || ttl[1] != -1 || ttl[2] <= ttl[0] {
+		t.Fatalf("restored field TTLs = %v", ttl)
+	}
+}
+
+func TestDecodeRedisRDBHashFieldExpirationMetadataPreGA(t *testing.T) {
+	expireAt := time.Now().Add(2 * time.Minute).UnixMilli()
+	body := appendRDBLen(nil, 1)
+	body = appendRDBLen(body, uint64(expireAt))
+	body = appendRDBRawString(body, []byte("field"))
+	body = appendRDBRawString(body, []byte("value"))
+
+	pos := 0
+	obj, err := decodeRedisRDBObjectAt(body, &pos, redisRDBTypeHashMetadataPreGA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pos != len(body) || len(obj.hash) != 1 || obj.hash[0].ExpiresAtMS != expireAt {
+		t.Fatalf("unexpected PRE_GA decode: pos=%d len=%d hash=%+v", pos, len(body), obj.hash)
+	}
+}
+
 func TestDecodeRedisRDBPlainCollections(t *testing.T) {
 	t.Run("list", func(t *testing.T) {
 		body := appendRDBLen(nil, 3)
