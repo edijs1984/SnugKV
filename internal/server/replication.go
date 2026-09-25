@@ -64,6 +64,8 @@ type replicationState struct {
 	backlogBytes       int64
 	backlogFirstOffset int64
 	backlog            []replicationBacklogEntry
+	backlogHead        int
+	backlogCount       int
 
 	nextReplicaID     uint64
 	replicas           map[uint64]func([]byte) error
@@ -382,25 +384,57 @@ func (r *replicationState) appendBacklogLocked(frame []byte, payload []byte) {
 	r.appendBacklogPayloadLocked(len(frame), append([]byte(nil), payload...))
 }
 
+func (r *replicationState) backlogEntryLocked(logical int) replicationBacklogEntry {
+	if logical < 0 || logical >= r.backlogCount {
+		panic("replication backlog index out of range")
+	}
+	return r.backlog[(r.backlogHead+logical)%len(r.backlog)]
+}
+
+func (r *replicationState) growBacklogLocked() {
+	old := r.backlog
+	nextCap := len(old) * 2
+	if nextCap < 64 {
+		nextCap = 64
+	}
+	next := make([]replicationBacklogEntry, nextCap)
+	for i := 0; i < r.backlogCount; i++ {
+		next[i] = r.backlogEntryLocked(i)
+	}
+	r.backlog = next
+	r.backlogHead = 0
+}
+
 func (r *replicationState) appendBacklogPayloadLocked(frameLen int, payload []byte) {
 	r.ensureBacklogLocked()
+
+	if r.backlogCount == len(r.backlog) {
+		r.growBacklogLocked()
+	}
+
 	start := r.offset + 1
 	end := r.offset + int64(frameLen)
-	entry := replicationBacklogEntry{
+	index := (r.backlogHead + r.backlogCount) % len(r.backlog)
+	r.backlog[index] = replicationBacklogEntry{
 		startOffset: start,
 		endOffset:   end,
 		payload:     payload,
 	}
-	r.backlog = append(r.backlog, entry)
+	r.backlogCount++
 	r.backlogBytes += int64(frameLen)
 	r.offset = end
-	for len(r.backlog) > 0 && r.backlogBytes > r.backlogSize {
-		r.backlogBytes -= r.backlog[0].endOffset - r.backlog[0].startOffset + 1
-		r.backlog = r.backlog[1:]
+
+	for r.backlogCount > 0 && r.backlogBytes > r.backlogSize {
+		entry := r.backlog[r.backlogHead]
+		r.backlogBytes -= entry.endOffset - entry.startOffset + 1
+		r.backlog[r.backlogHead] = replicationBacklogEntry{}
+		r.backlogHead = (r.backlogHead + 1) % len(r.backlog)
+		r.backlogCount--
 	}
-	if len(r.backlog) > 0 {
-		r.backlogFirstOffset = r.backlog[0].startOffset
+	if r.backlogCount > 0 {
+		r.backlogFirstOffset = r.backlog[r.backlogHead].startOffset
 	} else {
+		r.backlogHead = 0
 		r.backlogFirstOffset = r.offset + 1
 	}
 }
@@ -416,8 +450,9 @@ func (r *replicationState) partialSyncPayloadLocked(runID string, offset int64) 
 	if offset < r.backlogFirstOffset {
 		return nil, false
 	}
-	payloads := make([][]byte, 0)
-	for _, entry := range r.backlog {
+	payloads := make([][]byte, 0, r.backlogCount)
+	for i := 0; i < r.backlogCount; i++ {
+		entry := r.backlogEntryLocked(i)
 		if entry.endOffset >= offset {
 			payloads = append(payloads, append([]byte(nil), entry.payload...))
 		}
