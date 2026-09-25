@@ -27,6 +27,7 @@ type Server struct {
 	commands                 uint64
 	journal                  Journal
 	durableMu                sync.RWMutex
+	replicationSetStripes    [256]sync.Mutex
 	durabilityFailed         bool
 	watchSessions            atomic.Int32
 	replication              replicationState
