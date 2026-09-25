@@ -677,8 +677,12 @@ func decodePlainSetReplicationFrame(frame []byte) (key, value []byte, ok bool, e
 
 	keyStart := headerLen
 	valueStart := keyStart + keyLen
-	key = append([]byte(nil), frame[keyStart:valueStart]...)
-	value = append([]byte(nil), frame[valueStart:checksumPos]...)
+	// The replication reader owns frame until the current record has been
+	// applied/forwarded. Return immutable views into that frame so the replica
+	// does not allocate and copy key/value bytes before Store.SetPlain copies
+	// the value into arena storage.
+	key = frame[keyStart:valueStart]
+	value = frame[valueStart:checksumPos]
 	return key, value, true, nil
 }
 
