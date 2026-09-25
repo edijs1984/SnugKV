@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -74,6 +75,14 @@ type replicationState struct {
 	replicaAOFOffsets  map[uint64]int64
 	replicaAckTimes    map[uint64]time.Time
 	ackChanged         chan struct{}
+
+	writerSocketWrites     uint64
+	writerFrames           uint64
+	writerBytes            uint64
+	writerMaxFrames        uint64
+	writerMaxBytes         uint64
+	writerQueueHighWater   uint64
+	writerQueueBlockEvents uint64
 
 	followCancel      chan struct{}
 	followDone        chan struct{}
@@ -263,7 +272,14 @@ func (s *Server) replicationInfo() string {
 			"repl_backlog_active:%d\r\n"+
 			"repl_backlog_size:%d\r\n"+
 			"repl_backlog_first_byte_offset:%d\r\n"+
-			"repl_backlog_histlen:%d\r\n",
+			"repl_backlog_histlen:%d\r\n"+
+			"snug_repl_writer_socket_writes:%d\r\n"+
+			"snug_repl_writer_frames:%d\r\n"+
+			"snug_repl_writer_bytes:%d\r\n"+
+			"snug_repl_writer_max_frames:%d\r\n"+
+			"snug_repl_writer_max_bytes:%d\r\n"+
+			"snug_repl_writer_queue_high_water:%d\r\n"+
+			"snug_repl_writer_queue_block_events:%d\r\n",
 		state.connectedReplicas,
 		s.replication.replicaInfoLines(),
 		state.runID,
@@ -272,6 +288,13 @@ func (s *Server) replicationInfo() string {
 		state.backlogSize,
 		state.backlogFirstOffset,
 		state.backlogBytes,
+		atomic.LoadUint64(&s.replication.writerSocketWrites),
+		atomic.LoadUint64(&s.replication.writerFrames),
+		atomic.LoadUint64(&s.replication.writerBytes),
+		atomic.LoadUint64(&s.replication.writerMaxFrames),
+		atomic.LoadUint64(&s.replication.writerMaxBytes),
+		atomic.LoadUint64(&s.replication.writerQueueHighWater),
+		atomic.LoadUint64(&s.replication.writerQueueBlockEvents),
 	)
 }
 
@@ -429,6 +452,27 @@ func (r *replicationState) primaryHasReplicas() bool {
 	return r.role == replicationMaster && (len(r.replicas) > 0 || r.backlogActive)
 }
 
+func atomicMaxUint64(dst *uint64, value uint64) {
+	for {
+		current := atomic.LoadUint64(dst)
+		if value <= current || atomic.CompareAndSwapUint64(dst, current, value) {
+			return
+		}
+	}
+}
+
+func (r *replicationState) recordWriterBatch(frames, bytes int) {
+	atomic.AddUint64(&r.writerSocketWrites, 1)
+	atomic.AddUint64(&r.writerFrames, uint64(frames))
+	atomic.AddUint64(&r.writerBytes, uint64(bytes))
+	atomicMaxUint64(&r.writerMaxFrames, uint64(frames))
+	atomicMaxUint64(&r.writerMaxBytes, uint64(bytes))
+}
+
+func (r *replicationState) recordWriterQueueDepth(depth int) {
+	atomicMaxUint64(&r.writerQueueHighWater, uint64(depth))
+}
+
 func (r *replicationState) registerReplica(write func([]byte) error) (uint64, string, int64) {
 	queue := make(chan []byte, replicationReplicaQueueDepth)
 	stop := make(chan struct{})
@@ -443,6 +487,15 @@ func (r *replicationState) registerReplica(write func([]byte) error) (uint64, st
 
 		select {
 		case queue <- payload:
+			r.recordWriterQueueDepth(len(queue))
+			return nil
+		default:
+			atomic.AddUint64(&r.writerQueueBlockEvents, 1)
+		}
+
+		select {
+		case queue <- payload:
+			r.recordWriterQueueDepth(len(queue))
 			return nil
 		case <-stop:
 			return net.ErrClosed
@@ -513,7 +566,8 @@ func (r *replicationState) registerReplica(write func([]byte) error) (uint64, st
 					select {
 					case next := <-queue:
 						if !appendPayload(next, &frames) {
-							if err := write(batch); err != nil {
+							r.recordWriterBatch(frames, len(batch))
+				if err := write(batch); err != nil {
 								r.unregisterReplica(id)
 								return
 							}
@@ -540,7 +594,9 @@ func (r *replicationState) registerReplica(write func([]byte) error) (uint64, st
 						select {
 						case next := <-queue:
 							if !appendPayload(next, &frames) {
-								if err := write(batch); err != nil {
+								r.recordWriterBatch(frames, len(batch))
+								r.recordWriterBatch(frames, len(batch))
+				if err := write(batch); err != nil {
 									r.unregisterReplica(id)
 									return
 								}
@@ -570,7 +626,9 @@ func (r *replicationState) registerReplica(write func([]byte) error) (uint64, st
 						select {
 						case next := <-queue:
 							if !appendPayload(next, &frames) {
-								if err := write(batch); err != nil {
+								r.recordWriterBatch(frames, len(batch))
+								r.recordWriterBatch(frames, len(batch))
+				if err := write(batch); err != nil {
 									r.unregisterReplica(id)
 									return
 								}
@@ -584,6 +642,7 @@ func (r *replicationState) registerReplica(write func([]byte) error) (uint64, st
 					}
 				}
 
+				r.recordWriterBatch(frames, len(batch))
 				if err := write(batch); err != nil {
 					r.unregisterReplica(id)
 					return
