@@ -632,6 +632,25 @@ func (s *Server) forwardReplicatedSnugFrame(frame []byte) int64 {
 	return replicatedOffset
 }
 
+func (s *Server) publishPlainSetReplication(key, value []byte) {
+	frame := encodePlainSetReplicationFrame(key, value)
+	payload := replicationBulk(frame)
+
+	s.replication.mu.Lock()
+	s.replication.appendBacklogLocked(frame, payload)
+	targets := make(map[uint64]func([]byte) error, len(s.replication.replicas))
+	for id, write := range s.replication.replicas {
+		targets[id] = write
+	}
+	s.replication.mu.Unlock()
+
+	for id, write := range targets {
+		if err := write(payload); err != nil {
+			s.replication.unregisterReplica(id)
+		}
+	}
+}
+
 func (s *Server) publishReplication(records []persistence.Record) {
 	if len(records) == 0 {
 		return
