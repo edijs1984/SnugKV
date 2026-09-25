@@ -113,6 +113,54 @@ func TestReplicationPhase1FullSyncLiveWritesAndPromotion(t *testing.T) {
 	}
 }
 
+func TestReplicationPlainSetDirectRecordClearsReplicaTTL(t *testing.T) {
+	primary, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer primary.Close()
+
+	replica, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replica.Close()
+
+	if _, err := primary.server.Execute([][]byte{
+		[]byte("SET"), []byte("ttl-key"), []byte("old"), []byte("PX"), []byte("60000"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	addr := primary.listener.Addr().(*net.TCPAddr)
+	if _, err := replica.server.Execute([][]byte{
+		[]byte("REPLICAOF"), []byte("127.0.0.1"), []byte(strconv.Itoa(addr.Port)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	waitReplication(t, func() bool {
+		return replica.server.replication.snapshot().masterLinkStatus == "up"
+	})
+	waitReplication(t, func() bool {
+		return replica.server.store.TTL("ttl-key", true) > 0
+	})
+
+	if _, err := primary.server.Execute([][]byte{
+		[]byte("SET"), []byte("ttl-key"), []byte("new"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	waitReplication(t, func() bool {
+		value, found, wrong := replica.server.store.GetString("ttl-key")
+		return found && !wrong && string(value) == "new"
+	})
+	if ttl := replica.server.store.TTL("ttl-key", true); ttl != -1 {
+		t.Fatalf("replica ttl=%d want=-1 after plain SET", ttl)
+	}
+}
+
 func TestReplicationPublishDoesNotWaitForReplicaSocket(t *testing.T) {
 	s := New(engine.New())
 
