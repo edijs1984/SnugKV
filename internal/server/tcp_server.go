@@ -863,6 +863,21 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			}
 		}
 
+		if result, replicationOffset, handled, fastErr := s.server.executeAuthorizedSerializedReplicatedSet(msg); handled {
+			if fastErr != nil {
+				result = errorResponse(fastErr)
+			}
+			commandSucceeded := fastErr == nil
+			if writeProtocol(msg, result) != nil {
+				return
+			}
+			if commandSucceeded {
+				clientSession.replicationOffset.Store(replicationOffset)
+				s.invalidateTrackingKeys(clientSession, msg)
+			}
+			continue
+		}
+
 		if handled, fastErr := s.server.executeAuthorizedConcurrentRawGet(
 			msg,
 			writer.writeBulkBuffered,
