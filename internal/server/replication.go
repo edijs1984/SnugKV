@@ -30,9 +30,11 @@ const (
 	replicationMaster replicationRole = iota
 	replicationReplica
 
-	replicationReplicaQueueDepth      = 4096
-	replicationReplicaBatchMaxFrames  = 64
-	replicationReplicaBatchMaxBytes   = 256 << 10
+	replicationReplicaQueueDepth        = 4096
+	replicationReplicaBatchMaxFrames    = 256
+	replicationReplicaBatchMaxBytes     = 256 << 10
+	replicationReplicaBatchTargetFrames = 8
+	replicationReplicaCoalesceInterval  = 8 * time.Microsecond
 
 	replicationPlainSetMagic0 byte = 0x53 // 'S'
 	replicationPlainSetMagic1 byte = 0x4b // 'K'
@@ -483,33 +485,90 @@ func (r *replicationState) registerReplica(write func([]byte) error) (uint64, st
 
 	go func() {
 		batch := make([]byte, 0, replicationReplicaBatchMaxBytes)
+		timer := time.NewTimer(time.Hour)
+		if !timer.Stop() {
+			<-timer.C
+		}
+		defer timer.Stop()
+
+		appendPayload := func(next []byte, frames *int) bool {
+			if len(batch)+len(next) > replicationReplicaBatchMaxBytes {
+				return false
+			}
+			batch = append(batch, next...)
+			*frames++
+			return true
+		}
+
 		for {
 			select {
 			case payload := <-queue:
 				batch = append(batch[:0], payload...)
 				frames := 1
 
-			drain:
+				// First consume everything already queued without waiting.
+			drainImmediate:
 				for frames < replicationReplicaBatchMaxFrames &&
 					len(batch) < replicationReplicaBatchMaxBytes {
 					select {
 					case next := <-queue:
-						if len(batch)+len(next) > replicationReplicaBatchMaxBytes {
-							// Preserve ordering without dropping the payload: write
-							// the current batch first, then start the next batch with
-							// this frame.
+						if !appendPayload(next, &frames) {
 							if err := write(batch); err != nil {
 								r.unregisterReplica(id)
 								return
 							}
 							batch = append(batch[:0], next...)
 							frames = 1
-							continue drain
 						}
-						batch = append(batch, next...)
-						frames++
 					default:
-						break drain
+						break drainImmediate
+					}
+				}
+
+				// Very small batches are the common case. Give the producer a tiny
+				// window to add more work, but never impose the delay once the target
+				// batch size is already available.
+				if frames < replicationReplicaBatchTargetFrames &&
+					frames < replicationReplicaBatchMaxFrames &&
+					len(batch) < replicationReplicaBatchMaxBytes {
+					timer.Reset(replicationReplicaCoalesceInterval)
+
+				coalesce:
+					for frames < replicationReplicaBatchTargetFrames &&
+						frames < replicationReplicaBatchMaxFrames &&
+						len(batch) < replicationReplicaBatchMaxBytes {
+						select {
+						case next := <-queue:
+							if !appendPayload(next, &frames) {
+								break coalesce
+							}
+						case <-timer.C:
+							break coalesce
+						case <-stop:
+							return
+						}
+					}
+
+					if !timer.Stop() {
+						select {
+						case <-timer.C:
+						default:
+						}
+					}
+
+					// Once the target is reached, opportunistically absorb any
+					// additional queued frames without another wait.
+				drainAfterCoalesce:
+					for frames < replicationReplicaBatchMaxFrames &&
+						len(batch) < replicationReplicaBatchMaxBytes {
+						select {
+						case next := <-queue:
+							if !appendPayload(next, &frames) {
+								break drainAfterCoalesce
+							}
+						default:
+							break drainAfterCoalesce
+						}
 					}
 				}
 
