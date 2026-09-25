@@ -564,6 +564,23 @@ func encodeReplicationFrame(records []persistence.Record) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+func encodePlainSetReplicationFrame(key, value []byte) []byte {
+	keyLen := base64.StdEncoding.EncodedLen(len(key))
+	valueLen := base64.StdEncoding.EncodedLen(len(value))
+	payload := make([]byte, 0, 24+keyLen+valueLen)
+	payload = append(payload, '[', '{', '"', 'k', 'e', 'y', '"', ':', '"')
+	payload = base64.StdEncoding.AppendEncode(payload, key)
+	payload = append(payload, '"', ',', '"', 'v', 'a', 'l', 'u', 'e', '"', ':', '"')
+	payload = base64.StdEncoding.AppendEncode(payload, value)
+	payload = append(payload, '"', '}', ']')
+
+	frame := make([]byte, 8+len(payload))
+	binary.LittleEndian.PutUint32(frame[:4], uint32(len(payload)))
+	binary.LittleEndian.PutUint32(frame[4:8], crc32.ChecksumIEEE(payload))
+	copy(frame[8:], payload)
+	return frame
+}
+
 func decodeReplicationFrame(frame []byte) ([]persistence.Record, error) {
 	if len(frame) < 8 {
 		return nil, errors.New("short replication frame")
