@@ -493,20 +493,18 @@ func isConcurrentScalarCommand(args [][]byte) bool {
 
 
 func (s *Server) executeReplicatedWriteLocked(args [][]byte) ([]byte, error) {
-	// Plain SET is the dominant replicated scalar write path. Snapshot only the
-	// affected key so replication cost stays proportional to the mutation instead
-	// of exporting and diffing the entire database for every SET.
+	// Plain SET fully replaces one key, so the post-write export is already the
+	// complete replication record for this mutation. Avoid the pre-write snapshot
+	// and persistenceDiff entirely on this hot path.
 	if len(args) == 3 && bytes.EqualFold(args[0], []byte("SET")) {
 		affected := []string{string(args[1])}
-		before := s.store.Export(affected)
 		result, err := s.executePressure(args)
 		if err != nil {
 			return result, err
 		}
 		after := s.store.Export(affected)
-		changes := persistenceDiff(before, after)
-		if len(changes) > 0 {
-			s.publishReplication(changes)
+		if len(after) > 0 {
+			s.publishReplication(after)
 		}
 		s.signalListAvailability(args, result)
 		s.signalZSetAvailability(args, result)
