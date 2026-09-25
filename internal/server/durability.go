@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"errors"
+	"snugkv/internal/index"
 	"snugkv/internal/persistence"
 	"strings"
 	"sync/atomic"
@@ -229,36 +230,68 @@ func (s *Server) executeAuthorizedConcurrentGet(args [][]byte) (response []byte,
 // It is only used when persistence, metrics, WATCH and maxmemory semantics do not
 // require the ordinary durability/pressure path.
 func (s *Server) executeAuthorizedConcurrentSet(args [][]byte) (response []byte, handled bool, err error) {
+	response, handled, _, err = s.executeAuthorizedConcurrentSetCaptureOffset(args)
+	return response, handled, err
+}
+
+func (s *Server) executeAuthorizedConcurrentSetCaptureOffset(args [][]byte) (response []byte, handled bool, replicationOffset int64, err error) {
 	if len(args) == 3 && bytes.EqualFold(args[0], []byte("SET")) && s.replication.isReadOnlyReplica() {
-		return nil, true, errors.New("READONLY You can't write against a read only replica.")
+		return nil, true, 0, errors.New("READONLY You can't write against a read only replica.")
 	}
 	if len(args) != 3 ||
 		!bytes.EqualFold(args[0], []byte("SET")) ||
 		s.journal != nil ||
-		s.replication.primaryHasReplicas() ||
 		atomic.LoadUint32(&s.metricsEnabled) != 0 ||
 		s.store.MaxMemory() != 0 {
-		return nil, false, nil
+		return nil, false, 0, nil
 	}
 
 	s.durableMu.RLock()
 	if s.hasWatchSessionsLocked() {
 		s.durableMu.RUnlock()
-		return nil, false, nil
+		return nil, false, 0, nil
 	}
 
 	key := string(args[1])
+	hasReplication := s.replication.primaryHasReplicas()
+
+	if hasReplication {
+		// Preserve same-key commit/replication ordering without serializing
+		// unrelated keys behind durableMu's exclusive lock. A stripe collision
+		// may serialize unrelated keys, but never changes correctness.
+		stripe := &s.replicationSetStripes[index.HashBytes(args[1])&uint64(len(s.replicationSetStripes)-1)]
+		stripe.Lock()
+
+		setErr := s.store.SetPlain(key, args[2])
+		if setErr == nil {
+			s.publishPlainSetReplication(args[1], args[2])
+			replicationOffset = s.replication.currentOffset()
+		}
+
+		stripe.Unlock()
+		s.durableMu.RUnlock()
+
+		atomic.AddUint64(&s.commands, 1)
+		if setErr != nil {
+			return nil, true, 0, setErr
+		}
+		if s.optimizer != nil && s.store.ShouldQueueOptimization(args[2]) {
+			s.optimizer.Queue(key)
+		}
+		return []byte("+OK\r\n"), true, replicationOffset, nil
+	}
+
 	setErr := s.store.SetPlain(key, args[2])
 	s.durableMu.RUnlock()
 
 	atomic.AddUint64(&s.commands, 1)
 	if setErr != nil {
-		return nil, true, setErr
+		return nil, true, 0, setErr
 	}
 	if s.optimizer != nil && s.store.ShouldQueueOptimization(args[2]) {
 		s.optimizer.Queue(key)
 	}
-	return []byte("+OK\r\n"), true, nil
+	return []byte("+OK\r\n"), true, 0, nil
 }
 
 func (s *Server) executeDurable(args [][]byte) ([]byte, error) {
