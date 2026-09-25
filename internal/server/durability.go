@@ -507,10 +507,7 @@ func (s *Server) executeReplicatedWriteLocked(args [][]byte) ([]byte, error) {
 			if s.optimizer != nil && s.store.ShouldQueueOptimization(args[2]) {
 				s.optimizer.Queue(key)
 			}
-			s.publishReplication([]persistence.Record{{
-				Key:   append([]byte(nil), args[1]...),
-				Value: append([]byte(nil), args[2]...),
-			}})
+			s.publishPlainSetReplication(args[1], args[2])
 			return []byte("+OK\r\n"), nil
 		}
 
