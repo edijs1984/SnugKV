@@ -31,7 +31,9 @@ const (
 	replicationMaster replicationRole = iota
 	replicationReplica
 
-	replicationReplicaQueueDepth = 4096
+	replicationReplicaQueueDepth      = 4096
+	replicationReplicaBatchMaxFrames  = 64
+	replicationReplicaBatchMaxBytes   = 256 << 10
 )
 
 type replicationBacklogEntry struct {
@@ -477,10 +479,38 @@ func (r *replicationState) registerReplica(write func([]byte) error) (uint64, st
 	r.mu.Unlock()
 
 	go func() {
+		batch := make([]byte, 0, replicationReplicaBatchMaxBytes)
 		for {
 			select {
 			case payload := <-queue:
-				if err := write(payload); err != nil {
+				batch = append(batch[:0], payload...)
+				frames := 1
+
+			drain:
+				for frames < replicationReplicaBatchMaxFrames &&
+					len(batch) < replicationReplicaBatchMaxBytes {
+					select {
+					case next := <-queue:
+						if len(batch)+len(next) > replicationReplicaBatchMaxBytes {
+							// Preserve ordering without dropping the payload: write
+							// the current batch first, then start the next batch with
+							// this frame.
+							if err := write(batch); err != nil {
+								r.unregisterReplica(id)
+								return
+							}
+							batch = append(batch[:0], next...)
+							frames = 1
+							continue drain
+						}
+						batch = append(batch, next...)
+						frames++
+					default:
+						break drain
+					}
+				}
+
+				if err := write(batch); err != nil {
 					r.unregisterReplica(id)
 					return
 				}
