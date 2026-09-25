@@ -16,6 +16,8 @@ PIPELINE="${PIPELINE:-256}"
 FSYNC="${FSYNC:-everysec}"
 AOF_MODE="${AOF_MODE:-off}"
 SETTLE_SECONDS="${SETTLE_SECONDS:-1}"
+CASES="${CASES:-0 1 2 4 chain}"
+REPEATS="${REPEATS:-1}"
 
 PIDS=()
 
@@ -108,9 +110,12 @@ run_star_case() {
   "$BENCH_BIN"     -server "$label"     -addr "127.0.0.1:${PRIMARY_PORT}"     -workload load     -keys "$KEYS"     -workers "$WORKERS"     -pipeline "$PIPELINE"     -value-bytes "$VALUE_BYTES"     -value-shape "$VALUE_SHAPE"     -reset     | tee -a "$OUT"
 
   if (( replicas > 0 )); then
-    local wait_reply
+    local wait_reply wait_start_ns wait_end_ns wait_ms
+    wait_start_ns="$(date +%s%N)"
     wait_reply="$(redis-cli -p "$PRIMARY_PORT" WAIT "$replicas" 5000)"
-    echo "WAIT direct replicas: ${wait_reply}/${replicas}" >&2
+    wait_end_ns="$(date +%s%N)"
+    wait_ms=$(( (wait_end_ns - wait_start_ns) / 1000000 ))
+    echo "WAIT direct replicas: ${wait_reply}/${replicas} wait_ms=${wait_ms}" >&2
   fi
 
   sleep "$SETTLE_SECONDS"
@@ -166,11 +171,28 @@ run_chain_case() {
 : > "$OUT"
 build
 
-for replicas in 0 1 2 4; do
-  run_star_case "$replicas"
-done
+if ! [[ "$REPEATS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "REPEATS must be a positive integer" >&2
+  exit 2
+fi
 
-run_chain_case
+for repeat in $(seq 1 "$REPEATS"); do
+  for case_name in $CASES; do
+    echo "=== repeat ${repeat}/${REPEATS}; case ${case_name} ===" >&2
+    case "$case_name" in
+      0|1|2|4)
+        run_star_case "$case_name"
+        ;;
+      chain)
+        run_chain_case
+        ;;
+      *)
+        echo "unknown CASES entry: $case_name (expected 0, 1, 2, 4, or chain)" >&2
+        exit 2
+        ;;
+    esac
+  done
+done
 
 echo >&2
 echo "Replication benchmark results: $OUT" >&2
