@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -29,6 +30,8 @@ type replicationRole uint8
 const (
 	replicationMaster replicationRole = iota
 	replicationReplica
+
+	replicationReplicaQueueDepth = 4096
 )
 
 type replicationBacklogEntry struct {
@@ -59,6 +62,7 @@ type replicationState struct {
 
 	nextReplicaID     uint64
 	replicas           map[uint64]func([]byte) error
+	replicaStops        map[uint64]func()
 	replicaAckOffsets  map[uint64]int64
 	replicaAOFOffsets  map[uint64]int64
 	replicaAckTimes    map[uint64]time.Time
@@ -335,6 +339,9 @@ func (r *replicationState) init() {
 	if r.replicas == nil {
 		r.replicas = make(map[uint64]func([]byte) error)
 	}
+	if r.replicaStops == nil {
+		r.replicaStops = make(map[uint64]func())
+	}
 	if r.replicaAckOffsets == nil {
 		r.replicaAckOffsets = make(map[uint64]int64)
 	}
@@ -416,10 +423,36 @@ func (r *replicationState) primaryHasReplicas() bool {
 }
 
 func (r *replicationState) registerReplica(write func([]byte) error) (uint64, string, int64) {
+	queue := make(chan []byte, replicationReplicaQueueDepth)
+	stop := make(chan struct{})
+	var stopOnce sync.Once
+
+	enqueue := func(payload []byte) error {
+		select {
+		case <-stop:
+			return net.ErrClosed
+		default:
+		}
+
+		select {
+		case queue <- payload:
+			return nil
+		case <-stop:
+			return net.ErrClosed
+		}
+	}
+	stopWriter := func() {
+		stopOnce.Do(func() {
+			close(stop)
+		})
+	}
+
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.replicas == nil {
 		r.replicas = make(map[uint64]func([]byte) error)
+	}
+	if r.replicaStops == nil {
+		r.replicaStops = make(map[uint64]func())
 	}
 	if r.replicaAckOffsets == nil {
 		r.replicaAckOffsets = make(map[uint64]int64)
@@ -432,24 +465,49 @@ func (r *replicationState) registerReplica(write func([]byte) error) (uint64, st
 	}
 	r.nextReplicaID++
 	id := r.nextReplicaID
-	r.replicas[id] = write
+	r.replicas[id] = enqueue
+	r.replicaStops[id] = stopWriter
 	r.replicaAckOffsets[id] = 0
 	r.replicaAOFOffsets[id] = -1
 	r.replicaAckTimes[id] = time.Now()
 	r.connectedReplicas = len(r.replicas)
 	r.notifyAckChangedLocked()
-	return id, r.runID, r.offset
+	runID := r.runID
+	offset := r.offset
+	r.mu.Unlock()
+
+	go func() {
+		for {
+			select {
+			case payload := <-queue:
+				if err := write(payload); err != nil {
+					r.unregisterReplica(id)
+					return
+				}
+			case <-stop:
+				return
+			}
+		}
+	}()
+
+	return id, runID, offset
 }
 
 func (r *replicationState) unregisterReplica(id uint64) {
 	r.mu.Lock()
+	stopWriter := r.replicaStops[id]
 	delete(r.replicas, id)
+	delete(r.replicaStops, id)
 	delete(r.replicaAckOffsets, id)
 	delete(r.replicaAOFOffsets, id)
 	delete(r.replicaAckTimes, id)
 	r.connectedReplicas = len(r.replicas)
 	r.notifyAckChangedLocked()
 	r.mu.Unlock()
+
+	if stopWriter != nil {
+		stopWriter()
+	}
 }
 
 func (r *replicationState) acknowledgeReplica(id uint64, offset int64, aofOffset ...int64) {
@@ -506,6 +564,66 @@ func encodeReplicationFrame(records []persistence.Record) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+func encodePlainSetReplicationFrame(key, value []byte) []byte {
+	keyLen := base64.StdEncoding.EncodedLen(len(key))
+	valueLen := base64.StdEncoding.EncodedLen(len(value))
+	payload := make([]byte, 0, 24+keyLen+valueLen)
+	payload = append(payload, '[', '{', '"', 'k', 'e', 'y', '"', ':', '"')
+	payload = base64.StdEncoding.AppendEncode(payload, key)
+	payload = append(payload, '"', ',', '"', 'v', 'a', 'l', 'u', 'e', '"', ':', '"')
+	payload = base64.StdEncoding.AppendEncode(payload, value)
+	payload = append(payload, '"', '}', ']')
+
+	frame := make([]byte, 8+len(payload))
+	binary.LittleEndian.PutUint32(frame[:4], uint32(len(payload)))
+	binary.LittleEndian.PutUint32(frame[4:8], crc32.ChecksumIEEE(payload))
+	copy(frame[8:], payload)
+	return frame
+}
+
+func decodePlainSetReplicationFrame(frame []byte) (key, value []byte, ok bool, err error) {
+	if len(frame) < 8 {
+		return nil, nil, false, nil
+	}
+	n := int(binary.LittleEndian.Uint32(frame[:4]))
+	if n < 0 || n > persistence.MaxFrameBytes || len(frame) != 8+n {
+		return nil, nil, false, errors.New("invalid replication frame length")
+	}
+	payload := frame[8:]
+	if crc32.ChecksumIEEE(payload) != binary.LittleEndian.Uint32(frame[4:8]) {
+		return nil, nil, false, errors.New("replication checksum mismatch")
+	}
+
+	prefix := []byte(`[{"key":"`)
+	separator := []byte(`","value":"`)
+	suffix := []byte(`"}]`)
+	if !bytes.HasPrefix(payload, prefix) || !bytes.HasSuffix(payload, suffix) {
+		return nil, nil, false, nil
+	}
+	body := payload[len(prefix) : len(payload)-len(suffix)]
+	sep := bytes.Index(body, separator)
+	if sep < 0 {
+		return nil, nil, false, nil
+	}
+
+	key64 := body[:sep]
+	value64 := body[sep+len(separator):]
+	key = make([]byte, base64.StdEncoding.DecodedLen(len(key64)))
+	nk, decodeErr := base64.StdEncoding.Decode(key, key64)
+	if decodeErr != nil {
+		return nil, nil, false, nil
+	}
+	key = key[:nk]
+
+	value = make([]byte, base64.StdEncoding.DecodedLen(len(value64)))
+	nv, decodeErr := base64.StdEncoding.Decode(value, value64)
+	if decodeErr != nil {
+		return nil, nil, false, nil
+	}
+	value = value[:nv]
+	return key, value, true, nil
+}
+
 func decodeReplicationFrame(frame []byte) ([]persistence.Record, error) {
 	if len(frame) < 8 {
 		return nil, errors.New("short replication frame")
@@ -555,6 +673,25 @@ func (s *Server) forwardReplicatedSnugFrame(frame []byte) int64 {
 	}
 
 	return replicatedOffset
+}
+
+func (s *Server) publishPlainSetReplication(key, value []byte) {
+	frame := encodePlainSetReplicationFrame(key, value)
+	payload := replicationBulk(frame)
+
+	s.replication.mu.Lock()
+	s.replication.appendBacklogLocked(frame, payload)
+	targets := make(map[uint64]func([]byte) error, len(s.replication.replicas))
+	for id, write := range s.replication.replicas {
+		targets[id] = write
+	}
+	s.replication.mu.Unlock()
+
+	for id, write := range targets {
+		if err := write(payload); err != nil {
+			s.replication.unregisterReplica(id)
+		}
+	}
 }
 
 func (s *Server) publishReplication(records []persistence.Record) {
@@ -1239,6 +1376,27 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 		if err != nil {
 			return err
 		}
+		if s.journal == nil && s.store.MaxMemory() == 0 {
+			key, value, plainSet, decodeErr := decodePlainSetReplicationFrame(frame)
+			if decodeErr != nil {
+				return decodeErr
+			}
+			if plainSet {
+				s.durableMu.Lock()
+				err = s.store.SetPlain(string(key), value)
+				if err == nil {
+					s.refreshWatchesLocked()
+				}
+				s.durableMu.Unlock()
+				if err != nil {
+					return err
+				}
+				replicatedOffset := s.forwardReplicatedSnugFrame(frame)
+				s.noteReplicaAOFOffset(replicatedOffset)
+				continue
+			}
+		}
+
 		records, err := decodeReplicationFrame(frame)
 		if err != nil {
 			return err

@@ -493,6 +493,37 @@ func isConcurrentScalarCommand(args [][]byte) bool {
 
 
 func (s *Server) executeReplicatedWriteLocked(args [][]byte) ([]byte, error) {
+	// Plain SET fully replaces one key and clears its TTL. When maxmemory is
+	// disabled, execute it through Store.SetPlain directly so the replicated hot
+	// path avoids generic pressure/dispatch and unrelated availability signaling.
+	// With maxmemory enabled, keep executePressure so eviction semantics remain
+	// unchanged.
+	if len(args) == 3 && bytes.EqualFold(args[0], []byte("SET")) {
+		if s.store.MaxMemory() == 0 {
+			key := string(args[1])
+			if err := s.store.SetPlain(key, args[2]); err != nil {
+				return nil, err
+			}
+			if s.optimizer != nil && s.store.ShouldQueueOptimization(args[2]) {
+				s.optimizer.Queue(key)
+			}
+			s.publishPlainSetReplication(args[1], args[2])
+			return []byte("+OK\r\n"), nil
+		}
+
+		result, err := s.executePressure(args)
+		if err != nil {
+			return result, err
+		}
+		s.publishReplication([]persistence.Record{{
+			Key:   append([]byte(nil), args[1]...),
+			Value: append([]byte(nil), args[2]...),
+		}})
+		return result, nil
+	}
+
+	// Commands with dynamic or multi-key mutation surfaces keep the conservative
+	// full-database diff until their affected-key sets are audited individually.
 	before := s.store.Export(nil)
 	result, err := s.executePressure(args)
 	if err != nil {

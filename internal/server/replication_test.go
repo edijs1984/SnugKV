@@ -113,6 +113,136 @@ func TestReplicationPhase1FullSyncLiveWritesAndPromotion(t *testing.T) {
 	}
 }
 
+func TestEncodePlainSetReplicationFrameRoundTrip(t *testing.T) {
+	key := []byte{0x00, 0xff, 'k', 'e', 'y'}
+	value := []byte{0x01, 0x02, 0xfe, 'v', 'a', 'l', 'u', 'e'}
+
+	frame := encodePlainSetReplicationFrame(key, value)
+	records, err := decodeReplicationFrame(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("records=%d want=1", len(records))
+	}
+	if !bytes.Equal(records[0].Key, key) {
+		t.Fatalf("key=%v want=%v", records[0].Key, key)
+	}
+	if !bytes.Equal(records[0].Value, value) {
+		t.Fatalf("value=%v want=%v", records[0].Value, value)
+	}
+	if records[0].Deleted || records[0].ExpiresAtMS != 0 || records[0].ValueType != 0 {
+		t.Fatalf("unexpected metadata: %+v", records[0])
+	}
+}
+
+func TestDecodePlainSetReplicationFrameRoundTrip(t *testing.T) {
+	key := []byte{0x00, 0xff, 'k', 'e', 'y'}
+	value := []byte{0x01, 0x02, 0xfe, 'v', 'a', 'l', 'u', 'e'}
+
+	frame := encodePlainSetReplicationFrame(key, value)
+	gotKey, gotValue, ok, err := decodePlainSetReplicationFrame(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("plain SET frame was not recognized")
+	}
+	if !bytes.Equal(gotKey, key) {
+		t.Fatalf("key=%v want=%v", gotKey, key)
+	}
+	if !bytes.Equal(gotValue, value) {
+		t.Fatalf("value=%v want=%v", gotValue, value)
+	}
+}
+
+func TestReplicationPlainSetDirectRecordClearsReplicaTTL(t *testing.T) {
+	primary, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer primary.Close()
+
+	replica, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replica.Close()
+
+	if _, err := primary.server.Execute([][]byte{
+		[]byte("SET"), []byte("ttl-key"), []byte("old"), []byte("PX"), []byte("60000"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	addr := primary.listener.Addr().(*net.TCPAddr)
+	if _, err := replica.server.Execute([][]byte{
+		[]byte("REPLICAOF"), []byte("127.0.0.1"), []byte(strconv.Itoa(addr.Port)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	waitReplication(t, func() bool {
+		return replica.server.replication.snapshot().masterLinkStatus == "up"
+	})
+	waitReplication(t, func() bool {
+		return replica.server.store.TTL("ttl-key", true) > 0
+	})
+
+	if _, err := primary.server.Execute([][]byte{
+		[]byte("SET"), []byte("ttl-key"), []byte("new"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	waitReplication(t, func() bool {
+		value, found, wrong := replica.server.store.GetString("ttl-key")
+		return found && !wrong && string(value) == "new"
+	})
+	if ttl := replica.server.store.TTL("ttl-key", true); ttl != -1 {
+		t.Fatalf("replica ttl=%d want=-1 after plain SET", ttl)
+	}
+}
+
+func TestReplicationPublishDoesNotWaitForReplicaSocket(t *testing.T) {
+	s := New(engine.New())
+
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	id, _, _ := s.replication.registerReplica(func([]byte) error {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		<-release
+		return nil
+	})
+	defer func() {
+		close(release)
+		s.replication.unregisterReplica(id)
+	}()
+
+	s.publishReplication([]persistence.Record{{Reset: true}})
+
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("replica writer did not receive first payload")
+	}
+
+	done := make(chan struct{})
+	go func() {
+		s.publishReplication([]persistence.Record{{Reset: true}})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("publishReplication waited for replica socket write")
+	}
+}
+
 func TestReplicationRoleAndInfoShape(t *testing.T) {
 	s := New(engine.New())
 	role, err := s.Execute([][]byte{[]byte("ROLE")})

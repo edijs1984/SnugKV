@@ -78,9 +78,118 @@ func (s *Store) Export(keys []string) []persistence.Record {
 	return records
 }
 
+func (s *Store) restoreSingleRecord(record persistence.Record, force bool) error {
+	if record.Replication != nil {
+		return nil
+	}
+	if len(record.Value) > 32<<20 {
+		return errors.New("ERR recovered value exceeds 32 MiB limit")
+	}
+	if record.ValueType > uint8(TypeTimeSeries) {
+		return errors.New("ERR recovered value has unknown type")
+	}
+
+	key := string(record.Key)
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	now := s.now()
+	if record.Deleted || record.ExpiresAtMS != 0 && record.ExpiresAtMS <= now.UnixMilli() {
+		s.remove(sh, key)
+		return nil
+	}
+
+	var e preparedEntry
+	switch ValueType(record.ValueType) {
+	case TypeHash:
+		pairs, err := decodePackedHash(record.Value)
+		if err != nil {
+			return errors.New("ERR recovered HASH value is invalid")
+		}
+		e = s.hashEntry(pairs, record.Value)
+	case TypeSet:
+		if _, err := decodePackedSet(record.Value); err != nil {
+			return errors.New("ERR recovered SET value is invalid")
+		}
+		e = setPreparedEntry(record.Value)
+	case TypeList:
+		if _, err := decodePackedList(record.Value); err != nil {
+			return errors.New("ERR recovered LIST value is invalid")
+		}
+		e = listPreparedEntry(record.Value)
+	case TypeZSet:
+		if _, err := decodePackedZSet(record.Value); err != nil {
+			return errors.New("ERR recovered ZSET value is invalid")
+		}
+		e = zsetPreparedEntry(record.Value)
+	case TypeStream:
+		if _, err := decodePackedStream(record.Value); err != nil {
+			return errors.New("ERR recovered STREAM value is invalid")
+		}
+		e = streamPreparedEntry(record.Value)
+	case TypeBloom:
+		if _, err := decodeBloom(record.Value); err != nil {
+			return errors.New("ERR recovered BLOOM value is invalid")
+		}
+		e = bloomPreparedEntry(record.Value)
+	case TypeCuckoo:
+		if _, err := decodeCuckoo(record.Value); err != nil {
+			return errors.New("ERR recovered CUCKOO value is invalid")
+		}
+		e = cuckooPreparedEntry(record.Value)
+	case TypeCMS:
+		if _, err := decodeCMS(record.Value); err != nil {
+			return errors.New("ERR recovered CMS value is invalid")
+		}
+		e = cmsPreparedEntry(record.Value)
+	case TypeTopK:
+		if _, err := decodeTopK(record.Value); err != nil {
+			return errors.New("ERR recovered TOPK value is invalid")
+		}
+		e = topKPreparedEntry(record.Value)
+	case TypeTDigest:
+		if _, err := decodeTDigest(record.Value); err != nil {
+			return errors.New("ERR recovered TDIGEST value is invalid")
+		}
+		e = tDigestPreparedEntry(record.Value)
+	case TypeTimeSeries:
+		if _, err := decodeTimeSeries(record.Value); err != nil {
+			return errors.New("ERR recovered TIMESERIES value is invalid")
+		}
+		e = timeSeriesPreparedEntry(record.Value)
+	default:
+		e = s.makeEntry(record.Value)
+		if record.ValueType != 0 {
+			e.valueType = ValueType(record.ValueType)
+		}
+	}
+
+	if record.ExpiresAtMS != 0 {
+		e.expiresAt = stamp(record.ExpiresAtMS)
+	}
+
+	admission := enforceMemoryLimit
+	if force {
+		admission = allowOverMemoryLimit
+	}
+	if err := s.publishRecord(sh, key, e, admission); err != nil {
+		return err
+	}
+	if !isNativeContainerType(e.valueType) {
+		if current, ok := sh.get(key); ok {
+			s.observeJSONShapeLocked(sh, s.decode(sh, current))
+		}
+	}
+	return nil
+}
+
 // Restore applies a logical batch atomically. force is reserved for rollback of
 // previously admitted data after a failed durability write.
 func (s *Store) Restore(records []persistence.Record, force bool) error {
+	if len(records) == 1 && !records[0].Reset {
+		return s.restoreSingleRecord(records[0], force)
+	}
 	for i := len(records) - 1; i >= 0; i-- {
 		if records[i].Reset {
 			s.resetForRecovery()
