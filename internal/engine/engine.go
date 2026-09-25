@@ -79,7 +79,7 @@ func (sh *shard) encodedInto(e entry, dst []byte) []byte {
 		}
 		return value
 	}
-	return sh.encoded(e)
+	return sh.arena.ViewTrusted(e.ref)
 }
 
 func (sh *shard) expirationAt(key string, e entry) stamp {
