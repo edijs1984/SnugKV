@@ -897,7 +897,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			continue
 		}
 
-		if result, handled, fastErr := s.server.executeAuthorizedConcurrentSet(msg); handled {
+		if result, handled, replicationOffset, fastErr := s.server.executeAuthorizedConcurrentSetCaptureOffset(msg); handled {
 			if fastErr != nil {
 				result = errorResponse(fastErr)
 			}
@@ -906,6 +906,9 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				return
 			}
 			if commandSucceeded {
+				if replicationOffset > 0 {
+					clientSession.replicationOffset.Store(replicationOffset)
+				}
 				s.invalidateTrackingKeys(clientSession, msg)
 			}
 			continue
