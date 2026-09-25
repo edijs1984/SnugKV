@@ -493,19 +493,18 @@ func isConcurrentScalarCommand(args [][]byte) bool {
 
 
 func (s *Server) executeReplicatedWriteLocked(args [][]byte) ([]byte, error) {
-	// Plain SET fully replaces one key, so the post-write export is already the
-	// complete replication record for this mutation. Avoid the pre-write snapshot
-	// and persistenceDiff entirely on this hot path.
+	// Plain SET fully replaces one key and clears its TTL. Its logical mutation
+	// record is therefore known directly from the command arguments; avoid Store.Export,
+	// which takes an all-shard snapshot even when only one explicit key is requested.
 	if len(args) == 3 && bytes.EqualFold(args[0], []byte("SET")) {
-		affected := []string{string(args[1])}
 		result, err := s.executePressure(args)
 		if err != nil {
 			return result, err
 		}
-		after := s.store.Export(affected)
-		if len(after) > 0 {
-			s.publishReplication(after)
-		}
+		s.publishReplication([]persistence.Record{{
+			Key:   append([]byte(nil), args[1]...),
+			Value: append([]byte(nil), args[2]...),
+		}})
 		s.signalListAvailability(args, result)
 		s.signalZSetAvailability(args, result)
 		s.signalStreamAvailability(args, result)
