@@ -204,6 +204,19 @@ func (s *Store) decodeInto(sh *shard, e entry, dst []byte) []byte {
 		return s.decode(sh, e)
 	}
 
+	// Raw values need no codec dispatch or schema lookup. Preserve the public
+	// ownership contract by copying into caller-provided scratch when possible
+	// and allocating only when the scratch capacity is insufficient.
+	if e.codecID == codec.Raw {
+		if cap(dst) < len(encoded) {
+			dst = make([]byte, len(encoded))
+		} else {
+			dst = dst[:len(encoded)]
+		}
+		copy(dst, encoded)
+		return dst
+	}
+
 	var schema *jsonshape.Schema
 	if e.entryMeta != nil && e.entryMeta.schemaID != 0 {
 		if shapes := s.loadShapeStore(); shapes != nil {
