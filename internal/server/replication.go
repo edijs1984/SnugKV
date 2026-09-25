@@ -45,6 +45,82 @@ type replicationBacklogEntry struct {
 	payload     []byte
 }
 
+
+type replicationPayloadQueue struct {
+	mu       sync.Mutex
+	notEmpty *sync.Cond
+	notFull  *sync.Cond
+	items    [][]byte
+	head     int
+	count    int
+	closed   bool
+}
+
+func newReplicationPayloadQueue(capacity int) *replicationPayloadQueue {
+	q := &replicationPayloadQueue{
+		items: make([][]byte, capacity),
+	}
+	q.notEmpty = sync.NewCond(&q.mu)
+	q.notFull = sync.NewCond(&q.mu)
+	return q
+}
+
+func (q *replicationPayloadQueue) push(payload []byte) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	for q.count == len(q.items) && !q.closed {
+		q.notFull.Wait()
+	}
+	if q.closed {
+		return net.ErrClosed
+	}
+
+	index := (q.head + q.count) % len(q.items)
+	q.items[index] = payload
+	q.count++
+	q.notEmpty.Signal()
+	return nil
+}
+
+func (q *replicationPayloadQueue) popBatch(dst [][]byte, maxFrames, maxBytes int) ([][]byte, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	for q.count == 0 && !q.closed {
+		q.notEmpty.Wait()
+	}
+	if q.count == 0 && q.closed {
+		return dst[:0], false
+	}
+
+	dst = dst[:0]
+	bytes := 0
+	for q.count > 0 && len(dst) < maxFrames {
+		payload := q.items[q.head]
+		if len(dst) > 0 && bytes+len(payload) > maxBytes {
+			break
+		}
+		q.items[q.head] = nil
+		q.head = (q.head + 1) % len(q.items)
+		q.count--
+		dst = append(dst, payload)
+		bytes += len(payload)
+	}
+	q.notFull.Broadcast()
+	return dst, true
+}
+
+func (q *replicationPayloadQueue) close() {
+	q.mu.Lock()
+	if !q.closed {
+		q.closed = true
+		q.notEmpty.Broadcast()
+		q.notFull.Broadcast()
+	}
+	q.mu.Unlock()
+}
+
 type replicationState struct {
 	mu sync.RWMutex
 
@@ -432,28 +508,12 @@ func (r *replicationState) primaryHasReplicas() bool {
 }
 
 func (r *replicationState) registerReplica(write func([]byte) error) (uint64, string, int64) {
-	queue := make(chan []byte, replicationReplicaQueueDepth)
-	stop := make(chan struct{})
+	queue := newReplicationPayloadQueue(replicationReplicaQueueDepth)
 	var stopOnce sync.Once
 
-	enqueue := func(payload []byte) error {
-		select {
-		case <-stop:
-			return net.ErrClosed
-		default:
-		}
-
-		select {
-		case queue <- payload:
-			return nil
-		case <-stop:
-			return net.ErrClosed
-		}
-	}
+	enqueue := queue.push
 	stopWriter := func() {
-		stopOnce.Do(func() {
-			close(stop)
-		})
+		stopOnce.Do(queue.close)
 	}
 
 	r.mu.Lock()
@@ -487,41 +547,24 @@ func (r *replicationState) registerReplica(write func([]byte) error) (uint64, st
 
 	go func() {
 		batch := make([]byte, 0, replicationReplicaBatchMaxBytes)
+		payloads := make([][]byte, 0, replicationReplicaBatchMaxFrames)
 		for {
-			select {
-			case payload := <-queue:
-				batch = append(batch[:0], payload...)
-				frames := 1
+			var ok bool
+			payloads, ok = queue.popBatch(
+				payloads,
+				replicationReplicaBatchMaxFrames,
+				replicationReplicaBatchMaxBytes,
+			)
+			if !ok {
+				return
+			}
 
-			drain:
-				for frames < replicationReplicaBatchMaxFrames &&
-					len(batch) < replicationReplicaBatchMaxBytes {
-					select {
-					case next := <-queue:
-						if len(batch)+len(next) > replicationReplicaBatchMaxBytes {
-							// Preserve ordering without dropping the payload: write
-							// the current batch first, then start the next batch with
-							// this frame.
-							if err := write(batch); err != nil {
-								r.unregisterReplica(id)
-								return
-							}
-							batch = append(batch[:0], next...)
-							frames = 1
-							continue drain
-						}
-						batch = append(batch, next...)
-						frames++
-					default:
-						break drain
-					}
-				}
-
-				if err := write(batch); err != nil {
-					r.unregisterReplica(id)
-					return
-				}
-			case <-stop:
+			batch = batch[:0]
+			for _, payload := range payloads {
+				batch = append(batch, payload...)
+			}
+			if err := write(batch); err != nil {
+				r.unregisterReplica(id)
 				return
 			}
 		}
