@@ -1588,8 +1588,9 @@ func TestReplicationPartialResyncReplaysFromContainingBacklogEntry(t *testing.T)
 	secondPayload := []byte("payload-two")
 
 	r.appendBacklogLocked(firstFrame, firstPayload)
-	firstStart := r.backlog[0].startOffset
-	firstEnd := r.backlog[0].endOffset
+	firstEntry := r.backlogEntryLocked(0)
+	firstStart := firstEntry.startOffset
+	firstEnd := firstEntry.endOffset
 	r.appendBacklogLocked(secondFrame, secondPayload)
 	runID := r.runID
 	r.mu.Unlock()
@@ -1624,12 +1625,12 @@ func TestReplicationBacklogFirstOffsetTracksEvictionExactly(t *testing.T) {
 	r.backlogFirstOffset = 1
 
 	r.appendBacklogLocked([]byte("123456"), []byte("one"))
-	firstEnd := r.backlog[0].endOffset
+	firstEnd := r.backlogEntryLocked(0).endOffset
 
 	r.appendBacklogLocked([]byte("abcdef"), []byte("two"))
 
-	if len(r.backlog) != 1 {
-		got := len(r.backlog)
+	if r.backlogCount != 1 {
+		got := r.backlogCount
 		r.mu.Unlock()
 		t.Fatalf("backlog entries=%d want=1", got)
 	}
