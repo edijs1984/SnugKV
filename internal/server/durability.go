@@ -493,6 +493,29 @@ func isConcurrentScalarCommand(args [][]byte) bool {
 
 
 func (s *Server) executeReplicatedWriteLocked(args [][]byte) ([]byte, error) {
+	// Plain SET is the dominant replicated scalar write path. Snapshot only the
+	// affected key so replication cost stays proportional to the mutation instead
+	// of exporting and diffing the entire database for every SET.
+	if len(args) == 3 && bytes.EqualFold(args[0], []byte("SET")) {
+		affected := []string{string(args[1])}
+		before := s.store.Export(affected)
+		result, err := s.executePressure(args)
+		if err != nil {
+			return result, err
+		}
+		after := s.store.Export(affected)
+		changes := persistenceDiff(before, after)
+		if len(changes) > 0 {
+			s.publishReplication(changes)
+		}
+		s.signalListAvailability(args, result)
+		s.signalZSetAvailability(args, result)
+		s.signalStreamAvailability(args, result)
+		return result, nil
+	}
+
+	// Commands with dynamic or multi-key mutation surfaces keep the conservative
+	// full-database diff until their affected-key sets are audited individually.
 	before := s.store.Export(nil)
 	result, err := s.executePressure(args)
 	if err != nil {
