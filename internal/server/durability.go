@@ -265,9 +265,9 @@ func (s *Server) executeAuthorizedConcurrentSet(args [][]byte) (response []byte,
 // plain SET on the replicated hot path while preserving global write ordering.
 // It bypasses generic command dispatch only when AOF, metrics and maxmemory do
 // not require the ordinary durability/pressure path.
-func (s *Server) executeAuthorizedSerializedReplicatedSet(args [][]byte) (response []byte, replicationOffset int64, handled bool, err error) {
+func (s *Server) canExecuteAuthorizedSerializedReplicatedSet(args [][]byte) (handled bool, err error) {
 	if len(args) == 3 && bytes.EqualFold(args[0], []byte("SET")) && s.replication.isReadOnlyReplica() {
-		return nil, 0, true, errors.New("READONLY You can't write against a read only replica.")
+		return true, errors.New("READONLY You can't write against a read only replica.")
 	}
 	if len(args) != 3 ||
 		!bytes.EqualFold(args[0], []byte("SET")) ||
@@ -275,10 +275,12 @@ func (s *Server) executeAuthorizedSerializedReplicatedSet(args [][]byte) (respon
 		!s.replication.primaryHasReplicas() ||
 		atomic.LoadUint32(&s.metricsEnabled) != 0 ||
 		s.store.MaxMemory() != 0 {
-		return nil, 0, false, nil
+		return false, nil
 	}
+	return true, nil
+}
 
-	s.durableMu.Lock()
+func (s *Server) executeAuthorizedSerializedReplicatedSetLocked(args [][]byte) (replicationOffset int64, err error) {
 	s.refreshWatchesLocked()
 
 	key := string(args[1])
@@ -292,11 +294,24 @@ func (s *Server) executeAuthorizedSerializedReplicatedSet(args [][]byte) (respon
 	}
 
 	s.refreshWatchesLocked()
-	s.durableMu.Unlock()
-
 	atomic.AddUint64(&s.commands, 1)
 	if setErr != nil {
-		return nil, 0, true, setErr
+		return 0, setErr
+	}
+	return replicationOffset, nil
+}
+
+func (s *Server) executeAuthorizedSerializedReplicatedSet(args [][]byte) (response []byte, replicationOffset int64, handled bool, err error) {
+	handled, err = s.canExecuteAuthorizedSerializedReplicatedSet(args)
+	if !handled || err != nil {
+		return nil, 0, handled, err
+	}
+
+	s.durableMu.Lock()
+	replicationOffset, err = s.executeAuthorizedSerializedReplicatedSetLocked(args)
+	s.durableMu.Unlock()
+	if err != nil {
+		return nil, 0, true, err
 	}
 	return []byte("+OK\r\n"), replicationOffset, true, nil
 }
