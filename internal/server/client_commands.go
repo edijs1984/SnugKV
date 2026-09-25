@@ -105,8 +105,20 @@ func (c *clientSession) touch(args [][]byte) time.Time {
 		}
 	}
 
-	c.lastSeen.Store(now.UnixNano())
-	c.lastCmd.Store(cmd)
+	// lastSeen is diagnostic CLIENT metadata, while now is also used by the
+	// execution path for exact TTL/expiry semantics. Keep the execution timestamp
+	// exact but avoid publishing a new diagnostic timestamp for every hot command.
+	nowNS := now.UnixNano()
+	lastSeen := c.lastSeen.Load()
+	if nowNS-lastSeen >= int64(time.Second) {
+		c.lastSeen.Store(nowNS)
+	}
+
+	// GET/SET use stable package-level strings. Avoid an atomic pointer store when
+	// consecutive hot commands already report the same last command.
+	if c.lastCmd.Load() != cmd {
+		c.lastCmd.Store(cmd)
+	}
 	return now
 }
 
