@@ -733,22 +733,52 @@ func (s *Server) forwardReplicatedSnugFrame(frame []byte) int64 {
 	return replicatedOffset
 }
 
-func (s *Server) publishPlainSetReplication(key, value []byte) {
+func (s *Server) publishPlainSetReplication(key, value []byte) int64 {
 	frameLen, payload := encodePlainSetReplicationPayload(key, value)
+
+	var singleID uint64
+	var singleWrite func([]byte) error
+	var targets []struct {
+		id    uint64
+		write func([]byte) error
+	}
 
 	s.replication.mu.Lock()
 	s.replication.appendBacklogPayloadLocked(frameLen, payload)
-	targets := make(map[uint64]func([]byte) error, len(s.replication.replicas))
-	for id, write := range s.replication.replicas {
-		targets[id] = write
+	replicationOffset := s.replication.offset
+	switch len(s.replication.replicas) {
+	case 0:
+	case 1:
+		for id, write := range s.replication.replicas {
+			singleID = id
+			singleWrite = write
+		}
+	default:
+		targets = make([]struct {
+			id    uint64
+			write func([]byte) error
+		}, 0, len(s.replication.replicas))
+		for id, write := range s.replication.replicas {
+			targets = append(targets, struct {
+				id    uint64
+				write func([]byte) error
+			}{id: id, write: write})
+		}
 	}
 	s.replication.mu.Unlock()
 
-	for id, write := range targets {
-		if err := write(payload); err != nil {
-			s.replication.unregisterReplica(id)
+	if singleWrite != nil {
+		if err := singleWrite(payload); err != nil {
+			s.replication.unregisterReplica(singleID)
+		}
+		return replicationOffset
+	}
+	for _, target := range targets {
+		if err := target.write(payload); err != nil {
+			s.replication.unregisterReplica(target.id)
 		}
 	}
+	return replicationOffset
 }
 
 func (s *Server) publishReplication(records []persistence.Record) {
