@@ -19,10 +19,10 @@ func TestEntryCapacityUsesSparseRampThenDenseGrowthFloor(t *testing.T) {
 		{32, 32, 64},
 		{64, 64, 128},
 		{128, 128, 192},
-		{192, 192, 256},
-		{256, 256, 320},
-		{320, 320, 400},
-		{400, 400, 500},
+		{192, 192, 288},
+		{256, 256, 384},
+		{320, 320, 480},
+		{400, 400, 600},
 	} {
 		sh.entries = make([]entryData, tc.length, tc.capacity)
 		sh.freeIDs = nil
@@ -59,8 +59,8 @@ func TestEntryCapacityCanPlanBatchGrowth(t *testing.T) {
 	if got := sh.entryCapacityFor(65); got != 128 {
 		t.Fatalf("batch capacity crossing 64 = %d, want 128", got)
 	}
-	if got := sh.entryCapacityFor(390); got != 400 {
-		t.Fatalf("dense shard capacity = %d, want 400", got)
+	if got := sh.entryCapacityFor(390); got != 432 {
+		t.Fatalf("dense shard capacity = %d, want 432", got)
 	}
 }
 
