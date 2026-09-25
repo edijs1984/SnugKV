@@ -1,7 +1,10 @@
 // Package index provides a collision-safe open-addressed index with explicit capacity.
 package index
 
-import "unsafe"
+import (
+	"hash/maphash"
+	"unsafe"
+)
 
 const (
 	stateEmpty      = uint64(0)
@@ -35,38 +38,17 @@ type Table[V ~uint32] struct {
 	tinyFilter uint32
 }
 
-func Hash(key string) uint64 {
-	h := uint64(14695981039346656037)
-	for i := range key {
-		h ^= uint64(key[i])
-		h *= 1099511628211
-	}
+var tableHashSeed = maphash.MakeSeed()
 
-	// FNV-1a has useful full-width dispersion, but its low bits can cluster for
-	// similarly structured keys. Tables use power-of-two capacities, so bucket
-	// selection depends directly on those low bits. Finalize with a strong
-	// avalanche before masking to keep linear-probe chains short.
-	h ^= h >> 33
-	h *= 0xff51afd7ed558ccd
-	h ^= h >> 33
-	h *= 0xc4ceb9fe1a85ec53
-	h ^= h >> 33
-	return h
+// Hash uses Go's runtime-optimized seeded string hash. The same process-local
+// seed is shared by string and byte lookups so Hash and HashBytes remain
+// equivalent, while exact key comparison still makes the index collision-safe.
+func Hash(key string) uint64 {
+	return maphash.String(tableHashSeed, key)
 }
 
 func HashBytes(key []byte) uint64 {
-	h := uint64(14695981039346656037)
-	for _, b := range key {
-		h ^= uint64(b)
-		h *= 1099511628211
-	}
-
-	h ^= h >> 33
-	h *= 0xff51afd7ed558ccd
-	h ^= h >> 33
-	h *= 0xc4ceb9fe1a85ec53
-	h ^= h >> 33
-	return h
+	return maphash.Bytes(tableHashSeed, key)
 }
 
 func tinyFilterBits(hash uint64) uint32 {
