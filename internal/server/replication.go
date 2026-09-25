@@ -581,6 +581,49 @@ func encodePlainSetReplicationFrame(key, value []byte) []byte {
 	return frame
 }
 
+func decodePlainSetReplicationFrame(frame []byte) (key, value []byte, ok bool, err error) {
+	if len(frame) < 8 {
+		return nil, nil, false, nil
+	}
+	n := int(binary.LittleEndian.Uint32(frame[:4]))
+	if n < 0 || n > persistence.MaxFrameBytes || len(frame) != 8+n {
+		return nil, nil, false, errors.New("invalid replication frame length")
+	}
+	payload := frame[8:]
+	if crc32.ChecksumIEEE(payload) != binary.LittleEndian.Uint32(frame[4:8]) {
+		return nil, nil, false, errors.New("replication checksum mismatch")
+	}
+
+	prefix := []byte(`[{"key":"`)
+	separator := []byte(`","value":"`)
+	suffix := []byte(`"}]`)
+	if !bytes.HasPrefix(payload, prefix) || !bytes.HasSuffix(payload, suffix) {
+		return nil, nil, false, nil
+	}
+	body := payload[len(prefix) : len(payload)-len(suffix)]
+	sep := bytes.Index(body, separator)
+	if sep < 0 {
+		return nil, nil, false, nil
+	}
+
+	key64 := body[:sep]
+	value64 := body[sep+len(separator):]
+	key = make([]byte, base64.StdEncoding.DecodedLen(len(key64)))
+	nk, decodeErr := base64.StdEncoding.Decode(key, key64)
+	if decodeErr != nil {
+		return nil, nil, false, nil
+	}
+	key = key[:nk]
+
+	value = make([]byte, base64.StdEncoding.DecodedLen(len(value64)))
+	nv, decodeErr := base64.StdEncoding.Decode(value, value64)
+	if decodeErr != nil {
+		return nil, nil, false, nil
+	}
+	value = value[:nv]
+	return key, value, true, nil
+}
+
 func decodeReplicationFrame(frame []byte) ([]persistence.Record, error) {
 	if len(frame) < 8 {
 		return nil, errors.New("short replication frame")
