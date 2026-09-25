@@ -31,9 +31,10 @@ const (
 	replicationMaster replicationRole = iota
 	replicationReplica
 
-	replicationReplicaQueueDepth      = 4096
-	replicationReplicaBatchMaxFrames  = 64
-	replicationReplicaBatchMaxBytes   = 256 << 10
+	replicationReplicaQueueDepth       = 4096
+	replicationReplicaBatchMaxFrames   = 64
+	replicationReplicaBatchMaxBytes    = 256 << 10
+	replicationReplicaCoalesceInterval = 50 * time.Microsecond
 )
 
 type replicationBacklogEntry struct {
@@ -480,11 +481,18 @@ func (r *replicationState) registerReplica(write func([]byte) error) (uint64, st
 
 	go func() {
 		batch := make([]byte, 0, replicationReplicaBatchMaxBytes)
+		timer := time.NewTimer(time.Hour)
+		if !timer.Stop() {
+			<-timer.C
+		}
+		defer timer.Stop()
+
 		for {
 			select {
 			case payload := <-queue:
 				batch = append(batch[:0], payload...)
 				frames := 1
+				timer.Reset(replicationReplicaCoalesceInterval)
 
 			drain:
 				for frames < replicationReplicaBatchMaxFrames &&
@@ -492,24 +500,36 @@ func (r *replicationState) registerReplica(write func([]byte) error) (uint64, st
 					select {
 					case next := <-queue:
 						if len(batch)+len(next) > replicationReplicaBatchMaxBytes {
-							// Preserve ordering without dropping the payload: write
-							// the current batch first, then start the next batch with
-							// this frame.
 							if err := write(batch); err != nil {
 								r.unregisterReplica(id)
 								return
 							}
 							batch = append(batch[:0], next...)
 							frames = 1
+							if !timer.Stop() {
+								select {
+								case <-timer.C:
+								default:
+								}
+							}
+							timer.Reset(replicationReplicaCoalesceInterval)
 							continue drain
 						}
 						batch = append(batch, next...)
 						frames++
-					default:
+					case <-timer.C:
 						break drain
+					case <-stop:
+						return
 					}
 				}
 
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
 				if err := write(batch); err != nil {
 					r.unregisterReplica(id)
 					return
