@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -31,7 +30,13 @@ const (
 	replicationMaster replicationRole = iota
 	replicationReplica
 
-	replicationReplicaQueueDepth = 4096
+	replicationReplicaQueueDepth      = 4096
+	replicationReplicaBatchMaxFrames  = 64
+	replicationReplicaBatchMaxBytes   = 256 << 10
+
+	replicationPlainSetMagic0 byte = 0x53 // 'S'
+	replicationPlainSetMagic1 byte = 0x4b // 'K'
+	replicationPlainSetVersion byte = 1
 )
 
 type replicationBacklogEntry struct {
@@ -477,10 +482,38 @@ func (r *replicationState) registerReplica(write func([]byte) error) (uint64, st
 	r.mu.Unlock()
 
 	go func() {
+		batch := make([]byte, 0, replicationReplicaBatchMaxBytes)
 		for {
 			select {
 			case payload := <-queue:
-				if err := write(payload); err != nil {
+				batch = append(batch[:0], payload...)
+				frames := 1
+
+			drain:
+				for frames < replicationReplicaBatchMaxFrames &&
+					len(batch) < replicationReplicaBatchMaxBytes {
+					select {
+					case next := <-queue:
+						if len(batch)+len(next) > replicationReplicaBatchMaxBytes {
+							// Preserve ordering without dropping the payload: write
+							// the current batch first, then start the next batch with
+							// this frame.
+							if err := write(batch); err != nil {
+								r.unregisterReplica(id)
+								return
+							}
+							batch = append(batch[:0], next...)
+							frames = 1
+							continue drain
+						}
+						batch = append(batch, next...)
+						frames++
+					default:
+						break drain
+					}
+				}
+
+				if err := write(batch); err != nil {
 					r.unregisterReplica(id)
 					return
 				}
@@ -565,62 +598,68 @@ func encodeReplicationFrame(records []persistence.Record) ([]byte, error) {
 }
 
 func encodePlainSetReplicationFrame(key, value []byte) []byte {
-	keyLen := base64.StdEncoding.EncodedLen(len(key))
-	valueLen := base64.StdEncoding.EncodedLen(len(value))
-	payload := make([]byte, 0, 24+keyLen+valueLen)
-	payload = append(payload, '[', '{', '"', 'k', 'e', 'y', '"', ':', '"')
-	payload = base64.StdEncoding.AppendEncode(payload, key)
-	payload = append(payload, '"', ',', '"', 'v', 'a', 'l', 'u', 'e', '"', ':', '"')
-	payload = base64.StdEncoding.AppendEncode(payload, value)
-	payload = append(payload, '"', '}', ']')
+	// Compact binary fast path for the overwhelmingly common plain SET case.
+	// Layout:
+	//   0..1   magic "SK"
+	//   2      version
+	//   3      reserved
+	//   4..7   key length (uint32 LE)
+	//   8..11  value length (uint32 LE)
+	//   12..   key bytes || value bytes
+	//   tail   crc32 over bytes [0:12+keyLen+valueLen]
+	const headerLen = 12
+	const checksumLen = 4
 
-	frame := make([]byte, 8+len(payload))
-	binary.LittleEndian.PutUint32(frame[:4], uint32(len(payload)))
-	binary.LittleEndian.PutUint32(frame[4:8], crc32.ChecksumIEEE(payload))
-	copy(frame[8:], payload)
+	frameLen := headerLen + len(key) + len(value) + checksumLen
+	frame := make([]byte, frameLen)
+	frame[0] = replicationPlainSetMagic0
+	frame[1] = replicationPlainSetMagic1
+	frame[2] = replicationPlainSetVersion
+	binary.LittleEndian.PutUint32(frame[4:8], uint32(len(key)))
+	binary.LittleEndian.PutUint32(frame[8:12], uint32(len(value)))
+
+	pos := headerLen
+	copy(frame[pos:pos+len(key)], key)
+	pos += len(key)
+	copy(frame[pos:pos+len(value)], value)
+	pos += len(value)
+
+	binary.LittleEndian.PutUint32(frame[pos:pos+checksumLen], crc32.ChecksumIEEE(frame[:pos]))
 	return frame
 }
 
 func decodePlainSetReplicationFrame(frame []byte) (key, value []byte, ok bool, err error) {
-	if len(frame) < 8 {
-		return nil, nil, false, nil
-	}
-	n := int(binary.LittleEndian.Uint32(frame[:4]))
-	if n < 0 || n > persistence.MaxFrameBytes || len(frame) != 8+n {
-		return nil, nil, false, errors.New("invalid replication frame length")
-	}
-	payload := frame[8:]
-	if crc32.ChecksumIEEE(payload) != binary.LittleEndian.Uint32(frame[4:8]) {
-		return nil, nil, false, errors.New("replication checksum mismatch")
-	}
+	const headerLen = 12
+	const checksumLen = 4
 
-	prefix := []byte(`[{"key":"`)
-	separator := []byte(`","value":"`)
-	suffix := []byte(`"}]`)
-	if !bytes.HasPrefix(payload, prefix) || !bytes.HasSuffix(payload, suffix) {
+	if len(frame) < headerLen+checksumLen {
 		return nil, nil, false, nil
 	}
-	body := payload[len(prefix) : len(payload)-len(suffix)]
-	sep := bytes.Index(body, separator)
-	if sep < 0 {
+	if frame[0] != replicationPlainSetMagic0 ||
+		frame[1] != replicationPlainSetMagic1 ||
+		frame[2] != replicationPlainSetVersion {
 		return nil, nil, false, nil
 	}
 
-	key64 := body[:sep]
-	value64 := body[sep+len(separator):]
-	key = make([]byte, base64.StdEncoding.DecodedLen(len(key64)))
-	nk, decodeErr := base64.StdEncoding.Decode(key, key64)
-	if decodeErr != nil {
-		return nil, nil, false, nil
+	keyLen := int(binary.LittleEndian.Uint32(frame[4:8]))
+	valueLen := int(binary.LittleEndian.Uint32(frame[8:12]))
+	payloadLen := keyLen + valueLen
+	if keyLen < 0 || valueLen < 0 || payloadLen < 0 ||
+		payloadLen > persistence.MaxFrameBytes ||
+		len(frame) != headerLen+payloadLen+checksumLen {
+		return nil, nil, false, errors.New("invalid plain SET replication frame length")
 	}
-	key = key[:nk]
 
-	value = make([]byte, base64.StdEncoding.DecodedLen(len(value64)))
-	nv, decodeErr := base64.StdEncoding.Decode(value, value64)
-	if decodeErr != nil {
-		return nil, nil, false, nil
+	checksumPos := headerLen + payloadLen
+	want := binary.LittleEndian.Uint32(frame[checksumPos:])
+	if crc32.ChecksumIEEE(frame[:checksumPos]) != want {
+		return nil, nil, false, errors.New("plain SET replication checksum mismatch")
 	}
-	value = value[:nv]
+
+	keyStart := headerLen
+	valueStart := keyStart + keyLen
+	key = append([]byte(nil), frame[keyStart:valueStart]...)
+	value = append([]byte(nil), frame[valueStart:checksumPos]...)
 	return key, value, true, nil
 }
 

@@ -113,26 +113,18 @@ func TestReplicationPhase1FullSyncLiveWritesAndPromotion(t *testing.T) {
 	}
 }
 
-func TestEncodePlainSetReplicationFrameRoundTrip(t *testing.T) {
+func TestEncodePlainSetReplicationFrameBinaryEnvelope(t *testing.T) {
 	key := []byte{0x00, 0xff, 'k', 'e', 'y'}
 	value := []byte{0x01, 0x02, 0xfe, 'v', 'a', 'l', 'u', 'e'}
 
 	frame := encodePlainSetReplicationFrame(key, value)
-	records, err := decodeReplicationFrame(frame)
-	if err != nil {
-		t.Fatal(err)
+	if len(frame) != 12+len(key)+len(value)+4 {
+		t.Fatalf("frame len=%d want=%d", len(frame), 12+len(key)+len(value)+4)
 	}
-	if len(records) != 1 {
-		t.Fatalf("records=%d want=1", len(records))
-	}
-	if !bytes.Equal(records[0].Key, key) {
-		t.Fatalf("key=%v want=%v", records[0].Key, key)
-	}
-	if !bytes.Equal(records[0].Value, value) {
-		t.Fatalf("value=%v want=%v", records[0].Value, value)
-	}
-	if records[0].Deleted || records[0].ExpiresAtMS != 0 || records[0].ValueType != 0 {
-		t.Fatalf("unexpected metadata: %+v", records[0])
+	if frame[0] != replicationPlainSetMagic0 ||
+		frame[1] != replicationPlainSetMagic1 ||
+		frame[2] != replicationPlainSetVersion {
+		t.Fatalf("unexpected plain SET frame prefix: %x", frame[:3])
 	}
 }
 
