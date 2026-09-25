@@ -264,16 +264,13 @@ func (t *Table[V]) insertHashed(key string, value V, hash uint64) {
 		t.tinyFilter |= tinyFilterBits(hash)
 	}
 	mask := uint64(len(t.slots) - 1)
-	fingerprint := hashFingerprint(hash)
 	deleted := -1
 	for n := 0; n < len(t.slots); n++ {
 		i := int((hash + uint64(n)) & mask)
 		s := &t.slots[i]
 		switch s.state() {
 		case stateLive:
-			if s.keyLen() == len(key) &&
-				(s.meta>>fingerprintShift)&fingerprintMask == fingerprint &&
-				s.key() == key {
+			if s.keyLen() == len(key) && s.key() == key {
 				s.setLive(key, value, hash)
 				return
 			}
