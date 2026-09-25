@@ -29,6 +29,8 @@ type replicationRole uint8
 const (
 	replicationMaster replicationRole = iota
 	replicationReplica
+
+	replicationReplicaQueueDepth = 4096
 )
 
 type replicationBacklogEntry struct {
@@ -59,6 +61,7 @@ type replicationState struct {
 
 	nextReplicaID     uint64
 	replicas           map[uint64]func([]byte) error
+	replicaStops        map[uint64]func()
 	replicaAckOffsets  map[uint64]int64
 	replicaAOFOffsets  map[uint64]int64
 	replicaAckTimes    map[uint64]time.Time
@@ -335,6 +338,9 @@ func (r *replicationState) init() {
 	if r.replicas == nil {
 		r.replicas = make(map[uint64]func([]byte) error)
 	}
+	if r.replicaStops == nil {
+		r.replicaStops = make(map[uint64]func())
+	}
 	if r.replicaAckOffsets == nil {
 		r.replicaAckOffsets = make(map[uint64]int64)
 	}
@@ -416,10 +422,36 @@ func (r *replicationState) primaryHasReplicas() bool {
 }
 
 func (r *replicationState) registerReplica(write func([]byte) error) (uint64, string, int64) {
+	queue := make(chan []byte, replicationReplicaQueueDepth)
+	stop := make(chan struct{})
+	var stopOnce sync.Once
+
+	enqueue := func(payload []byte) error {
+		select {
+		case <-stop:
+			return net.ErrClosed
+		default:
+		}
+
+		select {
+		case queue <- payload:
+			return nil
+		case <-stop:
+			return net.ErrClosed
+		}
+	}
+	stopWriter := func() {
+		stopOnce.Do(func() {
+			close(stop)
+		})
+	}
+
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.replicas == nil {
 		r.replicas = make(map[uint64]func([]byte) error)
+	}
+	if r.replicaStops == nil {
+		r.replicaStops = make(map[uint64]func())
 	}
 	if r.replicaAckOffsets == nil {
 		r.replicaAckOffsets = make(map[uint64]int64)
@@ -432,24 +464,49 @@ func (r *replicationState) registerReplica(write func([]byte) error) (uint64, st
 	}
 	r.nextReplicaID++
 	id := r.nextReplicaID
-	r.replicas[id] = write
+	r.replicas[id] = enqueue
+	r.replicaStops[id] = stopWriter
 	r.replicaAckOffsets[id] = 0
 	r.replicaAOFOffsets[id] = -1
 	r.replicaAckTimes[id] = time.Now()
 	r.connectedReplicas = len(r.replicas)
 	r.notifyAckChangedLocked()
-	return id, r.runID, r.offset
+	runID := r.runID
+	offset := r.offset
+	r.mu.Unlock()
+
+	go func() {
+		for {
+			select {
+			case payload := <-queue:
+				if err := write(payload); err != nil {
+					r.unregisterReplica(id)
+					return
+				}
+			case <-stop:
+				return
+			}
+		}
+	}()
+
+	return id, runID, offset
 }
 
 func (r *replicationState) unregisterReplica(id uint64) {
 	r.mu.Lock()
+	stopWriter := r.replicaStops[id]
 	delete(r.replicas, id)
+	delete(r.replicaStops, id)
 	delete(r.replicaAckOffsets, id)
 	delete(r.replicaAOFOffsets, id)
 	delete(r.replicaAckTimes, id)
 	r.connectedReplicas = len(r.replicas)
 	r.notifyAckChangedLocked()
 	r.mu.Unlock()
+
+	if stopWriter != nil {
+		stopWriter()
+	}
 }
 
 func (r *replicationState) acknowledgeReplica(id uint64, offset int64, aofOffset ...int64) {
