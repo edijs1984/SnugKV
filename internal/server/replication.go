@@ -540,6 +540,12 @@ func (r *replicationState) registerReplica(write func([]byte) error) (uint64, st
 						select {
 						case next := <-queue:
 							if !appendPayload(next, &frames) {
+								if err := write(batch); err != nil {
+									r.unregisterReplica(id)
+									return
+								}
+								batch = append(batch[:0], next...)
+								frames = 1
 								break coalesce
 							}
 						case <-timer.C:
@@ -564,6 +570,12 @@ func (r *replicationState) registerReplica(write func([]byte) error) (uint64, st
 						select {
 						case next := <-queue:
 							if !appendPayload(next, &frames) {
+								if err := write(batch); err != nil {
+									r.unregisterReplica(id)
+									return
+								}
+								batch = append(batch[:0], next...)
+								frames = 1
 								break drainAfterCoalesce
 							}
 						default:
