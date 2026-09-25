@@ -261,6 +261,46 @@ func (s *Server) executeAuthorizedConcurrentSet(args [][]byte) (response []byte,
 	return []byte("+OK\r\n"), true, nil
 }
 
+// executeAuthorizedSerializedReplicatedSet serves a previously ACL-authorized
+// plain SET on the replicated hot path while preserving global write ordering.
+// It bypasses generic command dispatch only when AOF, metrics and maxmemory do
+// not require the ordinary durability/pressure path.
+func (s *Server) executeAuthorizedSerializedReplicatedSet(args [][]byte) (response []byte, replicationOffset int64, handled bool, err error) {
+	if len(args) == 3 && bytes.EqualFold(args[0], []byte("SET")) && s.replication.isReadOnlyReplica() {
+		return nil, 0, true, errors.New("READONLY You can't write against a read only replica.")
+	}
+	if len(args) != 3 ||
+		!bytes.EqualFold(args[0], []byte("SET")) ||
+		s.journal != nil ||
+		!s.replication.primaryHasReplicas() ||
+		atomic.LoadUint32(&s.metricsEnabled) != 0 ||
+		s.store.MaxMemory() != 0 {
+		return nil, 0, false, nil
+	}
+
+	s.durableMu.Lock()
+	s.refreshWatchesLocked()
+
+	key := string(args[1])
+	setErr := s.store.SetPlain(key, args[2])
+	if setErr == nil {
+		if s.optimizer != nil && s.store.ShouldQueueOptimization(args[2]) {
+			s.optimizer.Queue(key)
+		}
+		s.publishPlainSetReplication(args[1], args[2])
+		replicationOffset = s.replication.currentOffset()
+	}
+
+	s.refreshWatchesLocked()
+	s.durableMu.Unlock()
+
+	atomic.AddUint64(&s.commands, 1)
+	if setErr != nil {
+		return nil, 0, true, setErr
+	}
+	return []byte("+OK\r\n"), replicationOffset, true, nil
+}
+
 func (s *Server) executeDurable(args [][]byte) ([]byte, error) {
 	return s.executeDurableForSession(args, nil)
 }
