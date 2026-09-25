@@ -46,8 +46,9 @@ func (sh *shard) entryCapacityFor(additional int) int {
 		// adding an extra reallocation only for shards that grow past six keys.
 		//
 		// From eight slots onward, keep the established geometric ramp to 64.
-		// Once a shard reaches 64 entries, restore the dense growth rule: grow
-		// by 25%, but never by fewer than 64 slots.
+		// Once a shard reaches 64 entries, grow dense entry storage by 50%.
+		// This reduces repeated realloc/copy churn on large write-heavy shards
+		// while keeping sparse-shard behavior unchanged.
 		switch {
 		case capacity == 0:
 			capacity = 4
@@ -61,7 +62,7 @@ func (sh *shard) entryCapacityFor(additional int) int {
 				capacity = 64
 			}
 		default:
-			growth := capacity / 4
+			growth := capacity / 2
 			if growth < 64 {
 				growth = 64
 			}
