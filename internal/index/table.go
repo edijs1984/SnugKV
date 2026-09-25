@@ -232,10 +232,15 @@ func (t *Table[V]) SetKnownHashed(key string, value V, hash uint64, exists bool)
 		if _, ok := t.GetHashed(key, hash); !ok {
 			panic("known index entry is missing")
 		}
-	} else {
-		t.growForInsert()
+		t.insertHashed(key, value, hash)
+		return
 	}
-	t.insertHashed(key, value, hash)
+
+	// The caller already proved absence while holding the owning shard lock.
+	// Avoid repeating exact-key equality checks while probing for the insertion
+	// slot; we only need the first tombstone/empty position.
+	t.growForInsert()
+	t.insertAbsentHashed(key, value, hash)
 }
 
 func (t *Table[V]) growForInsert() {
@@ -257,6 +262,37 @@ func (t *Table[V]) growForInsert() {
 
 func (t *Table[V]) insert(key string, value V) {
 	t.insertHashed(key, value, Hash(key))
+}
+
+func (t *Table[V]) insertAbsentHashed(key string, value V, hash uint64) {
+	if len(t.slots) == initialCapacity {
+		t.tinyFilter |= tinyFilterBits(hash)
+	}
+	mask := uint64(len(t.slots) - 1)
+	deleted := -1
+	for n := 0; n < len(t.slots); n++ {
+		i := int((hash + uint64(n)) & mask)
+		s := &t.slots[i]
+		switch s.state() {
+		case stateDeleted:
+			if deleted < 0 {
+				deleted = i
+			}
+		case stateEmpty:
+			if deleted >= 0 {
+				s = &t.slots[deleted]
+			}
+			s.setLive(key, value, hash)
+			t.count++
+			return
+		}
+	}
+	if deleted >= 0 {
+		t.slots[deleted].setLive(key, value, hash)
+		t.count++
+		return
+	}
+	panic("index capacity invariant")
 }
 
 func (t *Table[V]) insertHashed(key string, value V, hash uint64) {
