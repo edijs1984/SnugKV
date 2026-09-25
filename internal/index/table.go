@@ -1,7 +1,10 @@
 // Package index provides a collision-safe open-addressed index with explicit capacity.
 package index
 
-import "unsafe"
+import (
+	"math/bits"
+	"unsafe"
+)
 
 const (
 	stateEmpty      = uint64(0)
@@ -35,17 +38,16 @@ type Table[V ~uint32] struct {
 	tinyFilter uint32
 }
 
-func Hash(key string) uint64 {
-	h := uint64(14695981039346656037)
-	for i := range key {
-		h ^= uint64(key[i])
-		h *= 1099511628211
-	}
+func hashMix(h, word uint64) uint64 {
+	const (
+		mul1 = uint64(0x9e3779b185ebca87)
+		mul2 = uint64(0xc2b2ae3d27d4eb4f)
+	)
+	h ^= word * mul2
+	return bits.RotateLeft64(h, 27)*mul1 + mul2
+}
 
-	// FNV-1a has useful full-width dispersion, but its low bits can cluster for
-	// similarly structured keys. Tables use power-of-two capacities, so bucket
-	// selection depends directly on those low bits. Finalize with a strong
-	// avalanche before masking to keep linear-probe chains short.
+func hashFinalize(h uint64) uint64 {
 	h ^= h >> 33
 	h *= 0xff51afd7ed558ccd
 	h ^= h >> 33
@@ -54,19 +56,67 @@ func Hash(key string) uint64 {
 	return h
 }
 
-func HashBytes(key []byte) uint64 {
-	h := uint64(14695981039346656037)
-	for _, b := range key {
-		h ^= uint64(b)
-		h *= 1099511628211
-	}
+// Hash is optimized for RESP keys: consume eight bytes per iteration instead
+// of the previous byte-at-a-time FNV loop. The index remains collision-safe
+// because every candidate match is still verified against the exact key bytes.
+func Hash(key string) uint64 {
+	const seed = uint64(0xa0761d6478bd642f)
+	h := seed ^ uint64(len(key))*0x9e3779b185ebca87
 
-	h ^= h >> 33
-	h *= 0xff51afd7ed558ccd
-	h ^= h >> 33
-	h *= 0xc4ceb9fe1a85ec53
-	h ^= h >> 33
-	return h
+	if len(key) >= 8 {
+		base := unsafe.Pointer(unsafe.StringData(key))
+		i := 0
+		for ; i+8 <= len(key); i += 8 {
+			word := *(*uint64)(unsafe.Add(base, i))
+			h = hashMix(h, word)
+		}
+		if i < len(key) {
+			var tail uint64
+			shift := uint(0)
+			for ; i < len(key); i++ {
+				tail |= uint64(key[i]) << shift
+				shift += 8
+			}
+			h = hashMix(h, tail^uint64(len(key)))
+		}
+	} else {
+		var tail uint64
+		for i := 0; i < len(key); i++ {
+			tail |= uint64(key[i]) << (uint(i) * 8)
+		}
+		h = hashMix(h, tail^uint64(len(key)))
+	}
+	return hashFinalize(h)
+}
+
+func HashBytes(key []byte) uint64 {
+	const seed = uint64(0xa0761d6478bd642f)
+	h := seed ^ uint64(len(key))*0x9e3779b185ebca87
+
+	if len(key) >= 8 {
+		base := unsafe.Pointer(unsafe.SliceData(key))
+		i := 0
+		for ; i+8 <= len(key); i += 8 {
+			word := *(*uint64)(unsafe.Add(base, i))
+			h = hashMix(h, word)
+		}
+		if i < len(key) {
+			var tail uint64
+			shift := uint(0)
+			for ; i < len(key); i++ {
+				tail |= uint64(key[i]) << shift
+				shift += 8
+			}
+			h = hashMix(h, tail^uint64(len(key)))
+		}
+	} else {
+		var tail uint64
+		for i, b := range key {
+			tail |= uint64(b) << (uint(i) * 8)
+		}
+		h = hashMix(h, tail^uint64(len(key)))
+	}
+	return hashFinalize(h)
 }
 
 func tinyFilterBits(hash uint64) uint32 {
