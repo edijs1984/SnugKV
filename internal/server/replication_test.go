@@ -113,6 +113,45 @@ func TestReplicationPhase1FullSyncLiveWritesAndPromotion(t *testing.T) {
 	}
 }
 
+func TestReplicationPublishDoesNotWaitForReplicaSocket(t *testing.T) {
+	s := New(engine.New())
+
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	id, _, _ := s.replication.registerReplica(func([]byte) error {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		<-release
+		return nil
+	})
+	defer func() {
+		close(release)
+		s.replication.unregisterReplica(id)
+	}()
+
+	s.publishReplication([]persistence.Record{{Reset: true}})
+
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("replica writer did not receive first payload")
+	}
+
+	done := make(chan struct{})
+	go func() {
+		s.publishReplication([]persistence.Record{{Reset: true}})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("publishReplication waited for replica socket write")
+	}
+}
+
 func TestReplicationRoleAndInfoShape(t *testing.T) {
 	s := New(engine.New())
 	role, err := s.Execute([][]byte{[]byte("ROLE")})
