@@ -863,6 +863,73 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			}
 		}
 
+		if borrowedSet && reader.Buffered() > 0 {
+			if handled, fastErr := s.server.canExecuteAuthorizedSerializedReplicatedSet(msg); handled && fastErr == nil {
+				const maxReplicatedSetBatch = 64
+
+				batchOutput := make([]byte, 0, maxReplicatedSetBatch*5)
+				current := msg
+				batchCount := 0
+
+				s.server.durableMu.Lock()
+				for {
+					replicationOffset, setErr := s.server.executeAuthorizedSerializedReplicatedSetLocked(current)
+					response := []byte("+OK\r\n")
+					if setErr != nil {
+						response = errorResponse(setErr)
+					} else {
+						clientSession.replicationOffset.Store(replicationOffset)
+						s.invalidateTrackingKeys(clientSession, current)
+					}
+					if clientSession.protocolVersion() == 3 {
+						response = resp3AdaptCommand(current, response)
+					}
+					batchOutput = append(batchOutput, response...)
+					batchCount++
+
+					if batchCount >= maxReplicatedSetBatch || reader.Buffered() == 0 {
+						break
+					}
+
+					nextKey, nextValue, ok, readErr := decoder.ReadBufferedSET(setKeyScratch, setValueScratch)
+					if readErr != nil || !ok {
+						break
+					}
+					borrowedSET[0] = []byte("SET")
+					borrowedSET[1] = nextKey
+					borrowedSET[2] = nextValue
+					current = borrowedSET[:]
+					clientSession.touch(current)
+
+					if cap(nextKey) <= maxRetainedSetKeyScratch {
+						setKeyScratch = nextKey[:0]
+					} else {
+						setKeyScratch = nil
+					}
+					if cap(nextValue) <= maxRetainedSetValueScratch {
+						setValueScratch = nextValue[:0]
+					} else {
+						setValueScratch = nil
+					}
+
+					if authErr := s.server.authorizeConnectionCommand(authSession, current); authErr != nil {
+						response := errorResponse(authErr)
+						if clientSession.protocolVersion() == 3 {
+							response = resp3AdaptCommand(current, response)
+						}
+						batchOutput = append(batchOutput, response...)
+						break
+					}
+				}
+				s.server.durableMu.Unlock()
+
+				if writer.writeBuffered(batchOutput) != nil {
+					return
+				}
+				continue
+			}
+		}
+
 		if result, replicationOffset, handled, fastErr := s.server.executeAuthorizedSerializedReplicatedSet(msg); handled {
 			if fastErr != nil {
 				result = errorResponse(fastErr)
