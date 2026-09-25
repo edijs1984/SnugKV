@@ -113,6 +113,29 @@ func TestReplicationPhase1FullSyncLiveWritesAndPromotion(t *testing.T) {
 	}
 }
 
+func TestEncodePlainSetReplicationFrameRoundTrip(t *testing.T) {
+	key := []byte{0x00, 0xff, 'k', 'e', 'y'}
+	value := []byte{0x01, 0x02, 0xfe, 'v', 'a', 'l', 'u', 'e'}
+
+	frame := encodePlainSetReplicationFrame(key, value)
+	records, err := decodeReplicationFrame(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("records=%d want=1", len(records))
+	}
+	if !bytes.Equal(records[0].Key, key) {
+		t.Fatalf("key=%v want=%v", records[0].Key, key)
+	}
+	if !bytes.Equal(records[0].Value, value) {
+		t.Fatalf("value=%v want=%v", records[0].Value, value)
+	}
+	if records[0].Deleted || records[0].ExpiresAtMS != 0 || records[0].ValueType != 0 {
+		t.Fatalf("unexpected metadata: %+v", records[0])
+	}
+}
+
 func TestReplicationPlainSetDirectRecordClearsReplicaTTL(t *testing.T) {
 	primary, err := Listen("127.0.0.1:0", engine.New())
 	if err != nil {
