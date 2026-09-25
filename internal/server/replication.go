@@ -621,7 +621,32 @@ func encodePlainSetReplicationPayload(key, value []byte) (int, []byte) {
 
 	var headBuf [32]byte
 	head := headBuf[:0]
-	head = append(head, '
+	head = append(head, '$')
+	head = strconv.AppendInt(head, int64(frameLen), 10)
+	head = append(head, '\r', '\n')
+
+	payload := make([]byte, len(head)+frameLen+2)
+	copy(payload, head)
+	frame := payload[len(head) : len(head)+frameLen]
+
+	frame[0] = replicationPlainSetMagic0
+	frame[1] = replicationPlainSetMagic1
+	frame[2] = replicationPlainSetVersion
+	binary.LittleEndian.PutUint32(frame[4:8], uint32(len(key)))
+	binary.LittleEndian.PutUint32(frame[8:12], uint32(len(value)))
+
+	pos := headerLen
+	copy(frame[pos:pos+len(key)], key)
+	pos += len(key)
+	copy(frame[pos:pos+len(value)], value)
+	pos += len(value)
+
+	binary.LittleEndian.PutUint32(frame[pos:pos+checksumLen], crc32.ChecksumIEEE(frame[:pos]))
+	payload[len(payload)-2] = '\r'
+	payload[len(payload)-1] = '\n'
+	return frameLen, payload
+}
+
 func decodePlainSetReplicationFrame(frame []byte) (key, value []byte, ok bool, err error) {
 	const headerLen = 12
 	const checksumLen = 4
