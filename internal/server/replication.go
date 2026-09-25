@@ -379,16 +379,20 @@ func (r *replicationState) ensureBacklogLocked() {
 }
 
 func (r *replicationState) appendBacklogLocked(frame []byte, payload []byte) {
+	r.appendBacklogPayloadLocked(len(frame), append([]byte(nil), payload...))
+}
+
+func (r *replicationState) appendBacklogPayloadLocked(frameLen int, payload []byte) {
 	r.ensureBacklogLocked()
 	start := r.offset + 1
-	end := r.offset + int64(len(frame))
+	end := r.offset + int64(frameLen)
 	entry := replicationBacklogEntry{
 		startOffset: start,
 		endOffset:   end,
-		payload:     append([]byte(nil), payload...),
+		payload:     payload,
 	}
 	r.backlog = append(r.backlog, entry)
-	r.backlogBytes += int64(len(frame))
+	r.backlogBytes += int64(frameLen)
 	r.offset = end
 	for len(r.backlog) > 0 && r.backlogBytes > r.backlogSize {
 		r.backlogBytes -= r.backlog[0].endOffset - r.backlog[0].startOffset + 1
@@ -598,20 +602,19 @@ func encodeReplicationFrame(records []persistence.Record) ([]byte, error) {
 }
 
 func encodePlainSetReplicationFrame(key, value []byte) []byte {
-	// Compact binary fast path for the overwhelmingly common plain SET case.
-	// Layout:
-	//   0..1   magic "SK"
-	//   2      version
-	//   3      reserved
-	//   4..7   key length (uint32 LE)
-	//   8..11  value length (uint32 LE)
-	//   12..   key bytes || value bytes
-	//   tail   crc32 over bytes [0:12+keyLen+valueLen]
 	const headerLen = 12
 	const checksumLen = 4
 
 	frameLen := headerLen + len(key) + len(value) + checksumLen
 	frame := make([]byte, frameLen)
+	encodePlainSetReplicationFrameInto(frame, key, value)
+	return frame
+}
+
+func encodePlainSetReplicationFrameInto(frame, key, value []byte) {
+	const headerLen = 12
+	const checksumLen = 4
+
 	frame[0] = replicationPlainSetMagic0
 	frame[1] = replicationPlainSetMagic1
 	frame[2] = replicationPlainSetVersion
@@ -625,7 +628,23 @@ func encodePlainSetReplicationFrame(key, value []byte) []byte {
 	pos += len(value)
 
 	binary.LittleEndian.PutUint32(frame[pos:pos+checksumLen], crc32.ChecksumIEEE(frame[:pos]))
-	return frame
+}
+
+func encodePlainSetReplicationPayload(key, value []byte) (int, []byte) {
+	const headerLen = 12
+	const checksumLen = 4
+
+	frameLen := headerLen + len(key) + len(value) + checksumLen
+	head := "$" + strconv.Itoa(frameLen) + "\r\n"
+	payload := make([]byte, len(head)+frameLen+2)
+	copy(payload, head)
+
+	frameStart := len(head)
+	frame := payload[frameStart : frameStart+frameLen]
+	encodePlainSetReplicationFrameInto(frame, key, value)
+	payload[len(payload)-2] = '\r'
+	payload[len(payload)-1] = '\n'
+	return frameLen, payload
 }
 
 func decodePlainSetReplicationFrame(frame []byte) (key, value []byte, ok bool, err error) {
@@ -715,11 +734,10 @@ func (s *Server) forwardReplicatedSnugFrame(frame []byte) int64 {
 }
 
 func (s *Server) publishPlainSetReplication(key, value []byte) {
-	frame := encodePlainSetReplicationFrame(key, value)
-	payload := replicationBulk(frame)
+	frameLen, payload := encodePlainSetReplicationPayload(key, value)
 
 	s.replication.mu.Lock()
-	s.replication.appendBacklogLocked(frame, payload)
+	s.replication.appendBacklogPayloadLocked(frameLen, payload)
 	targets := make(map[uint64]func([]byte) error, len(s.replication.replicas))
 	for id, write := range s.replication.replicas {
 		targets[id] = write
