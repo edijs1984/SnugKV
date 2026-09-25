@@ -1376,6 +1376,27 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 		if err != nil {
 			return err
 		}
+		if s.journal == nil && s.store.MaxMemory() == 0 {
+			key, value, plainSet, decodeErr := decodePlainSetReplicationFrame(frame)
+			if decodeErr != nil {
+				return decodeErr
+			}
+			if plainSet {
+				s.durableMu.Lock()
+				err = s.store.SetPlain(string(key), value)
+				if err == nil {
+					s.refreshWatchesLocked()
+				}
+				s.durableMu.Unlock()
+				if err != nil {
+					return err
+				}
+				replicatedOffset := s.forwardReplicatedSnugFrame(frame)
+				s.noteReplicaAOFOffset(replicatedOffset)
+				continue
+			}
+		}
+
 		records, err := decodeReplicationFrame(frame)
 		if err != nil {
 			return err
