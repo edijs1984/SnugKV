@@ -49,9 +49,9 @@ func main() {
 		fatalf("keys, ops, workers, value-bytes and pipeline must be positive")
 	}
 	switch *workload {
-	case "load", "get", "get-seq", "mixed", "ttl":
+	case "load", "get", "get-seq", "mixed", "mixed-pipe", "ttl":
 	default:
-		fatalf("workload must be load, get, get-seq, mixed, or ttl")
+		fatalf("workload must be load, get, get-seq, mixed, mixed-pipe, or ttl")
 	}
 	switch *valueShape {
 	case "random", "repetitive", "json", "session-json", "api-json", "cache-json", "counter", "uuid", "text", "compressed":
@@ -107,7 +107,11 @@ func main() {
 		elapsed, samples, errs = runPipelinedGet(*addr, *keys, *ops, *workers, *pipeline, *seed)
 	case "get-seq":
 		elapsed, samples, errs = runConcurrent(*addr, "get", *keys, *ops, *workers, *valueBytes, *valueShape, *seed)
-	case "mixed", "ttl":
+	case "mixed":
+		elapsed, samples, errs = runConcurrent(*addr, *workload, *keys, *ops, *workers, *valueBytes, *valueShape, *seed)
+	case "mixed-pipe":
+		elapsed, samples, errs = runPipelinedMixed(*addr, *keys, *ops, *workers, *valueBytes, *valueShape, *pipeline, *seed)
+	case "ttl":
 		elapsed, samples, errs = runConcurrent(*addr, *workload, *keys, *ops, *workers, *valueBytes, *valueShape, *seed)
 	}
 
@@ -339,6 +343,89 @@ func runPipelinedGet(addr string, keys, ops, workers, pipeline int, seed int64) 
 			}
 		}(worker)
 	}
+	wg.Wait()
+	return time.Since(start), samples, errs
+}
+
+func runPipelinedMixed(addr string, keys, ops, workers, valueBytes int, valueShape string, pipeline int, seed int64) (time.Duration, []int64, uint64) {
+	samples := make([]int64, ops)
+	var next uint64
+	var errs uint64
+	var wg sync.WaitGroup
+	start := time.Now()
+
+	for worker := 0; worker < workers; worker++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+
+			c, err := dial(addr)
+			if err != nil {
+				atomic.AddUint64(&errs, 1)
+				return
+			}
+			defer c.Close()
+
+			rng := rand.New(rand.NewSource(seed + int64(id+1)*1000003))
+			opsInBatch := make([]bool, pipeline) // true = SET, false = GET
+			for {
+				base := int(atomic.AddUint64(&next, uint64(pipeline)) - uint64(pipeline))
+				if base >= ops {
+					return
+				}
+
+				end := base + pipeline
+				if end > ops {
+					end = ops
+				}
+				batchLen := end - base
+				batchStart := time.Now()
+
+				for i := 0; i < batchLen; i++ {
+					k := rng.Intn(keys)
+					isSet := rng.Intn(10) == 0
+					opsInBatch[i] = isSet
+					if isSet {
+						if err := c.write(b("SET"), key(k), benchmarkValue(valueShape, valueBytes, k, seed)); err != nil {
+							atomic.AddUint64(&errs, uint64(batchLen-i))
+							return
+						}
+					} else {
+						if err := c.write(b("GET"), key(k)); err != nil {
+							atomic.AddUint64(&errs, uint64(batchLen-i))
+							return
+						}
+					}
+				}
+
+				if err := c.w.Flush(); err != nil {
+					atomic.AddUint64(&errs, uint64(batchLen))
+					return
+				}
+
+				for i := 0; i < batchLen; i++ {
+					if opsInBatch[i] {
+						line, err := c.readLine()
+						if err != nil {
+							atomic.AddUint64(&errs, uint64(batchLen-i))
+							return
+						}
+						if string(line) != "+OK" {
+							atomic.AddUint64(&errs, 1)
+						}
+					} else if err := c.readGetReply(); err != nil {
+						atomic.AddUint64(&errs, 1)
+					}
+				}
+
+				perOp := time.Since(batchStart).Nanoseconds() / int64(batchLen)
+				for i := base; i < end; i++ {
+					samples[i] = perOp
+				}
+			}
+		}(worker)
+	}
+
 	wg.Wait()
 	return time.Since(start), samples, errs
 }
@@ -822,6 +909,9 @@ func measurementNote(workload string, pipeline int) string {
 	}
 	if workload == "load" {
 		return fmt.Sprintf("black-box RESP2/TCP pipelined SET (depth=%d) with concurrent workers; percentile samples are amortized per-op batch times; use multiple repetitions before product claims", pipeline)
+	}
+	if workload == "mixed-pipe" {
+		return fmt.Sprintf("black-box RESP2/TCP pipelined mixed workload (90%% GET / 10%% SET, depth=%d); percentile samples are amortized per-op batch times; use multiple repetitions before product claims", pipeline)
 	}
 	return "black-box RESP2/TCP single run; use multiple repetitions before product claims"
 }
