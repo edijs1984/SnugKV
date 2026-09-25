@@ -287,8 +287,7 @@ func (s *Server) executeAuthorizedSerializedReplicatedSet(args [][]byte) (respon
 		if s.optimizer != nil && s.store.ShouldQueueOptimization(args[2]) {
 			s.optimizer.Queue(key)
 		}
-		s.publishPlainSetReplication(args[1], args[2])
-		replicationOffset = s.replication.currentOffset()
+		replicationOffset = s.publishPlainSetReplication(args[1], args[2])
 	}
 
 	s.refreshWatchesLocked()
@@ -547,7 +546,7 @@ func (s *Server) executeReplicatedWriteLocked(args [][]byte) ([]byte, error) {
 			if s.optimizer != nil && s.store.ShouldQueueOptimization(args[2]) {
 				s.optimizer.Queue(key)
 			}
-			s.publishPlainSetReplication(args[1], args[2])
+			_ = s.publishPlainSetReplication(args[1], args[2])
 			return []byte("+OK\r\n"), nil
 		}
 
