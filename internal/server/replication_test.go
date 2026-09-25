@@ -136,6 +136,26 @@ func TestEncodePlainSetReplicationFrameRoundTrip(t *testing.T) {
 	}
 }
 
+func TestDecodePlainSetReplicationFrameRoundTrip(t *testing.T) {
+	key := []byte{0x00, 0xff, 'k', 'e', 'y'}
+	value := []byte{0x01, 0x02, 0xfe, 'v', 'a', 'l', 'u', 'e'}
+
+	frame := encodePlainSetReplicationFrame(key, value)
+	gotKey, gotValue, ok, err := decodePlainSetReplicationFrame(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("plain SET frame was not recognized")
+	}
+	if !bytes.Equal(gotKey, key) {
+		t.Fatalf("key=%v want=%v", gotKey, key)
+	}
+	if !bytes.Equal(gotValue, value) {
+		t.Fatalf("value=%v want=%v", gotValue, value)
+	}
+}
+
 func TestReplicationPlainSetDirectRecordClearsReplicaTTL(t *testing.T) {
 	primary, err := Listen("127.0.0.1:0", engine.New())
 	if err != nil {
