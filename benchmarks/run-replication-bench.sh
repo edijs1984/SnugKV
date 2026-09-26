@@ -66,6 +66,26 @@ stop_all() {
   sleep 0.2
 }
 
+wait_dbsize() {
+  local port="$1"
+  local expected="$2"
+  local deadline=$((SECONDS + 15))
+  local size
+
+  while (( SECONDS < deadline )); do
+    size="$(redis-cli -p "$port" DBSIZE 2>/dev/null || echo -1)"
+    if [[ "$size" == "$expected" ]]; then
+      printf '%s' "$size"
+      return 0
+    fi
+    sleep 0.05
+  done
+
+  size="$(redis-cli -p "$port" DBSIZE 2>/dev/null || echo -1)"
+  printf '%s' "$size"
+  return 1
+}
+
 aof_args() {
   local port="$1"
   if [[ "$AOF_MODE" == "on" ]]; then
@@ -110,12 +130,7 @@ run_star_case() {
   "$BENCH_BIN"     -server "$label"     -addr "127.0.0.1:${PRIMARY_PORT}"     -workload load     -keys "$KEYS"     -workers "$WORKERS"     -pipeline "$PIPELINE"     -value-bytes "$VALUE_BYTES"     -value-shape "$VALUE_SHAPE"     -reset     | tee -a "$OUT"
 
   if (( replicas > 0 )); then
-    local wait_reply wait_start_ns wait_end_ns wait_ms
-    wait_start_ns="$(date +%s%N)"
-    wait_reply="$(redis-cli -p "$PRIMARY_PORT" WAIT "$replicas" 5000)"
-    wait_end_ns="$(date +%s%N)"
-    wait_ms=$(( (wait_end_ns - wait_start_ns) / 1000000 ))
-    echo "WAIT direct replicas: ${wait_reply}/${replicas} wait_ms=${wait_ms}" >&2
+    echo "NOTE: external WAIT is connection-scoped; polling replica DBSIZE for convergence." >&2
   fi
 
   sleep "$SETTLE_SECONDS"
@@ -124,10 +139,10 @@ run_star_case() {
     for i in $(seq 0 $((replicas - 1))); do
       local port=$((BASE_REPLICA_PORT + i))
       local size
-      size="$(redis-cli -p "$port" DBSIZE)"
-      echo "replica port ${port} dbsize=${size}" >&2
-      if [[ "$size" != "$KEYS" ]]; then
-        echo "replica ${port} did not converge: dbsize=${size}, expected=${KEYS}" >&2
+      if size="$(wait_dbsize "$port" "$KEYS")"; then
+        echo "replica port $port dbsize=$size" >&2
+      else
+        echo "replica $port did not converge: dbsize=$size, expected=$KEYS" >&2
         return 1
       fi
     done
@@ -153,19 +168,18 @@ run_chain_case() {
 
   "$BENCH_BIN"     -server "$label"     -addr "127.0.0.1:${PRIMARY_PORT}"     -workload load     -keys "$KEYS"     -workers "$WORKERS"     -pipeline "$PIPELINE"     -value-bytes "$VALUE_BYTES"     -value-shape "$VALUE_SHAPE"     -reset     | tee -a "$OUT"
 
-  redis-cli -p "$PRIMARY_PORT" WAIT 1 5000 >/dev/null
-  redis-cli -p "$middle" WAIT 1 5000 >/dev/null
   sleep "$SETTLE_SECONDS"
 
   local middle_size leaf_size
-  middle_size="$(redis-cli -p "$middle" DBSIZE)"
-  leaf_size="$(redis-cli -p "$leaf" DBSIZE)"
-  echo "chain middle dbsize=${middle_size}; leaf dbsize=${leaf_size}" >&2
-
-  if [[ "$middle_size" != "$KEYS" || "$leaf_size" != "$KEYS" ]]; then
-    echo "chain did not converge: middle=${middle_size} leaf=${leaf_size} expected=${KEYS}" >&2
+  if ! middle_size="$(wait_dbsize "$middle" "$KEYS")"; then
+    echo "chain middle did not converge: dbsize=$middle_size, expected=$KEYS" >&2
     return 1
   fi
+  if ! leaf_size="$(wait_dbsize "$leaf" "$KEYS")"; then
+    echo "chain leaf did not converge: dbsize=$leaf_size, expected=$KEYS" >&2
+    return 1
+  fi
+  echo "chain middle dbsize=$middle_size; leaf dbsize=$leaf_size" >&2
 }
 
 : > "$OUT"
