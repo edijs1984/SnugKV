@@ -635,15 +635,21 @@ func encodePlainSetReplicationPayload(key, value []byte) (int, []byte) {
 	const checksumLen = 4
 
 	frameLen := headerLen + len(key) + len(value) + checksumLen
-	head := "$" + strconv.Itoa(frameLen) + "\r\n"
+
+	var headBuf [32]byte
+	head := headBuf[:0]
+	head = append(head, '$')
+	head = strconv.AppendInt(head, int64(frameLen), 10)
+	head = append(head, 13, 10)
+
 	payload := make([]byte, len(head)+frameLen+2)
 	copy(payload, head)
 
 	frameStart := len(head)
 	frame := payload[frameStart : frameStart+frameLen]
 	encodePlainSetReplicationFrameInto(frame, key, value)
-	payload[len(payload)-2] = '\r'
-	payload[len(payload)-1] = '\n'
+	payload[len(payload)-2] = 13
+	payload[len(payload)-1] = 10
 	return frameLen, payload
 }
 
