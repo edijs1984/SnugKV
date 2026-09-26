@@ -407,7 +407,20 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				}
 				continue
 			}
-			replicaID, psyncErr := s.server.handlePSYNC(writer.write, string(msg[1]), requestedOffset)
+			writeBuffers := func(buffers net.Buffers) error {
+				if counted, ok := conn.(countedConn); ok {
+					return counted.writeBuffers(buffers)
+				}
+				_, err := buffers.WriteTo(conn)
+				return err
+			}
+			replicaID, psyncErr := s.server.handlePSYNCWithBuffers(
+				writer.write,
+				writeBuffers,
+				writer.flush,
+				string(msg[1]),
+				requestedOffset,
+			)
 			if psyncErr != nil {
 				_ = writer.write(errorResponse(psyncErr))
 				return
