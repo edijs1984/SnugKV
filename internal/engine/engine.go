@@ -215,7 +215,7 @@ func (s *Store) VisitRawStringBytes(key []byte, visit func([]byte) error) (handl
 		return false, nil
 	}
 
-	return true, visit(sh.arena.ViewTrusted(e.ref))
+	return true, visit(sh.encoded(e))
 }
 
 // GetString performs the Redis string GET type check and value lookup under one
