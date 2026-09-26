@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 type ACLUser struct {
@@ -35,8 +36,9 @@ type ACLUser struct {
 }
 
 type ACL struct {
-	mu    sync.RWMutex
-	users map[string]*ACLUser
+	mu      sync.RWMutex
+	users   map[string]*ACLUser
+	version atomic.Uint64
 }
 
 func NewACL() *ACL {
@@ -269,7 +271,10 @@ func (a *ACL) SetUser(name string, rules []string) error {
 	}
 
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	defer func() {
+		a.version.Add(1)
+		a.mu.Unlock()
+	}()
 
 	u, ok := a.users[name]
 	if !ok {
@@ -576,7 +581,10 @@ func (a *ACL) SetUser(name string, rules []string) error {
 
 func (a *ACL) DeleteUsers(names ...string) int64 {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	defer func() {
+		a.version.Add(1)
+		a.mu.Unlock()
+	}()
 
 	var deleted int64
 
@@ -828,5 +836,6 @@ func (a *ACL) ReplaceFrom(source *ACL) {
 
 	a.mu.Lock()
 	a.users = users
+	a.version.Add(1)
 	a.mu.Unlock()
 }
