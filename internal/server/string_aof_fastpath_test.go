@@ -1,9 +1,11 @@
 package server
 
 import (
+	"fmt"
 	"errors"
 	"path/filepath"
 	"testing"
+	"sync"
 
 	"snugkv/internal/engine"
 	"snugkv/internal/persistence"
@@ -66,5 +68,60 @@ func TestPlainSetAOFFastPathDoesNotMutateOnAppendFailure(t *testing.T) {
 
 	if got := execute(t, srv, "GET", "key"); got != "$3\r\nold\r\n" {
 		t.Fatalf("GET after failed append=%q", got)
+	}
+}
+
+
+func TestConcurrentPlainSetAOFReplayMatchesLiveValue(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "appendonly.snug")
+	store := engine.New()
+	journal, err := persistence.Open(path, "no")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := New(store)
+	srv.SetJournal(journal)
+
+	var wg sync.WaitGroup
+	for worker := 0; worker < 4; worker++ {
+		worker := worker
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 250; i++ {
+				value := []byte(fmt.Sprintf("%d:%d", worker, i))
+				if _, _, handled, err := srv.executeAuthorizedConcurrentAOFSet(
+					[][]byte{[]byte("SET"), []byte("same"), value},
+				); !handled || err != nil {
+					t.Errorf("worker=%d i=%d handled=%v err=%v", worker, i, handled, err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	live, found, wrongType := store.GetString("same")
+	if wrongType || !found {
+		t.Fatalf("live value found=%v wrongType=%v", found, wrongType)
+	}
+	live = append([]byte(nil), live...)
+
+	if err := journal.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted := engine.New()
+	if err := persistence.Replay(path, func(records []persistence.Record) error {
+		return restarted.Restore(records, false)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	replayed, found, wrongType := restarted.GetString("same")
+	if wrongType || !found {
+		t.Fatalf("replayed value found=%v wrongType=%v", found, wrongType)
+	}
+	if string(replayed) != string(live) {
+		t.Fatalf("replayed=%q live=%q", replayed, live)
 	}
 }
