@@ -245,6 +245,12 @@ func (l *Log) Append(records []Record) error {
 		return err
 	}
 	l.appendedSeq++
+	if l.policy == "no" {
+		if err := l.writer.Flush(); err != nil {
+			l.failed = err
+			return err
+		}
+	}
 	if l.policy == "always" {
 		if err := l.writer.Flush(); err != nil {
 			l.failed = err
