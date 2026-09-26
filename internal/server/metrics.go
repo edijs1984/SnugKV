@@ -68,6 +68,12 @@ func (c countedConn) Write(p []byte) (int, error) {
 	atomic.AddUint64(c.output, uint64(n))
 	return n, err
 }
+
+func (c countedConn) writeBuffers(buffers net.Buffers) error {
+	n, err := buffers.WriteTo(c.Conn)
+	atomic.AddUint64(c.output, uint64(n))
+	return err
+}
 func isAdminCommand(args [][]byte) bool {
 	return len(args) > 0 && strings.HasPrefix(strings.ToUpper(string(args[0])), "SNUG.")
 }
