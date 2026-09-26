@@ -332,6 +332,15 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			} else if err := conn.SetReadDeadline(time.Now().Add(time.Duration(s.config.ReadTimeoutMS) * time.Millisecond)); err != nil {
 				return
 			}
+
+			// Prime bufio with the first byte before trying the zero-copy/buffered
+			// command decoders. Without this, an empty reader forces the first
+			// command of every newly flushed pipeline through generic ReadCommand;
+			// that read then buffers the remaining commands, producing an
+			// artificial 1 + (pipeline-1) split on the AOF fast path.
+			if _, err := reader.Peek(1); err != nil {
+				return
+			}
 		}
 		var borrowedGET [2][]byte
 		var borrowedSET [3][]byte
