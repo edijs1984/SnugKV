@@ -108,7 +108,7 @@ func classifyValue(value []byte) ValueType {
 	// overwhelmingly common ordinary-string case before allocating a string or
 	// invoking strconv. A leading '+' can never be canonical because the
 	// formatter used below never emits it.
-	numericCandidate := len(value) > 0 &&
+	numericCandidate := len(value) > 0 && len(value) <= 32 &&
 		((value[0] >= '0' && value[0] <= '9') || value[0] == '-')
 
 	if numericCandidate {

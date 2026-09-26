@@ -122,8 +122,6 @@ func (s *Store) SetPlainBatchFresh(keys [][]byte, values [][]byte) (bool, error)
 
 	items := make([]plainBatchItem, len(keys))
 	seen := make(map[string]struct{}, len(keys))
-	touched := make([]int, 0, len(keys))
-	touchedSet := make(map[int]struct{}, len(keys))
 
 	for i := range keys {
 		if len(values[i]) > 32<<20 {
@@ -136,26 +134,39 @@ func (s *Store) SetPlainBatchFresh(keys [][]byte, values [][]byte) (bool, error)
 		seen[key] = struct{}{}
 
 		hash := index.Hash(key)
-		shardIndex := int((hash >> 32) & uint64(len(s.shards)-1))
 		items[i] = plainBatchItem{
 			key:        key,
 			value:      values[i],
 			hash:       hash,
-			shardIndex: shardIndex,
-		}
-		if _, ok := touchedSet[shardIndex]; !ok {
-			touchedSet[shardIndex] = struct{}{}
-			touched = append(touched, shardIndex)
+			shardIndex: int((hash >> 32) & uint64(len(s.shards)-1)),
 		}
 	}
 
-	sort.Ints(touched)
-	for _, shardIndex := range touched {
+	// Keep each shard's items contiguous. Besides preserving a deterministic
+	// lock order, this avoids several per-batch shard maps on the hot path:
+	// touched-set, growth counts, allocation-length buckets, and metadata flags.
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].shardIndex < items[j].shardIndex
+	})
+
+	lastShard := -1
+	for i := range items {
+		shardIndex := items[i].shardIndex
+		if shardIndex == lastShard {
+			continue
+		}
 		s.shards[shardIndex].mu.Lock()
+		lastShard = shardIndex
 	}
 	unlock := func() {
-		for i := len(touched) - 1; i >= 0; i-- {
-			s.shards[touched[i]].mu.Unlock()
+		last := -1
+		for i := len(items) - 1; i >= 0; i-- {
+			shardIndex := items[i].shardIndex
+			if shardIndex == last {
+				continue
+			}
+			s.shards[shardIndex].mu.Unlock()
+			last = shardIndex
 		}
 	}
 
@@ -173,9 +184,7 @@ func (s *Store) SetPlainBatchFresh(keys [][]byte, values [][]byte) (bool, error)
 		}
 	}
 
-	growth := make(map[int]int, len(touched))
-	allocations := make(map[int][]int, len(touched))
-	metaNeeds := make(map[int]bool, len(touched))
+	allocationLens := make([]int, len(items))
 
 	var keyBytes uint64
 	var metaBytes uint64
@@ -189,23 +198,29 @@ func (s *Store) SetPlainBatchFresh(keys [][]byte, values [][]byte) (bool, error)
 		item := &items[i]
 		keyBytes += uint64(len(item.key))
 		metaBytes += metadataCharge(item.entry.entry)
-		growth[item.shardIndex]++
-		allocations[item.shardIndex] = append(allocations[item.shardIndex], len(item.entry.data))
-		if item.entry.entryMeta != nil {
-			metaNeeds[item.shardIndex] = true
-		}
+		allocationLens[i] = len(item.entry.data)
 		if !shouldInlinePrepared(item.entry) {
 			arenaPayload += uint64(len(item.entry.data))
 		}
 	}
 
-	for _, shardIndex := range touched {
+	for start := 0; start < len(items); {
+		shardIndex := items[start].shardIndex
+		end := start + 1
+		metaNeeded := items[start].entry.entryMeta != nil
+		for end < len(items) && items[end].shardIndex == shardIndex {
+			metaNeeded = metaNeeded || items[end].entry.entryMeta != nil
+			end++
+		}
+
 		sh := &s.shards[shardIndex]
-		n := growth[shardIndex]
+		n := end - start
 		extraIndex += sh.data.GrowthBytes(n)
 		extraEntries += sh.entryGrowthBytes(n)
-		extraMetaSlots += sh.metaSlotGrowthBytes(n, metaNeeds[shardIndex])
-		extraArena += sh.arena.GrowthFor(allocations[shardIndex])
+		extraMetaSlots += sh.metaSlotGrowthBytes(n, metaNeeded)
+		extraArena += sh.arena.GrowthFor(allocationLens[start:end])
+
+		start = end
 	}
 
 	s.memory.mu.Lock()

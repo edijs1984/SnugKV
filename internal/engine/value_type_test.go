@@ -218,6 +218,20 @@ func TestUint64StoreRoundTrip(t *testing.T) {
 	}
 }
 
+func TestClassifyValueLongNumericLikeStrings(t *testing.T) {
+	values := []string{
+		"123456789012345678901234567890123",
+		"-123456789012345678901234567890123",
+		"1.23456789012345678901234567890123",
+	}
+
+	for _, value := range values {
+		if got := classifyValue([]byte(value)); got != TypeString {
+			t.Fatalf("classifyValue(%q) = %s, want STRING", value, got.String())
+		}
+	}
+}
+
 func TestClassifyValueFloat64(t *testing.T) {
 	tests := []struct {
 		value string
