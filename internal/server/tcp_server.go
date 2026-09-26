@@ -313,6 +313,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 
 	reader := bufio.NewReaderSize(conn, 256<<10)
 	decoder, _ := resp.NewDecoder(reader, s.config.Limits())
+	var requestBatchNow time.Time
 	for {
 		// If no more request bytes are already buffered, flushing here avoids
 		// waiting for the next client command while still allowing an existing
@@ -323,13 +324,14 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			}
 		}
 		if reader.Buffered() == 0 {
+			requestBatchNow = time.Now()
 			if pubSession.active() {
 				// Pub/Sub subscriptions are long-lived. Message delivery is outbound,
 				// so an ordinary request read timeout must not kill an idle subscriber.
 				if err := conn.SetReadDeadline(time.Time{}); err != nil {
 					return
 				}
-			} else if err := conn.SetReadDeadline(time.Now().Add(time.Duration(s.config.ReadTimeoutMS) * time.Millisecond)); err != nil {
+			} else if err := conn.SetReadDeadline(requestBatchNow.Add(time.Duration(s.config.ReadTimeoutMS) * time.Millisecond)); err != nil {
 				return
 			}
 
@@ -400,7 +402,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			_ = writer.write([]byte("-ERR invalid RESP\r\n"))
 			return
 		}
-		requestNow := clientSession.touch(msg)
+		clientSession.touchAt(msg, requestBatchNow)
 
 		if !borrowed && len(msg) > 0 && strings.EqualFold(string(msg[0]), "PSYNC") {
 			if len(msg) != 3 {
@@ -633,7 +635,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				continue
 			}
 
-			if value, found, handled, fastErr := s.server.executeAuthorizedConcurrentKnownGetIntoAt(msg[1], getScratch, requestNow); handled {
+			if value, found, handled, fastErr := s.server.executeAuthorizedConcurrentKnownGetIntoAt(msg[1], getScratch, time.Now()); handled {
 				if fastErr != nil {
 					if writeProtocol(msg, errorResponse(fastErr)) != nil {
 						return
@@ -733,7 +735,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				continue
 			}
 
-			if value, found, handled, fastErr := s.server.executeAuthorizedConcurrentKnownGetIntoAt(msg[1], getScratch, requestNow); handled {
+			if value, found, handled, fastErr := s.server.executeAuthorizedConcurrentKnownGetIntoAt(msg[1], getScratch, time.Now()); handled {
 				if fastErr != nil {
 					if writeProtocol(msg, errorResponse(fastErr)) != nil {
 						return
