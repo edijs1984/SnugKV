@@ -30,6 +30,8 @@ type Server struct {
 	durabilityFailed         bool
 	watchSessions            atomic.Int32
 	replication              replicationState
+	replicationSetChunk      []byte
+	replicationSetChunkUsed  int
 	replicaDurabilityMu      sync.Mutex
 	replicaDurabilityPoints  []replicaDurabilityPoint
 	replicaDurabilityFsynced int64
