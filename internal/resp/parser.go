@@ -197,44 +197,6 @@ func (d *Decoder) ReadBufferedGET(scratch []byte) (key []byte, ok bool, err erro
 }
 
 
-// BufferedSETStarted reports whether the currently buffered bytes are a
-// prefix of the exact three-argument SET wire header. It never reads from the
-// socket or consumes bytes. Callers can use this to distinguish an in-flight
-// plain SET from an unrelated command when ReadBufferedSET sees only a partial
-// frame.
-func (d *Decoder) BufferedSETStarted() bool {
-	buffered := d.reader.Buffered()
-	if buffered == 0 {
-		return false
-	}
-	if buffered > d.limits.MaxRequestBytes {
-		buffered = d.limits.MaxRequestBytes
-	}
-	buf, err := d.reader.Peek(buffered)
-	if err != nil || len(buf) == 0 {
-		return false
-	}
-
-	header := []byte("*3\r\n$3\r\nSET\r\n")
-	n := len(buf)
-	if n > len(header) {
-		n = len(header)
-	}
-	for i := 0; i < n; i++ {
-		got := buf[i]
-		want := header[i]
-		if i >= 8 && i <= 10 {
-			if got >= 'a' && got <= 'z' {
-				got -= 'a' - 'A'
-			}
-		}
-		if got != want {
-			return false
-		}
-	}
-	return true
-}
-
 // ReadBufferedSET copies a complete plain SET key/value pair from the current
 // bufio.Reader buffer into caller-owned scratch. It only accepts the exact
 // three-argument form SET key value. Partial or non-plain SET frames consume
