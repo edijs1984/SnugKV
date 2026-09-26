@@ -863,6 +863,78 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			}
 		}
 
+		if borrowedSet && !s.adminOnly && !txSession.multi &&
+			!(clientSession.protocolVersion() == 2 && pubSession.active()) &&
+			reader.Buffered() > 0 {
+			const maxSetBatch = 64
+
+			keys := make([][]byte, 0, maxSetBatch)
+			values := make([][]byte, 0, maxSetBatch)
+			keyArena := make([]byte, 0, 4<<10)
+			valueArena := make([]byte, 0, 32<<10)
+
+			appendOwned := func(key, value []byte) {
+				keyStart := len(keyArena)
+				keyArena = append(keyArena, key...)
+				keys = append(keys, keyArena[keyStart:len(keyArena)])
+
+				valueStart := len(valueArena)
+				valueArena = append(valueArena, value...)
+				values = append(values, valueArena[valueStart:len(valueArena)])
+			}
+			appendOwned(msg[1], msg[2])
+
+			for len(keys) < maxSetBatch && reader.Buffered() > 0 {
+				nextKey, nextValue, ok, setErr :=
+					decoder.ReadBufferedSET(setKeyScratch, setValueScratch)
+				if setErr != nil || !ok {
+					break
+				}
+
+				nextMsg := [][]byte{[]byte("SET"), nextKey, nextValue}
+				if authErr := s.server.authorizeConnectionCommand(authSession, nextMsg); authErr != nil {
+					break
+				}
+
+				clientSession.touch(nextMsg)
+				appendOwned(nextKey, nextValue)
+
+				if cap(nextKey) <= maxRetainedSetKeyScratch {
+					setKeyScratch = nextKey[:0]
+				} else {
+					setKeyScratch = nil
+				}
+				if cap(nextValue) <= maxRetainedSetValueScratch {
+					setValueScratch = nextValue[:0]
+				} else {
+					setValueScratch = nil
+				}
+			}
+
+			if len(keys) > 1 {
+				replicationOffset, handled, fastErr :=
+					s.server.executeAuthorizedSerializedReplicatedSetBatch(keys, values)
+				if handled {
+					if fastErr != nil {
+						if writer.writeBuffered(errorResponse(fastErr)) != nil {
+							return
+						}
+					} else {
+						for range keys {
+							if writer.writeBuffered([]byte("+OK\r\n")) != nil {
+								return
+							}
+						}
+						clientSession.replicationOffset.Store(replicationOffset)
+						for i := range keys {
+							s.invalidateTrackingKeys(clientSession, [][]byte{[]byte("SET"), keys[i], values[i]})
+						}
+					}
+					continue
+				}
+			}
+		}
+
 		if result, replicationOffset, handled, fastErr := s.server.executeAuthorizedSerializedReplicatedSet(msg); handled {
 			if fastErr != nil {
 				result = errorResponse(fastErr)
