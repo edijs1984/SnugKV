@@ -10,8 +10,10 @@ import (
 )
 
 type authSession struct {
-	username      string
-	authenticated bool
+	username        string
+	authenticated   bool
+	aclVersion      uint64
+	aclUnrestricted bool
 }
 
 func newAuthSession(acl *ACL) *authSession {
@@ -60,6 +62,8 @@ func (s *Server) executeAUTH(
 
 		session.username = "default"
 		session.authenticated = true
+		session.aclVersion = 0
+		session.aclUnrestricted = false
 
 		return []byte("+OK\r\n"), nil
 
@@ -75,6 +79,8 @@ func (s *Server) executeAUTH(
 
 		session.username = username
 		session.authenticated = true
+		session.aclVersion = 0
+		session.aclUnrestricted = false
 
 		return []byte("+OK\r\n"), nil
 
@@ -105,6 +111,13 @@ func (s *Server) authorizeConnectionCommand(
 		username = session.username
 	}
 
+	version := s.acl.version.Load()
+	if session != nil &&
+		session.aclUnrestricted &&
+		session.aclVersion == version {
+		return nil
+	}
+
 	s.acl.mu.RLock()
 	user, ok := s.acl.users[username]
 	if !ok || !user.Enabled {
@@ -121,6 +134,10 @@ func (s *Server) authorizeConnectionCommand(
 		user.AllKeys &&
 		user.AllChannels &&
 		len(user.Selectors) == 0 {
+		if session != nil {
+			session.aclVersion = s.acl.version.Load()
+			session.aclUnrestricted = true
+		}
 		s.acl.mu.RUnlock()
 		return nil
 	}
