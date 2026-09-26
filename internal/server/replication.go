@@ -677,8 +677,8 @@ func decodePlainSetReplicationFrame(frame []byte) (key, value []byte, ok bool, e
 
 	keyStart := headerLen
 	valueStart := keyStart + keyLen
-	key = append([]byte(nil), frame[keyStart:valueStart]...)
-	value = append([]byte(nil), frame[valueStart:checksumPos]...)
+	key = frame[keyStart:valueStart]
+	value = frame[valueStart:checksumPos]
 	return key, value, true, nil
 }
 
