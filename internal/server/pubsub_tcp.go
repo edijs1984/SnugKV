@@ -4,7 +4,6 @@ import (
 	"net"
 	"strconv"
 	"sync"
-	"time"
 )
 
 // serializedResponseWriter serializes complete RESP responses, not individual
