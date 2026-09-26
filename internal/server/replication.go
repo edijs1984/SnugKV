@@ -647,7 +647,7 @@ func encodePlainSetReplicationPayload(key, value []byte) (int, []byte) {
 	return frameLen, payload
 }
 
-func decodePlainSetReplicationFrame(frame []byte) (key, value []byte, ok bool, err error) {
+func decodePlainSetReplicationFrameView(frame []byte) (key, value []byte, ok bool, err error) {
 	const headerLen = 12
 	const checksumLen = 4
 
@@ -677,9 +677,44 @@ func decodePlainSetReplicationFrame(frame []byte) (key, value []byte, ok bool, e
 
 	keyStart := headerLen
 	valueStart := keyStart + keyLen
-	key = append([]byte(nil), frame[keyStart:valueStart]...)
-	value = append([]byte(nil), frame[valueStart:checksumPos]...)
-	return key, value, true, nil
+	return frame[keyStart:valueStart], frame[valueStart:checksumPos], true, nil
+}
+
+func decodePlainSetReplicationFrame(frame []byte) (key, value []byte, ok bool, err error) {
+	key, value, ok, err = decodePlainSetReplicationFrameView(frame)
+	if err != nil || !ok {
+		return key, value, ok, err
+	}
+	return append([]byte(nil), key...), append([]byte(nil), value...), true, nil
+}
+
+func bufferedPlainSetReplicationFrameReady(reader *bufio.Reader) bool {
+	buffered := reader.Buffered()
+	if buffered < 6 {
+		return false
+	}
+	data, err := reader.Peek(buffered)
+	if err != nil || len(data) < 6 || data[0] != 36 {
+		return false
+	}
+	lineEnd := bytes.Index(data, []byte{13, 10})
+	if lineEnd <= 1 {
+		return false
+	}
+	frameLen, err := strconv.Atoi(string(data[1:lineEnd]))
+	if err != nil || frameLen < 16 || frameLen > persistence.MaxFrameBytes+8 {
+		return false
+	}
+	frameStart := lineEnd + 2
+	frameEnd := frameStart + frameLen
+	if frameEnd+2 > len(data) || data[frameEnd] != 13 || data[frameEnd+1] != 10 {
+		return false
+	}
+	frame := data[frameStart:frameEnd]
+	return len(frame) >= 16 &&
+		frame[0] == replicationPlainSetMagic0 &&
+		frame[1] == replicationPlainSetMagic1 &&
+		frame[2] == replicationPlainSetVersion
 }
 
 func decodeReplicationFrame(frame []byte) ([]persistence.Record, error) {
@@ -1434,13 +1469,46 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 			return err
 		}
 		if s.journal == nil && s.store.MaxMemory() == 0 {
-			key, value, plainSet, decodeErr := decodePlainSetReplicationFrame(frame)
+			key, value, plainSet, decodeErr := decodePlainSetReplicationFrameView(frame)
 			if decodeErr != nil {
 				return decodeErr
 			}
 			if plainSet {
+				var frames [replicationReplicaBatchMaxFrames][]byte
+				var keys [replicationReplicaBatchMaxFrames][]byte
+				var values [replicationReplicaBatchMaxFrames][]byte
+				count := 1
+				frames[0] = frame
+				keys[0] = key
+				values[0] = value
+
+				for count < replicationReplicaBatchMaxFrames &&
+					bufferedPlainSetReplicationFrameReady(reader) {
+					nextFrame, readErr := readReplicationRESP(reader)
+					if readErr != nil {
+						return readErr
+					}
+					nextKey, nextValue, nextPlainSet, nextDecodeErr :=
+						decodePlainSetReplicationFrameView(nextFrame)
+					if nextDecodeErr != nil {
+						return nextDecodeErr
+					}
+					if !nextPlainSet {
+						return errors.New("buffered plain SET replication frame changed while reading")
+					}
+					frames[count] = nextFrame
+					keys[count] = nextKey
+					values[count] = nextValue
+					count++
+				}
+
 				s.durableMu.Lock()
-				err = s.store.SetPlain(string(key), value)
+				for i := 0; i < count; i++ {
+					err = s.store.SetPlain(string(keys[i]), values[i])
+					if err != nil {
+						break
+					}
+				}
 				if err == nil {
 					s.refreshWatchesLocked()
 				}
@@ -1448,8 +1516,11 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 				if err != nil {
 					return err
 				}
-				replicatedOffset := s.forwardReplicatedSnugFrame(frame)
-				s.noteReplicaAOFOffset(replicatedOffset)
+
+				for i := 0; i < count; i++ {
+					replicatedOffset := s.forwardReplicatedSnugFrame(frames[i])
+					s.noteReplicaAOFOffset(replicatedOffset)
+				}
 				continue
 			}
 		}
