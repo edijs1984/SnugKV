@@ -73,13 +73,17 @@ snug_aof_bytes() {
 }
 
 redis_aof_bytes() {
-  local dir="$REDIS_ROOT/appendonlydir"
-  if [[ ! -d "$dir" ]]; then
-    echo 0
+  if [[ -f "$REDIS_ROOT/appendonly.aof" ]]; then
+    stat -c %s "$REDIS_ROOT/appendonly.aof"
     return
   fi
-  find "$dir" -type f -printf '%s\n' 2>/dev/null |
-    awk '{sum += $1} END {print sum+0}'
+  local dir="$REDIS_ROOT/appendonlydir"
+  if [[ -d "$dir" ]]; then
+    find "$dir" -type f -printf '%s\n' 2>/dev/null |
+      awk '{sum += $1} END {print sum+0}'
+    return
+  fi
+  echo 0
 }
 
 start_snug() {
@@ -125,7 +129,6 @@ start_redis() {
     args+=(
       --appendonly yes
       --appendfsync "$mode"
-      --appenddirname appendonlydir
       --aof-use-rdb-preamble no
     )
   fi
