@@ -47,7 +47,7 @@ func TestPlainSetAOFFastPathRestartRecovery(t *testing.T) {
 	}
 }
 
-func TestPlainSetAOFFastPathRollsBackOnAppendFailure(t *testing.T) {
+func TestPlainSetAOFFastPathDoesNotMutateOnAppendFailure(t *testing.T) {
 	store := engine.New()
 	srv := New(store)
 
@@ -65,6 +65,6 @@ func TestPlainSetAOFFastPathRollsBackOnAppendFailure(t *testing.T) {
 	}
 
 	if got := execute(t, srv, "GET", "key"); got != "$3\r\nold\r\n" {
-		t.Fatalf("GET after rollback=%q", got)
+		t.Fatalf("GET after failed append=%q", got)
 	}
 }
