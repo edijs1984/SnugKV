@@ -814,12 +814,13 @@ func (s *Server) publishReplication(records []persistence.Record) {
 }
 
 func (s *Server) handlePSYNC(write func([]byte) error, requestedRunID string, requestedOffset int64) (uint64, error) {
-	return s.handlePSYNCWithBuffers(write, nil, requestedRunID, requestedOffset)
+	return s.handlePSYNCWithBuffers(write, nil, nil, requestedRunID, requestedOffset)
 }
 
 func (s *Server) handlePSYNCWithBuffers(
 	write func([]byte) error,
 	writeBuffers func(net.Buffers) error,
+	flush func() error,
 	requestedRunID string,
 	requestedOffset int64,
 ) (uint64, error) {
@@ -844,6 +845,11 @@ func (s *Server) handlePSYNCWithBuffers(
 		}
 		for _, payload := range payloads {
 			if err := write(payload); err != nil {
+				return 0, err
+			}
+		}
+		if flush != nil {
+			if err := flush(); err != nil {
 				return 0, err
 			}
 		}
@@ -878,6 +884,11 @@ func (s *Server) handlePSYNCWithBuffers(
 	}
 	if err := write(replicationBulk(frame)); err != nil {
 		return 0, err
+	}
+	if flush != nil {
+		if err := flush(); err != nil {
+			return 0, err
+		}
 	}
 	ok = true
 	return id, nil
