@@ -396,6 +396,7 @@ func (r *replicationState) appendBacklogPayloadLocked(frameLen int, payload []by
 	r.offset = end
 	for len(r.backlog) > 0 && r.backlogBytes > r.backlogSize {
 		r.backlogBytes -= r.backlog[0].endOffset - r.backlog[0].startOffset + 1
+		r.backlog[0] = replicationBacklogEntry{}
 		r.backlog = r.backlog[1:]
 	}
 	if len(r.backlog) > 0 {
