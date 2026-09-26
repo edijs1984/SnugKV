@@ -713,6 +713,15 @@ func replicationBulk(payload []byte) []byte {
 }
 
 func (s *Server) forwardReplicatedSnugFrame(frame []byte) int64 {
+	s.replication.mu.Lock()
+	if len(s.replication.replicas) == 0 && !s.replication.backlogActive {
+		s.replication.offset += int64(len(frame))
+		replicatedOffset := s.replication.offset
+		s.replication.mu.Unlock()
+		return replicatedOffset
+	}
+	s.replication.mu.Unlock()
+
 	payload := replicationBulk(frame)
 
 	s.replication.mu.Lock()
