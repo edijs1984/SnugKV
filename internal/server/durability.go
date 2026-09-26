@@ -18,6 +18,11 @@ type durabilityJournal interface {
 	DurabilitySnapshot() (appended, synced uint64, changed <-chan struct{})
 }
 
+type plainSetJournal interface {
+	Journal
+	AppendPlainSet(key, value []byte) error
+}
+
 // SetJournal is a startup-only operation. Command execution is serialized so
 // clients cannot observe a mutation whose journal append later fails, and so a
 // MULTI/EXEC block can execute without another client interleaving commands.
@@ -646,7 +651,13 @@ func (s *Server) executeDurableLocked(args [][]byte) ([]byte, error) {
 			Key:   args[1],
 			Value: args[2],
 		}}
-		if err := s.journal.Append(records); err != nil {
+		var appendErr error
+		if journal, ok := s.journal.(plainSetJournal); ok {
+			appendErr = journal.AppendPlainSet(args[1], args[2])
+		} else {
+			appendErr = s.journal.Append(records)
+		}
+		if err := appendErr; err != nil {
 			s.durabilityFailed = true
 			if rollbackErr := s.store.Restore(before, true); rollbackErr != nil {
 				return nil, errors.New("ERR persistence and rollback failed")
