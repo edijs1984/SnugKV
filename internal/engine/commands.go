@@ -64,6 +64,49 @@ func (s *Store) SetPlain(key string, value []byte) error {
 	return nil
 }
 
+
+// SetPlainCommitted serializes one plain SET by its destination shard, invokes
+// commit while that shard is locked, and publishes the value only after commit
+// succeeds. This lets durable callers run independent keys concurrently while
+// keeping same-key persistence order identical to in-memory mutation order.
+func (s *Store) SetPlainCommitted(key string, value []byte, commit func() error) error {
+	if len(value) > 32<<20 {
+		return errors.New("ERR value exceeds 32 MiB limit")
+	}
+
+	hash := index.Hash(key)
+	sh := s.shardForHash(hash)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	old, exists := sh.getHashed(key, hash)
+	if exists && old.hasExpiry && sh.expired(key, old, s.now()) {
+		s.remove(sh, key)
+		old = entry{}
+		exists = false
+	}
+
+	e := s.makeEntryForShard(sh, value)
+	if commit != nil {
+		if err := commit(); err != nil {
+			return err
+		}
+	}
+	if err := s.publishRecordKnownHashed(
+		sh,
+		key,
+		hash,
+		e,
+		enforceMemoryLimit,
+		old,
+		exists,
+	); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 type plainBatchItem struct {
 	key        string
 	value      []byte
