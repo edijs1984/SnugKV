@@ -37,6 +37,10 @@ const (
 	replicationPlainSetMagic0 byte = 0x53 // 'S'
 	replicationPlainSetMagic1 byte = 0x4b // 'K'
 	replicationPlainSetVersion byte = 1
+
+	replicationPlainSetBatchMagic0 byte = 0x53 // 'S'
+	replicationPlainSetBatchMagic1 byte = 0x42 // 'B'
+	replicationPlainSetBatchVersion byte = 1
 )
 
 type replicationBacklogEntry struct {
@@ -431,6 +435,77 @@ func (r *replicationState) primaryHasReplicas() bool {
 	return r.role == replicationMaster && (len(r.replicas) > 0 || r.backlogActive)
 }
 
+func plainSetFrameFromReplicationPayload(payload []byte) ([]byte, bool) {
+	if len(payload) < 8 || payload[0] != 36 {
+		return nil, false
+	}
+
+	i := 1
+	n := 0
+	for i < len(payload) && payload[i] >= '0' && payload[i] <= '9' {
+		n = n*10 + int(payload[i]-'0')
+		i++
+	}
+	if i <= 1 || i+1 >= len(payload) || payload[i] != 13 || payload[i+1] != 10 {
+		return nil, false
+	}
+
+	frameStart := i + 2
+	frameEnd := frameStart + n
+	if n < 16 || frameEnd+2 != len(payload) ||
+		payload[frameEnd] != 13 || payload[frameEnd+1] != 10 {
+		return nil, false
+	}
+
+	frame := payload[frameStart:frameEnd]
+	if frame[0] != replicationPlainSetMagic0 ||
+		frame[1] != replicationPlainSetMagic1 ||
+		frame[2] != replicationPlainSetVersion {
+		return nil, false
+	}
+	return frame, true
+}
+
+func encodeLivePlainSetReplicationBatch(payloads [][]byte) ([]byte, bool) {
+	if len(payloads) < 2 || len(payloads) > replicationReplicaBatchMaxFrames {
+		return nil, false
+	}
+
+	const headerLen = 12
+	totalFrameBytes := 0
+	frames := make([][]byte, len(payloads))
+	for i, payload := range payloads {
+		frame, ok := plainSetFrameFromReplicationPayload(payload)
+		if !ok {
+			return nil, false
+		}
+		frames[i] = frame
+		totalFrameBytes += len(frame)
+	}
+
+	batchFrameLen := headerLen + len(frames)*4 + totalFrameBytes
+	if batchFrameLen > persistence.MaxFrameBytes {
+		return nil, false
+	}
+
+	batchFrame := make([]byte, batchFrameLen)
+	batchFrame[0] = replicationPlainSetBatchMagic0
+	batchFrame[1] = replicationPlainSetBatchMagic1
+	batchFrame[2] = replicationPlainSetBatchVersion
+	binary.LittleEndian.PutUint32(batchFrame[4:8], uint32(len(frames)))
+	binary.LittleEndian.PutUint32(batchFrame[8:12], uint32(totalFrameBytes))
+
+	pos := headerLen
+	for _, frame := range frames {
+		binary.LittleEndian.PutUint32(batchFrame[pos:pos+4], uint32(len(frame)))
+		pos += 4
+		copy(batchFrame[pos:pos+len(frame)], frame)
+		pos += len(frame)
+	}
+
+	return replicationBulk(batchFrame), true
+}
+
 func (r *replicationState) registerReplica(write func([]byte) error) (uint64, string, int64) {
 	queue := make(chan []byte, replicationReplicaQueueDepth)
 	stop := make(chan struct{})
@@ -487,36 +562,52 @@ func (r *replicationState) registerReplica(write func([]byte) error) (uint64, st
 
 	go func() {
 		batch := make([]byte, 0, replicationReplicaBatchMaxBytes)
+		payloads := make([][]byte, 0, replicationReplicaBatchMaxFrames)
 		for {
 			select {
 			case payload := <-queue:
-				batch = append(batch[:0], payload...)
-				frames := 1
+				payloads = payloads[:0]
+				payloads = append(payloads, payload)
+				totalBytes := len(payload)
 
 			drain:
-				for frames < replicationReplicaBatchMaxFrames &&
-					len(batch) < replicationReplicaBatchMaxBytes {
+				for len(payloads) < replicationReplicaBatchMaxFrames &&
+					totalBytes < replicationReplicaBatchMaxBytes {
 					select {
 					case next := <-queue:
-						if len(batch)+len(next) > replicationReplicaBatchMaxBytes {
-							// Preserve ordering without dropping the payload: write
-							// the current batch first, then start the next batch with
-							// this frame.
+						if totalBytes+len(next) > replicationReplicaBatchMaxBytes {
+							batch = append(batch[:0], payloads[0]...)
+							for _, queued := range payloads[1:] {
+								batch = append(batch, queued...)
+							}
 							if err := write(batch); err != nil {
 								r.unregisterReplica(id)
 								return
 							}
-							batch = append(batch[:0], next...)
-							frames = 1
+							payloads = payloads[:0]
+							payloads = append(payloads, next)
+							totalBytes = len(next)
 							continue drain
 						}
-						batch = append(batch, next...)
-						frames++
+						payloads = append(payloads, next)
+						totalBytes += len(next)
 					default:
 						break drain
 					}
 				}
 
+				if liveBatch, ok := encodeLivePlainSetReplicationBatch(payloads); ok {
+					if err := write(liveBatch); err != nil {
+						r.unregisterReplica(id)
+						return
+					}
+					continue
+				}
+
+				batch = append(batch[:0], payloads[0]...)
+				for _, queued := range payloads[1:] {
+					batch = append(batch, queued...)
+				}
 				if err := write(batch); err != nil {
 					r.unregisterReplica(id)
 					return
@@ -647,7 +738,7 @@ func encodePlainSetReplicationPayload(key, value []byte) (int, []byte) {
 	return frameLen, payload
 }
 
-func decodePlainSetReplicationFrame(frame []byte) (key, value []byte, ok bool, err error) {
+func decodePlainSetReplicationFrameView(frame []byte) (key, value []byte, ok bool, err error) {
 	const headerLen = 12
 	const checksumLen = 4
 
@@ -677,9 +768,72 @@ func decodePlainSetReplicationFrame(frame []byte) (key, value []byte, ok bool, e
 
 	keyStart := headerLen
 	valueStart := keyStart + keyLen
-	key = append([]byte(nil), frame[keyStart:valueStart]...)
-	value = append([]byte(nil), frame[valueStart:checksumPos]...)
-	return key, value, true, nil
+	return frame[keyStart:valueStart], frame[valueStart:checksumPos], true, nil
+}
+
+func decodePlainSetReplicationFrame(frame []byte) (key, value []byte, ok bool, err error) {
+	key, value, ok, err = decodePlainSetReplicationFrameView(frame)
+	if err != nil || !ok {
+		return key, value, ok, err
+	}
+	return append([]byte(nil), key...), append([]byte(nil), value...), true, nil
+}
+
+type plainSetReplicationBatchEntry struct {
+	frame []byte
+	key   []byte
+	value []byte
+}
+
+func decodeLivePlainSetReplicationBatch(frame []byte) ([]plainSetReplicationBatchEntry, int, bool, error) {
+	const headerLen = 12
+	if len(frame) < headerLen ||
+		frame[0] != replicationPlainSetBatchMagic0 ||
+		frame[1] != replicationPlainSetBatchMagic1 ||
+		frame[2] != replicationPlainSetBatchVersion {
+		return nil, 0, false, nil
+	}
+
+	count := int(binary.LittleEndian.Uint32(frame[4:8]))
+	logicalBytes := int(binary.LittleEndian.Uint32(frame[8:12]))
+	if count < 2 || count > replicationReplicaBatchMaxFrames || logicalBytes < count*16 {
+		return nil, 0, true, errors.New("invalid plain SET replication batch header")
+	}
+
+	entries := make([]plainSetReplicationBatchEntry, 0, count)
+	pos := headerLen
+	sum := 0
+	for i := 0; i < count; i++ {
+		if pos+4 > len(frame) {
+			return nil, 0, true, errors.New("short plain SET replication batch")
+		}
+		n := int(binary.LittleEndian.Uint32(frame[pos : pos+4]))
+		pos += 4
+		if n < 16 || pos+n > len(frame) {
+			return nil, 0, true, errors.New("invalid plain SET replication batch entry")
+		}
+		inner := frame[pos : pos+n]
+		pos += n
+
+		key, value, ok, err := decodePlainSetReplicationFrameView(inner)
+		if err != nil {
+			return nil, 0, true, err
+		}
+		if !ok {
+			return nil, 0, true, errors.New("non-SET frame in plain SET replication batch")
+		}
+		entries = append(entries, plainSetReplicationBatchEntry{
+			frame: inner,
+			key:   key,
+			value: value,
+		})
+		sum += n
+	}
+
+	if pos != len(frame) || sum != logicalBytes {
+		return nil, 0, true, errors.New("plain SET replication batch length mismatch")
+	}
+	return entries, logicalBytes, true, nil
 }
 
 func decodeReplicationFrame(frame []byte) ([]persistence.Record, error) {
@@ -1434,6 +1588,38 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 			return err
 		}
 		if s.journal == nil && s.store.MaxMemory() == 0 {
+			entries, _, liveBatch, batchErr := decodeLivePlainSetReplicationBatch(frame)
+			if batchErr != nil {
+				return batchErr
+			}
+			if liveBatch {
+				s.durableMu.Lock()
+				watchActive := s.hasWatchSessionsLocked()
+				if watchActive {
+					s.refreshWatchesLocked()
+				}
+				for _, entry := range entries {
+					err = s.store.SetPlain(string(entry.key), entry.value)
+					if err != nil {
+						break
+					}
+					if watchActive {
+						s.refreshWatchesLocked()
+					}
+				}
+				s.durableMu.Unlock()
+				if err != nil {
+					return err
+				}
+
+				var replicatedOffset int64
+				for _, entry := range entries {
+					replicatedOffset = s.forwardReplicatedSnugFrame(entry.frame)
+				}
+				s.noteReplicaAOFOffset(replicatedOffset)
+				continue
+			}
+
 			key, value, plainSet, decodeErr := decodePlainSetReplicationFrame(frame)
 			if decodeErr != nil {
 				return decodeErr
