@@ -197,3 +197,57 @@ func TestConditionalAndMultiKeyAtomicity(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+
+func TestSetReplicaFreshPlainInsertsAndFallsBackOnOverwrite(t *testing.T) {
+	s := New()
+
+	handled, err := s.SetReplicaFreshPlain("replica:fresh", []byte("first"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !handled {
+		t.Fatal("fresh replicated SET was not handled")
+	}
+	got, ok := s.Get("replica:fresh")
+	if !ok || string(got) != "first" {
+		t.Fatalf("fresh value=%q ok=%v", got, ok)
+	}
+
+	handled, err = s.SetReplicaFreshPlain("replica:fresh", []byte("second"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handled {
+		t.Fatal("existing key must fall back to ordinary SET")
+	}
+	if err := s.SetPlain("replica:fresh", []byte("second")); err != nil {
+		t.Fatal(err)
+	}
+	got, ok = s.Get("replica:fresh")
+	if !ok || string(got) != "second" {
+		t.Fatalf("fallback value=%q ok=%v", got, ok)
+	}
+}
+
+func TestSetReplicaFreshPlainPreservesMemoryAccounting(t *testing.T) {
+	s := New()
+	before := s.Memory()
+
+	value := make([]byte, 256)
+	handled, err := s.SetReplicaFreshPlain("replica:memory", value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !handled {
+		t.Fatal("fresh replicated SET was not handled")
+	}
+
+	after := s.Memory()
+	if after.AccountedBytes <= before.AccountedBytes {
+		t.Fatalf("accounted bytes did not grow: before=%d after=%d", before.AccountedBytes, after.AccountedBytes)
+	}
+	if after.ArenaPayloadBytes-before.ArenaPayloadBytes != uint64(len(value)) {
+		t.Fatalf("arena payload delta=%d want=%d", after.ArenaPayloadBytes-before.ArenaPayloadBytes, len(value))
+	}
+}
