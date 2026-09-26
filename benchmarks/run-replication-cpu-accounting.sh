@@ -111,14 +111,10 @@ for i in "${!PIDS[@]}"; do
 done
 
 start_ns="$(date +%s%N)"
-"$BENCH_BIN"   -server snug-cpu-profile-4rep   -addr "127.0.0.1:${PRIMARY_PORT}"   -workload load   -keys "$KEYS"   -workers "$WORKERS"   -pipeline "$PIPELINE"   -value-bytes "$VALUE_BYTES"   -value-shape "$VALUE_SHAPE"   -reset   > /tmp/snugkv-cpu-profile-bench.json &
-BENCH_PID=$!
-PIDS+=("$BENCH_PID")
-NAMES+=("client")
-START_TICKS["$BENCH_PID"]="$(ticks "$BENCH_PID")"
-START_CTX["$BENCH_PID"]="$(ctx_switches "$BENCH_PID")"
-
-wait "$BENCH_PID"
+/usr/bin/time -f 'client_user_sec=%U\\nclient_sys_sec=%S\\nclient_cpu_pct=%P' -o /tmp/snugkv-cpu-profile-client.time \
+  "$BENCH_BIN" -server snug-cpu-profile-4rep -addr "127.0.0.1:${PRIMARY_PORT}" -workload load \
+  -keys "$KEYS" -workers "$WORKERS" -pipeline "$PIPELINE" -value-bytes "$VALUE_BYTES" \
+  -value-shape "$VALUE_SHAPE" -reset > /tmp/snugkv-cpu-profile-bench.json
 end_ns="$(date +%s%N)"
 
 for i in 0 1 2 3 4; do
@@ -126,9 +122,6 @@ for i in 0 1 2 3 4; do
   END_TICKS["$pid"]="$(ticks "$pid")"
   END_CTX["$pid"]="$(ctx_switches "$pid")"
 done
-
-# The client has exited, so /proc is gone. Its elapsed CPU is reported by GNU time
-# only when available; the server processes are the main diagnostic target.
 
 echo
 echo "========== BENCHMARK =========="
@@ -167,3 +160,7 @@ total_cpu_sec="$(awk -v t="$total_ticks" -v hz="$hz" 'BEGIN {printf "%.3f", t/hz
 total_cores="$(awk -v t="$total_ticks" -v hz="$hz" -v wall="$wall_s" 'BEGIN {printf "%.3f", (t/hz)/wall}')"
 echo "server_cpu_seconds=$total_cpu_sec"
 echo "server_avg_cores=$total_cores"
+
+echo
+echo "========== CLIENT CPU =========="
+cat /tmp/snugkv-cpu-profile-client.time
