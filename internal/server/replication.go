@@ -1035,6 +1035,38 @@ func readReplicationRESP(reader *bufio.Reader) ([]byte, error) {
 	return payload, nil
 }
 
+func readReplicationRESPReuse(reader *bufio.Reader, payload []byte) ([]byte, error) {
+	prefix, err := reader.ReadByte()
+	if err != nil {
+		return nil, err
+	}
+	if prefix != 36 {
+		line, _ := reader.ReadString('\n')
+		return nil, fmt.Errorf("unexpected replication frame %q", string(prefix)+line)
+	}
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return nil, err
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(line))
+	if err != nil || n < 0 || n > persistence.MaxFrameBytes+8 {
+		return nil, errors.New("invalid replication bulk length")
+	}
+	if cap(payload) < n {
+		payload = make([]byte, n)
+	} else {
+		payload = payload[:n]
+	}
+	if _, err := io.ReadFull(reader, payload); err != nil {
+		return nil, err
+	}
+	var crlf [2]byte
+	if _, err := io.ReadFull(reader, crlf[:]); err != nil || crlf[0] != 13 || crlf[1] != 10 {
+		return nil, errors.New("invalid replication bulk terminator")
+	}
+	return payload, nil
+}
+
 func authenticateReplicationUpstream(conn net.Conn, reader *bufio.Reader, username, password string) error {
 	if password == "" {
 		return nil
