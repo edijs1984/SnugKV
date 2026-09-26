@@ -17,6 +17,7 @@ import (
 	"net"
 	"os"
 	"slices"
+	"snugkv/internal/index"
 	"snugkv/internal/persistence"
 	"strconv"
 	"strings"
@@ -36,7 +37,7 @@ const (
 
 	replicationPlainSetMagic0 byte = 0x53 // 'S'
 	replicationPlainSetMagic1 byte = 0x4b // 'K'
-	replicationPlainSetVersion byte = 1
+	replicationPlainSetVersion byte = 2
 )
 
 type replicationBacklogEntry struct {
@@ -638,7 +639,7 @@ func encodePlainSetReplicationFrame(key, value []byte) []byte {
 }
 
 func encodePlainSetReplicationFrameInto(frame, key, value []byte) {
-	const headerLen = 12
+	const headerLen = 20
 	const checksumLen = 4
 
 	frame[0] = replicationPlainSetMagic0
@@ -646,6 +647,7 @@ func encodePlainSetReplicationFrameInto(frame, key, value []byte) {
 	frame[2] = replicationPlainSetVersion
 	binary.LittleEndian.PutUint32(frame[4:8], uint32(len(key)))
 	binary.LittleEndian.PutUint32(frame[8:12], uint32(len(value)))
+	binary.LittleEndian.PutUint64(frame[12:20], index.HashBytes(key))
 
 	pos := headerLen
 	copy(frame[pos:pos+len(key)], key)
@@ -684,7 +686,7 @@ func writeDecimal(dst []byte, n int) int {
 }
 
 func encodePlainSetReplicationPayloadBatch(keys [][]byte, values [][]byte) (frameLens []int, payloads [][]byte, wire []byte) {
-	const headerLen = 12
+	const headerLen = 20
 	const checksumLen = 4
 
 	frameLens = make([]int, len(keys))
@@ -723,7 +725,7 @@ func encodePlainSetReplicationPayloadBatch(keys [][]byte, values [][]byte) (fram
 }
 
 func encodePlainSetReplicationPayload(key, value []byte) (int, []byte) {
-	const headerLen = 12
+	const headerLen = 20
 	const checksumLen = 4
 
 	frameLen := headerLen + len(key) + len(value) + checksumLen
@@ -739,39 +741,40 @@ func encodePlainSetReplicationPayload(key, value []byte) (int, []byte) {
 	return frameLen, payload
 }
 
-func decodePlainSetReplicationFrame(frame []byte) (key, value []byte, ok bool, err error) {
-	const headerLen = 12
+func decodePlainSetReplicationFrame(frame []byte) (key, value []byte, hash uint64, ok bool, err error) {
+	const headerLen = 20
 	const checksumLen = 4
 
 	if len(frame) < headerLen+checksumLen {
-		return nil, nil, false, nil
+		return nil, nil, 0, false, nil
 	}
 	if frame[0] != replicationPlainSetMagic0 ||
 		frame[1] != replicationPlainSetMagic1 ||
 		frame[2] != replicationPlainSetVersion {
-		return nil, nil, false, nil
+		return nil, nil, 0, false, nil
 	}
 
 	keyLen := int(binary.LittleEndian.Uint32(frame[4:8]))
 	valueLen := int(binary.LittleEndian.Uint32(frame[8:12]))
+	hash = binary.LittleEndian.Uint64(frame[12:20])
 	payloadLen := keyLen + valueLen
 	if keyLen < 0 || valueLen < 0 || payloadLen < 0 ||
 		payloadLen > persistence.MaxFrameBytes ||
 		len(frame) != headerLen+payloadLen+checksumLen {
-		return nil, nil, false, errors.New("invalid plain SET replication frame length")
+		return nil, nil, 0, false, errors.New("invalid plain SET replication frame length")
 	}
 
 	checksumPos := headerLen + payloadLen
 	want := binary.LittleEndian.Uint32(frame[checksumPos:])
 	if crc32.ChecksumIEEE(frame[:checksumPos]) != want {
-		return nil, nil, false, errors.New("plain SET replication checksum mismatch")
+		return nil, nil, 0, false, errors.New("plain SET replication checksum mismatch")
 	}
 
 	keyStart := headerLen
 	valueStart := keyStart + keyLen
 	key = append([]byte(nil), frame[keyStart:valueStart]...)
 	value = append([]byte(nil), frame[valueStart:checksumPos]...)
-	return key, value, true, nil
+	return key, value, hash, true, nil
 }
 
 func decodeReplicationFrame(frame []byte) ([]persistence.Record, error) {
@@ -1526,13 +1529,13 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 			return err
 		}
 		if s.journal == nil && s.store.MaxMemory() == 0 {
-			key, value, plainSet, decodeErr := decodePlainSetReplicationFrame(frame)
+			key, value, hash, plainSet, decodeErr := decodePlainSetReplicationFrame(frame)
 			if decodeErr != nil {
 				return decodeErr
 			}
 			if plainSet {
 				s.durableMu.Lock()
-				err = s.store.SetPlain(string(key), value)
+				err = s.store.SetPlainHashed(string(key), value, hash)
 				if err == nil {
 					s.refreshWatchesLocked()
 				}
