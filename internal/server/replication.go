@@ -432,6 +432,13 @@ func (r *replicationState) primaryHasReplicas() bool {
 }
 
 func (r *replicationState) registerReplica(write func([]byte) error) (uint64, string, int64) {
+	return r.registerReplicaWithBuffers(write, nil)
+}
+
+func (r *replicationState) registerReplicaWithBuffers(
+	write func([]byte) error,
+	writeBuffers func(net.Buffers) error,
+) (uint64, string, int64) {
 	queue := make(chan []byte, replicationReplicaQueueDepth)
 	stop := make(chan struct{})
 	var stopOnce sync.Once
@@ -486,6 +493,39 @@ func (r *replicationState) registerReplica(write func([]byte) error) (uint64, st
 	r.mu.Unlock()
 
 	go func() {
+		if writeBuffers != nil {
+			buffers := make(net.Buffers, 0, replicationReplicaBatchMaxFrames)
+			for {
+				select {
+				case payload := <-queue:
+					buffers = append(buffers[:0], payload)
+					bytes := len(payload)
+
+				drainBuffers:
+					for len(buffers) < replicationReplicaBatchMaxFrames &&
+						bytes < replicationReplicaBatchMaxBytes {
+						select {
+						case next := <-queue:
+							if bytes+len(next) > replicationReplicaBatchMaxBytes {
+								break drainBuffers
+							}
+							buffers = append(buffers, next)
+							bytes += len(next)
+						default:
+							break drainBuffers
+						}
+					}
+
+					if err := writeBuffers(buffers); err != nil {
+						r.unregisterReplica(id)
+						return
+					}
+				case <-stop:
+					return
+				}
+			}
+		}
+
 		batch := make([]byte, 0, replicationReplicaBatchMaxBytes)
 		for {
 			select {
@@ -499,9 +539,6 @@ func (r *replicationState) registerReplica(write func([]byte) error) (uint64, st
 					select {
 					case next := <-queue:
 						if len(batch)+len(next) > replicationReplicaBatchMaxBytes {
-							// Preserve ordering without dropping the payload: write
-							// the current batch first, then start the next batch with
-							// this frame.
 							if err := write(batch); err != nil {
 								r.unregisterReplica(id)
 								return
