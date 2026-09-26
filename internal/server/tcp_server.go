@@ -865,6 +865,10 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 
 		if borrowedSet && !s.adminOnly && !txSession.multi &&
 			!(clientSession.protocolVersion() == 2 && pubSession.active()) &&
+			s.server.journal == nil &&
+			s.server.replication.primaryHasReplicas() &&
+			atomic.LoadUint32(&s.server.metricsEnabled) == 0 &&
+			s.server.store.MaxMemory() == 0 &&
 			reader.Buffered() > 0 {
 			const maxSetBatch = 64
 
@@ -872,6 +876,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			values := make([][]byte, 0, maxSetBatch)
 			keyArena := make([]byte, 0, 4<<10)
 			valueArena := make([]byte, 0, 32<<10)
+			var pendingAuthErr error
 
 			appendOwned := func(key, value []byte) {
 				keyStart := len(keyArena)
@@ -893,6 +898,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 
 				nextMsg := [][]byte{[]byte("SET"), nextKey, nextValue}
 				if authErr := s.server.authorizeConnectionCommand(authSession, nextMsg); authErr != nil {
+					pendingAuthErr = authErr
 					break
 				}
 
@@ -928,6 +934,11 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 						clientSession.replicationOffset.Store(replicationOffset)
 						for i := range keys {
 							s.invalidateTrackingKeys(clientSession, [][]byte{[]byte("SET"), keys[i], values[i]})
+						}
+					}
+					if pendingAuthErr != nil {
+						if writer.writeBuffered(errorResponse(pendingAuthErr)) != nil {
+							return
 						}
 					}
 					continue
