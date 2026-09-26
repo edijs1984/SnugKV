@@ -187,17 +187,31 @@ func (s *Store) Get(key string) ([]byte, bool) {
 // bytes stay valid without cloning. Missing, expired, encoded and native
 // container values return handled=false and use the ordinary GET path.
 func (s *Store) VisitRawString(key string, visit func([]byte) error) (handled bool, err error) {
+	return s.VisitRawStringBytes([]byte(key), visit)
+}
+
+// VisitRawStringBytes is the byte-key form of VisitRawString. TCP already owns
+// GET keys as RESP bulk bytes, so this avoids converting every hot-path key to
+// string before hashing and lookup. Expiring entries still convert only when
+// the expiration table must be consulted.
+func (s *Store) VisitRawStringBytes(key []byte, visit func([]byte) error) (handled bool, err error) {
 	if s.encoding {
 		return false, nil
 	}
 
-	hash := index.Hash(key)
+	hash := index.HashBytes(key)
 	sh := s.shardForHash(hash)
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
 
-	e, ok := sh.getHashed(key, hash)
-	if !ok || sh.expired(key, e, s.now()) || isNativeContainerType(e.valueType) || e.codecID != codec.Raw {
+	e, ok := sh.getHashedBytes(key, hash)
+	if !ok {
+		return false, nil
+	}
+	if e.hasExpiry && sh.expired(string(key), e, s.now()) {
+		return false, nil
+	}
+	if isNativeContainerType(e.valueType) || e.codecID != codec.Raw {
 		return false, nil
 	}
 
