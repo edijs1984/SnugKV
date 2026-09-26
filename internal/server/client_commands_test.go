@@ -299,3 +299,32 @@ func BenchmarkClientSessionTouchGET(b *testing.B) {
 		session.touch(get)
 	}
 }
+
+
+func TestClientSessionTouchUpdatesCommandOnTransition(t *testing.T) {
+	session := newClientSession(1, nil, "remote", "local")
+
+	get := [][]byte{[]byte("GET"), []byte("k")}
+	set := [][]byte{[]byte("SET"), []byte("k"), []byte("v")}
+
+	session.touch(get)
+	first := session.lastCmd.Load()
+	if first == nil || *first != "get" {
+		t.Fatalf("after GET lastCmd=%v", first)
+	}
+
+	session.touch(get)
+	second := session.lastCmd.Load()
+	if second != first {
+		t.Fatal("repeated GET should retain canonical lastCmd pointer")
+	}
+
+	session.touch(set)
+	third := session.lastCmd.Load()
+	if third == nil || *third != "set" {
+		t.Fatalf("after SET lastCmd=%v", third)
+	}
+	if third == second {
+		t.Fatal("GET to SET transition did not update lastCmd")
+	}
+}
