@@ -199,3 +199,62 @@ func TestLogAppendPlainSetRestartRecovery(t *testing.T) {
 		t.Fatalf("replayed=%+v", got)
 	}
 }
+
+
+func TestPlainSetBatchFrameReplay(t *testing.T) {
+	var b bytes.Buffer
+	b.WriteString(magic)
+
+	keys := [][]byte{[]byte("a"), []byte{0xff, 0x00, 'b'}, []byte("c")}
+	values := [][]byte{[]byte("one"), []byte("two"), []byte("three")}
+	if err := WritePlainSetBatchFrame(&b, keys, values); err != nil {
+		t.Fatal(err)
+	}
+
+	var got []Record
+	if _, err := Read(bytes.NewReader(b.Bytes()), func(records []Record) error {
+		got = append(got, records...)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len(keys) {
+		t.Fatalf("records=%d want=%d", len(got), len(keys))
+	}
+	for i := range keys {
+		if !bytes.Equal(got[i].Key, keys[i]) || !bytes.Equal(got[i].Value, values[i]) {
+			t.Fatalf("record %d=%+v", i, got[i])
+		}
+	}
+}
+
+func TestLogAppendPlainSetBatchDurabilitySequence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "aof")
+	log, err := Open(path, "no")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := [][]byte{[]byte("a"), []byte("b"), []byte("c")}
+	values := [][]byte{[]byte("1"), []byte("2"), []byte("3")}
+	if err := log.AppendPlainSetBatch(keys, values); err != nil {
+		t.Fatal(err)
+	}
+	appended, synced, _ := log.DurabilitySnapshot()
+	if appended != 3 || synced != 0 {
+		t.Fatalf("durability appended=%d synced=%d", appended, synced)
+	}
+	if err := log.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var got int
+	if err := Replay(path, func(records []Record) error {
+		got += len(records)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got != 3 {
+		t.Fatalf("replayed records=%d want=3", got)
+	}
+}
