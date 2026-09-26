@@ -865,8 +865,8 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 
 		if borrowedSet && !s.adminOnly && !txSession.multi &&
 			!(clientSession.protocolVersion() == 2 && pubSession.active()) &&
-			((s.server.journal == nil && s.server.replication.primaryHasReplicas()) ||
-				(s.server.journal != nil && !s.server.replication.primaryHasReplicas())) &&
+			s.server.journal == nil &&
+			s.server.replication.primaryHasReplicas() &&
 			atomic.LoadUint32(&s.server.metricsEnabled) == 0 &&
 			s.server.store.MaxMemory() == 0 &&
 			reader.Buffered() > 0 {
@@ -959,6 +959,21 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 					continue
 				}
 			}
+		}
+
+		if result, durabilitySequence, handled, fastErr := s.server.executeAuthorizedConcurrentAOFSet(msg); handled {
+			if fastErr != nil {
+				result = errorResponse(fastErr)
+			}
+			commandSucceeded := fastErr == nil
+			if writeProtocol(msg, result) != nil {
+				return
+			}
+			if commandSucceeded {
+				clientSession.durabilitySequence.Store(durabilitySequence)
+				s.invalidateTrackingKeys(clientSession, msg)
+			}
+			continue
 		}
 
 		if result, replicationOffset, handled, fastErr := s.server.executeAuthorizedSerializedReplicatedSet(msg); handled {
