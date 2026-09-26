@@ -417,6 +417,36 @@ func (a *Arena) View(ref Ref) ([]byte, error) {
 }
 
 
+// ViewTrusted returns the bytes for a current reference without generation or
+// bounds validation. The caller must already synchronize the Arena and must
+// have obtained ref from the current live entry under that same synchronization.
+// It exists for read-hot paths where re-validating a just-looked-up ref would
+// duplicate invariant checks on every access.
+func (a *Arena) ViewTrusted(ref Ref) []byte {
+	if ref.IsInline() {
+		out, ok := ref.InlineInto(nil)
+		if !ok {
+			panic("invalid inline reference")
+		}
+		return out
+	}
+	if ref.generation == 0 {
+		if ref.length() == 0 {
+			return []byte{}
+		}
+		panic("invalid empty reference")
+	}
+
+	segment := ref.segment()
+	offset := ref.offset()
+	length := ref.length()
+	data := a.segments[segment].data
+	start := uint64(offset) + 8
+	end := start + uint64(length)
+	return data[start:end:end]
+}
+
+
 func (a *Arena) Free(ref Ref) {
 	if ref.IsInline() {
 		return
