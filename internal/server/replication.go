@@ -866,6 +866,25 @@ func replicationBulk(payload []byte) []byte {
 	return out
 }
 
+func (s *Server) forwardReplicatedSnugBatch(entries []plainSetReplicationBatchEntry) int64 {
+	s.replication.mu.Lock()
+	if len(s.replication.replicas) == 0 && !s.replication.backlogActive {
+		for _, entry := range entries {
+			s.replication.offset += int64(len(entry.frame))
+		}
+		replicatedOffset := s.replication.offset
+		s.replication.mu.Unlock()
+		return replicatedOffset
+	}
+	s.replication.mu.Unlock()
+
+	var replicatedOffset int64
+	for _, entry := range entries {
+		replicatedOffset = s.forwardReplicatedSnugFrame(entry.frame)
+	}
+	return replicatedOffset
+}
+
 func (s *Server) forwardReplicatedSnugFrame(frame []byte) int64 {
 	payload := replicationBulk(frame)
 
@@ -1612,10 +1631,7 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 					return err
 				}
 
-				var replicatedOffset int64
-				for _, entry := range entries {
-					replicatedOffset = s.forwardReplicatedSnugFrame(entry.frame)
-				}
+				replicatedOffset := s.forwardReplicatedSnugBatch(entries)
 				s.noteReplicaAOFOffset(replicatedOffset)
 				continue
 			}
