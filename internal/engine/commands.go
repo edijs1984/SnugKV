@@ -64,6 +64,69 @@ func (s *Store) SetPlain(key string, value []byte) error {
 	return nil
 }
 
+// SetReplicaFreshPlain is a replication-only fast path for a new, ordinary
+// string key when maxmemory is disabled. It preserves exact structural memory
+// accounting but skips overwrite/expiry/schema/search bookkeeping that cannot
+// apply to this case. A false handled result means the caller must use SetPlain.
+func (s *Store) SetReplicaFreshPlain(key string, value []byte) (handled bool, err error) {
+	if len(value) > 32<<20 {
+		return true, errors.New("ERR value exceeds 32 MiB limit")
+	}
+	if s.memory.max.Load() != 0 {
+		return false, nil
+	}
+
+	hash := index.Hash(key)
+	sh := s.shardForHash(hash)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	if _, exists := sh.getHashed(key, hash); exists {
+		return false, nil
+	}
+
+	e := s.makeEntryForShard(sh, value)
+	if e.valueType != TypeString || e.entryMeta != nil || !e.expiresAt.IsZero() {
+		return false, nil
+	}
+
+	extraIndex := sh.data.GrowthBytes(1)
+	extraEntries := sh.entryGrowthBytes(1)
+	inline := shouldInlinePrepared(e)
+	var extraArena uint64
+	if !inline {
+		extraArena = sh.arena.GrowthFor([]int{len(e.data)})
+	}
+
+	s.memory.mu.Lock()
+	if s.memory.max.Load() != 0 {
+		s.memory.mu.Unlock()
+		return false, nil
+	}
+	s.memory.used += uint64(len(key)) + extraIndex + extraEntries + extraArena
+	s.memory.entries += uint64(len(key)) + extraEntries
+	s.memory.index += extraIndex
+	s.memory.arenas += extraArena
+
+	if inline {
+		ref, ok := sh.arena.AllocInline(e.data)
+		if !ok {
+			s.memory.mu.Unlock()
+			panic("inline scalar admission invariant")
+		}
+		e.ref = ref
+	} else {
+		e.ref = sh.arena.Alloc(e.data)
+		s.memory.arenaPayload += uint64(len(e.data))
+		s.memory.arenaLiveBlocks += sh.arena.AllocationBytes(e.ref)
+	}
+	s.memory.mu.Unlock()
+
+	e.hasExpiry = false
+	sh.setKnownHashed(key, hash, e.entry, false)
+	return true, nil
+}
+
 type plainBatchItem struct {
 	key        string
 	value      []byte
