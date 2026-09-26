@@ -19,6 +19,7 @@ import (
 const magic = "MCLOG001"
 const MaxFrameBytes = 128 << 20
 const plainSetFrameTag byte = 0
+const plainSetBatchFrameTag byte = 1
 
 type ReplicationCheckpoint struct {
 	MasterHost  string `json:"master_host,omitempty"`
@@ -284,6 +285,37 @@ func (l *Log) AppendPlainSet(key, value []byte) error {
 	}
 	return l.finishAppendLocked()
 }
+
+
+func (l *Log) AppendPlainSetBatch(keys, values [][]byte) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.failed != nil {
+		return l.failed
+	}
+	if err := WritePlainSetBatchFrame(l.writer, keys, values); err != nil {
+		l.failed = err
+		return err
+	}
+	l.appendedSeq += uint64(len(keys))
+	if l.policy == "no" {
+		if err := l.writer.Flush(); err != nil {
+			l.failed = err
+			return err
+		}
+	}
+	if l.policy == "always" {
+		if err := l.writer.Flush(); err != nil {
+			l.failed = err
+			return err
+		}
+		l.failed = l.file.Sync()
+		if l.failed == nil {
+			l.markSyncedLocked()
+		}
+	}
+	return l.failed
+}
 func (l *Log) Close() error {
 	l.once.Do(func() {
 		close(l.stop)
@@ -353,6 +385,40 @@ func WritePlainSetFrame(w io.Writer, key, value []byte) error {
 	}
 	return writeAll(w, value)
 }
+
+
+func WritePlainSetBatchFrame(w io.Writer, keys, values [][]byte) error {
+	if len(keys) == 0 || len(keys) != len(values) {
+		return errors.New("invalid plain SET batch")
+	}
+	payloadLen := 5
+	for i := range keys {
+		payloadLen += 8 + len(keys[i]) + len(values[i])
+	}
+	if payloadLen > MaxFrameBytes {
+		return errors.New("persistence frame exceeds limit")
+	}
+
+	payload := make([]byte, 5, payloadLen)
+	payload[0] = plainSetBatchFrameTag
+	binary.LittleEndian.PutUint32(payload[1:5], uint32(len(keys)))
+	for i := range keys {
+		start := len(payload)
+		payload = append(payload, make([]byte, 8)...)
+		binary.LittleEndian.PutUint32(payload[start:start+4], uint32(len(keys[i])))
+		binary.LittleEndian.PutUint32(payload[start+4:start+8], uint32(len(values[i])))
+		payload = append(payload, keys[i]...)
+		payload = append(payload, values[i]...)
+	}
+
+	var header [8]byte
+	binary.LittleEndian.PutUint32(header[:4], uint32(len(payload)))
+	binary.LittleEndian.PutUint32(header[4:], crc32.ChecksumIEEE(payload))
+	if err := writeAll(w, header[:]); err != nil {
+		return err
+	}
+	return writeAll(w, payload)
+}
 func writeAll(w io.Writer, data []byte) error {
 	for len(data) > 0 {
 		n, err := w.Write(data)
@@ -414,6 +480,32 @@ func Read(r io.Reader, apply func([]Record) error) (int64, error) {
 				Key:   append([]byte(nil), payloadBytes[5:5+keyLen]...),
 				Value: append([]byte(nil), payloadBytes[5+keyLen:]...),
 			}}
+		} else if len(payloadBytes) > 0 && payloadBytes[0] == plainSetBatchFrameTag {
+			if len(payloadBytes) < 5 {
+				return offset, errors.New("invalid plain SET batch persistence frame")
+			}
+			count := int(binary.LittleEndian.Uint32(payloadBytes[1:5]))
+			pos := 5
+			records = make([]Record, 0, count)
+			for i := 0; i < count; i++ {
+				if pos+8 > len(payloadBytes) {
+					return offset, errors.New("invalid plain SET batch persistence frame")
+				}
+				keyLen := int(binary.LittleEndian.Uint32(payloadBytes[pos : pos+4]))
+				valueLen := int(binary.LittleEndian.Uint32(payloadBytes[pos+4 : pos+8]))
+				pos += 8
+				if keyLen < 0 || valueLen < 0 || pos+keyLen+valueLen > len(payloadBytes) {
+					return offset, errors.New("invalid plain SET batch persistence frame")
+				}
+				records = append(records, Record{
+					Key:   append([]byte(nil), payloadBytes[pos:pos+keyLen]...),
+					Value: append([]byte(nil), payloadBytes[pos+keyLen:pos+keyLen+valueLen]...),
+				})
+				pos += keyLen + valueLen
+			}
+			if pos != len(payloadBytes) {
+				return offset, errors.New("trailing plain SET batch persistence data")
+			}
 		} else {
 			d := json.NewDecoder(bytes.NewReader(payloadBytes))
 			d.DisallowUnknownFields()
