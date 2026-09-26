@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net"
 	"testing"
+	"time"
 )
 
 func clientArgs(parts ...string) [][]byte {
