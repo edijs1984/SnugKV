@@ -64,6 +64,170 @@ func (s *Store) SetPlain(key string, value []byte) error {
 	return nil
 }
 
+type plainBatchItem struct {
+	key        string
+	value      []byte
+	hash       uint64
+	shardIndex int
+	entry      preparedEntry
+}
+
+func (s *Store) SetPlainBatchFresh(keys [][]byte, values [][]byte) (bool, error) {
+	if len(keys) == 0 || len(keys) != len(values) {
+		return false, nil
+	}
+
+	items := make([]plainBatchItem, len(keys))
+	seen := make(map[string]struct{}, len(keys))
+	touched := make([]int, 0, len(keys))
+	touchedSet := make(map[int]struct{}, len(keys))
+
+	for i := range keys {
+		if len(values[i]) > 32<<20 {
+			return true, errors.New("ERR value exceeds 32 MiB limit")
+		}
+		key := string(keys[i])
+		if _, duplicate := seen[key]; duplicate {
+			return false, nil
+		}
+		seen[key] = struct{}{}
+
+		hash := index.Hash(key)
+		shardIndex := int((hash >> 32) & uint64(len(s.shards)-1))
+		items[i] = plainBatchItem{
+			key:        key,
+			value:      values[i],
+			hash:       hash,
+			shardIndex: shardIndex,
+		}
+		if _, ok := touchedSet[shardIndex]; !ok {
+			touchedSet[shardIndex] = struct{}{}
+			touched = append(touched, shardIndex)
+		}
+	}
+
+	sort.Ints(touched)
+	for _, shardIndex := range touched {
+		s.shards[shardIndex].mu.Lock()
+	}
+	unlock := func() {
+		for i := len(touched) - 1; i >= 0; i-- {
+			s.shards[touched[i]].mu.Unlock()
+		}
+	}
+
+	for i := range items {
+		item := &items[i]
+		sh := &s.shards[item.shardIndex]
+		if old, exists := sh.getHashed(item.key, item.hash); exists {
+			_ = old
+			unlock()
+			return false, nil
+		}
+		item.entry = s.makeEntryForShard(sh, item.value)
+		if s.shouldTrackActivity(item.entry.entry) {
+			item.entry.entryMeta = &entryMeta{}
+		}
+	}
+
+	growth := make(map[int]int, len(touched))
+	allocations := make(map[int][]int, len(touched))
+	metaNeeds := make(map[int]bool, len(touched))
+
+	var keyBytes uint64
+	var metaBytes uint64
+	var extraIndex uint64
+	var extraEntries uint64
+	var extraMetaSlots uint64
+	var extraArena uint64
+	var arenaPayload uint64
+
+	for i := range items {
+		item := &items[i]
+		keyBytes += uint64(len(item.key))
+		metaBytes += metadataCharge(item.entry.entry)
+		growth[item.shardIndex]++
+		allocations[item.shardIndex] = append(allocations[item.shardIndex], len(item.entry.data))
+		if item.entry.entryMeta != nil {
+			metaNeeds[item.shardIndex] = true
+		}
+		if !shouldInlinePrepared(item.entry) {
+			arenaPayload += uint64(len(item.entry.data))
+		}
+	}
+
+	for _, shardIndex := range touched {
+		sh := &s.shards[shardIndex]
+		n := growth[shardIndex]
+		extraIndex += sh.data.GrowthBytes(n)
+		extraEntries += sh.entryGrowthBytes(n)
+		extraMetaSlots += sh.metaSlotGrowthBytes(n, metaNeeds[shardIndex])
+		extraArena += sh.arena.GrowthFor(allocations[shardIndex])
+	}
+
+	s.memory.mu.Lock()
+	next := s.memory.used +
+		keyBytes +
+		metaBytes +
+		extraIndex +
+		extraEntries +
+		extraMetaSlots +
+		extraArena
+
+	if s.exceedsMemoryLimitLocked(next, enforceMemoryLimit) {
+		s.memory.mu.Unlock()
+		unlock()
+		return true, ErrOOM
+	}
+
+	s.memory.used = next
+	s.memory.entries += keyBytes + extraEntries + extraMetaSlots
+	s.memory.metas += metaBytes
+	s.memory.index += extraIndex
+	s.memory.arenas += extraArena
+
+	var liveBlocks uint64
+	for i := range items {
+		item := &items[i]
+		sh := &s.shards[item.shardIndex]
+		if shouldInlinePrepared(item.entry) {
+			ref, ok := sh.arena.AllocInline(item.entry.data)
+			if !ok {
+				s.memory.mu.Unlock()
+				unlock()
+				panic("inline scalar admission invariant")
+			}
+			item.entry.ref = ref
+		} else {
+			item.entry.ref = sh.arena.Alloc(item.entry.data)
+			liveBlocks += sh.arena.AllocationBytes(item.entry.ref)
+		}
+	}
+
+	s.memory.arenaPayload += arenaPayload
+	s.memory.arenaLiveBlocks += liveBlocks
+	s.memory.mu.Unlock()
+
+	now := s.now()
+	for i := range items {
+		item := &items[i]
+		sh := &s.shards[item.shardIndex]
+		if item.entry.entryMeta != nil {
+			meta := item.entry.entryMeta
+			meta.lastWrite = activityStampOf(now)
+			meta.lastAccess = meta.lastWrite
+			meta.writes = 1
+		}
+		item.entry.hasExpiry = false
+		sh.setKnownHashed(item.key, item.hash, item.entry.entry, false)
+		sh.schedule(item.key, 0)
+		s.searchRemoveKey(item.key)
+	}
+
+	unlock()
+	return true, nil
+}
+
 func (s *Store) SetWithOptions(
 	key string,
 	value []byte,

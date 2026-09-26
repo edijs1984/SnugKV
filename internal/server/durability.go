@@ -265,6 +265,126 @@ func (s *Server) executeAuthorizedConcurrentSet(args [][]byte) (response []byte,
 // plain SET on the replicated hot path while preserving global write ordering.
 // It bypasses generic command dispatch only when AOF, metrics and maxmemory do
 // not require the ordinary durability/pressure path.
+func (s *Server) executeAuthorizedSerializedReplicatedSetBatch(keys [][]byte, values [][]byte) (replicationOffset int64, handled bool, err error) {
+	if len(keys) < 2 || len(keys) != len(values) ||
+		s.journal != nil ||
+		atomic.LoadUint32(&s.metricsEnabled) != 0 ||
+		s.store.MaxMemory() != 0 {
+		return 0, false, nil
+	}
+
+	s.durableMu.Lock()
+
+	s.replication.mu.Lock()
+	if s.replication.role == replicationReplica {
+		s.replication.mu.Unlock()
+		s.durableMu.Unlock()
+		return 0, true, errors.New("READONLY You can't write against a read only replica.")
+	}
+	if s.replication.role != replicationMaster ||
+		(len(s.replication.replicas) == 0 && !s.replication.backlogActive) {
+		s.replication.mu.Unlock()
+		s.durableMu.Unlock()
+		return 0, false, nil
+	}
+
+	var singleID uint64
+	var singleWrite func([]byte) error
+	var targets []struct {
+		id    uint64
+		write func([]byte) error
+	}
+	switch len(s.replication.replicas) {
+	case 0:
+	case 1:
+		for id, write := range s.replication.replicas {
+			singleID = id
+			singleWrite = write
+		}
+	default:
+		targets = make([]struct {
+			id    uint64
+			write func([]byte) error
+		}, 0, len(s.replication.replicas))
+		for id, write := range s.replication.replicas {
+			targets = append(targets, struct {
+				id    uint64
+				write func([]byte) error
+			}{id: id, write: write})
+		}
+	}
+	s.replication.mu.Unlock()
+
+	watchActive := s.hasWatchSessionsLocked()
+	if watchActive {
+		s.refreshWatchesLocked()
+	}
+
+	batched, setErr := s.store.SetPlainBatchFresh(keys, values)
+	if !batched {
+		for i := range keys {
+			if setErr = s.store.SetPlain(string(keys[i]), values[i]); setErr != nil {
+				break
+			}
+			if watchActive {
+				s.refreshWatchesLocked()
+			}
+		}
+	}
+	if setErr != nil {
+		if watchActive {
+			s.refreshWatchesLocked()
+		}
+		s.durableMu.Unlock()
+		atomic.AddUint64(&s.commands, uint64(len(keys)))
+		return 0, true, setErr
+	}
+
+	payloads := make([][]byte, len(keys))
+	s.replication.mu.Lock()
+	for i := range keys {
+		frameLen, payload := encodePlainSetReplicationPayload(keys[i], values[i])
+		payloads[i] = payload
+		s.replication.appendBacklogPayloadLocked(frameLen, payload)
+		replicationOffset = s.replication.offset
+	}
+	s.replication.mu.Unlock()
+
+	if watchActive {
+		s.refreshWatchesLocked()
+	}
+	s.durableMu.Unlock()
+
+	if s.optimizer != nil {
+		for i := range keys {
+			key := string(keys[i])
+			if s.store.ShouldQueueOptimization(values[i]) {
+				s.optimizer.Queue(key)
+			}
+		}
+	}
+
+	if singleWrite != nil {
+		for _, payload := range payloads {
+			if writeErr := singleWrite(payload); writeErr != nil {
+				s.replication.unregisterReplica(singleID)
+				break
+			}
+		}
+	} else {
+		for _, payload := range payloads {
+			for _, target := range targets {
+				if writeErr := target.write(payload); writeErr != nil {
+					s.replication.unregisterReplica(target.id)
+				}
+			}
+		}
+	}
+
+	atomic.AddUint64(&s.commands, uint64(len(keys)))
+	return replicationOffset, true, nil
+}
+
 func (s *Server) executeAuthorizedSerializedReplicatedSet(args [][]byte) (response []byte, replicationOffset int64, handled bool, err error) {
 	if len(args) != 3 ||
 		!bytes.EqualFold(args[0], []byte("SET")) ||
