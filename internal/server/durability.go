@@ -340,14 +340,10 @@ func (s *Server) executeAuthorizedSerializedReplicatedSetBatch(keys [][]byte, va
 		return 0, true, setErr
 	}
 
-	payloads := make([][]byte, len(keys))
+	frameLens, payloads, wireBatch := encodePlainSetReplicationPayloadBatch(keys, values)
 	s.replication.mu.Lock()
-	for i := range keys {
-		frameLen, payload := encodePlainSetReplicationPayload(keys[i], values[i])
-		payloads[i] = payload
-		s.replication.appendBacklogPayloadLocked(frameLen, payload)
-		replicationOffset = s.replication.offset
-	}
+	s.replication.appendBacklogPayloadBatchLocked(frameLens, payloads)
+	replicationOffset = s.replication.offset
 	s.replication.mu.Unlock()
 
 	if watchActive {
@@ -365,18 +361,13 @@ func (s *Server) executeAuthorizedSerializedReplicatedSetBatch(keys [][]byte, va
 	}
 
 	if singleWrite != nil {
-		for _, payload := range payloads {
-			if writeErr := singleWrite(payload); writeErr != nil {
-				s.replication.unregisterReplica(singleID)
-				break
-			}
+		if writeErr := singleWrite(wireBatch); writeErr != nil {
+			s.replication.unregisterReplica(singleID)
 		}
 	} else {
-		for _, payload := range payloads {
-			for _, target := range targets {
-				if writeErr := target.write(payload); writeErr != nil {
-					s.replication.unregisterReplica(target.id)
-				}
+		for _, target := range targets {
+			if writeErr := target.write(wireBatch); writeErr != nil {
+				s.replication.unregisterReplica(target.id)
 			}
 		}
 	}

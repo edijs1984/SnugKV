@@ -405,6 +405,32 @@ func (r *replicationState) appendBacklogPayloadLocked(frameLen int, payload []by
 	}
 }
 
+func (r *replicationState) appendBacklogPayloadBatchLocked(frameLens []int, payloads [][]byte) {
+	r.ensureBacklogLocked()
+
+	for i, frameLen := range frameLens {
+		start := r.offset + 1
+		end := r.offset + int64(frameLen)
+		r.backlog = append(r.backlog, replicationBacklogEntry{
+			startOffset: start,
+			endOffset:   end,
+			payload:     payloads[i],
+		})
+		r.backlogBytes += int64(frameLen)
+		r.offset = end
+	}
+
+	for len(r.backlog) > 0 && r.backlogBytes > r.backlogSize {
+		r.backlogBytes -= r.backlog[0].endOffset - r.backlog[0].startOffset + 1
+		r.backlog = r.backlog[1:]
+	}
+	if len(r.backlog) > 0 {
+		r.backlogFirstOffset = r.backlog[0].startOffset
+	} else {
+		r.backlogFirstOffset = r.offset + 1
+	}
+}
+
 func (r *replicationState) partialSyncPayloadLocked(runID string, offset int64) ([][]byte, bool) {
 	if !r.backlogActive || runID == "" || runID != r.runID {
 		return nil, false
@@ -628,6 +654,72 @@ func encodePlainSetReplicationFrameInto(frame, key, value []byte) {
 	pos += len(value)
 
 	binary.LittleEndian.PutUint32(frame[pos:pos+checksumLen], crc32.ChecksumIEEE(frame[:pos]))
+}
+
+func decimalDigits(n int) int {
+	if n < 10 {
+		return 1
+	}
+	digits := 0
+	for n > 0 {
+		n /= 10
+		digits++
+	}
+	return digits
+}
+
+func writeDecimal(dst []byte, n int) int {
+	if n == 0 {
+		dst[0] = 48
+		return 1
+	}
+	var buf [20]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte(48 + n%10)
+		n /= 10
+	}
+	return copy(dst, buf[i:])
+}
+
+func encodePlainSetReplicationPayloadBatch(keys [][]byte, values [][]byte) (frameLens []int, payloads [][]byte, wire []byte) {
+	const headerLen = 12
+	const checksumLen = 4
+
+	frameLens = make([]int, len(keys))
+	total := 0
+	for i := range keys {
+		frameLen := headerLen + len(keys[i]) + len(values[i]) + checksumLen
+		frameLens[i] = frameLen
+		total += 1 + decimalDigits(frameLen) + 2 + frameLen + 2
+	}
+
+	wire = make([]byte, total)
+	payloads = make([][]byte, len(keys))
+	pos := 0
+	for i := range keys {
+		start := pos
+		frameLen := frameLens[i]
+
+		wire[pos] = 36
+		pos++
+		pos += writeDecimal(wire[pos:], frameLen)
+		wire[pos] = 13
+		wire[pos+1] = 10
+		pos += 2
+
+		frame := wire[pos : pos+frameLen]
+		encodePlainSetReplicationFrameInto(frame, keys[i], values[i])
+		pos += frameLen
+
+		wire[pos] = 13
+		wire[pos+1] = 10
+		pos += 2
+		payloads[i] = wire[start:pos]
+	}
+
+	return frameLens, payloads, wire
 }
 
 func encodePlainSetReplicationPayload(key, value []byte) (int, []byte) {
