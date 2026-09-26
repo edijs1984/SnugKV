@@ -870,7 +870,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			atomic.LoadUint32(&s.server.metricsEnabled) == 0 &&
 			s.server.store.MaxMemory() == 0 &&
 			reader.Buffered() > 0 {
-			const maxSetBatch = 64
+			const maxSetBatch = 256
 
 			keys := make([][]byte, 0, maxSetBatch)
 			values := make([][]byte, 0, maxSetBatch)
