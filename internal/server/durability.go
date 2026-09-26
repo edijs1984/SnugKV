@@ -271,6 +271,54 @@ func (s *Server) executeAuthorizedConcurrentSet(args [][]byte) (response []byte,
 	return []byte("+OK\r\n"), true, nil
 }
 
+func (s *Server) executeAuthorizedConcurrentAOFSet(args [][]byte) (response []byte, durabilitySequence uint64, handled bool, err error) {
+	if len(args) != 3 ||
+		!bytes.EqualFold(args[0], []byte("SET")) ||
+		s.journal == nil ||
+		s.replication.primaryHasReplicas() ||
+		atomic.LoadUint32(&s.metricsEnabled) != 0 ||
+		s.store.MaxMemory() != 0 {
+		return nil, 0, false, nil
+	}
+	journal, ok := s.journal.(plainSetJournal)
+	if !ok {
+		return nil, 0, false, nil
+	}
+	if len(args[2]) > 32<<20 {
+		return nil, 0, true, errors.New("ERR value exceeds 32 MiB limit")
+	}
+
+	s.durableMu.RLock()
+	if s.hasWatchSessionsLocked() {
+		s.durableMu.RUnlock()
+		return nil, 0, false, nil
+	}
+
+	var appendErr error
+	key := string(args[1])
+	setErr := s.store.SetPlainCommitted(key, args[2], func() error {
+		appendErr = journal.AppendPlainSet(args[1], args[2])
+		return appendErr
+	})
+	s.durableMu.RUnlock()
+
+	if setErr != nil {
+		if appendErr != nil {
+			return nil, 0, true, errors.New("ERR persistence append failed")
+		}
+		return nil, 0, true, setErr
+	}
+
+	if durable, ok := s.journal.(durabilityJournal); ok {
+		durabilitySequence, _, _ = durable.DurabilitySnapshot()
+	}
+	if s.optimizer != nil && s.store.ShouldQueueOptimization(args[2]) {
+		s.optimizer.Queue(key)
+	}
+	atomic.AddUint64(&s.commands, 1)
+	return []byte("+OK\r\n"), durabilitySequence, true, nil
+}
+
 func (s *Server) executeAuthorizedSerializedAOFSetBatch(keys, values [][]byte) (durabilitySequence uint64, handled bool, err error) {
 	if len(keys) < 2 || len(keys) != len(values) ||
 		s.journal == nil ||
