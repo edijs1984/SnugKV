@@ -769,9 +769,7 @@ func decodePlainSetReplicationFrame(frame []byte) (key, value []byte, ok bool, e
 
 	keyStart := headerLen
 	valueStart := keyStart + keyLen
-	key = append([]byte(nil), frame[keyStart:valueStart]...)
-	value = append([]byte(nil), frame[valueStart:checksumPos]...)
-	return key, value, true, nil
+	return frame[keyStart:valueStart], frame[valueStart:checksumPos], true, nil
 }
 
 func decodeReplicationFrame(frame []byte) ([]persistence.Record, error) {
@@ -805,6 +803,15 @@ func replicationBulk(payload []byte) []byte {
 }
 
 func (s *Server) forwardReplicatedSnugFrame(frame []byte) int64 {
+	s.replication.mu.Lock()
+	if len(s.replication.replicas) == 0 && !s.replication.backlogActive {
+		s.replication.offset += int64(len(frame))
+		replicatedOffset := s.replication.offset
+		s.replication.mu.Unlock()
+		return replicatedOffset
+	}
+	s.replication.mu.Unlock()
+
 	payload := replicationBulk(frame)
 
 	s.replication.mu.Lock()
@@ -1007,7 +1014,7 @@ func readReplicationSnapshot(reader *bufio.Reader) ([]byte, bool, error) {
 	return payload, false, nil
 }
 
-func readReplicationRESP(reader *bufio.Reader) ([]byte, error) {
+func readReplicationRESPInto(reader *bufio.Reader, payload []byte) ([]byte, error) {
 	p, err := reader.ReadByte()
 	if err != nil {
 		return nil, err
@@ -1024,7 +1031,11 @@ func readReplicationRESP(reader *bufio.Reader) ([]byte, error) {
 	if err != nil || n < 0 || n > persistence.MaxFrameBytes+8 {
 		return nil, errors.New("invalid replication bulk length")
 	}
-	payload := make([]byte, n)
+	if cap(payload) < n {
+		payload = make([]byte, n)
+	} else {
+		payload = payload[:n]
+	}
 	if _, err := io.ReadFull(reader, payload); err != nil {
 		return nil, err
 	}
@@ -1033,6 +1044,10 @@ func readReplicationRESP(reader *bufio.Reader) ([]byte, error) {
 		return nil, errors.New("invalid replication bulk terminator")
 	}
 	return payload, nil
+}
+
+func readReplicationRESP(reader *bufio.Reader) ([]byte, error) {
+	return readReplicationRESPInto(reader, nil)
 }
 
 func authenticateReplicationUpstream(conn net.Conn, reader *bufio.Reader, username, password string) error {
@@ -1373,6 +1388,7 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 
 	var transaction [][][]byte
 	var transactionBytes int64
+	var replicationFrameBuf []byte
 	for {
 		select {
 		case <-cancel:
@@ -1512,7 +1528,10 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 			continue
 		}
 
-		frame, err := readReplicationRESP(reader)
+		frame, err := readReplicationRESPInto(reader, replicationFrameBuf)
+		if err == nil {
+			replicationFrameBuf = frame
+		}
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			s.replication.mu.RLock()
 			ackOffset := s.replication.offset
