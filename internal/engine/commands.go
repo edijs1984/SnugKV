@@ -121,18 +121,12 @@ func (s *Store) SetPlainBatchFresh(keys [][]byte, values [][]byte) (bool, error)
 	}
 
 	items := make([]plainBatchItem, len(keys))
-	seen := make(map[string]struct{}, len(keys))
 
 	for i := range keys {
 		if len(values[i]) > 32<<20 {
 			return true, errors.New("ERR value exceeds 32 MiB limit")
 		}
 		key := string(keys[i])
-		if _, duplicate := seen[key]; duplicate {
-			return false, nil
-		}
-		seen[key] = struct{}{}
-
 		hash := index.Hash(key)
 		items[i] = plainBatchItem{
 			key:        key,
@@ -146,8 +140,19 @@ func (s *Store) SetPlainBatchFresh(keys [][]byte, values [][]byte) (bool, error)
 	// lock order, this avoids several per-batch shard maps on the hot path:
 	// touched-set, growth counts, allocation-length buckets, and metadata flags.
 	sort.Slice(items, func(i, j int) bool {
-		return items[i].shardIndex < items[j].shardIndex
+		if items[i].shardIndex != items[j].shardIndex {
+			return items[i].shardIndex < items[j].shardIndex
+		}
+		if items[i].hash != items[j].hash {
+			return items[i].hash < items[j].hash
+		}
+		return items[i].key < items[j].key
 	})
+	for i := 1; i < len(items); i++ {
+		if items[i-1].hash == items[i].hash && items[i-1].key == items[i].key {
+			return false, nil
+		}
+	}
 
 	lastShard := -1
 	for i := range items {
