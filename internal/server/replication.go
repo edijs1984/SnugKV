@@ -1532,7 +1532,13 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 			}
 			if plainSet {
 				s.durableMu.Lock()
-				err = s.store.SetPlain(string(key), value)
+				keyString := string(key)
+				handledFresh, freshErr := s.store.SetReplicaFreshPlain(keyString, value)
+				if freshErr != nil {
+					err = freshErr
+				} else if !handledFresh {
+					err = s.store.SetPlain(keyString, value)
+				}
 				if err == nil {
 					s.refreshWatchesLocked()
 				}
