@@ -274,6 +274,8 @@ func (s *Server) executeAuthorizedSerializedReplicatedSet(args [][]byte) (respon
 		return nil, 0, false, nil
 	}
 
+	frameLen, payload := encodePlainSetReplicationPayload(args[1], args[2])
+
 	s.durableMu.Lock()
 
 	// The ordinary concurrent SET fast path has already declined this command.
@@ -313,8 +315,6 @@ func (s *Server) executeAuthorizedSerializedReplicatedSet(args [][]byte) (respon
 	if s.optimizer != nil && s.store.ShouldQueueOptimization(args[2]) {
 		s.optimizer.Queue(key)
 	}
-
-	frameLen, payload := encodePlainSetReplicationPayload(args[1], args[2])
 
 	var singleID uint64
 	var singleWrite func([]byte) error
