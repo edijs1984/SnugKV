@@ -295,12 +295,17 @@ func (s *Server) executeAuthorizedSerializedReplicatedSet(args [][]byte) (respon
 	}
 	s.replication.mu.Unlock()
 
-	s.refreshWatchesLocked()
+	watchActive := s.hasWatchSessionsLocked()
+	if watchActive {
+		s.refreshWatchesLocked()
+	}
 
 	key := string(args[1])
 	setErr := s.store.SetPlain(key, args[2])
 	if setErr != nil {
-		s.refreshWatchesLocked()
+		if watchActive {
+			s.refreshWatchesLocked()
+		}
 		s.durableMu.Unlock()
 		atomic.AddUint64(&s.commands, 1)
 		return nil, 0, true, setErr
@@ -342,7 +347,9 @@ func (s *Server) executeAuthorizedSerializedReplicatedSet(args [][]byte) (respon
 	}
 	s.replication.mu.Unlock()
 
-	s.refreshWatchesLocked()
+	if watchActive {
+		s.refreshWatchesLocked()
+	}
 	s.durableMu.Unlock()
 
 	if singleWrite != nil {
