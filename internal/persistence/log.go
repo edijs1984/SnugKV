@@ -274,12 +274,17 @@ func (l *Log) Append(records []Record) error {
 // encoding. The payload starts with a reserved binary tag so Read can replay
 // these frames alongside older JSON frames in the same AOF.
 func (l *Log) AppendPlainSet(key, value []byte) error {
+	frame, err := EncodePlainSetFrame(key, value)
+	if err != nil {
+		return err
+	}
+
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.failed != nil {
 		return l.failed
 	}
-	if err := WritePlainSetFrame(l.writer, key, value); err != nil {
+	if err := writeAll(l.writer, frame); err != nil {
 		l.failed = err
 		return err
 	}
@@ -288,12 +293,17 @@ func (l *Log) AppendPlainSet(key, value []byte) error {
 
 
 func (l *Log) AppendPlainSetBatch(keys, values [][]byte) error {
+	frame, err := EncodePlainSetBatchFrame(keys, values)
+	if err != nil {
+		return err
+	}
+
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.failed != nil {
 		return l.failed
 	}
-	if err := WritePlainSetBatchFrame(l.writer, keys, values); err != nil {
+	if err := writeAll(l.writer, frame); err != nil {
 		l.failed = err
 		return err
 	}
@@ -358,66 +368,71 @@ func WriteFrame(w io.Writer, records []Record) error {
 	return writeAll(w, payload)
 }
 
-func WritePlainSetFrame(w io.Writer, key, value []byte) error {
+func EncodePlainSetFrame(key, value []byte) ([]byte, error) {
 	payloadLen := 5 + len(key) + len(value)
 	if payloadLen > MaxFrameBytes {
-		return errors.New("persistence frame exceeds limit")
+		return nil, errors.New("persistence frame exceeds limit")
 	}
-	var prefix [5]byte
-	prefix[0] = plainSetFrameTag
-	binary.LittleEndian.PutUint32(prefix[1:], uint32(len(key)))
 
-	checksum := crc32.Update(0, crc32.IEEETable, prefix[:])
-	checksum = crc32.Update(checksum, crc32.IEEETable, key)
-	checksum = crc32.Update(checksum, crc32.IEEETable, value)
+	frame := make([]byte, 8+payloadLen)
+	payload := frame[8:]
+	payload[0] = plainSetFrameTag
+	binary.LittleEndian.PutUint32(payload[1:5], uint32(len(key)))
+	copy(payload[5:], key)
+	copy(payload[5+len(key):], value)
 
-	var header [8]byte
-	binary.LittleEndian.PutUint32(header[:4], uint32(payloadLen))
-	binary.LittleEndian.PutUint32(header[4:], checksum)
-	if err := writeAll(w, header[:]); err != nil {
+	binary.LittleEndian.PutUint32(frame[:4], uint32(payloadLen))
+	binary.LittleEndian.PutUint32(frame[4:8], crc32.ChecksumIEEE(payload))
+	return frame, nil
+}
+
+func WritePlainSetFrame(w io.Writer, key, value []byte) error {
+	frame, err := EncodePlainSetFrame(key, value)
+	if err != nil {
 		return err
 	}
-	if err := writeAll(w, prefix[:]); err != nil {
-		return err
-	}
-	if err := writeAll(w, key); err != nil {
-		return err
-	}
-	return writeAll(w, value)
+	return writeAll(w, frame)
 }
 
 
-func WritePlainSetBatchFrame(w io.Writer, keys, values [][]byte) error {
+func EncodePlainSetBatchFrame(keys, values [][]byte) ([]byte, error) {
 	if len(keys) == 0 || len(keys) != len(values) {
-		return errors.New("invalid plain SET batch")
+		return nil, errors.New("invalid plain SET batch")
 	}
 	payloadLen := 5
 	for i := range keys {
 		payloadLen += 8 + len(keys[i]) + len(values[i])
 	}
 	if payloadLen > MaxFrameBytes {
-		return errors.New("persistence frame exceeds limit")
+		return nil, errors.New("persistence frame exceeds limit")
 	}
 
-	payload := make([]byte, 5, payloadLen)
+	frame := make([]byte, 8+payloadLen)
+	payload := frame[8:]
 	payload[0] = plainSetBatchFrameTag
 	binary.LittleEndian.PutUint32(payload[1:5], uint32(len(keys)))
+	pos := 5
 	for i := range keys {
-		start := len(payload)
-		payload = append(payload, make([]byte, 8)...)
-		binary.LittleEndian.PutUint32(payload[start:start+4], uint32(len(keys[i])))
-		binary.LittleEndian.PutUint32(payload[start+4:start+8], uint32(len(values[i])))
-		payload = append(payload, keys[i]...)
-		payload = append(payload, values[i]...)
+		binary.LittleEndian.PutUint32(payload[pos:pos+4], uint32(len(keys[i])))
+		binary.LittleEndian.PutUint32(payload[pos+4:pos+8], uint32(len(values[i])))
+		pos += 8
+		copy(payload[pos:], keys[i])
+		pos += len(keys[i])
+		copy(payload[pos:], values[i])
+		pos += len(values[i])
 	}
 
-	var header [8]byte
-	binary.LittleEndian.PutUint32(header[:4], uint32(len(payload)))
-	binary.LittleEndian.PutUint32(header[4:], crc32.ChecksumIEEE(payload))
-	if err := writeAll(w, header[:]); err != nil {
+	binary.LittleEndian.PutUint32(frame[:4], uint32(payloadLen))
+	binary.LittleEndian.PutUint32(frame[4:8], crc32.ChecksumIEEE(payload))
+	return frame, nil
+}
+
+func WritePlainSetBatchFrame(w io.Writer, keys, values [][]byte) error {
+	frame, err := EncodePlainSetBatchFrame(keys, values)
+	if err != nil {
 		return err
 	}
-	return writeAll(w, payload)
+	return writeAll(w, frame)
 }
 func writeAll(w io.Writer, data []byte) error {
 	for len(data) > 0 {
