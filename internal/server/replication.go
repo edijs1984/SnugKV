@@ -1588,22 +1588,67 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 			return err
 		}
 		if s.journal == nil && s.store.MaxMemory() == 0 {
-			key, value, plainSet, decodeErr := decodePlainSetReplicationFrame(frame)
+			key, value, plainSet, decodeErr := decodePlainSetReplicationFrameView(frame)
 			if decodeErr != nil {
 				return decodeErr
 			}
 			if plainSet {
+				frames := make([][]byte, 1, replicationReplicaBatchMaxFrames)
+				frames[0] = frame
+				keys := make([][]byte, 1, replicationReplicaBatchMaxFrames)
+				keys[0] = key
+				values := make([][]byte, 1, replicationReplicaBatchMaxFrames)
+				values[0] = value
+
+				for len(frames) < replicationReplicaBatchMaxFrames {
+					nextFrame, bufferedPlain, readErr := readBufferedPlainSetReplicationFrame(reader)
+					if readErr != nil {
+						return readErr
+					}
+					if !bufferedPlain {
+						break
+					}
+					nextKey, nextValue, ok, nextDecodeErr := decodePlainSetReplicationFrameView(nextFrame)
+					if nextDecodeErr != nil {
+						return nextDecodeErr
+					}
+					if !ok {
+						break
+					}
+					frames = append(frames, nextFrame)
+					keys = append(keys, nextKey)
+					values = append(values, nextValue)
+				}
+
 				s.durableMu.Lock()
-				err = s.store.SetPlain(string(key), value)
-				if err == nil {
+				watchActive := s.hasWatchSessionsLocked()
+				batched := false
+				if !watchActive && len(frames) > 1 {
+					batched, err = s.store.SetPlainBatchFresh(keys, values)
+				}
+				if !batched {
+					for i := range keys {
+						err = s.store.SetPlain(string(keys[i]), values[i])
+						if err != nil {
+							break
+						}
+						if watchActive {
+							s.refreshWatchesLocked()
+						}
+					}
+				}
+				if err == nil && !watchActive {
 					s.refreshWatchesLocked()
 				}
 				s.durableMu.Unlock()
 				if err != nil {
 					return err
 				}
-				replicatedOffset := s.forwardReplicatedSnugFrame(frame)
-				s.noteReplicaAOFOffset(replicatedOffset)
+
+				for _, replicatedFrame := range frames {
+					replicatedOffset := s.forwardReplicatedSnugFrame(replicatedFrame)
+					s.noteReplicaAOFOffset(replicatedOffset)
+				}
 				continue
 			}
 		}
