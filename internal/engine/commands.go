@@ -184,7 +184,13 @@ func (s *Store) SetPlainBatchFresh(keys [][]byte, values [][]byte) (bool, error)
 		}
 	}
 
-	allocationLens := make([]int, len(items))
+	var allocationLensStack [256]int
+	allocationLens := allocationLensStack[:0]
+	if len(items) <= len(allocationLensStack) {
+		allocationLens = allocationLensStack[:len(items)]
+	} else {
+		allocationLens = make([]int, len(items))
+	}
 
 	var keyBytes uint64
 	var metaBytes uint64
