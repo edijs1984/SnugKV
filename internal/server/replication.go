@@ -769,9 +769,7 @@ func decodePlainSetReplicationFrame(frame []byte) (key, value []byte, ok bool, e
 
 	keyStart := headerLen
 	valueStart := keyStart + keyLen
-	key = append([]byte(nil), frame[keyStart:valueStart]...)
-	value = append([]byte(nil), frame[valueStart:checksumPos]...)
-	return key, value, true, nil
+	return frame[keyStart:valueStart], frame[valueStart:checksumPos], true, nil
 }
 
 func decodeReplicationFrame(frame []byte) ([]persistence.Record, error) {
@@ -1405,6 +1403,7 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 
 	var transaction [][][]byte
 	var transactionBytes int64
+	var replicationFrameBuf []byte
 	for {
 		select {
 		case <-cancel:
@@ -1544,7 +1543,10 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 			continue
 		}
 
-		frame, err := readReplicationRESP(reader)
+		frame, err := readReplicationRESPReuse(reader, replicationFrameBuf)
+		if err == nil {
+			replicationFrameBuf = frame
+		}
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			s.replication.mu.RLock()
 			ackOffset := s.replication.offset
