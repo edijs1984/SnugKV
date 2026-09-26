@@ -168,52 +168,18 @@ func (l *Log) syncLoop() {
 			batch := []queuedFrame{first}
 			bytes := len(first.data)
 			needSync := first.sync
-
-			// appendfsync=always benefits from a tiny group-commit window:
-			// concurrent client pipelines commonly enqueue within a few dozen
-			// microseconds of each other. Waiting briefly here lets those frames
-			// share one flush+fsync while replies still remain blocked until that
-			// durability boundary completes. everysec remains fully eager.
-			var coalesce <-chan time.Time
-			var timer *time.Timer
-			if first.sync {
-				timer = time.NewTimer(50 * time.Microsecond)
-				coalesce = timer.C
-			}
-
 			for len(batch) < 64 && bytes < 256<<10 {
-				if coalesce == nil {
-					select {
-					case next := <-l.queue:
-						batch = append(batch, next)
-						bytes += len(next.data)
-						needSync = needSync || next.sync
-					default:
-						goto writeBatch
-					}
-					continue
-				}
-
 				select {
 				case next := <-l.queue:
 					batch = append(batch, next)
 					bytes += len(next.data)
 					needSync = needSync || next.sync
-				case <-coalesce:
-					coalesce = nil
+				default:
 					goto writeBatch
 				}
 			}
 
 		writeBatch:
-			if timer != nil {
-				if !timer.Stop() {
-					select {
-					case <-timer.C:
-					default:
-					}
-				}
-			}
 			l.mu.Lock()
 			if l.failed == nil {
 				for _, frame := range batch {
