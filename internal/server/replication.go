@@ -814,6 +814,15 @@ func (s *Server) publishReplication(records []persistence.Record) {
 }
 
 func (s *Server) handlePSYNC(write func([]byte) error, requestedRunID string, requestedOffset int64) (uint64, error) {
+	return s.handlePSYNCWithBuffers(write, nil, requestedRunID, requestedOffset)
+}
+
+func (s *Server) handlePSYNCWithBuffers(
+	write func([]byte) error,
+	writeBuffers func(net.Buffers) error,
+	requestedRunID string,
+	requestedOffset int64,
+) (uint64, error) {
 	s.durableMu.Lock()
 	defer s.durableMu.Unlock()
 
@@ -823,7 +832,7 @@ func (s *Server) handlePSYNC(write func([]byte) error, requestedRunID string, re
 	payloads, partial := s.replication.partialSyncPayloadLocked(requestedRunID, requestedOffset)
 	s.replication.mu.RUnlock()
 	if partial {
-		id, _, _ := s.replication.registerReplica(write)
+		id, _, _ := s.replication.registerReplicaWithBuffers(write, writeBuffers)
 		ok := false
 		defer func() {
 			if !ok {
@@ -851,7 +860,7 @@ func (s *Server) handlePSYNC(write func([]byte) error, requestedRunID string, re
 		return 0, err
 	}
 
-	id, runID, offset := s.replication.registerReplica(write)
+	id, runID, offset := s.replication.registerReplicaWithBuffers(write, writeBuffers)
 	s.replication.mu.Lock()
 	s.replication.ensureBacklogLocked()
 	s.replication.mu.Unlock()
