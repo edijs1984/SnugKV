@@ -630,6 +630,37 @@ func (s *Server) executeDurableLocked(args [][]byte) ([]byte, error) {
 		return s.executeScriptDurableLocked(args)
 	}
 
+	// Plain SET fully replaces one string key and clears its TTL. With maxmemory
+	// disabled, the mutation is already known from the command arguments, so the
+	// AOF hot path does not need generic dispatch plus a second logical Export.
+	// Keep one pre-image for rollback if the journal append fails.
+	if cmd == "SET" && len(args) == 3 && s.store.MaxMemory() == 0 {
+		key := string(args[1])
+		before := s.store.Export([]string{key})
+
+		if err := s.store.SetPlain(key, args[2]); err != nil {
+			return nil, err
+		}
+
+		records := []persistence.Record{{
+			Key:   args[1],
+			Value: args[2],
+		}}
+		if err := s.journal.Append(records); err != nil {
+			s.durabilityFailed = true
+			if rollbackErr := s.store.Restore(before, true); rollbackErr != nil {
+				return nil, errors.New("ERR persistence and rollback failed")
+			}
+			return nil, errors.New("ERR persistence append failed")
+		}
+
+		s.publishReplication(records)
+		if s.optimizer != nil && s.store.ShouldQueueOptimization(args[2]) {
+			s.optimizer.Queue(key)
+		}
+		return []byte("+OK\r\n"), nil
+	}
+
 	if cmd == "FLUSHDB" || cmd == "FLUSHALL" {
 		before := s.store.Export(nil)
 
