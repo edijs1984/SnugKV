@@ -28,6 +28,16 @@ type plainSetBatchJournal interface {
 	AppendPlainSetBatch(keys, values [][]byte) error
 }
 
+type fsyncPolicyJournal interface {
+	Journal
+	Policy() string
+}
+
+func (s *Server) journalUsesAlwaysFsync() bool {
+	journal, ok := s.journal.(fsyncPolicyJournal)
+	return ok && journal.Policy() == "always"
+}
+
 // SetJournal is a startup-only operation. Command execution is serialized so
 // clients cannot observe a mutation whose journal append later fails, and so a
 // MULTI/EXEC block can execute without another client interleaving commands.
