@@ -715,15 +715,12 @@ func (s *Server) executeDurableLocked(args [][]byte) ([]byte, error) {
 	}
 
 	// Plain SET fully replaces one string key and clears its TTL. With maxmemory
-	// disabled, the mutation is already known from the command arguments, so the
-	// AOF hot path does not need generic dispatch plus a second logical Export.
-	// Keep one pre-image for rollback if the journal append fails.
+	// disabled, SetPlain can only fail its deterministic value-size validation.
+	// Validate that first, persist the known mutation, then publish it in memory.
+	// This removes the per-command pre-image Export from the AOF hot path.
 	if cmd == "SET" && len(args) == 3 && s.store.MaxMemory() == 0 {
-		key := string(args[1])
-		before := s.store.Export([]string{key})
-
-		if err := s.store.SetPlain(key, args[2]); err != nil {
-			return nil, err
+		if len(args[2]) > 32<<20 {
+			return nil, errors.New("ERR value exceeds 32 MiB limit")
 		}
 
 		records := []persistence.Record{{
@@ -736,12 +733,18 @@ func (s *Server) executeDurableLocked(args [][]byte) ([]byte, error) {
 		} else {
 			appendErr = s.journal.Append(records)
 		}
-		if err := appendErr; err != nil {
+		if appendErr != nil {
 			s.durabilityFailed = true
-			if rollbackErr := s.store.Restore(before, true); rollbackErr != nil {
-				return nil, errors.New("ERR persistence and rollback failed")
-			}
 			return nil, errors.New("ERR persistence append failed")
+		}
+
+		key := string(args[1])
+		if err := s.store.SetPlain(key, args[2]); err != nil {
+			// With maxmemory disabled and size prevalidated this should be
+			// unreachable. Mark durability unavailable rather than continue with
+			// memory and AOF diverged.
+			s.durabilityFailed = true
+			return nil, errors.New("ERR persisted SET could not be applied in memory")
 		}
 
 		s.publishReplication(records)
