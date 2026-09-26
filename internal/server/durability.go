@@ -281,19 +281,16 @@ func (s *Server) executeAuthorizedSerializedReplicatedSet(args [][]byte) (respon
 	// lock for backlog publication, avoiding repeated lock round-trips through
 	// isReadOnlyReplica, primaryHasReplicas, publishPlainSetReplication and
 	// currentOffset.
-	s.replication.mu.Lock()
-	if s.replication.role == replicationReplica {
-		s.replication.mu.Unlock()
+	switch s.replication.fastState.Load() {
+	case replicationFastReplica:
 		s.durableMu.Unlock()
 		return nil, 0, true, errors.New("READONLY You can't write against a read only replica.")
-	}
-	if s.replication.role != replicationMaster ||
-		(len(s.replication.replicas) == 0 && !s.replication.backlogActive) {
-		s.replication.mu.Unlock()
+	case replicationFastMasterActive:
+		// Continue into the replicated fast path.
+	default:
 		s.durableMu.Unlock()
 		return nil, 0, false, nil
 	}
-	s.replication.mu.Unlock()
 
 	watchActive := s.hasWatchSessionsLocked()
 	if watchActive {
