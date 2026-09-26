@@ -60,6 +60,12 @@ func RecoverReplicationCheckpoint(current *ReplicationCheckpoint, records []Reco
 	}
 	return current
 }
+type queuedFrame struct {
+	data  []byte
+	count uint64
+	seq   uint64
+}
+
 type Log struct {
 	lock        *os.File
 	mu          sync.Mutex
@@ -68,8 +74,11 @@ type Log struct {
 	policy      string
 	failed      error
 	appendedSeq uint64
+	writtenSeq  uint64
 	syncedSeq   uint64
 	syncChanged chan struct{}
+	queue       chan queuedFrame
+	wake        chan struct{}
 	stop        chan struct{}
 	done        chan struct{}
 	once        sync.Once
@@ -125,6 +134,8 @@ func Open(path, policy string) (*Log, error) {
 		writer:      bufio.NewWriterSize(f, 256<<10),
 		policy:      policy,
 		syncChanged: make(chan struct{}),
+		queue:       make(chan queuedFrame, 4096),
+		wake:        make(chan struct{}, 1),
 		stop:        make(chan struct{}),
 		done:        make(chan struct{}),
 	}
@@ -141,28 +152,74 @@ func (l *Log) syncLoop() {
 	defer close(l.done)
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+
+	drain := func() {
+		for {
+			select {
+			case frame := <-l.queue:
+				l.mu.Lock()
+				if l.failed == nil {
+					if err := writeAll(l.writer, frame.data); err != nil {
+						l.failed = err
+					} else if frame.seq > l.writtenSeq {
+						l.writtenSeq = frame.seq
+					}
+				}
+				l.mu.Unlock()
+			default:
+				return
+			}
+		}
+	}
+
 	for {
 		select {
 		case <-l.stop:
+			drain()
 			return
+		case <-l.wake:
+			drain()
 		case <-ticker.C:
+			drain()
 			l.mu.Lock()
-
-			if l.failed == nil &&
-				l.policy == "everysec" {
-
+			if l.failed == nil && l.policy == "everysec" {
 				if err := l.writer.Flush(); err != nil {
 					l.failed = err
 				} else {
 					l.failed = l.file.Sync()
 				}
 				if l.failed == nil {
-					l.markSyncedLocked()
+					if l.writtenSeq > l.syncedSeq {
+						l.syncedSeq = l.writtenSeq
+						close(l.syncChanged)
+						l.syncChanged = make(chan struct{})
+					}
 				}
 			}
-
 			l.mu.Unlock()
 		}
+	}
+}
+
+func (l *Log) drainEverysec() error {
+	for {
+		l.mu.Lock()
+		if l.failed != nil {
+			err := l.failed
+			l.mu.Unlock()
+			return err
+		}
+		target := l.appendedSeq
+		written := l.writtenSeq
+		l.mu.Unlock()
+		if written >= target {
+			return nil
+		}
+		select {
+		case l.wake <- struct{}{}:
+		default:
+		}
+		time.Sleep(time.Microsecond)
 	}
 }
 
@@ -206,6 +263,9 @@ func (l *Log) DurabilitySnapshot() (appended, synced uint64, changed <-chan stru
 func (l *Log) SetPolicy(policy string) error {
 	if !validFsyncPolicy(policy) {
 		return errors.New("invalid fsync policy")
+	}
+	if err := l.drainEverysec(); err != nil {
+		return err
 	}
 
 	l.mu.Lock()
@@ -258,12 +318,39 @@ func (l *Log) finishAppendLocked() error {
 }
 
 func (l *Log) Append(records []Record) error {
+	var frame bytes.Buffer
+	if err := WriteFrame(&frame, records); err != nil {
+		return err
+	}
+
+	l.mu.Lock()
+	if l.failed != nil {
+		err := l.failed
+		l.mu.Unlock()
+		return err
+	}
+	if l.policy == "everysec" {
+		l.appendedSeq++
+		seq := l.appendedSeq
+		l.mu.Unlock()
+		l.queue <- queuedFrame{data: frame.Bytes(), count: 1, seq: seq}
+		select {
+		case l.wake <- struct{}{}:
+		default:
+		}
+		return nil
+	}
+	l.mu.Unlock()
+
+	if err := l.drainEverysec(); err != nil {
+		return err
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.failed != nil {
 		return l.failed
 	}
-	if err := WriteFrame(l.writer, records); err != nil {
+	if err := writeAll(l.writer, frame.Bytes()); err != nil {
 		l.failed = err
 		return err
 	}
@@ -279,6 +366,28 @@ func (l *Log) AppendPlainSet(key, value []byte) error {
 		return err
 	}
 
+	l.mu.Lock()
+	if l.failed != nil {
+		err := l.failed
+		l.mu.Unlock()
+		return err
+	}
+	if l.policy == "everysec" {
+		l.appendedSeq++
+		seq := l.appendedSeq
+		l.mu.Unlock()
+		l.queue <- queuedFrame{data: frame, count: 1, seq: seq}
+		select {
+		case l.wake <- struct{}{}:
+		default:
+		}
+		return nil
+	}
+	l.mu.Unlock()
+
+	if err := l.drainEverysec(); err != nil {
+		return err
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.failed != nil {
@@ -297,7 +406,30 @@ func (l *Log) AppendPlainSetBatch(keys, values [][]byte) error {
 	if err != nil {
 		return err
 	}
+	count := uint64(len(keys))
 
+	l.mu.Lock()
+	if l.failed != nil {
+		err := l.failed
+		l.mu.Unlock()
+		return err
+	}
+	if l.policy == "everysec" {
+		l.appendedSeq += count
+		seq := l.appendedSeq
+		l.mu.Unlock()
+		l.queue <- queuedFrame{data: frame, count: count, seq: seq}
+		select {
+		case l.wake <- struct{}{}:
+		default:
+		}
+		return nil
+	}
+	l.mu.Unlock()
+
+	if err := l.drainEverysec(); err != nil {
+		return err
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.failed != nil {
@@ -307,7 +439,7 @@ func (l *Log) AppendPlainSetBatch(keys, values [][]byte) error {
 		l.failed = err
 		return err
 	}
-	l.appendedSeq += uint64(len(keys))
+	l.appendedSeq += count
 	if l.policy == "no" {
 		if err := l.writer.Flush(); err != nil {
 			l.failed = err
@@ -326,8 +458,10 @@ func (l *Log) AppendPlainSetBatch(keys, values [][]byte) error {
 	}
 	return l.failed
 }
+
 func (l *Log) Close() error {
 	l.once.Do(func() {
+		_ = l.drainEverysec()
 		close(l.stop)
 		<-l.done
 		l.mu.Lock()
@@ -629,6 +763,9 @@ func ReplaySnapshot(path string, apply func([]Record) error) error {
 // Rewrite atomically replaces history with a reset marker and current logical
 // records. Reset makes replay safe even over a snapshot from an older keyspace.
 func (l *Log) Rewrite(records []Record) error {
+	if err := l.drainEverysec(); err != nil {
+		return err
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.failed != nil {
