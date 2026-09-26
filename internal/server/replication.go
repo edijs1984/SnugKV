@@ -21,10 +21,17 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 type replicationRole uint8
+
+const (
+	replicationFastMasterIdle uint32 = iota
+	replicationFastMasterActive
+	replicationFastReplica
+)
 
 const (
 	replicationMaster replicationRole = iota
@@ -48,7 +55,8 @@ type replicationBacklogEntry struct {
 type replicationState struct {
 	mu sync.RWMutex
 
-	role replicationRole
+	fastState atomic.Uint32
+	role      replicationRole
 
 	masterHost           string
 	masterPort           int
@@ -125,6 +133,7 @@ func (r *replicationState) setReplica(host string, port int) {
 	r.masterPort = port
 	r.masterLinkStatus = "down"
 	r.masterSyncInProgress = true
+	r.fastState.Store(replicationFastReplica)
 	r.mu.Unlock()
 }
 
@@ -155,6 +164,11 @@ func (r *replicationState) promote() {
 	r.masterSyncInProgress = false
 	r.masterRunID = ""
 	r.masterRedisStream = false
+	if len(r.replicas) > 0 || r.backlogActive {
+		r.fastState.Store(replicationFastMasterActive)
+	} else {
+		r.fastState.Store(replicationFastMasterIdle)
+	}
 	r.mu.Unlock()
 }
 
@@ -229,9 +243,7 @@ func (r *replicationState) requestReplicaACKs() {
 }
 
 func (r *replicationState) isReadOnlyReplica() bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.role == replicationReplica
+	return r.fastState.Load() == replicationFastReplica
 }
 
 func (s *Server) replicationInfo() string {
@@ -365,6 +377,13 @@ func (r *replicationState) init() {
 	if r.backlogFirstOffset == 0 {
 		r.backlogFirstOffset = 1
 	}
+	if r.role == replicationReplica {
+		r.fastState.Store(replicationFastReplica)
+	} else if len(r.replicas) > 0 || r.backlogActive {
+		r.fastState.Store(replicationFastMasterActive)
+	} else {
+		r.fastState.Store(replicationFastMasterIdle)
+	}
 	r.mu.Unlock()
 }
 
@@ -375,6 +394,9 @@ func (r *replicationState) ensureBacklogLocked() {
 	if !r.backlogActive {
 		r.backlogActive = true
 		r.backlogFirstOffset = r.offset + 1
+		if r.role == replicationMaster {
+			r.fastState.Store(replicationFastMasterActive)
+		}
 	}
 }
 
@@ -426,9 +448,7 @@ func (r *replicationState) partialSyncPayloadLocked(runID string, offset int64) 
 }
 
 func (r *replicationState) primaryHasReplicas() bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.role == replicationMaster && (len(r.replicas) > 0 || r.backlogActive)
+	return r.fastState.Load() == replicationFastMasterActive
 }
 
 func (r *replicationState) registerReplica(write func([]byte) error) (uint64, string, int64) {
@@ -480,6 +500,9 @@ func (r *replicationState) registerReplica(write func([]byte) error) (uint64, st
 	r.replicaAOFOffsets[id] = -1
 	r.replicaAckTimes[id] = time.Now()
 	r.connectedReplicas = len(r.replicas)
+	if r.role == replicationMaster {
+		r.fastState.Store(replicationFastMasterActive)
+	}
 	r.notifyAckChangedLocked()
 	runID := r.runID
 	offset := r.offset
@@ -539,6 +562,13 @@ func (r *replicationState) unregisterReplica(id uint64) {
 	delete(r.replicaAOFOffsets, id)
 	delete(r.replicaAckTimes, id)
 	r.connectedReplicas = len(r.replicas)
+	if r.role == replicationMaster {
+		if len(r.replicas) > 0 || r.backlogActive {
+			r.fastState.Store(replicationFastMasterActive)
+		} else {
+			r.fastState.Store(replicationFastMasterIdle)
+		}
+	}
 	r.notifyAckChangedLocked()
 	r.mu.Unlock()
 
