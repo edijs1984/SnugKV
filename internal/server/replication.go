@@ -833,6 +833,13 @@ func (s *Server) forwardReplicatedSnugFrame(frame []byte) int64 {
 }
 
 func (s *Server) publishPlainSetReplication(key, value []byte) {
+	s.replication.mu.RLock()
+	active := len(s.replication.replicas) > 0 || s.replication.backlogActive
+	s.replication.mu.RUnlock()
+	if !active {
+		return
+	}
+
 	frameLen, payload := encodePlainSetReplicationPayload(key, value)
 
 	s.replication.mu.Lock()
@@ -854,6 +861,14 @@ func (s *Server) publishReplication(records []persistence.Record) {
 	if len(records) == 0 {
 		return
 	}
+
+	s.replication.mu.RLock()
+	active := len(s.replication.replicas) > 0 || s.replication.backlogActive
+	s.replication.mu.RUnlock()
+	if !active {
+		return
+	}
+
 	frame, err := encodeReplicationFrame(records)
 	if err != nil {
 		return
