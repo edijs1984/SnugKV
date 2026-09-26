@@ -332,8 +332,8 @@ func (l *Log) Append(records []Record) error {
 	if l.policy == "everysec" {
 		l.appendedSeq++
 		seq := l.appendedSeq
-		l.mu.Unlock()
 		l.queue <- queuedFrame{data: frame.Bytes(), count: 1, seq: seq}
+		l.mu.Unlock()
 		select {
 		case l.wake <- struct{}{}:
 		default:
@@ -375,8 +375,8 @@ func (l *Log) AppendPlainSet(key, value []byte) error {
 	if l.policy == "everysec" {
 		l.appendedSeq++
 		seq := l.appendedSeq
-		l.mu.Unlock()
 		l.queue <- queuedFrame{data: frame, count: 1, seq: seq}
+		l.mu.Unlock()
 		select {
 		case l.wake <- struct{}{}:
 		default:
@@ -417,8 +417,8 @@ func (l *Log) AppendPlainSetBatch(keys, values [][]byte) error {
 	if l.policy == "everysec" {
 		l.appendedSeq += count
 		seq := l.appendedSeq
-		l.mu.Unlock()
 		l.queue <- queuedFrame{data: frame, count: count, seq: seq}
+		l.mu.Unlock()
 		select {
 		case l.wake <- struct{}{}:
 		default:
