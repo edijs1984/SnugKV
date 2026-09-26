@@ -31,8 +31,8 @@ const (
 	replicationReplica
 
 	replicationReplicaQueueDepth      = 4096
-	replicationReplicaBatchMaxFrames  = 64
-	replicationReplicaBatchMaxBytes   = 256 << 10
+	replicationReplicaBatchMaxFrames  = 256
+	replicationReplicaBatchMaxBytes   = 1 << 20
 
 	replicationPlainSetMagic0 byte = 0x53 // 'S'
 	replicationPlainSetMagic1 byte = 0x4b // 'K'
