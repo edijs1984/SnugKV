@@ -407,13 +407,16 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				}
 				continue
 			}
-			replicaID, psyncErr := s.server.handlePSYNC(writer.write, string(msg[1]), requestedOffset)
-			if psyncErr != nil {
-				_ = writer.write(errorResponse(psyncErr))
+			if err := writer.flush(); err != nil {
 				return
 			}
-			if err := writer.flush(); err != nil {
-				s.server.replication.unregisterReplica(replicaID)
+			streamWriter := replicationStreamWriter{
+				conn:    conn,
+				timeout: time.Duration(s.config.WriteTimeoutMS) * time.Millisecond,
+			}
+			replicaID, psyncErr := s.server.handlePSYNC(streamWriter.write, string(msg[1]), requestedOffset)
+			if psyncErr != nil {
+				_ = streamWriter.write(errorResponse(psyncErr))
 				return
 			}
 			_ = conn.SetReadDeadline(time.Time{})
@@ -1043,6 +1046,40 @@ func errorResponse(err error) []byte {
 	}
 	return []byte("-" + message + "\r\n")
 }
+type replicationStreamWriter struct {
+	conn                net.Conn
+	timeout             time.Duration
+	nextDeadlineRefresh time.Time
+}
+
+func (w *replicationStreamWriter) write(response []byte) error {
+	if w.timeout > 0 {
+		now := time.Now()
+		if w.nextDeadlineRefresh.IsZero() || !now.Before(w.nextDeadlineRefresh) {
+			if err := w.conn.SetWriteDeadline(now.Add(w.timeout)); err != nil {
+				return err
+			}
+			refresh := w.timeout / 2
+			if refresh <= 0 {
+				refresh = time.Millisecond
+			}
+			w.nextDeadlineRefresh = now.Add(refresh)
+		}
+	}
+
+	for len(response) > 0 {
+		n, err := w.conn.Write(response)
+		if err != nil {
+			return err
+		}
+		if n <= 0 || n > len(response) {
+			return io.ErrShortWrite
+		}
+		response = response[n:]
+	}
+	return nil
+}
+
 func writeResponse(conn net.Conn, response []byte) error {
 	return writeWithTimeout(conn, response, 30*time.Second)
 }
