@@ -904,21 +904,6 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				if setErr != nil {
 					return
 				}
-				if !ok && decoder.BufferedSETStarted() {
-					// The next exact plain SET has already started arriving but its
-					// final bytes are not yet in bufio.Reader. Finish that same
-					// in-flight command instead of prematurely committing the
-					// preceding batch (commonly 255 + 1 with pipeline depth 256).
-					nextMsg, readErr := decoder.ReadCommand()
-					if readErr != nil {
-						return
-					}
-					if len(nextMsg) == 3 && strings.EqualFold(string(nextMsg[0]), "SET") {
-						nextKey = nextMsg[1]
-						nextValue = nextMsg[2]
-						ok = true
-					}
-				}
 				if !ok {
 					break
 				}
