@@ -23,6 +23,11 @@ type plainSetJournal interface {
 	AppendPlainSet(key, value []byte) error
 }
 
+type plainSetBatchJournal interface {
+	Journal
+	AppendPlainSetBatch(keys, values [][]byte) error
+}
+
 // SetJournal is a startup-only operation. Command execution is serialized so
 // clients cannot observe a mutation whose journal append later fails, and so a
 // MULTI/EXEC block can execute without another client interleaving commands.
@@ -264,6 +269,80 @@ func (s *Server) executeAuthorizedConcurrentSet(args [][]byte) (response []byte,
 		s.optimizer.Queue(key)
 	}
 	return []byte("+OK\r\n"), true, nil
+}
+
+func (s *Server) executeAuthorizedSerializedAOFSetBatch(keys, values [][]byte) (durabilitySequence uint64, handled bool, err error) {
+	if len(keys) < 2 || len(keys) != len(values) ||
+		s.journal == nil ||
+		s.replication.primaryHasReplicas() ||
+		atomic.LoadUint32(&s.metricsEnabled) != 0 ||
+		s.store.MaxMemory() != 0 {
+		return 0, false, nil
+	}
+	journal, ok := s.journal.(plainSetBatchJournal)
+	if !ok {
+		return 0, false, nil
+	}
+
+	s.durableMu.Lock()
+	defer s.durableMu.Unlock()
+
+	if s.durabilityFailed {
+		return 0, true, errors.New("ERR persistence is unavailable; restart after repairing storage")
+	}
+	if s.hasWatchSessionsLocked() {
+		return 0, false, nil
+	}
+
+	batched, setErr := s.store.SetPlainBatchFresh(keys, values)
+	var before []persistence.Record
+	if !batched {
+		affected := make([]string, len(keys))
+		for i := range keys {
+			affected[i] = string(keys[i])
+		}
+		before = s.store.Export(affected)
+		for i := range keys {
+			if setErr = s.store.SetPlain(string(keys[i]), values[i]); setErr != nil {
+				break
+			}
+		}
+	}
+	if setErr != nil {
+		return 0, true, setErr
+	}
+
+	if appendErr := journal.AppendPlainSetBatch(keys, values); appendErr != nil {
+		s.durabilityFailed = true
+		var rollback []persistence.Record
+		if batched {
+			rollback = make([]persistence.Record, len(keys))
+			for i := range keys {
+				rollback[i] = persistence.Record{Key: append([]byte(nil), keys[i]...), Deleted: true}
+			}
+		} else {
+			rollback = before
+		}
+		if rollbackErr := s.store.Restore(rollback, true); rollbackErr != nil {
+			return 0, true, errors.New("ERR persistence and rollback failed")
+		}
+		return 0, true, errors.New("ERR persistence append failed")
+	}
+
+	if durable, ok := s.journal.(durabilityJournal); ok {
+		durabilitySequence, _, _ = durable.DurabilitySnapshot()
+	}
+
+	if s.optimizer != nil {
+		for i := range keys {
+			if s.store.ShouldQueueOptimization(values[i]) {
+				s.optimizer.Queue(string(keys[i]))
+			}
+		}
+	}
+
+	atomic.AddUint64(&s.commands, uint64(len(keys)))
+	return durabilitySequence, true, nil
 }
 
 // executeAuthorizedSerializedReplicatedSet serves a previously ACL-authorized
