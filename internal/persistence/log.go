@@ -298,6 +298,7 @@ func (l *Log) SetPolicy(policy string) error {
 
 func (l *Log) finishAppendLocked() error {
 	l.appendedSeq++
+	l.writtenSeq = l.appendedSeq
 	if l.policy == "no" {
 		if err := l.writer.Flush(); err != nil {
 			l.failed = err
@@ -440,6 +441,7 @@ func (l *Log) AppendPlainSetBatch(keys, values [][]byte) error {
 		return err
 	}
 	l.appendedSeq += count
+	l.writtenSeq = l.appendedSeq
 	if l.policy == "no" {
 		if err := l.writer.Flush(); err != nil {
 			l.failed = err
