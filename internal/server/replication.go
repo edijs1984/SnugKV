@@ -629,7 +629,7 @@ func encodeReplicationFrame(records []persistence.Record) ([]byte, error) {
 }
 
 func encodePlainSetReplicationFrame(key, value []byte) []byte {
-	const headerLen = 12
+	const headerLen = 20
 	const checksumLen = 4
 
 	frameLen := headerLen + len(key) + len(value) + checksumLen
