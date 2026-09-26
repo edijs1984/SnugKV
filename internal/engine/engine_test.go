@@ -167,3 +167,27 @@ func TestSetPlainOwnsBorrowedRawInput(t *testing.T) {
 		t.Fatal("stored value aliases caller buffer")
 	}
 }
+
+
+func TestVisitRawStringBytes(t *testing.T) {
+	store := New()
+	value := []byte("raw-value")
+	if err := store.Set("raw-key", value, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	var got []byte
+	handled, err := store.VisitRawStringBytes([]byte("raw-key"), func(v []byte) error {
+		got = append(got[:0], v...)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !handled {
+		t.Fatal("raw byte-key GET was not handled")
+	}
+	if !bytes.Equal(got, value) {
+		t.Fatalf("got %q want %q", got, value)
+	}
+}
