@@ -265,6 +265,44 @@ func (s *Server) executeAuthorizedConcurrentSet(args [][]byte) (response []byte,
 // plain SET on the replicated hot path while preserving global write ordering.
 // It bypasses generic command dispatch only when AOF, metrics and maxmemory do
 // not require the ordinary durability/pressure path.
+const replicationSetChunkSize = 256 << 10
+
+func (s *Server) encodePlainSetReplicationPayloadChunked(key, value []byte) (int, []byte) {
+	const frameHeaderLen = 12
+	const checksumLen = 4
+
+	frameLen := frameHeaderLen + len(key) + len(value) + checksumLen
+
+	var headBuf [32]byte
+	head := headBuf[:0]
+	head = append(head, '$')
+	head = strconv.AppendInt(head, int64(frameLen), 10)
+	head = append(head, '\r', '\n')
+
+	totalLen := len(head) + frameLen + 2
+	if totalLen > replicationSetChunkSize {
+		return encodePlainSetReplicationPayload(key, value)
+	}
+	if s.replicationSetChunk == nil ||
+		len(s.replicationSetChunk)-s.replicationSetChunkUsed < totalLen {
+		s.replicationSetChunk = make([]byte, replicationSetChunkSize)
+		s.replicationSetChunkUsed = 0
+	}
+
+	start := s.replicationSetChunkUsed
+	end := start + totalLen
+	payload := s.replicationSetChunk[start:end]
+	s.replicationSetChunkUsed = end
+
+	copy(payload, head)
+	frameStart := len(head)
+	frame := payload[frameStart : frameStart+frameLen]
+	encodePlainSetReplicationFrameInto(frame, key, value)
+	payload[len(payload)-2] = '\r'
+	payload[len(payload)-1] = '\n'
+	return frameLen, payload
+}
+
 func (s *Server) executeAuthorizedSerializedReplicatedSet(args [][]byte) (response []byte, replicationOffset int64, handled bool, err error) {
 	if len(args) != 3 ||
 		!bytes.EqualFold(args[0], []byte("SET")) ||
@@ -314,7 +352,7 @@ func (s *Server) executeAuthorizedSerializedReplicatedSet(args [][]byte) (respon
 		s.optimizer.Queue(key)
 	}
 
-	frameLen, payload := encodePlainSetReplicationPayload(args[1], args[2])
+	frameLen, payload := s.encodePlainSetReplicationPayloadChunked(args[1], args[2])
 
 	var singleID uint64
 	var singleWrite func([]byte) error
