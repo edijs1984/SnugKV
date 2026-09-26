@@ -31,12 +31,11 @@ func (s *Store) SetConditional(
 // SetPlain implements the plain Redis SET key value form without option
 // parsing overhead. JSON-shape learning is deliberately deferred to the
 // background optimizer so foreground SET never parses JSON schemas.
-func (s *Store) SetPlain(key string, value []byte) error {
+func (s *Store) SetPlainHashed(key string, value []byte, hash uint64) error {
 	if len(value) > 32<<20 {
 		return errors.New("ERR value exceeds 32 MiB limit")
 	}
 
-	hash := index.Hash(key)
 	sh := s.shardForHash(hash)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
@@ -62,6 +61,10 @@ func (s *Store) SetPlain(key string, value []byte) error {
 	}
 
 	return nil
+}
+
+func (s *Store) SetPlain(key string, value []byte) error {
+	return s.SetPlainHashed(key, value, index.Hash(key))
 }
 
 type plainBatchItem struct {
