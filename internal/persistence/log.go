@@ -18,6 +18,7 @@ import (
 
 const magic = "MCLOG001"
 const MaxFrameBytes = 128 << 20
+const plainSetFrameTag byte = 0
 
 type ReplicationCheckpoint struct {
 	MasterHost  string `json:"master_host,omitempty"`
@@ -234,16 +235,7 @@ func (l *Log) SetPolicy(policy string) error {
 	return nil
 }
 
-func (l *Log) Append(records []Record) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.failed != nil {
-		return l.failed
-	}
-	if err := WriteFrame(l.writer, records); err != nil {
-		l.failed = err
-		return err
-	}
+func (l *Log) finishAppendLocked() error {
 	l.appendedSeq++
 	if l.policy == "no" {
 		if err := l.writer.Flush(); err != nil {
@@ -262,6 +254,35 @@ func (l *Log) Append(records []Record) error {
 		}
 	}
 	return l.failed
+}
+
+func (l *Log) Append(records []Record) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.failed != nil {
+		return l.failed
+	}
+	if err := WriteFrame(l.writer, records); err != nil {
+		l.failed = err
+		return err
+	}
+	return l.finishAppendLocked()
+}
+
+// AppendPlainSet writes the common SET key value mutation without JSON/base64
+// encoding. The payload starts with a reserved binary tag so Read can replay
+// these frames alongside older JSON frames in the same AOF.
+func (l *Log) AppendPlainSet(key, value []byte) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.failed != nil {
+		return l.failed
+	}
+	if err := WritePlainSetFrame(l.writer, key, value); err != nil {
+		l.failed = err
+		return err
+	}
+	return l.finishAppendLocked()
 }
 func (l *Log) Close() error {
 	l.once.Do(func() {
@@ -303,6 +324,34 @@ func WriteFrame(w io.Writer, records []Record) error {
 		return err
 	}
 	return writeAll(w, payload)
+}
+
+func WritePlainSetFrame(w io.Writer, key, value []byte) error {
+	payloadLen := 5 + len(key) + len(value)
+	if payloadLen > MaxFrameBytes {
+		return errors.New("persistence frame exceeds limit")
+	}
+	var prefix [5]byte
+	prefix[0] = plainSetFrameTag
+	binary.LittleEndian.PutUint32(prefix[1:], uint32(len(key)))
+
+	checksum := crc32.Update(0, crc32.IEEETable, prefix[:])
+	checksum = crc32.Update(checksum, crc32.IEEETable, key)
+	checksum = crc32.Update(checksum, crc32.IEEETable, value)
+
+	var header [8]byte
+	binary.LittleEndian.PutUint32(header[:4], uint32(payloadLen))
+	binary.LittleEndian.PutUint32(header[4:], checksum)
+	if err := writeAll(w, header[:]); err != nil {
+		return err
+	}
+	if err := writeAll(w, prefix[:]); err != nil {
+		return err
+	}
+	if err := writeAll(w, key); err != nil {
+		return err
+	}
+	return writeAll(w, value)
 }
 func writeAll(w io.Writer, data []byte) error {
 	for len(data) > 0 {
@@ -352,14 +401,29 @@ func Read(r io.Reader, apply func([]Record) error) (int64, error) {
 			return offset, errors.New("persistence checksum mismatch")
 		}
 		var records []Record
-		d := json.NewDecoder(&payload)
-		d.DisallowUnknownFields()
-		if err = d.Decode(&records); err != nil {
-			return offset, err
-		}
-		var extra interface{}
-		if d.Decode(&extra) != io.EOF {
-			return offset, errors.New("trailing frame data")
+		payloadBytes := payload.Bytes()
+		if len(payloadBytes) > 0 && payloadBytes[0] == plainSetFrameTag {
+			if len(payloadBytes) < 5 {
+				return offset, errors.New("invalid plain SET persistence frame")
+			}
+			keyLen := int(binary.LittleEndian.Uint32(payloadBytes[1:5]))
+			if keyLen > len(payloadBytes)-5 {
+				return offset, errors.New("invalid plain SET persistence frame")
+			}
+			records = []Record{{
+				Key:   append([]byte(nil), payloadBytes[5:5+keyLen]...),
+				Value: append([]byte(nil), payloadBytes[5+keyLen:]...),
+			}}
+		} else {
+			d := json.NewDecoder(bytes.NewReader(payloadBytes))
+			d.DisallowUnknownFields()
+			if err = d.Decode(&records); err != nil {
+				return offset, err
+			}
+			var extra interface{}
+			if d.Decode(&extra) != io.EOF {
+				return offset, errors.New("trailing frame data")
+			}
 		}
 		if err = apply(records); err != nil {
 			return offset, err
