@@ -622,6 +622,17 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				}
 			}
 
+			if handled, fastErr := s.server.executeAuthorizedConcurrentRawGet(
+				msg,
+				writer.writeBulkBuffered,
+			); handled {
+				if fastErr != nil {
+					return
+				}
+				s.trackCommandRead(clientSession, msg)
+				continue
+			}
+
 			if value, found, handled, fastErr := s.server.executeAuthorizedConcurrentKnownGetIntoAt(msg[1], getScratch, requestNow); handled {
 				if fastErr != nil {
 					if writeProtocol(msg, errorResponse(fastErr)) != nil {
@@ -708,6 +719,17 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				if writeProtocol(msg, txResponse) != nil {
 					return
 				}
+				continue
+			}
+
+			if handled, fastErr := s.server.executeAuthorizedConcurrentRawGet(
+				msg,
+				writer.writeBulkBuffered,
+			); handled {
+				if fastErr != nil {
+					return
+				}
+				s.trackCommandRead(clientSession, msg)
 				continue
 			}
 

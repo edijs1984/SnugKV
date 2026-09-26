@@ -1,20 +1,20 @@
 package server
 
 import (
-	"bufio"
 	"net"
 	"strconv"
 	"sync"
-	"time"
 )
 
 // serializedResponseWriter serializes complete RESP responses, not individual
 // net.Conn.Write calls. This prevents a partial socket write from allowing an
 // asynchronous Pub/Sub push to interleave with an ordinary command response.
+const serializedResponseBufferBytes = 256 << 10
+
 type serializedResponseWriter struct {
 	server *TCPServer
 	conn   net.Conn
-	buf    *bufio.Writer
+	buf    []byte
 	mu     sync.Mutex
 }
 
@@ -22,7 +22,7 @@ func newSerializedResponseWriter(server *TCPServer, conn net.Conn) *serializedRe
 	return &serializedResponseWriter{
 		server: server,
 		conn:   conn,
-		buf:    bufio.NewWriterSize(conn, 256<<10),
+		buf:    make([]byte, 0, serializedResponseBufferBytes),
 	}
 }
 
@@ -45,13 +45,19 @@ func (w *serializedResponseWriter) writeBuffered(response []byte) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	if len(response) > w.buf.Available() {
-		if err := w.conn.SetWriteDeadline(time.Now().Add(time.Duration(w.server.config.WriteTimeoutMS) * time.Millisecond)); err != nil {
+	if len(response) > cap(w.buf) {
+		if err := w.flushLocked(); err != nil {
+			return err
+		}
+		return w.server.write(w.conn, response)
+	}
+	if len(response) > cap(w.buf)-len(w.buf) {
+		if err := w.flushLocked(); err != nil {
 			return err
 		}
 	}
-	_, err := w.buf.Write(response)
-	return err
+	w.buf = append(w.buf, response...)
+	return nil
 }
 
 func (w *serializedResponseWriter) writeBulkBuffered(payload []byte) error {
@@ -65,20 +71,28 @@ func (w *serializedResponseWriter) writeBulkBuffered(payload []byte) error {
 	framed = append(framed, 13, 10)
 
 	total := len(framed) + len(payload) + 2
-	if total > w.buf.Available() {
-		if err := w.conn.SetWriteDeadline(time.Now().Add(time.Duration(w.server.config.WriteTimeoutMS) * time.Millisecond)); err != nil {
+	if total > cap(w.buf) {
+		if err := w.flushLocked(); err != nil {
+			return err
+		}
+		if err := w.server.write(w.conn, framed); err != nil {
+			return err
+		}
+		if err := w.server.write(w.conn, payload); err != nil {
+			return err
+		}
+		return w.server.write(w.conn, []byte{13, 10})
+	}
+	if total > cap(w.buf)-len(w.buf) {
+		if err := w.flushLocked(); err != nil {
 			return err
 		}
 	}
 
-	if _, err := w.buf.Write(framed); err != nil {
-		return err
-	}
-	if _, err := w.buf.Write(payload); err != nil {
-		return err
-	}
-	_, err := w.buf.Write([]byte{13, 10})
-	return err
+	w.buf = append(w.buf, framed...)
+	w.buf = append(w.buf, payload...)
+	w.buf = append(w.buf, 13, 10)
+	return nil
 }
 
 func (w *serializedResponseWriter) flush() error {
@@ -88,11 +102,12 @@ func (w *serializedResponseWriter) flush() error {
 }
 
 func (w *serializedResponseWriter) flushLocked() error {
-	if w.buf.Buffered() == 0 {
+	if len(w.buf) == 0 {
 		return nil
 	}
-	if err := w.conn.SetWriteDeadline(time.Now().Add(time.Duration(w.server.config.WriteTimeoutMS) * time.Millisecond)); err != nil {
+	if err := w.server.write(w.conn, w.buf); err != nil {
 		return err
 	}
-	return w.buf.Flush()
+	w.buf = w.buf[:0]
+	return nil
 }

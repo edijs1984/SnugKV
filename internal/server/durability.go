@@ -131,7 +131,7 @@ func (s *Server) executeAuthorizedConcurrentRawGet(
 		return false, nil
 	}
 
-	handled, err = s.store.VisitRawString(string(args[1]), func(value []byte) error {
+	handled, err = s.store.VisitRawStringBytes(args[1], func(value []byte) error {
 		atomic.AddUint64(&s.commands, 1)
 		return writeBulk(value)
 	})
