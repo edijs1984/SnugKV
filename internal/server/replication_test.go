@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"snugkv/internal/engine"
+	"snugkv/internal/index"
 	"snugkv/internal/persistence"
 )
 
@@ -118,8 +119,8 @@ func TestEncodePlainSetReplicationFrameBinaryEnvelope(t *testing.T) {
 	value := []byte{0x01, 0x02, 0xfe, 'v', 'a', 'l', 'u', 'e'}
 
 	frame := encodePlainSetReplicationFrame(key, value)
-	if len(frame) != 12+len(key)+len(value)+4 {
-		t.Fatalf("frame len=%d want=%d", len(frame), 12+len(key)+len(value)+4)
+	if len(frame) != 20+len(key)+len(value)+4 {
+		t.Fatalf("frame len=%d want=%d", len(frame), 20+len(key)+len(value)+4)
 	}
 	if frame[0] != replicationPlainSetMagic0 ||
 		frame[1] != replicationPlainSetMagic1 ||
@@ -133,7 +134,7 @@ func TestDecodePlainSetReplicationFrameRoundTrip(t *testing.T) {
 	value := []byte{0x01, 0x02, 0xfe, 'v', 'a', 'l', 'u', 'e'}
 
 	frame := encodePlainSetReplicationFrame(key, value)
-	gotKey, gotValue, ok, err := decodePlainSetReplicationFrame(frame)
+	gotKey, gotValue, gotHash, ok, err := decodePlainSetReplicationFrame(frame)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,6 +146,9 @@ func TestDecodePlainSetReplicationFrameRoundTrip(t *testing.T) {
 	}
 	if !bytes.Equal(gotValue, value) {
 		t.Fatalf("value=%v want=%v", gotValue, value)
+	}
+	if gotHash != index.HashBytes(key) {
+		t.Fatalf("hash=%d want=%d", gotHash, index.HashBytes(key))
 	}
 }
 
