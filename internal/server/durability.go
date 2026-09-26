@@ -795,7 +795,7 @@ func (s *Server) executeDurableLocked(args [][]byte) ([]byte, error) {
 			return nil, errors.New("ERR persisted SET could not be applied in memory")
 		}
 
-		s.publishReplication(records)
+		s.publishPlainSetReplication(args[1], args[2])
 		if s.optimizer != nil && s.store.ShouldQueueOptimization(args[2]) {
 			s.optimizer.Queue(key)
 		}
