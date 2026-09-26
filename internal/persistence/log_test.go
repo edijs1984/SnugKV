@@ -142,3 +142,60 @@ func TestExclusiveLockAndRewrite(t *testing.T) {
 		t.Fatal("rewrite state", keys)
 	}
 }
+
+
+func TestMixedJSONAndPlainSetFramesReplay(t *testing.T) {
+	var b bytes.Buffer
+	b.WriteString(magic)
+
+	if err := WriteFrame(&b, []Record{{Key: []byte("legacy"), Value: []byte("json")}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := WritePlainSetFrame(&b, []byte{0xff, 0x00, 'k'}, []byte("binary-value")); err != nil {
+		t.Fatal(err)
+	}
+
+	var got []Record
+	if _, err := Read(bytes.NewReader(b.Bytes()), func(records []Record) error {
+		got = append(got, records...)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(got) != 2 {
+		t.Fatalf("records=%d want=2", len(got))
+	}
+	if string(got[0].Key) != "legacy" || string(got[0].Value) != "json" {
+		t.Fatalf("legacy record=%+v", got[0])
+	}
+	if !bytes.Equal(got[1].Key, []byte{0xff, 0x00, 'k'}) ||
+		string(got[1].Value) != "binary-value" {
+		t.Fatalf("plain SET record=%+v", got[1])
+	}
+}
+
+func TestLogAppendPlainSetRestartRecovery(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "aof")
+	log, err := Open(path, "always")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := log.AppendPlainSet([]byte("key"), []byte("value")); err != nil {
+		t.Fatal(err)
+	}
+	if err := log.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var got []Record
+	if err := Replay(path, func(records []Record) error {
+		got = append(got, records...)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || string(got[0].Key) != "key" || string(got[0].Value) != "value" {
+		t.Fatalf("replayed=%+v", got)
+	}
+}
