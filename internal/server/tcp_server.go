@@ -865,8 +865,8 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 
 		if borrowedSet && !s.adminOnly && !txSession.multi &&
 			!(clientSession.protocolVersion() == 2 && pubSession.active()) &&
-			s.server.journal == nil &&
-			s.server.replication.primaryHasReplicas() &&
+			((s.server.journal == nil && s.server.replication.primaryHasReplicas()) ||
+				(s.server.journal != nil && s.server.journalUsesAlwaysFsync())) &&
 			atomic.LoadUint32(&s.server.metricsEnabled) == 0 &&
 			s.server.store.MaxMemory() == 0 &&
 			reader.Buffered() > 0 {
