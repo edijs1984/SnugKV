@@ -2,6 +2,7 @@
 package persistence
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
@@ -61,6 +62,7 @@ type Log struct {
 	lock        *os.File
 	mu          sync.Mutex
 	file        *os.File
+	writer      *bufio.Writer
 	policy      string
 	failed      error
 	appendedSeq uint64
@@ -118,6 +120,7 @@ func Open(path, policy string) (*Log, error) {
 	l := &Log{
 		lock:        lock,
 		file:        f,
+		writer:      bufio.NewWriterSize(f, 256<<10),
 		policy:      policy,
 		syncChanged: make(chan struct{}),
 		stop:        make(chan struct{}),
@@ -146,7 +149,11 @@ func (l *Log) syncLoop() {
 			if l.failed == nil &&
 				l.policy == "everysec" {
 
-				l.failed = l.file.Sync()
+				if err := l.writer.Flush(); err != nil {
+					l.failed = err
+				} else {
+					l.failed = l.file.Sync()
+				}
 				if l.failed == nil {
 					l.markSyncedLocked()
 				}
@@ -211,6 +218,10 @@ func (l *Log) SetPolicy(policy string) error {
 	}
 
 	if policy == "always" {
+		if err := l.writer.Flush(); err != nil {
+			l.failed = err
+			return err
+		}
 		if err := l.file.Sync(); err != nil {
 			l.failed = err
 			return err
@@ -229,12 +240,16 @@ func (l *Log) Append(records []Record) error {
 	if l.failed != nil {
 		return l.failed
 	}
-	if err := WriteFrame(l.file, records); err != nil {
+	if err := WriteFrame(l.writer, records); err != nil {
 		l.failed = err
 		return err
 	}
 	l.appendedSeq++
 	if l.policy == "always" {
+		if err := l.writer.Flush(); err != nil {
+			l.failed = err
+			return err
+		}
 		l.failed = l.file.Sync()
 		if l.failed == nil {
 			l.markSyncedLocked()
@@ -249,7 +264,11 @@ func (l *Log) Close() error {
 		l.mu.Lock()
 		defer l.mu.Unlock()
 		if l.failed == nil {
-			l.failed = l.file.Sync()
+			if err := l.writer.Flush(); err != nil {
+				l.failed = err
+			} else {
+				l.failed = l.file.Sync()
+			}
 			if l.failed == nil {
 				l.markSyncedLocked()
 			}
@@ -453,6 +472,7 @@ func (l *Log) Rewrite(records []Record) error {
 	}
 	previous := l.file
 	l.file = next
+	l.writer.Reset(next)
 	if err = previous.Close(); err != nil {
 		l.failed = err
 	}
