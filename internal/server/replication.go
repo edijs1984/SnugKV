@@ -739,7 +739,7 @@ func encodePlainSetReplicationPayload(key, value []byte) (int, []byte) {
 	return frameLen, payload
 }
 
-func decodePlainSetReplicationFrame(frame []byte) (key, value []byte, ok bool, err error) {
+func decodePlainSetReplicationFrameView(frame []byte) (key, value []byte, ok bool, err error) {
 	const headerLen = 12
 	const checksumLen = 4
 
@@ -769,9 +769,15 @@ func decodePlainSetReplicationFrame(frame []byte) (key, value []byte, ok bool, e
 
 	keyStart := headerLen
 	valueStart := keyStart + keyLen
-	key = append([]byte(nil), frame[keyStart:valueStart]...)
-	value = append([]byte(nil), frame[valueStart:checksumPos]...)
-	return key, value, true, nil
+	return frame[keyStart:valueStart], frame[valueStart:checksumPos], true, nil
+}
+
+func decodePlainSetReplicationFrame(frame []byte) (key, value []byte, ok bool, err error) {
+	keyView, valueView, ok, err := decodePlainSetReplicationFrameView(frame)
+	if err != nil || !ok {
+		return nil, nil, ok, err
+	}
+	return append([]byte(nil), keyView...), append([]byte(nil), valueView...), true, nil
 }
 
 func decodeReplicationFrame(frame []byte) ([]persistence.Record, error) {
@@ -1033,6 +1039,62 @@ func readReplicationRESP(reader *bufio.Reader) ([]byte, error) {
 		return nil, errors.New("invalid replication bulk terminator")
 	}
 	return payload, nil
+}
+
+func readBufferedPlainSetReplicationFrame(reader *bufio.Reader) ([]byte, bool, error) {
+	buffered := reader.Buffered()
+	if buffered < 8 {
+		return nil, false, nil
+	}
+	buf, err := reader.Peek(buffered)
+	if err != nil {
+		return nil, false, nil
+	}
+	if len(buf) == 0 || buf[0] != 36 {
+		return nil, false, nil
+	}
+
+	pos := 1
+	n := 0
+	digits := 0
+	for pos < len(buf) {
+		b := buf[pos]
+		if b == 13 {
+			if digits == 0 || pos+1 >= len(buf) || buf[pos+1] != 10 {
+				return nil, false, nil
+			}
+			pos += 2
+			break
+		}
+		if b < 48 || b > 57 || digits >= 20 {
+			return nil, false, nil
+		}
+		n = n*10 + int(b-48)
+		if n > persistence.MaxFrameBytes+8 {
+			return nil, false, errors.New("invalid replication bulk length")
+		}
+		digits++
+		pos++
+	}
+	if digits == 0 || pos+n+2 > len(buf) {
+		return nil, false, nil
+	}
+	if buf[pos+n] != 13 || buf[pos+n+1] != 10 {
+		return nil, false, errors.New("invalid replication bulk terminator")
+	}
+	payload := buf[pos : pos+n]
+	if len(payload) < 3 ||
+		payload[0] != replicationPlainSetMagic0 ||
+		payload[1] != replicationPlainSetMagic1 ||
+		payload[2] != replicationPlainSetVersion {
+		return nil, false, nil
+	}
+
+	frame := append([]byte(nil), payload...)
+	if _, err := reader.Discard(pos + n + 2); err != nil {
+		return nil, false, err
+	}
+	return frame, true, nil
 }
 
 func authenticateReplicationUpstream(conn net.Conn, reader *bufio.Reader, username, password string) error {
