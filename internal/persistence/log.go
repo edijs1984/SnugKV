@@ -2,6 +2,7 @@
 package persistence
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
@@ -17,6 +18,8 @@ import (
 
 const magic = "MCLOG001"
 const MaxFrameBytes = 128 << 20
+const plainSetFrameTag byte = 0
+const plainSetBatchFrameTag byte = 1
 
 type ReplicationCheckpoint struct {
 	MasterHost  string `json:"master_host,omitempty"`
@@ -57,15 +60,28 @@ func RecoverReplicationCheckpoint(current *ReplicationCheckpoint, records []Reco
 	}
 	return current
 }
+type queuedFrame struct {
+	data     []byte
+	count    uint64
+	seq      uint64
+	sync     bool
+	done     chan error
+}
+
 type Log struct {
 	lock        *os.File
 	mu          sync.Mutex
+	enqueueMu   sync.Mutex
 	file        *os.File
+	writer      *bufio.Writer
 	policy      string
 	failed      error
 	appendedSeq uint64
+	writtenSeq  uint64
 	syncedSeq   uint64
 	syncChanged chan struct{}
+	queue       chan queuedFrame
+	wake        chan struct{}
 	stop        chan struct{}
 	done        chan struct{}
 	once        sync.Once
@@ -118,8 +134,11 @@ func Open(path, policy string) (*Log, error) {
 	l := &Log{
 		lock:        lock,
 		file:        f,
+		writer:      bufio.NewWriterSize(f, 256<<10),
 		policy:      policy,
 		syncChanged: make(chan struct{}),
+		queue:       make(chan queuedFrame, 4096),
+		wake:        make(chan struct{}, 1),
 		stop:        make(chan struct{}),
 		done:        make(chan struct{}),
 	}
@@ -136,24 +155,113 @@ func (l *Log) syncLoop() {
 	defer close(l.done)
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
-	for {
-		select {
-		case <-l.stop:
-			return
-		case <-ticker.C:
-			l.mu.Lock()
 
-			if l.failed == nil &&
-				l.policy == "everysec" {
+	drain := func() {
+		for {
+			var first queuedFrame
+			select {
+			case first = <-l.queue:
+			default:
+				return
+			}
 
-				l.failed = l.file.Sync()
-				if l.failed == nil {
-					l.markSyncedLocked()
+			batch := []queuedFrame{first}
+			bytes := len(first.data)
+			needSync := first.sync
+			for len(batch) < 64 && bytes < 256<<10 {
+				select {
+				case next := <-l.queue:
+					batch = append(batch, next)
+					bytes += len(next.data)
+					needSync = needSync || next.sync
+				default:
+					goto writeBatch
 				}
 			}
 
+		writeBatch:
+			l.mu.Lock()
+			if l.failed == nil {
+				for _, frame := range batch {
+					if err := writeAll(l.writer, frame.data); err != nil {
+						l.failed = err
+						break
+					}
+					if frame.seq > l.writtenSeq {
+						l.writtenSeq = frame.seq
+					}
+				}
+			}
+			if l.failed == nil && needSync {
+				if err := l.writer.Flush(); err != nil {
+					l.failed = err
+				} else {
+					l.failed = l.file.Sync()
+				}
+				if l.failed == nil && l.writtenSeq > l.syncedSeq {
+					l.syncedSeq = l.writtenSeq
+					close(l.syncChanged)
+					l.syncChanged = make(chan struct{})
+				}
+			}
+			err := l.failed
+			l.mu.Unlock()
+
+			for _, frame := range batch {
+				if frame.done != nil {
+					frame.done <- err
+					close(frame.done)
+				}
+			}
+		}
+	}
+
+	for {
+		select {
+		case <-l.stop:
+			drain()
+			return
+		case <-l.wake:
+			drain()
+		case <-ticker.C:
+			drain()
+			l.mu.Lock()
+			if l.failed == nil && l.policy == "everysec" {
+				if err := l.writer.Flush(); err != nil {
+					l.failed = err
+				} else {
+					l.failed = l.file.Sync()
+				}
+				if l.failed == nil && l.writtenSeq > l.syncedSeq {
+					l.syncedSeq = l.writtenSeq
+					close(l.syncChanged)
+					l.syncChanged = make(chan struct{})
+				}
+			}
 			l.mu.Unlock()
 		}
+	}
+}
+
+func (l *Log) drainEverysec() error {
+	for {
+		l.mu.Lock()
+		if l.failed != nil {
+			err := l.failed
+			l.mu.Unlock()
+			return err
+		}
+		target := l.appendedSeq
+		written := l.writtenSeq
+		l.mu.Unlock()
+		if written >= target {
+			return nil
+		}
+		select {
+		case l.wake <- struct{}{}:
+		default:
+		}
+		time.Sleep(time.Microsecond)
 	}
 }
 
@@ -198,6 +306,11 @@ func (l *Log) SetPolicy(policy string) error {
 	if !validFsyncPolicy(policy) {
 		return errors.New("invalid fsync policy")
 	}
+	l.enqueueMu.Lock()
+	defer l.enqueueMu.Unlock()
+	if err := l.drainEverysec(); err != nil {
+		return err
+	}
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -211,6 +324,10 @@ func (l *Log) SetPolicy(policy string) error {
 	}
 
 	if policy == "always" {
+		if err := l.writer.Flush(); err != nil {
+			l.failed = err
+			return err
+		}
 		if err := l.file.Sync(); err != nil {
 			l.failed = err
 			return err
@@ -223,18 +340,20 @@ func (l *Log) SetPolicy(policy string) error {
 	return nil
 }
 
-func (l *Log) Append(records []Record) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.failed != nil {
-		return l.failed
-	}
-	if err := WriteFrame(l.file, records); err != nil {
-		l.failed = err
-		return err
-	}
+func (l *Log) finishAppendLocked() error {
 	l.appendedSeq++
+	l.writtenSeq = l.appendedSeq
+	if l.policy == "no" {
+		if err := l.writer.Flush(); err != nil {
+			l.failed = err
+			return err
+		}
+	}
 	if l.policy == "always" {
+		if err := l.writer.Flush(); err != nil {
+			l.failed = err
+			return err
+		}
 		l.failed = l.file.Sync()
 		if l.failed == nil {
 			l.markSyncedLocked()
@@ -242,14 +361,114 @@ func (l *Log) Append(records []Record) error {
 	}
 	return l.failed
 }
+
+func (l *Log) appendEncoded(frame []byte, count uint64) error {
+	l.enqueueMu.Lock()
+
+	l.mu.Lock()
+	if l.failed != nil {
+		err := l.failed
+		l.mu.Unlock()
+		l.enqueueMu.Unlock()
+		return err
+	}
+	policy := l.policy
+	if policy == "everysec" || policy == "always" {
+		l.appendedSeq += count
+		seq := l.appendedSeq
+		var done chan error
+		if policy == "always" {
+			done = make(chan error, 1)
+		}
+		l.mu.Unlock()
+
+		l.queue <- queuedFrame{
+			data:  frame,
+			count: count,
+			seq:   seq,
+			sync:  policy == "always",
+			done:  done,
+		}
+		select {
+		case l.wake <- struct{}{}:
+		default:
+		}
+		l.enqueueMu.Unlock()
+
+		if done != nil {
+			return <-done
+		}
+		return nil
+	}
+	l.mu.Unlock()
+
+	if err := l.drainEverysec(); err != nil {
+		l.enqueueMu.Unlock()
+		return err
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	defer l.enqueueMu.Unlock()
+	if l.failed != nil {
+		return l.failed
+	}
+	if err := writeAll(l.writer, frame); err != nil {
+		l.failed = err
+		return err
+	}
+	l.appendedSeq += count
+	l.writtenSeq = l.appendedSeq
+	if err := l.writer.Flush(); err != nil {
+		l.failed = err
+		return err
+	}
+	return nil
+}
+
+func (l *Log) Append(records []Record) error {
+	var frame bytes.Buffer
+	if err := WriteFrame(&frame, records); err != nil {
+		return err
+	}
+	return l.appendEncoded(frame.Bytes(), 1)
+}
+
+// AppendPlainSet writes the common SET key value mutation without JSON/base64
+// encoding. The payload starts with a reserved binary tag so Read can replay
+// these frames alongside older JSON frames in the same AOF.
+func (l *Log) AppendPlainSet(key, value []byte) error {
+	frame, err := EncodePlainSetFrame(key, value)
+	if err != nil {
+		return err
+	}
+	return l.appendEncoded(frame, 1)
+}
+
+
+func (l *Log) AppendPlainSetBatch(keys, values [][]byte) error {
+	frame, err := EncodePlainSetBatchFrame(keys, values)
+	if err != nil {
+		return err
+	}
+	return l.appendEncoded(frame, uint64(len(keys)))
+}
+
 func (l *Log) Close() error {
 	l.once.Do(func() {
+		l.enqueueMu.Lock()
+		defer l.enqueueMu.Unlock()
+		_ = l.drainEverysec()
 		close(l.stop)
 		<-l.done
 		l.mu.Lock()
 		defer l.mu.Unlock()
 		if l.failed == nil {
-			l.failed = l.file.Sync()
+			if err := l.writer.Flush(); err != nil {
+				l.failed = err
+			} else {
+				l.failed = l.file.Sync()
+			}
 			if l.failed == nil {
 				l.markSyncedLocked()
 			}
@@ -278,6 +497,73 @@ func WriteFrame(w io.Writer, records []Record) error {
 		return err
 	}
 	return writeAll(w, payload)
+}
+
+func EncodePlainSetFrame(key, value []byte) ([]byte, error) {
+	payloadLen := 5 + len(key) + len(value)
+	if payloadLen > MaxFrameBytes {
+		return nil, errors.New("persistence frame exceeds limit")
+	}
+
+	frame := make([]byte, 8+payloadLen)
+	payload := frame[8:]
+	payload[0] = plainSetFrameTag
+	binary.LittleEndian.PutUint32(payload[1:5], uint32(len(key)))
+	copy(payload[5:], key)
+	copy(payload[5+len(key):], value)
+
+	binary.LittleEndian.PutUint32(frame[:4], uint32(payloadLen))
+	binary.LittleEndian.PutUint32(frame[4:8], crc32.ChecksumIEEE(payload))
+	return frame, nil
+}
+
+func WritePlainSetFrame(w io.Writer, key, value []byte) error {
+	frame, err := EncodePlainSetFrame(key, value)
+	if err != nil {
+		return err
+	}
+	return writeAll(w, frame)
+}
+
+
+func EncodePlainSetBatchFrame(keys, values [][]byte) ([]byte, error) {
+	if len(keys) == 0 || len(keys) != len(values) {
+		return nil, errors.New("invalid plain SET batch")
+	}
+	payloadLen := 5
+	for i := range keys {
+		payloadLen += 8 + len(keys[i]) + len(values[i])
+	}
+	if payloadLen > MaxFrameBytes {
+		return nil, errors.New("persistence frame exceeds limit")
+	}
+
+	frame := make([]byte, 8+payloadLen)
+	payload := frame[8:]
+	payload[0] = plainSetBatchFrameTag
+	binary.LittleEndian.PutUint32(payload[1:5], uint32(len(keys)))
+	pos := 5
+	for i := range keys {
+		binary.LittleEndian.PutUint32(payload[pos:pos+4], uint32(len(keys[i])))
+		binary.LittleEndian.PutUint32(payload[pos+4:pos+8], uint32(len(values[i])))
+		pos += 8
+		copy(payload[pos:], keys[i])
+		pos += len(keys[i])
+		copy(payload[pos:], values[i])
+		pos += len(values[i])
+	}
+
+	binary.LittleEndian.PutUint32(frame[:4], uint32(payloadLen))
+	binary.LittleEndian.PutUint32(frame[4:8], crc32.ChecksumIEEE(payload))
+	return frame, nil
+}
+
+func WritePlainSetBatchFrame(w io.Writer, keys, values [][]byte) error {
+	frame, err := EncodePlainSetBatchFrame(keys, values)
+	if err != nil {
+		return err
+	}
+	return writeAll(w, frame)
 }
 func writeAll(w io.Writer, data []byte) error {
 	for len(data) > 0 {
@@ -327,14 +613,55 @@ func Read(r io.Reader, apply func([]Record) error) (int64, error) {
 			return offset, errors.New("persistence checksum mismatch")
 		}
 		var records []Record
-		d := json.NewDecoder(&payload)
-		d.DisallowUnknownFields()
-		if err = d.Decode(&records); err != nil {
-			return offset, err
-		}
-		var extra interface{}
-		if d.Decode(&extra) != io.EOF {
-			return offset, errors.New("trailing frame data")
+		payloadBytes := payload.Bytes()
+		if len(payloadBytes) > 0 && payloadBytes[0] == plainSetFrameTag {
+			if len(payloadBytes) < 5 {
+				return offset, errors.New("invalid plain SET persistence frame")
+			}
+			keyLen := int(binary.LittleEndian.Uint32(payloadBytes[1:5]))
+			if keyLen > len(payloadBytes)-5 {
+				return offset, errors.New("invalid plain SET persistence frame")
+			}
+			records = []Record{{
+				Key:   append([]byte(nil), payloadBytes[5:5+keyLen]...),
+				Value: append([]byte(nil), payloadBytes[5+keyLen:]...),
+			}}
+		} else if len(payloadBytes) > 0 && payloadBytes[0] == plainSetBatchFrameTag {
+			if len(payloadBytes) < 5 {
+				return offset, errors.New("invalid plain SET batch persistence frame")
+			}
+			count := int(binary.LittleEndian.Uint32(payloadBytes[1:5]))
+			pos := 5
+			records = make([]Record, 0, count)
+			for i := 0; i < count; i++ {
+				if pos+8 > len(payloadBytes) {
+					return offset, errors.New("invalid plain SET batch persistence frame")
+				}
+				keyLen := int(binary.LittleEndian.Uint32(payloadBytes[pos : pos+4]))
+				valueLen := int(binary.LittleEndian.Uint32(payloadBytes[pos+4 : pos+8]))
+				pos += 8
+				if keyLen < 0 || valueLen < 0 || pos+keyLen+valueLen > len(payloadBytes) {
+					return offset, errors.New("invalid plain SET batch persistence frame")
+				}
+				records = append(records, Record{
+					Key:   append([]byte(nil), payloadBytes[pos:pos+keyLen]...),
+					Value: append([]byte(nil), payloadBytes[pos+keyLen:pos+keyLen+valueLen]...),
+				})
+				pos += keyLen + valueLen
+			}
+			if pos != len(payloadBytes) {
+				return offset, errors.New("trailing plain SET batch persistence data")
+			}
+		} else {
+			d := json.NewDecoder(bytes.NewReader(payloadBytes))
+			d.DisallowUnknownFields()
+			if err = d.Decode(&records); err != nil {
+				return offset, err
+			}
+			var extra interface{}
+			if d.Decode(&extra) != io.EOF {
+				return offset, errors.New("trailing frame data")
+			}
 		}
 		if err = apply(records); err != nil {
 			return offset, err
@@ -433,6 +760,11 @@ func ReplaySnapshot(path string, apply func([]Record) error) error {
 // Rewrite atomically replaces history with a reset marker and current logical
 // records. Reset makes replay safe even over a snapshot from an older keyspace.
 func (l *Log) Rewrite(records []Record) error {
+	l.enqueueMu.Lock()
+	defer l.enqueueMu.Unlock()
+	if err := l.drainEverysec(); err != nil {
+		return err
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.failed != nil {
@@ -453,6 +785,7 @@ func (l *Log) Rewrite(records []Record) error {
 	}
 	previous := l.file
 	l.file = next
+	l.writer.Reset(next)
 	if err = previous.Close(); err != nil {
 		l.failed = err
 	}

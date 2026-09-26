@@ -332,6 +332,15 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			} else if err := conn.SetReadDeadline(time.Now().Add(time.Duration(s.config.ReadTimeoutMS) * time.Millisecond)); err != nil {
 				return
 			}
+
+			// Prime bufio with the first byte before trying the zero-copy/buffered
+			// command decoders. Without this, an empty reader forces the first
+			// command of every newly flushed pipeline through generic ReadCommand;
+			// that read then buffers the remaining commands, producing an
+			// artificial 1 + (pipeline-1) split on the AOF fast path.
+			if _, err := reader.Peek(1); err != nil {
+				return
+			}
 		}
 		var borrowedGET [2][]byte
 		var borrowedSET [3][]byte
@@ -865,12 +874,12 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 
 		if borrowedSet && !s.adminOnly && !txSession.multi &&
 			!(clientSession.protocolVersion() == 2 && pubSession.active()) &&
-			s.server.journal == nil &&
-			s.server.replication.primaryHasReplicas() &&
+			((s.server.journal == nil && s.server.replication.primaryHasReplicas()) ||
+				(s.server.journal != nil && s.server.journalUsesAlwaysFsync())) &&
 			atomic.LoadUint32(&s.server.metricsEnabled) == 0 &&
 			s.server.store.MaxMemory() == 0 &&
 			reader.Buffered() > 0 {
-			const maxSetBatch = 64
+			const maxSetBatch = 256
 
 			keys := make([][]byte, 0, maxSetBatch)
 			values := make([][]byte, 0, maxSetBatch)
@@ -892,7 +901,10 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			for len(keys) < maxSetBatch && reader.Buffered() > 0 {
 				nextKey, nextValue, ok, setErr :=
 					decoder.ReadBufferedSET(setKeyScratch, setValueScratch)
-				if setErr != nil || !ok {
+				if setErr != nil {
+					return
+				}
+				if !ok {
 					break
 				}
 
@@ -918,8 +930,19 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			}
 
 			if len(keys) > 1 {
-				replicationOffset, handled, fastErr :=
-					s.server.executeAuthorizedSerializedReplicatedSetBatch(keys, values)
+				var handled bool
+				var fastErr error
+				var replicationOffset int64
+				var durabilitySequence uint64
+
+				if s.server.journal != nil {
+					durabilitySequence, handled, fastErr =
+						s.server.executeAuthorizedSerializedAOFSetBatch(keys, values)
+				} else {
+					replicationOffset, handled, fastErr =
+						s.server.executeAuthorizedSerializedReplicatedSetBatch(keys, values)
+				}
+
 				if handled {
 					if fastErr != nil {
 						if writer.writeBuffered(errorResponse(fastErr)) != nil {
@@ -931,7 +954,11 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 								return
 							}
 						}
-						clientSession.replicationOffset.Store(replicationOffset)
+						if s.server.journal != nil {
+							clientSession.durabilitySequence.Store(durabilitySequence)
+						} else {
+							clientSession.replicationOffset.Store(replicationOffset)
+						}
 						for i := range keys {
 							s.invalidateTrackingKeys(clientSession, [][]byte{[]byte("SET"), keys[i], values[i]})
 						}
@@ -944,6 +971,21 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 					continue
 				}
 			}
+		}
+
+		if result, durabilitySequence, handled, fastErr := s.server.executeAuthorizedConcurrentAOFSet(msg); handled {
+			if fastErr != nil {
+				result = errorResponse(fastErr)
+			}
+			commandSucceeded := fastErr == nil
+			if writeProtocol(msg, result) != nil {
+				return
+			}
+			if commandSucceeded {
+				clientSession.durabilitySequence.Store(durabilitySequence)
+				s.invalidateTrackingKeys(clientSession, msg)
+			}
+			continue
 		}
 
 		if result, replicationOffset, handled, fastErr := s.server.executeAuthorizedSerializedReplicatedSet(msg); handled {

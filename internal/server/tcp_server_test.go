@@ -3,17 +3,20 @@ package server
 import (
 	"snugkv/internal/optimizer"
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"snugkv/internal/config"
 	"snugkv/internal/engine"
+	"snugkv/internal/persistence"
 )
 
 func freeAddress(t *testing.T) string {
@@ -68,6 +71,95 @@ func connectTestServer(t *testing.T) net.Conn {
 	t.Cleanup(func() { conn.Close() })
 	conn.SetDeadline(time.Now().Add(3 * time.Second))
 	return conn
+}
+
+
+type countingAlwaysSetJournal struct {
+	mu         sync.Mutex
+	singleSets int
+	batches    []int
+}
+
+func (j *countingAlwaysSetJournal) Append([]persistence.Record) error {
+	return nil
+}
+
+func (j *countingAlwaysSetJournal) AppendPlainSet(_, _ []byte) error {
+	j.mu.Lock()
+	j.singleSets++
+	j.mu.Unlock()
+	return nil
+}
+
+func (j *countingAlwaysSetJournal) AppendPlainSetBatch(keys, values [][]byte) error {
+	if len(keys) != len(values) {
+		return errors.New("mismatched SET batch")
+	}
+	j.mu.Lock()
+	j.batches = append(j.batches, len(keys))
+	j.mu.Unlock()
+	return nil
+}
+
+func (j *countingAlwaysSetJournal) Policy() string {
+	return "always"
+}
+
+func TestTCPAlwaysFsyncFullPipelineUsesSingleSetBatch(t *testing.T) {
+	store := engine.New()
+	s, err := Listen("127.0.0.1:0", store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	journal := &countingAlwaysSetJournal{}
+	s.server.SetJournal(journal)
+
+	conn, err := net.DialTimeout("tcp", s.listener.Addr().String(), 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	const pipeline = 256
+	var wire bytes.Buffer
+	for i := 0; i < pipeline; i++ {
+		key := fmt.Sprintf("batch:%03d", i)
+		value := fmt.Sprintf("value:%03d", i)
+		fmt.Fprintf(
+			&wire,
+			"*3\r\n$3\r\nSET\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n",
+			len(key), key, len(value), value,
+		)
+	}
+	if _, err := conn.Write(wire.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+
+	wantReply := bytes.Repeat([]byte("+OK\r\n"), pipeline)
+	gotReply := make([]byte, len(wantReply))
+	if _, err := io.ReadFull(conn, gotReply); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(gotReply, wantReply) {
+		t.Fatalf("pipeline reply mismatch")
+	}
+
+	journal.mu.Lock()
+	singleSets := journal.singleSets
+	batches := append([]int(nil), journal.batches...)
+	journal.mu.Unlock()
+
+	if singleSets != 0 {
+		t.Fatalf("plain SET appends=%d want 0", singleSets)
+	}
+	if len(batches) != 1 || batches[0] != pipeline {
+		t.Fatalf("SET batch appends=%v want [%d]", batches, pipeline)
+	}
 }
 func TestTCPBinaryPipeline(t *testing.T) {
 	conn := connectTestServer(t)

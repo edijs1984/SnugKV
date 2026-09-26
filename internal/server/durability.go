@@ -18,6 +18,26 @@ type durabilityJournal interface {
 	DurabilitySnapshot() (appended, synced uint64, changed <-chan struct{})
 }
 
+type plainSetJournal interface {
+	Journal
+	AppendPlainSet(key, value []byte) error
+}
+
+type plainSetBatchJournal interface {
+	Journal
+	AppendPlainSetBatch(keys, values [][]byte) error
+}
+
+type fsyncPolicyJournal interface {
+	Journal
+	Policy() string
+}
+
+func (s *Server) journalUsesAlwaysFsync() bool {
+	journal, ok := s.journal.(fsyncPolicyJournal)
+	return ok && journal.Policy() == "always"
+}
+
 // SetJournal is a startup-only operation. Command execution is serialized so
 // clients cannot observe a mutation whose journal append later fails, and so a
 // MULTI/EXEC block can execute without another client interleaving commands.
@@ -259,6 +279,128 @@ func (s *Server) executeAuthorizedConcurrentSet(args [][]byte) (response []byte,
 		s.optimizer.Queue(key)
 	}
 	return []byte("+OK\r\n"), true, nil
+}
+
+func (s *Server) executeAuthorizedConcurrentAOFSet(args [][]byte) (response []byte, durabilitySequence uint64, handled bool, err error) {
+	if len(args) != 3 ||
+		!bytes.EqualFold(args[0], []byte("SET")) ||
+		s.journal == nil ||
+		s.replication.primaryHasReplicas() ||
+		atomic.LoadUint32(&s.metricsEnabled) != 0 ||
+		s.store.MaxMemory() != 0 {
+		return nil, 0, false, nil
+	}
+	journal, ok := s.journal.(plainSetJournal)
+	if !ok {
+		return nil, 0, false, nil
+	}
+	if len(args[2]) > 32<<20 {
+		return nil, 0, true, errors.New("ERR value exceeds 32 MiB limit")
+	}
+
+	s.durableMu.RLock()
+	if s.hasWatchSessionsLocked() {
+		s.durableMu.RUnlock()
+		return nil, 0, false, nil
+	}
+
+	var appendErr error
+	key := string(args[1])
+	setErr := s.store.SetPlainCommitted(key, args[2], func() error {
+		appendErr = journal.AppendPlainSet(args[1], args[2])
+		return appendErr
+	})
+	s.durableMu.RUnlock()
+
+	if setErr != nil {
+		if appendErr != nil {
+			return nil, 0, true, errors.New("ERR persistence append failed")
+		}
+		return nil, 0, true, setErr
+	}
+
+	if durable, ok := s.journal.(durabilityJournal); ok {
+		durabilitySequence, _, _ = durable.DurabilitySnapshot()
+	}
+	if s.optimizer != nil && s.store.ShouldQueueOptimization(args[2]) {
+		s.optimizer.Queue(key)
+	}
+	atomic.AddUint64(&s.commands, 1)
+	return []byte("+OK\r\n"), durabilitySequence, true, nil
+}
+
+func (s *Server) executeAuthorizedSerializedAOFSetBatch(keys, values [][]byte) (durabilitySequence uint64, handled bool, err error) {
+	if len(keys) < 2 || len(keys) != len(values) ||
+		s.journal == nil ||
+		s.replication.primaryHasReplicas() ||
+		atomic.LoadUint32(&s.metricsEnabled) != 0 ||
+		s.store.MaxMemory() != 0 {
+		return 0, false, nil
+	}
+	journal, ok := s.journal.(plainSetBatchJournal)
+	if !ok {
+		return 0, false, nil
+	}
+
+	s.durableMu.Lock()
+	defer s.durableMu.Unlock()
+
+	if s.durabilityFailed {
+		return 0, true, errors.New("ERR persistence is unavailable; restart after repairing storage")
+	}
+	if s.hasWatchSessionsLocked() {
+		return 0, false, nil
+	}
+
+	batched, setErr := s.store.SetPlainBatchFresh(keys, values)
+	var before []persistence.Record
+	if !batched {
+		affected := make([]string, len(keys))
+		for i := range keys {
+			affected[i] = string(keys[i])
+		}
+		before = s.store.Export(affected)
+		for i := range keys {
+			if setErr = s.store.SetPlain(string(keys[i]), values[i]); setErr != nil {
+				break
+			}
+		}
+	}
+	if setErr != nil {
+		return 0, true, setErr
+	}
+
+	if appendErr := journal.AppendPlainSetBatch(keys, values); appendErr != nil {
+		s.durabilityFailed = true
+		var rollback []persistence.Record
+		if batched {
+			rollback = make([]persistence.Record, len(keys))
+			for i := range keys {
+				rollback[i] = persistence.Record{Key: append([]byte(nil), keys[i]...), Deleted: true}
+			}
+		} else {
+			rollback = before
+		}
+		if rollbackErr := s.store.Restore(rollback, true); rollbackErr != nil {
+			return 0, true, errors.New("ERR persistence and rollback failed")
+		}
+		return 0, true, errors.New("ERR persistence append failed")
+	}
+
+	if durable, ok := s.journal.(durabilityJournal); ok {
+		durabilitySequence, _, _ = durable.DurabilitySnapshot()
+	}
+
+	if s.optimizer != nil {
+		for i := range keys {
+			if s.store.ShouldQueueOptimization(values[i]) {
+				s.optimizer.Queue(string(keys[i]))
+			}
+		}
+	}
+
+	atomic.AddUint64(&s.commands, uint64(len(keys)))
+	return durabilitySequence, true, nil
 }
 
 // executeAuthorizedSerializedReplicatedSet serves a previously ACL-authorized
@@ -628,6 +770,46 @@ func (s *Server) executeDurableLocked(args [][]byte) ([]byte, error) {
 	// logical DB and append the resulting changes as one persistence frame.
 	if isScriptEvalCommand(args) || isWritableFunctionCallCommand(args) {
 		return s.executeScriptDurableLocked(args)
+	}
+
+	// Plain SET fully replaces one string key and clears its TTL. With maxmemory
+	// disabled, SetPlain can only fail its deterministic value-size validation.
+	// Validate that first, persist the known mutation, then publish it in memory.
+	// This removes the per-command pre-image Export from the AOF hot path.
+	if cmd == "SET" && len(args) == 3 && s.store.MaxMemory() == 0 {
+		if len(args[2]) > 32<<20 {
+			return nil, errors.New("ERR value exceeds 32 MiB limit")
+		}
+
+		records := []persistence.Record{{
+			Key:   args[1],
+			Value: args[2],
+		}}
+		var appendErr error
+		if journal, ok := s.journal.(plainSetJournal); ok {
+			appendErr = journal.AppendPlainSet(args[1], args[2])
+		} else {
+			appendErr = s.journal.Append(records)
+		}
+		if appendErr != nil {
+			s.durabilityFailed = true
+			return nil, errors.New("ERR persistence append failed")
+		}
+
+		key := string(args[1])
+		if err := s.store.SetPlain(key, args[2]); err != nil {
+			// With maxmemory disabled and size prevalidated this should be
+			// unreachable. Mark durability unavailable rather than continue with
+			// memory and AOF diverged.
+			s.durabilityFailed = true
+			return nil, errors.New("ERR persisted SET could not be applied in memory")
+		}
+
+		s.publishPlainSetReplication(args[1], args[2])
+		if s.optimizer != nil && s.store.ShouldQueueOptimization(args[2]) {
+			s.optimizer.Queue(key)
+		}
+		return []byte("+OK\r\n"), nil
 	}
 
 	if cmd == "FLUSHDB" || cmd == "FLUSHALL" {
