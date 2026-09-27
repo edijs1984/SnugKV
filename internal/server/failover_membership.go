@@ -503,9 +503,59 @@ func (s *Server) retryFailoverMembershipCommit(now time.Time) error {
 	s.failoverCommitLastRetry = now
 	s.failoverMembershipMu.Unlock()
 
+	// Removed members must be durably retired before the new membership is
+	// allowed to commit. Recovery always finishes retirement first.
+	for _, addr := range membership.CommitRetireTargets {
+		state, err := queryFailoverPeer(
+			addr,
+			300*time.Millisecond,
+			s.replicationMasterUser,
+			s.replicationMasterAuth,
+		)
+		if err != nil {
+			return nil
+		}
+		if state.GroupID != membership.GroupID {
+			return nil
+		}
+		if state.Retired && state.RetiredAtEpoch == membership.CommitEpoch {
+			continue
+		}
+		if state.ConfigEpoch != membership.CommitOldEpoch {
+			return nil
+		}
+		if !state.RetirePending || state.RetirePendingEpoch != membership.CommitEpoch {
+			reply, prepErr := queryFailoverRetirePrepare(
+				addr,
+				300*time.Millisecond,
+				s.replicationMasterUser,
+				s.replicationMasterAuth,
+				membership.GroupID,
+				membership.CommitOldEpoch,
+				membership.CommitEpoch,
+			)
+			if prepErr != nil || !reply.Accepted {
+				return nil
+			}
+		}
+		reply, retireErr := queryFailoverRetire(
+			addr,
+			300*time.Millisecond,
+			s.replicationMasterUser,
+			s.replicationMasterAuth,
+			membership.GroupID,
+			membership.CommitOldEpoch,
+			membership.CommitEpoch,
+		)
+		if retireErr != nil || !reply.Accepted || !reply.Retired {
+			return nil
+		}
+	}
+
 	// If the coordinator crashed after recording commit intent but before its
-	// own local COMMIT, recover by committing forward. Dual-majority PREPARE
-	// already completed before this recovery record was armed.
+	// own local COMMIT, recover by committing forward only after every removed
+	// member has become durably ineligible.
+	membership = s.failoverMembershipSnapshot()
 	if membership.JointActive &&
 		membership.ConfigEpoch == membership.CommitOldEpoch &&
 		membership.PendingEpoch == membership.CommitEpoch {
@@ -584,7 +634,7 @@ func (s *Server) coordinateFailoverMembershipChange(newEpoch uint64, newMembers 
 		OldQuorum: membership.Quorum,
 		NewQuorum: newQuorum,
 	}
-	if membership.JointActive {
+	if membership.JointActive || membership.CommitPending {
 		return result, errors.New("failover membership transition already active")
 	}
 	if membership.GroupID == "" || membership.ConfigEpoch == 0 {
@@ -605,13 +655,8 @@ func (s *Server) coordinateFailoverMembershipChange(newEpoch uint64, newMembers 
 	if _, err := deriveFailoverPeersForMember(newMembers, s.failoverAdvertiseAddr); err != nil {
 		return result, err
 	}
-	if err := validateFailoverPeerSet(
-		func() []string {
-			peers, _ := deriveFailoverPeersForMember(newMembers, s.failoverAdvertiseAddr)
-			return peers
-		}(),
-		newQuorum,
-	); err != nil {
+	newPeers, _ := deriveFailoverPeersForMember(newMembers, s.failoverAdvertiseAddr)
+	if err := validateFailoverPeerSet(newPeers, newQuorum); err != nil {
 		return result, err
 	}
 
@@ -622,9 +667,11 @@ func (s *Server) coordinateFailoverMembershipChange(newEpoch uint64, newMembers 
 	if !containsString(newMembers, s.failoverAdvertiseAddr) {
 		return result, errors.New("coordinator must remain in proposed failover membership")
 	}
+
+	removed := make([]string, 0)
 	for _, member := range oldMembers {
 		if !containsString(newMembers, member) {
-			return result, errors.New("member removal requires the retirement protocol")
+			removed = append(removed, member)
 		}
 	}
 
@@ -642,15 +689,13 @@ func (s *Server) coordinateFailoverMembershipChange(newEpoch uint64, newMembers 
 		return result, errors.New("local failover membership prepare rejected")
 	}
 
-	if containsString(oldMembers, s.failoverAdvertiseAddr) {
-		result.OldAcks++
-	}
-	if containsString(newMembers, s.failoverAdvertiseAddr) {
-		result.NewAcks++
-	}
-
+	result.OldAcks++
+	result.NewAcks++
 	prepared := map[string]struct{}{s.failoverAdvertiseAddr: {}}
-	for _, addr := range unionStrings(oldMembers, newMembers) {
+
+	// Only members that remain in the proposed configuration enter joint state.
+	// Removed members instead prepare a retirement tombstone.
+	for _, addr := range newMembers {
 		if addr == s.failoverAdvertiseAddr {
 			continue
 		}
@@ -673,12 +718,49 @@ func (s *Server) coordinateFailoverMembershipChange(newEpoch uint64, newMembers 
 		if containsString(oldMembers, addr) {
 			result.OldAcks++
 		}
-		if containsString(newMembers, addr) {
-			result.NewAcks++
-		}
+		result.NewAcks++
 	}
 
-	if result.OldAcks < membership.Quorum || result.NewAcks < newQuorum {
+	// Do not stage irreversible retirement unless the proposed membership has
+	// already reached its own majority and the old majority is reachable once
+	// retiring members contribute their explicit consent.
+	if result.NewAcks < newQuorum || result.OldAcks+len(removed) < membership.Quorum {
+		for addr := range prepared {
+			if addr == s.failoverAdvertiseAddr {
+				continue
+			}
+			_, _ = queryFailoverMembershipAbort(
+				addr,
+				300*time.Millisecond,
+				s.replicationMasterUser,
+				s.replicationMasterAuth,
+				membership.GroupID,
+				newEpoch,
+			)
+		}
+		_, _ = s.abortFailoverMembership(membership.GroupID, newEpoch)
+		return result, nil
+	}
+
+	retirePrepared := make([]string, 0, len(removed))
+	for _, addr := range removed {
+		reply, err := queryFailoverRetirePrepare(
+			addr,
+			300*time.Millisecond,
+			s.replicationMasterUser,
+			s.replicationMasterAuth,
+			membership.GroupID,
+			membership.ConfigEpoch,
+			newEpoch,
+		)
+		if err != nil || !reply.Accepted {
+			continue
+		}
+		retirePrepared = append(retirePrepared, addr)
+		result.OldAcks++
+	}
+
+	if result.OldAcks < membership.Quorum {
 		for addr := range prepared {
 			if addr == s.failoverAdvertiseAddr {
 				continue
@@ -697,39 +779,24 @@ func (s *Server) coordinateFailoverMembershipChange(newEpoch uint64, newMembers 
 	}
 
 	result.Prepared = true
-	commitTargets := unionStrings(oldMembers, newMembers)
 	if err := s.armFailoverMembershipCommitRecovery(
 		membership.ConfigEpoch,
 		newEpoch,
 		newMembers,
 		newQuorum,
-		commitTargets,
-		nil,
+		append([]string(nil), newMembers...),
+		retirePrepared,
 	); err != nil {
 		return result, err
 	}
-	if _, err := s.commitFailoverMembership(membership.GroupID, newEpoch); err != nil {
+
+	if err := s.retryFailoverMembershipCommit(time.Now().Add(time.Second)); err != nil {
 		return result, err
 	}
-	result.Committed = true
-
-	for addr := range prepared {
-		if addr == s.failoverAdvertiseAddr {
-			continue
-		}
-		_, _ = queryFailoverMembershipCommit(
-			addr,
-			300*time.Millisecond,
-			s.replicationMasterUser,
-			s.replicationMasterAuth,
-			membership.GroupID,
-			newEpoch,
-		)
-	}
-	_ = s.retryFailoverMembershipCommit(time.Now())
+	after := s.failoverMembershipSnapshot()
+	result.Committed = after.ConfigEpoch == newEpoch && !after.JointActive
 	return result, nil
 }
-
 
 type failoverRetireReply struct {
 	GroupID        string `json:"group_id"`
