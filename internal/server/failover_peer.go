@@ -641,19 +641,15 @@ func (s *Server) requestFailoverReparent(now time.Time, lineage string, term uin
 		return reply, nil
 	}
 
-	// A returning old primary may have been offline for the entire election and
-	// therefore may not hold a local lease record. Prove that this node is the
-	// failed lineage itself, then independently verify the elected leader still
-	// controls lease quorum before demoting.
-	if local.NodeID != lineage {
-		return reply, nil
-	}
-	verified, higherTerm := s.verifyFailoverLeaderQuorum(now, lineage, term, leaderID)
-	if higherTerm > term {
-		reply.Term = higherTerm
-		return reply, nil
-	}
-	if !verified {
+	s.failoverLeaseMu.Lock()
+	leaseTerm := s.failoverLeaseTerm
+	leaseHolder := s.failoverLeaseHolder
+	leaseUntil := s.failoverLeaseUntil
+	s.failoverLeaseMu.Unlock()
+	if leaseTerm != term ||
+		leaseHolder != leaderID ||
+		leaseUntil.IsZero() ||
+		!now.Before(leaseUntil) {
 		return reply, nil
 	}
 
@@ -777,15 +773,19 @@ func (s *Server) requestFailoverDemote(now time.Time, lineage string, term uint6
 		return reply, nil
 	}
 
-	s.failoverLeaseMu.Lock()
-	leaseTerm := s.failoverLeaseTerm
-	leaseHolder := s.failoverLeaseHolder
-	leaseUntil := s.failoverLeaseUntil
-	s.failoverLeaseMu.Unlock()
-	if leaseTerm != term ||
-		leaseHolder != leaderID ||
-		leaseUntil.IsZero() ||
-		!now.Before(leaseUntil) {
+	// A returning old primary may have been offline for the entire election and
+	// therefore may not hold a local lease record. Prove that this node is the
+	// failed lineage itself, then independently verify the elected leader still
+	// controls lease quorum before demoting.
+	if local.NodeID != lineage {
+		return reply, nil
+	}
+	verified, higherTerm := s.verifyFailoverLeaderQuorum(now, lineage, term, leaderID)
+	if higherTerm > term {
+		reply.Term = higherTerm
+		return reply, nil
+	}
+	if !verified {
 		return reply, nil
 	}
 
