@@ -1131,6 +1131,31 @@ func (s *Server) writeReplicationACK(conn net.Conn, ackOffset int64) error {
 	return writeReplicationRESPCommand(conn, args...)
 }
 
+func (s *Server) promoteReplicaLocked() error {
+	if err := s.persistReplicationCheckpointClearLocked("", 0); err != nil {
+		s.durabilityFailed = true
+		return errors.New("ERR replication persistence update failed")
+	}
+	if err := s.clearReplicationPersistence(); err != nil {
+		return errors.New("ERR replication persistence update failed")
+	}
+	s.replication.promote()
+	return nil
+}
+
+func (s *Server) maintainAutoFailover(now time.Time) error {
+	if !s.replication.autoFailoverDue(now, s.autoFailoverTimeout) {
+		return nil
+	}
+	s.stopReplicaFollow()
+	s.durableMu.Lock()
+	defer s.durableMu.Unlock()
+	if !s.replication.autoFailoverDue(now, s.autoFailoverTimeout) {
+		return nil
+	}
+	return s.promoteReplicaLocked()
+}
+
 func (s *Server) startReplicaFollow(host string, port int) {
 	s.stopReplicaFollow()
 	s.resetReplicaAOFTracking()
