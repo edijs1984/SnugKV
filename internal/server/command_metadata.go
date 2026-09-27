@@ -49,6 +49,9 @@ func commandKeys(args [][]byte) ([]commandKeyRef, error) {
 		"ZUNIONSTORE", "ZINTERSTORE", "ZDIFFSTORE":
 		return commandZSetAlgebraKeys(name, args)
 
+	case "SINTERCARD":
+		return commandSInterCardKeys(args)
+
 	case "ZMPOP":
 		return commandZMPopKeys(args)
 
@@ -189,6 +192,29 @@ func commandKeys(args [][]byte) ([]commandKeyRef, error) {
 		)
 	}
 
+	return refs, nil
+}
+
+func commandSInterCardKeys(args [][]byte) ([]commandKeyRef, error) {
+	if len(args) < 3 {
+		return nil, errors.New("ERR Invalid number of arguments specified for command")
+	}
+	numKeys, err := strconv.Atoi(string(args[1]))
+	if err != nil || numKeys <= 0 {
+		return nil, errors.New("ERR numkeys should be greater than 0")
+	}
+	firstKey := 2
+	lastKey := firstKey + numKeys
+	if lastKey > len(args) {
+		return nil, errors.New("ERR syntax error")
+	}
+	refs := make([]commandKeyRef, 0, numKeys)
+	for _, key := range args[firstKey:lastKey] {
+		refs = append(refs, commandKeyRef{
+			value: key,
+			flags: []string{"RO", "access"},
+		})
+	}
 	return refs, nil
 }
 
@@ -597,6 +623,9 @@ func commandInfoFlags(
 	case "ZUNION", "ZINTER", "ZDIFF", "ZINTERCARD":
 		return []string{"readonly", "movablekeys"}
 
+	case "SINTERCARD":
+		return []string{"readonly", "movablekeys"}
+
 	case "ZUNIONSTORE", "ZINTERSTORE", "ZDIFFSTORE":
 		return []string{"write", "denyoom", "movablekeys"}
 
@@ -731,6 +760,13 @@ func commandInfoACL(
 		return []string{
 			"@write",
 			"@bitmap",
+			"@slow",
+		}
+
+	case "SINTERCARD":
+		return []string{
+			"@read",
+			"@set",
 			"@slow",
 		}
 
