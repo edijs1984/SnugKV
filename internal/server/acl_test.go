@@ -3031,3 +3031,55 @@ func TestAuthorizeConnectionCommandAllCommandsExplicitDeny(t *testing.T) {
 		t.Fatalf("SET should remain allowed: %v", err)
 	}
 }
+
+
+func TestACLUnrestrictedConnectionCacheInvalidatesOnMutation(t *testing.T) {
+	store := engine.New()
+	serv := New(store)
+	session := newAuthSession(serv.acl)
+	get := [][]byte{[]byte("GET"), []byte("k")}
+
+	if err := serv.authorizeConnectionCommand(session, get); err != nil {
+		t.Fatalf("initial authorization failed: %v", err)
+	}
+	if !session.aclUnrestricted {
+		t.Fatal("expected unrestricted ACL cache to warm")
+	}
+
+	if err := serv.acl.SetUser("default", []string{"-get"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := serv.authorizeConnectionCommand(session, get); err == nil {
+		t.Fatal("cached authorization survived ACL mutation")
+	}
+}
+
+func BenchmarkAuthorizeConnectionCommandUnrestricted(b *testing.B) {
+	serv := New(engine.New())
+	session := newAuthSession(serv.acl)
+	get := [][]byte{[]byte("GET"), []byte("bench:key")}
+
+	if err := serv.authorizeConnectionCommand(session, get); err != nil {
+		b.Fatal(err)
+	}
+
+	b.Run("cached", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			if err := serv.authorizeConnectionCommand(session, get); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("lock-and-map", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			session.aclUnrestricted = false
+			if err := serv.authorizeConnectionCommand(session, get); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+}

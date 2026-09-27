@@ -106,7 +106,9 @@ func (c *clientSession) touch(args [][]byte) time.Time {
 	}
 
 	c.lastSeen.Store(now.UnixNano())
-	c.lastCmd.Store(cmd)
+	if c.lastCmd.Load() != cmd {
+		c.lastCmd.Store(cmd)
+	}
 	return now
 }
 
