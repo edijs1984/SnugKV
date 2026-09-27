@@ -20,6 +20,7 @@ var setCommands = map[string]commandInfo{
 	"SSCAN":       {3, 0, 1, 1, 1, false},
 	"SUNION":      {2, 0, 1, -1, 1, false},
 	"SINTER":      {2, 0, 1, -1, 1, false},
+	"SINTERCARD":  {3, 0, 0, 0, 0, false},
 	"SDIFF":       {2, 0, 1, -1, 1, false},
 	"SUNIONSTORE": {3, 0, 1, -1, 1, true},
 	"SINTERSTORE": {3, 0, 1, -1, 1, true},
@@ -216,6 +217,44 @@ func (s *Server) executeSet(args [][]byte) ([]byte, error) {
 			return nil, err
 		}
 		return setMembersResponse(members), nil
+
+	case "SINTERCARD":
+		numKeys, err := strconv.ParseInt(string(args[1]), 10, 64)
+		if err != nil || numKeys <= 0 {
+			return nil, errors.New("ERR numkeys should be greater than 0")
+		}
+		if numKeys > int64(len(args)) {
+			return nil, errors.New("ERR syntax error")
+		}
+		lastKey := 2 + int(numKeys)
+		if lastKey > len(args) {
+			return nil, errors.New("ERR syntax error")
+		}
+
+		limit := int64(0)
+		if lastKey < len(args) {
+			if lastKey+2 != len(args) || !strings.EqualFold(string(args[lastKey]), "LIMIT") {
+				return nil, errors.New("ERR syntax error")
+			}
+			limit, err = strconv.ParseInt(string(args[lastKey+1]), 10, 64)
+			if err != nil || limit < 0 {
+				return nil, errors.New("ERR LIMIT can't be negative")
+			}
+		}
+
+		keys := make([]string, int(numKeys))
+		for i := range keys {
+			keys[i] = string(args[2+i])
+		}
+		members, err := s.store.SetIntersect(keys)
+		if err != nil {
+			return nil, err
+		}
+		count := int64(len(members))
+		if limit > 0 && count > limit {
+			count = limit
+		}
+		return integer(count), nil
 
 	case "SUNION", "SINTER", "SDIFF":
 		keys := make([]string, len(args)-1)
