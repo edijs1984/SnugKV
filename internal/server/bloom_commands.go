@@ -16,6 +16,8 @@ var bloomCommands = map[string]commandInfo{
 	"BF.CARD":    {2, 2, 1, 1, 1, false},
 	"BF.INFO":    {2, 3, 1, 1, 1, false},
 	"BF.INSERT":  {4, 0, 1, 1, 1, true},
+	"BF.SCANDUMP": {3, 3, 1, 1, 1, false},
+	"BF.LOADCHUNK": {4, 4, 1, 1, 1, true},
 }
 
 func init() {
@@ -187,6 +189,33 @@ func (s *Server) executeBloom(args [][]byte) ([]byte, error) {
 				return integer(int64(info.Expansion))
 			}(),
 		), nil
+
+	case "BF.SCANDUMP":
+		iter, err := strconv.ParseInt(string(args[2]), 10, 64)
+		if err != nil || iter < 0 {
+			return nil, errors.New("ERR Second argument must be numeric")
+		}
+		if iter != 0 {
+			return array(integer(0), nullBulk()), nil
+		}
+		dump, err := s.store.BloomDump(key)
+		if err != nil {
+			return nil, err
+		}
+		return array(integer(1), formatBulkString(dump)), nil
+
+	case "BF.LOADCHUNK":
+		iter, err := strconv.ParseInt(string(args[2]), 10, 64)
+		if err != nil {
+			return nil, errors.New("ERR Second argument must be numeric")
+		}
+		if iter != 1 {
+			return nil, errors.New("ERR Invalid position")
+		}
+		if err := s.store.BloomLoadDump(key, args[3]); err != nil {
+			return nil, err
+		}
+		return []byte("+OK\r\n"), nil
 
 	case "BF.INSERT":
 		var capacity uint64
