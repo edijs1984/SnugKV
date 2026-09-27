@@ -294,16 +294,20 @@ func TestHSetExRedis8Semantics(t *testing.T) {
 func TestHashRedis8ExCommandErrors(t *testing.T) {
 	s := New(engine.New())
 
-	if got := execute(t, s, "HGETDEL", "h", "BAD", "1", "a"); !strings.Contains(got, "Mandatory argument FIELDS") {
-		t.Fatalf("HGETDEL FIELDS error = %q", got)
+	assertErrContains := func(want string, args ...string) {
+		t.Helper()
+		raw := make([][]byte, len(args))
+		for i := range args {
+			raw[i] = []byte(args[i])
+		}
+		_, err := s.Execute(raw)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("%q error=%v want substring %q", args, err, want)
+		}
 	}
-	if got := execute(t, s, "HGETEX", "h", "EX", "10", "BAD", "1", "a"); !strings.Contains(got, "Mandatory argument FIELDS") {
-		t.Fatalf("HGETEX FIELDS error = %q", got)
-	}
-	if got := execute(t, s, "HSETEX", "h", "FNX", "FXX", "FIELDS", "1", "a", "1"); !strings.Contains(got, "Only one of FXX or FNX") {
-		t.Fatalf("HSETEX condition error = %q", got)
-	}
-	if got := execute(t, s, "HSETEX", "h", "EX", "10", "KEEPTTL", "FIELDS", "1", "a", "1"); !strings.Contains(got, "Only one of EX, PX, EXAT, PXAT or KEEPTTL") {
-		t.Fatalf("HSETEX expiration error = %q", got)
-	}
+
+	assertErrContains("Mandatory argument FIELDS", "HGETDEL", "h", "BAD", "1", "a")
+	assertErrContains("Mandatory argument FIELDS", "HGETEX", "h", "EX", "10", "BAD", "1", "a")
+	assertErrContains("Only one of FXX or FNX", "HSETEX", "h", "FNX", "FXX", "FIELDS", "1", "a", "1")
+	assertErrContains("Only one of EX, PX, EXAT, PXAT or KEEPTTL", "HSETEX", "h", "EX", "10", "KEEPTTL", "FIELDS", "1", "a", "1")
 }
