@@ -61,6 +61,7 @@ func main() {
 	flag.StringVar(&cfg.AOFRewritePath, "aof-rewrite", cfg.AOFRewritePath, "one-off AOF rewrite destination when journaling is disabled (not loaded at startup)")
 	flag.StringVar(&cfg.AOFPath, "aof", cfg.AOFPath, "append-only file path (optional)")
 	flag.StringVar(&cfg.SnapshotPath, "snapshot", cfg.SnapshotPath, "snapshot file path (optional)")
+	flag.Int64Var(&cfg.SnapshotIntervalMS, "snapshot-interval-ms", cfg.SnapshotIntervalMS, "automatic background snapshot interval in milliseconds, zero disables")
 	flag.StringVar(&cfg.Fsync, "fsync", cfg.Fsync, "always, everysec, or no")
 	flag.BoolVar(&cfg.JSONShape, "json-shape", cfg.JSONShape, "enable background exact JSON template sharing")
 	flag.BoolVar(&cfg.Compression, "compression", cfg.Compression, "enable background LZ4/Zstandard")
@@ -162,6 +163,13 @@ func main() {
 	defer signal.Stop(signals)
 	ticker := time.NewTicker(time.Duration(cfg.CleanupIntervalMS) * time.Millisecond)
 	defer ticker.Stop()
+	var snapshotTicks <-chan time.Time
+	var snapshotTicker *time.Ticker
+	if cfg.SnapshotIntervalMS > 0 {
+		snapshotTicker = time.NewTicker(time.Duration(cfg.SnapshotIntervalMS) * time.Millisecond)
+		defer snapshotTicker.Stop()
+		snapshotTicks = snapshotTicker.C
+	}
 	log.Printf("event=started listen=%s shards=%d", cfg.ListenAddr, cfg.Shards)
 	for {
 		select {
@@ -201,6 +209,10 @@ func main() {
 			return
 		case <-ticker.C:
 			listener.Maintain()
+		case <-snapshotTicks:
+			if err = listener.TriggerPeriodicSnapshot(); err != nil {
+				log.Printf("event=periodic_snapshot_failed error=%q", err)
+			}
 		}
 	}
 }
