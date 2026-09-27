@@ -47,6 +47,12 @@ type failoverMembershipSnapshot struct {
 	PendingEpoch  uint64
 	PendingPeers  []string
 	PendingQuorum int
+	CommitPending bool
+	CommitOldEpoch uint64
+	CommitEpoch uint64
+	CommitMembers []string
+	CommitQuorum int
+	CommitTargets []string
 }
 
 func (s *Server) failoverMembershipSnapshot() failoverMembershipSnapshot {
@@ -61,6 +67,12 @@ func (s *Server) failoverMembershipSnapshot() failoverMembershipSnapshot {
 		PendingEpoch:  s.failoverPendingEpoch,
 		PendingPeers:  append([]string(nil), s.failoverPendingPeers...),
 		PendingQuorum: s.failoverPendingQuorum,
+		CommitPending: s.failoverCommitPending,
+		CommitOldEpoch: s.failoverCommitOldEpoch,
+		CommitEpoch: s.failoverCommitEpoch,
+		CommitMembers: append([]string(nil), s.failoverCommitMembers...),
+		CommitQuorum: s.failoverCommitQuorum,
+		CommitTargets: append([]string(nil), s.failoverCommitTargets...),
 	}
 }
 
