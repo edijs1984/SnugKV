@@ -217,7 +217,7 @@ func TestMonitorScriptFamilies(t *testing.T) {
 		{
 			name: "fcall",
 			setup: func(t *testing.T, srv *Server, actor net.Conn, ar *bufio.Reader) {
-				code := "#!lua name=monitorlib\\nredis.register_function('reader', function(keys,args) return redis.call('GET',keys[1]) end)"
+				code := "#!lua name=monitorlib\nredis.register_function('reader', function(keys,args) return redis.call('GET',keys[1]) end)"
 				monitorTestSend(t, actor, "SET", "monitor:script", "hello")
 				monitorTestReply(t, ar)
 				if got := loadFunctionLibrary(t, srv, code); !strings.HasPrefix(got, "$") {
@@ -230,7 +230,7 @@ func TestMonitorScriptFamilies(t *testing.T) {
 		{
 			name: "fcall_ro",
 			setup: func(t *testing.T, srv *Server, actor net.Conn, ar *bufio.Reader) {
-				code := "#!lua name=monitorlibro\\nredis.register_function{function_name='reader_ro',callback=function(keys,args) return redis.call('GET',keys[1]) end,flags={'no-writes'}}"
+				code := "#!lua name=monitorlibro\nredis.register_function{function_name='reader_ro',callback=function(keys,args) return redis.call('GET',keys[1]) end,flags={'no-writes'}}"
 				monitorTestSend(t, actor, "SET", "monitor:script", "hello")
 				monitorTestReply(t, ar)
 				if got := loadFunctionLibrary(t, srv, code); !strings.HasPrefix(got, "$") {
