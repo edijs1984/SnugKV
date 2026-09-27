@@ -136,3 +136,51 @@ func TestMonitorCanSubscribeAgainAfterReset(t *testing.T) {
 		if got := monitorTestReply(t, r); got != "+RESET\r\n" { t.Fatalf("RESET=%q", got) }
 	}
 }
+
+func TestMonitorLuaOrdering(t *testing.T) {
+	for _, transaction := range []bool{false, true} {
+		name := "direct"
+		if transaction { name = "exec" }
+		t.Run(name, func(t *testing.T) {
+			s, err := Listen("127.0.0.1:0", engine.New())
+			if err != nil { t.Fatal(err) }
+			defer s.Close()
+			dial := func() net.Conn {
+				conn, err := net.DialTimeout("tcp", s.listener.Addr().String(), time.Second)
+				if err != nil { t.Fatal(err) }
+				t.Cleanup(func() { conn.Close() })
+				conn.SetDeadline(time.Now().Add(5*time.Second))
+				return conn
+			}
+			monitor, actor := dial(), dial()
+			mr, ar := bufio.NewReader(monitor), bufio.NewReader(actor)
+			monitorTestSend(t, monitor, "MONITOR")
+			if got := monitorTestReply(t, mr); got != "+OK\r\n" { t.Fatalf("MONITOR=%q", got) }
+			if transaction {
+				monitorTestSend(t, actor, "MULTI")
+				monitorTestReply(t, ar)
+			}
+			script := "redis.call('SET',KEYS[1],ARGV[1]); return redis.call('GET',KEYS[1])"
+			monitorTestSend(t, actor, "EVAL", script, "1", "monitor:lua", "hello")
+			if got := monitorTestReply(t, ar); strings.HasPrefix(got, "-") { t.Fatalf("EVAL=%q", got) }
+			if transaction {
+				monitorTestSend(t, actor, "EXEC")
+				if got := monitorTestReply(t, ar); strings.HasPrefix(got, "-") { t.Fatalf("EXEC=%q", got) }
+			}
+			peer := " [0 "+actor.LocalAddr().String()+"] "
+			want := []string{
+				peer+"\"EVAL\" "+monitorQuote([]byte(script))+" \"1\" \"monitor:lua\" \"hello\"\r\n",
+				" [0 lua] \"SET\" \"monitor:lua\" \"hello\"\r\n",
+				" [0 lua] \"GET\" \"monitor:lua\"\r\n",
+			}
+			if transaction {
+				want = append([]string{peer+"\"MULTI\"\r\n"}, want...)
+				want = append(want, peer+"\"EXEC\"\r\n")
+			}
+			for _, suffix := range want {
+				line, err := mr.ReadString('\n')
+				if err != nil || !strings.HasSuffix(line, suffix) { t.Fatalf("event=%q want suffix=%q err=%v", line, suffix, err) }
+			}
+		})
+	}
+}
