@@ -96,6 +96,18 @@ func (s *TCPServer) waitClientPause(args [][]byte) {
 	}
 }
 
+func (s *TCPServer) TriggerPeriodicSnapshot() error {
+	if s.config.SnapshotIntervalMS <= 0 || s.config.SnapshotPath == "" {
+		return nil
+	}
+	_, err := s.server.executeSave(true, false)
+	if err != nil && (err.Error() == "ERR Background save already in progress" ||
+		strings.HasPrefix(err.Error(), "ERR Another child process is active")) {
+		return nil
+	}
+	return err
+}
+
 func Listen(addr string, store *engine.Store) (*TCPServer, error) {
 	c := config.Default()
 	c.ListenAddr = addr
