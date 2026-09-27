@@ -1,7 +1,9 @@
 package server
 
 import (
+	"encoding/binary"
 	"math"
+	"strconv"
 	"testing"
 
 	"snugkv/internal/engine"
@@ -274,5 +276,76 @@ func TestDecodeRedisLegacyStreamGroupsType19(t *testing.T) {
 	}
 	if len(g.Consumers) != 1 || g.Consumers[0].ActiveAt != g.Consumers[0].SeenAt {
 		t.Fatalf("consumer=%+v", g.Consumers)
+	}
+}
+
+
+func buildLegacyStreamFullSyncRDB(t *testing.T, streamType byte, key string, entries []engine.StreamEntry) []byte {
+	t.Helper()
+	first := engine.StreamID{}
+	last := engine.StreamID{}
+	if len(entries) > 0 {
+		first = entries[0].ID
+		last = entries[len(entries)-1].ID
+	}
+	body := encodeLegacyStreamBody(
+		t,
+		streamType,
+		entries,
+		last,
+		first,
+		engine.StreamID{},
+		uint64(len(entries)),
+	)
+
+	rdb := []byte("REDIS0012")
+	rdb = append(rdb, redisRDBOpcodeSelectDB)
+	rdb = appendRDBLen(rdb, 0)
+	rdb = append(rdb, streamType)
+	rdb = appendRDBRawString(rdb, []byte(key))
+	rdb = append(rdb, body...)
+	rdb = append(rdb, redisRDBOpcodeEOF)
+
+	var checksum [8]byte
+	binary.LittleEndian.PutUint64(checksum[:], redisCRC64(rdb))
+	return append(rdb, checksum[:]...)
+}
+
+func TestDecodeRedisFullSyncLegacyStreamTypes(t *testing.T) {
+	for _, streamType := range []byte{
+		redisRDBTypeStreamListpacks,
+		redisRDBTypeStreamListpacks2,
+	} {
+		t.Run(strconv.Itoa(int(streamType)), func(t *testing.T) {
+			entries := []engine.StreamEntry{
+				{
+					ID: engine.StreamID{Millis: 5000, Sequence: 0},
+					Fields: []engine.StreamField{{Field: []byte("f"), Value: []byte("one")}},
+				},
+				{
+					ID: engine.StreamID{Millis: 5001, Sequence: 1},
+					Fields: []engine.StreamField{{Field: []byte("f"), Value: []byte("two")}},
+				},
+			}
+			rdb := buildLegacyStreamFullSyncRDB(t, streamType, "legacy:stream", entries)
+			records, err := decodeRedisFullSyncRDB(rdb)
+			if err != nil {
+				t.Fatal(err)
+			}
+			store := engine.New()
+			if err := store.Restore(records, true); err != nil {
+				t.Fatal(err)
+			}
+			snapshot, ok := store.StreamSnapshot("legacy:stream")
+			if !ok {
+				t.Fatal("restored stream missing")
+			}
+			if len(snapshot.Entries) != 2 {
+				t.Fatalf("entries=%d want=2", len(snapshot.Entries))
+			}
+			if snapshot.Entries[0].ID != entries[0].ID || snapshot.Entries[1].ID != entries[1].ID {
+				t.Fatalf("restored IDs=%+v", snapshot.Entries)
+			}
+		})
 	}
 }
