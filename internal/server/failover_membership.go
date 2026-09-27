@@ -152,6 +152,8 @@ func (s *Server) commitFailoverMembership(groupID string, newEpoch uint64) (fail
 	oldPendingEpoch := s.failoverPendingEpoch
 	oldPendingPeers := append([]string(nil), s.failoverPendingPeers...)
 	oldPendingQuorum := s.failoverPendingQuorum
+	oldRetirePending := s.failoverRetirePending
+	oldRetirePendingEpoch := s.failoverRetirePendingEpoch
 
 	s.failoverConfigEpoch = s.failoverPendingEpoch
 	s.failoverPeers = append([]string(nil), s.failoverPendingPeers...)
@@ -175,6 +177,8 @@ func (s *Server) commitFailoverMembership(groupID string, newEpoch uint64) (fail
 		s.failoverPendingEpoch = oldPendingEpoch
 		s.failoverPendingPeers = oldPendingPeers
 		s.failoverPendingQuorum = oldPendingQuorum
+		s.failoverRetirePending = oldRetirePending
+		s.failoverRetirePendingEpoch = oldRetirePendingEpoch
 		s.failoverMembershipMu.Unlock()
 		return failoverMembershipReply{}, err
 	}
