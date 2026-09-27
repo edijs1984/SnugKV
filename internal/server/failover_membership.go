@@ -423,7 +423,7 @@ func unionStrings(a, b []string) []string {
 }
 
 
-func (s *Server) armFailoverMembershipCommitRecovery(oldEpoch, newEpoch uint64, members []string, quorum int, targets []string) error {
+func (s *Server) armFailoverMembershipCommitRecovery(oldEpoch, newEpoch uint64, members []string, quorum int, targets, retireTargets []string) error {
 	s.failoverMembershipMu.Lock()
 	oldPending := s.failoverCommitPending
 	oldOldEpoch := s.failoverCommitOldEpoch
@@ -431,12 +431,14 @@ func (s *Server) armFailoverMembershipCommitRecovery(oldEpoch, newEpoch uint64, 
 	oldMembers := append([]string(nil), s.failoverCommitMembers...)
 	oldQuorum := s.failoverCommitQuorum
 	oldTargets := append([]string(nil), s.failoverCommitTargets...)
+	oldRetireTargets := append([]string(nil), s.failoverCommitRetireTargets...)
 	s.failoverCommitPending = true
 	s.failoverCommitOldEpoch = oldEpoch
 	s.failoverCommitEpoch = newEpoch
 	s.failoverCommitMembers = append([]string(nil), members...)
 	s.failoverCommitQuorum = quorum
 	s.failoverCommitTargets = append([]string(nil), targets...)
+	s.failoverCommitRetireTargets = append([]string(nil), retireTargets...)
 	s.failoverMembershipMu.Unlock()
 
 	if err := s.persistFailoverMembershipState(); err != nil {
@@ -447,6 +449,7 @@ func (s *Server) armFailoverMembershipCommitRecovery(oldEpoch, newEpoch uint64, 
 		s.failoverCommitMembers = oldMembers
 		s.failoverCommitQuorum = oldQuorum
 		s.failoverCommitTargets = oldTargets
+		s.failoverCommitRetireTargets = oldRetireTargets
 		s.failoverMembershipMu.Unlock()
 		return err
 	}
@@ -461,12 +464,14 @@ func (s *Server) clearFailoverMembershipCommitRecovery() error {
 	oldMembers := append([]string(nil), s.failoverCommitMembers...)
 	oldQuorum := s.failoverCommitQuorum
 	oldTargets := append([]string(nil), s.failoverCommitTargets...)
+	oldRetireTargets := append([]string(nil), s.failoverCommitRetireTargets...)
 	s.failoverCommitPending = false
 	s.failoverCommitOldEpoch = 0
 	s.failoverCommitEpoch = 0
 	s.failoverCommitMembers = nil
 	s.failoverCommitQuorum = 0
 	s.failoverCommitTargets = nil
+	s.failoverCommitRetireTargets = nil
 	s.failoverMembershipMu.Unlock()
 
 	if err := s.persistFailoverMembershipState(); err != nil {
@@ -477,6 +482,7 @@ func (s *Server) clearFailoverMembershipCommitRecovery() error {
 		s.failoverCommitMembers = oldMembers
 		s.failoverCommitQuorum = oldQuorum
 		s.failoverCommitTargets = oldTargets
+		s.failoverCommitRetireTargets = oldRetireTargets
 		s.failoverMembershipMu.Unlock()
 		return err
 	}
@@ -698,6 +704,7 @@ func (s *Server) coordinateFailoverMembershipChange(newEpoch uint64, newMembers 
 		newMembers,
 		newQuorum,
 		commitTargets,
+		nil,
 	); err != nil {
 		return result, err
 	}
@@ -732,6 +739,67 @@ type failoverRetireReply struct {
 	Accepted       bool   `json:"accepted"`
 }
 
+
+func (s *Server) prepareFailoverRetirement(groupID string, currentEpoch, retireAtEpoch uint64) (failoverRetireReply, error) {
+	if groupID == "" || retireAtEpoch <= currentEpoch {
+		return failoverRetireReply{}, errors.New("invalid failover retirement epoch")
+	}
+	if _, ok := replicationPersistencePaths.Load(s); !ok {
+		return failoverRetireReply{}, errors.New("failover membership persistence is unavailable")
+	}
+
+	s.failoverMembershipMu.Lock()
+	if s.failoverGroupID != groupID || s.failoverConfigEpoch != currentEpoch {
+		reply := failoverRetireReply{
+			GroupID: s.failoverGroupID,
+			ConfigEpoch: s.failoverConfigEpoch,
+			Retired: s.failoverRetired,
+			RetiredAtEpoch: s.failoverRetiredAtEpoch,
+		}
+		s.failoverMembershipMu.Unlock()
+		return reply, nil
+	}
+	if s.failoverRetired {
+		reply := failoverRetireReply{
+			GroupID: groupID,
+			ConfigEpoch: currentEpoch,
+			Retired: true,
+			RetiredAtEpoch: s.failoverRetiredAtEpoch,
+			Accepted: s.failoverRetiredAtEpoch == retireAtEpoch,
+		}
+		s.failoverMembershipMu.Unlock()
+		return reply, nil
+	}
+	if s.failoverRetirePending {
+		reply := failoverRetireReply{
+			GroupID: groupID,
+			ConfigEpoch: currentEpoch,
+			Retired: false,
+			RetiredAtEpoch: s.failoverRetirePendingEpoch,
+			Accepted: s.failoverRetirePendingEpoch == retireAtEpoch,
+		}
+		s.failoverMembershipMu.Unlock()
+		return reply, nil
+	}
+	s.failoverRetirePending = true
+	s.failoverRetirePendingEpoch = retireAtEpoch
+	s.failoverMembershipMu.Unlock()
+
+	if err := s.persistFailoverMembershipState(); err != nil {
+		s.failoverMembershipMu.Lock()
+		s.failoverRetirePending = false
+		s.failoverRetirePendingEpoch = 0
+		s.failoverMembershipMu.Unlock()
+		return failoverRetireReply{}, err
+	}
+	return failoverRetireReply{
+		GroupID: groupID,
+		ConfigEpoch: currentEpoch,
+		RetiredAtEpoch: retireAtEpoch,
+		Accepted: true,
+	}, nil
+}
+
 func (s *Server) retireFailoverMember(groupID string, currentEpoch, retireAtEpoch uint64) (failoverRetireReply, error) {
 	if groupID == "" || retireAtEpoch <= currentEpoch {
 		return failoverRetireReply{}, errors.New("invalid failover retirement epoch")
@@ -762,8 +830,14 @@ func (s *Server) retireFailoverMember(groupID string, currentEpoch, retireAtEpoc
 		s.failoverMembershipMu.Unlock()
 		return reply, nil
 	}
+	if !s.failoverRetirePending || s.failoverRetirePendingEpoch != retireAtEpoch {
+		s.failoverMembershipMu.Unlock()
+		return failoverRetireReply{}, errors.New("failover retirement was not prepared")
+	}
 	s.failoverRetired = true
 	s.failoverRetiredAtEpoch = retireAtEpoch
+	s.failoverRetirePending = false
+	s.failoverRetirePendingEpoch = 0
 	s.failoverMembershipMu.Unlock()
 
 	if err := s.persistFailoverMembershipState(); err != nil {
