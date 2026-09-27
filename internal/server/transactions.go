@@ -420,6 +420,7 @@ func (session *transactionSession) exec() ([]byte, error) {
 
 	results := make([][]byte, 0, len(commands))
 	for _, command := range commands {
+		commandStarted := time.Now()
 		cmd := strings.ToUpper(string(command[0]))
 		info := commandTable[cmd]
 		var result []byte
@@ -446,6 +447,11 @@ func (session *transactionSession) exec() ([]byte, error) {
 			s.signalStreamAvailability(command, result)
 		}
 		if session.auth != nil && !monitorScriptCommand(command) { s.feedMonitor(session.auth.client, command, result) }
+		var slowlogClient *clientSession
+		if session.auth != nil {
+			slowlogClient = session.auth.client
+		}
+		s.recordSlowlogForClient(slowlogClient, command, time.Since(commandStarted))
 		results = append(results, result)
 		// Preserve Redis WATCH semantics for other clients even if a later
 		// command in this same transaction restores the previous value.
@@ -556,9 +562,19 @@ func (s *Server) executeTransactionConnectionCommand(session *transactionSession
 	if atomic.LoadUint32(&s.metricsEnabled) != 0 {
 		started = time.Now()
 	}
+	slowlogStarted := time.Now()
 	handled, response, err = session.handleCommand(args)
 	if handled {
 		s.observeTransactionCommand(args, started, err)
+		if len(args) > 0 {
+			if _, isControl := transactionCommands[strings.ToUpper(string(args[0]))]; isControl {
+				var slowlogClient *clientSession
+				if session.auth != nil {
+					slowlogClient = session.auth.client
+				}
+				s.recordSlowlogForClient(slowlogClient, args, time.Since(slowlogStarted))
+			}
+		}
 	}
 	return handled, response, err
 }
