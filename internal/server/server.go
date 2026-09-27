@@ -286,6 +286,9 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		}
 		return nil, fmt.Errorf("ERR wrong number of arguments for '%s' command", strings.ToLower(cmd))
 	}
+	if err := s.enforceClusterRouting(args); err != nil {
+		return nil, err
+	}
 	if info.write && s.failoverWritesFenced(time.Now()) {
 		return nil, errors.New("READONLY failover leader lease is not valid")
 	}
