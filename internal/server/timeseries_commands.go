@@ -23,6 +23,9 @@ var timeSeriesCommands = map[string]commandInfo{
 	"TS.ALTER":      {2, 0, 1, 1, 1, true},
 	"TS.MADD":       {4, 0, 1, -1, 3, true},
 	"TS.QUERYINDEX": {2, 0, 0, 0, 0, false},
+	"TS.MGET":       {3, 0, 0, 0, 0, false},
+	"TS.MRANGE":     {5, 0, 0, 0, 0, false},
+	"TS.MREVRANGE":  {5, 0, 0, 0, 0, false},
 }
 
 func init() {
@@ -121,6 +124,105 @@ func parseTimeSeriesBound(raw []byte, lower bool)(int64,error){
 	if string(raw)=="-" { return -1 << 63,nil }
 	if string(raw)=="+" { return 1<<63 - 1,nil }
 	return parseTimeSeriesTimestamp(raw)
+}
+
+type timeSeriesMultiOptions struct {
+	withLabels     bool
+	selectedLabels []string
+	filters        map[string]string
+	filterIndex    int
+}
+
+func parseTimeSeriesMultiOptions(args [][]byte, start int) (timeSeriesMultiOptions, error) {
+	out := timeSeriesMultiOptions{filters: make(map[string]string)}
+	filterIndex := -1
+
+	for i := start; i < len(args); {
+		switch strings.ToUpper(string(args[i])) {
+		case "WITHLABELS":
+			if len(out.selectedLabels) > 0 {
+				return out, errors.New("ERR TSDB: cannot accept WITHLABELS and SELECTED_LABELS together")
+			}
+			out.withLabels = true
+			i++
+		case "SELECTED_LABELS":
+			if out.withLabels {
+				return out, errors.New("ERR TSDB: cannot accept WITHLABELS and SELECTED_LABELS together")
+			}
+			i++
+			startLabels := i
+			for i < len(args) && !strings.EqualFold(string(args[i]), "FILTER") {
+				out.selectedLabels = append(out.selectedLabels, string(args[i]))
+				i++
+			}
+			if i == startLabels {
+				return out, errors.New("ERR TSDB: SELECTED_LABELS should have at least 1 parameter")
+			}
+		case "FILTER":
+			filterIndex = i
+			i = len(args)
+		default:
+			return out, errors.New("ERR TSDB: unknown argument")
+		}
+	}
+
+	if filterIndex < 0 {
+		return out, errors.New("ERR TSDB: missing FILTER argument")
+	}
+	if filterIndex+1 >= len(args) {
+		return out, errors.New("ERR TSDB: missing labels for filter argument")
+	}
+
+	for _, raw := range args[filterIndex+1:] {
+		filter := string(raw)
+		eq := strings.IndexByte(filter, '=')
+		if eq <= 0 || eq == len(filter)-1 {
+			return out, errors.New("ERR TSDB: invalid filter")
+		}
+		out.filters[filter[:eq]] = filter[eq+1:]
+	}
+	out.filterIndex = filterIndex
+	return out, nil
+}
+
+func timeSeriesLabelsReply(labels []engine.TimeSeriesLabel, opts timeSeriesMultiOptions) []byte {
+	if !opts.withLabels && len(opts.selectedLabels) == 0 {
+		return array()
+	}
+
+	selected := map[string]struct{}{}
+	if len(opts.selectedLabels) > 0 {
+		for _, label := range opts.selectedLabels {
+			selected[label] = struct{}{}
+		}
+	}
+
+	items := make([][]byte, 0, len(labels))
+	for _, label := range labels {
+		if len(selected) > 0 {
+			if _, ok := selected[label.Key]; !ok {
+				continue
+			}
+		}
+		items = append(items, array(
+			formatBulkString([]byte(label.Key)),
+			formatBulkString([]byte(label.Value)),
+		))
+	}
+	return array(items...)
+}
+
+func timeSeriesMultiSeriesReply(
+	key string,
+	labels []engine.TimeSeriesLabel,
+	data []byte,
+	opts timeSeriesMultiOptions,
+) []byte {
+	return array(
+		formatBulkString([]byte(key)),
+		timeSeriesLabelsReply(labels, opts),
+		data,
+	)
 }
 
 func (s *Server) executeTimeSeries(args [][]byte)([]byte,error){
@@ -302,6 +404,80 @@ func (s *Server) executeTimeSeries(args [][]byte)([]byte,error){
 		items := make([][]byte, len(keys))
 		for i, key := range keys {
 			items[i] = formatBulkString([]byte(key))
+		}
+		return array(items...), nil
+
+	case "TS.MGET":
+		opts, err := parseTimeSeriesMultiOptions(args, 1)
+		if err != nil {
+			return nil, err
+		}
+		keys, err := s.store.TimeSeriesQueryIndex(opts.filters)
+		if err != nil {
+			return nil, err
+		}
+
+		items := make([][]byte, 0, len(keys))
+		for _, seriesKey := range keys {
+			info, err := s.store.TimeSeriesInfo(seriesKey)
+			if err != nil {
+				return nil, err
+			}
+			sample, found, err := s.store.TimeSeriesGet(seriesKey)
+			if err != nil {
+				return nil, err
+			}
+			data := nullBulk()
+			if found {
+				data = timeSeriesSampleReply(sample)
+			}
+			items = append(items, timeSeriesMultiSeriesReply(seriesKey, info.Labels, data, opts))
+		}
+		return array(items...), nil
+
+	case "TS.MRANGE", "TS.MREVRANGE":
+		from, err := parseTimeSeriesBound(args[1], true)
+		if err != nil {
+			return nil, err
+		}
+		to, err := parseTimeSeriesBound(args[2], false)
+		if err != nil {
+			return nil, err
+		}
+		if from > to {
+			return array(), nil
+		}
+
+		opts, err := parseTimeSeriesMultiOptions(args, 3)
+		if err != nil {
+			return nil, err
+		}
+		keys, err := s.store.TimeSeriesQueryIndex(opts.filters)
+		if err != nil {
+			return nil, err
+		}
+
+		items := make([][]byte, 0, len(keys))
+		for _, seriesKey := range keys {
+			info, err := s.store.TimeSeriesInfo(seriesKey)
+			if err != nil {
+				return nil, err
+			}
+			samples, err := s.store.TimeSeriesRange(
+				seriesKey,
+				from,
+				to,
+				cmd == "TS.MREVRANGE",
+			)
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, timeSeriesMultiSeriesReply(
+				seriesKey,
+				info.Labels,
+				timeSeriesRangeReply(samples),
+				opts,
+			))
 		}
 		return array(items...), nil
 
