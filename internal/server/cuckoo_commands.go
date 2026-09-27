@@ -17,6 +17,8 @@ var cuckooCommands = map[string]commandInfo{
 	"CF.INSERT":   {4, 0, 1, 1, 1, true},
 	"CF.INSERTNX": {4, 0, 1, 1, 1, true},
 	"CF.INFO":     {2, 2, 1, 1, 1, false},
+	"CF.SCANDUMP": {3, 3, 1, 1, 1, false},
+	"CF.LOADCHUNK": {4, 4, 1, 1, 1, true},
 }
 
 func init() {
@@ -159,6 +161,30 @@ func (s *Server) executeCuckoo(args [][]byte) ([]byte, error) {
 			return nil, err
 		}
 		return cuckooBoolArray(results), nil
+
+	case "CF.SCANDUMP":
+		iter, err := strconv.ParseInt(string(args[2]), 10, 64)
+		if err != nil || iter < 0 {
+			return nil, errors.New("Invalid position")
+		}
+		if iter != 0 {
+			return array(integer(0), nullBulk()), nil
+		}
+		dump, err := s.store.CuckooDump(key)
+		if err != nil {
+			return nil, err
+		}
+		return array(integer(1), formatBulkString(dump)), nil
+
+	case "CF.LOADCHUNK":
+		iter, err := strconv.ParseInt(string(args[2]), 10, 64)
+		if err != nil || iter != 1 {
+			return nil, errors.New("Invalid position")
+		}
+		if err := s.store.CuckooLoadDump(key, args[3]); err != nil {
+			return nil, err
+		}
+		return []byte("+OK\r\n"), nil
 
 	case "CF.INFO":
 		info, err := s.store.CuckooInfo(key)

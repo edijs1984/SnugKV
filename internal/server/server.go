@@ -136,6 +136,8 @@ var commandTable = map[string]commandInfo{
 	"BITOP":          {4, 0, 2, -1, 1, true},
 	"JSON.SET":       {4, 5, 1, 1, 1, true},
 	"JSON.GET":       {2, 3, 1, 1, 1, false},
+	"JSON.RESP":      {2, 3, 1, 1, 1, false},
+	"JSON.DEBUG":     {2, 4, 0, 0, 0, false},
 	"JSON.TYPE":      {2, 3, 1, 1, 1, false},
 	"JSON.DEL":       {2, 3, 1, 1, 1, true},
 	"JSON.NUMINCRBY": {4, 4, 1, 1, 1, true},
@@ -223,6 +225,74 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		default:
 			return nil, errors.New("ERR unknown subcommand")
 		}
+	case "JSON.RESP":
+		path := "$"
+		explicitPath := false
+		if len(args) == 3 {
+			path = string(args[2])
+			explicitPath = true
+		}
+
+		values, found, err := s.store.JSONValues(key, path)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nullBulk(), nil
+		}
+
+		if explicitPath && strings.HasPrefix(path, "$") {
+			items := make([][]byte, 0, len(values))
+			for _, value := range values {
+				items = append(items, jsonRESPValue(value))
+			}
+			return array(items...), nil
+		}
+		return jsonRESPValue(values[0]), nil
+
+	case "JSON.DEBUG":
+		subcommand := strings.ToUpper(string(args[1]))
+		switch subcommand {
+		case "HELP":
+			if len(args) != 2 {
+				return nil, errors.New("ERR wrong number of arguments for 'json.debug|help' command")
+			}
+			return array(
+				formatBulkString([]byte("MEMORY <key> [path] - reports JSON value memory usage")),
+				formatBulkString([]byte("HELP - this help")),
+			), nil
+
+		case "MEMORY":
+			if len(args) != 3 && len(args) != 4 {
+				return nil, errors.New("ERR wrong number of arguments for 'json.debug|memory' command")
+			}
+			path := "$"
+			explicitPath := false
+			if len(args) == 4 {
+				path = string(args[3])
+				explicitPath = true
+			}
+			values, found, err := s.store.JSONValues(string(args[2]), path)
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				return nullBulk(), nil
+			}
+
+			if explicitPath && strings.HasPrefix(path, "$") {
+				items := make([][]byte, 0, len(values))
+				for _, value := range values {
+					items = append(items, integer(jsonDebugMemory(value)))
+				}
+				return array(items...), nil
+			}
+			return integer(jsonDebugMemory(values[0])), nil
+
+		default:
+			return nil, errors.New("ERR unknown subcommand for JSON.DEBUG")
+		}
+
 	case "JSON.DEL", "JSON.FORGET":
 		path := "$"
 

@@ -25,6 +25,8 @@ type TCPServer struct {
 	inputBytes, outputBytes  uint64
 	nextClientID             uint64
 	trackingClients          uint64
+	pauseUntil               atomic.Int64
+	pauseWriteOnly           atomic.Bool
 	optimizerMaintainTicks   uint64
 	optimizerDroppedSeen     uint64
 	optimizerRecoveryBudget  uint64
@@ -38,6 +40,60 @@ type TCPServer struct {
 	wg                       sync.WaitGroup
 	closeOnce                sync.Once
 	done                     chan struct{}
+}
+
+func (s *TCPServer) setClientPause(timeout time.Duration, writeOnly bool) {
+	if timeout <= 0 {
+		s.pauseUntil.Store(0)
+		s.pauseWriteOnly.Store(false)
+		return
+	}
+	s.pauseWriteOnly.Store(writeOnly)
+	s.pauseUntil.Store(time.Now().Add(timeout).UnixNano())
+}
+
+func (s *TCPServer) clearClientPause() {
+	s.pauseUntil.Store(0)
+	s.pauseWriteOnly.Store(false)
+}
+
+func clientPauseBypass(args [][]byte) bool {
+	return len(args) >= 2 &&
+		strings.EqualFold(string(args[0]), "CLIENT") &&
+		(strings.EqualFold(string(args[1]), "UNPAUSE") ||
+			strings.EqualFold(string(args[1]), "PAUSE"))
+}
+
+func commandIsWrite(args [][]byte) bool {
+	if len(args) == 0 {
+		return false
+	}
+	info, ok := commandTable[strings.ToUpper(string(args[0]))]
+	return ok && info.write
+}
+
+func (s *TCPServer) waitClientPause(args [][]byte) {
+	if clientPauseBypass(args) {
+		return
+	}
+	for {
+		until := s.pauseUntil.Load()
+		if until == 0 {
+			return
+		}
+		if s.pauseWriteOnly.Load() && !commandIsWrite(args) {
+			return
+		}
+		remaining := time.Until(time.Unix(0, until))
+		if remaining <= 0 {
+			s.clearClientPause()
+			return
+		}
+		if remaining > 10*time.Millisecond {
+			remaining = 10 * time.Millisecond
+		}
+		time.Sleep(remaining)
+	}
 }
 
 func Listen(addr string, store *engine.Store) (*TCPServer, error) {
@@ -301,6 +357,16 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 		command [][]byte,
 		response []byte,
 	) error {
+		isReplyControl := len(command) >= 2 &&
+			strings.EqualFold(string(command[0]), "CLIENT") &&
+			strings.EqualFold(string(command[1]), "REPLY")
+
+		if !isReplyControl && !clientSession.consumeReplyPermission() {
+			return nil
+		}
+		if len(response) == 0 {
+			return nil
+		}
 		if clientSession.protocolVersion() == 3 {
 			response = resp3AdaptCommand(
 				command,
@@ -309,6 +375,13 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 		}
 
 		return writer.writeBuffered(response)
+	}
+
+	writeBulkProtocol := func(value []byte) error {
+		if !clientSession.consumeReplyPermission() {
+			return nil
+		}
+		return writer.writeBulkBuffered(value)
 	}
 
 	reader := bufio.NewReaderSize(conn, 256<<10)
@@ -401,6 +474,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			return
 		}
 		requestNow := clientSession.touch(msg)
+		s.waitClientPause(msg)
 
 		if !borrowed && len(msg) > 0 && strings.EqualFold(string(msg[0]), "PSYNC") {
 			if len(msg) != 3 {
@@ -624,7 +698,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 
 			if handled, fastErr := s.server.executeAuthorizedConcurrentRawGet(
 				msg,
-				writer.writeBulkBuffered,
+				writeBulkProtocol,
 			); handled {
 				if fastErr != nil {
 					return
@@ -641,7 +715,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 					continue
 				}
 				if found {
-					if writer.writeBulkBuffered(value) != nil {
+					if writeBulkProtocol(value) != nil {
 						return
 					}
 					if cap(value) <= maxRetainedGetScratch {
@@ -724,7 +798,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 
 			if handled, fastErr := s.server.executeAuthorizedConcurrentRawGet(
 				msg,
-				writer.writeBulkBuffered,
+				writeBulkProtocol,
 			); handled {
 				if fastErr != nil {
 					return
@@ -741,7 +815,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 					continue
 				}
 				if found {
-					if writer.writeBulkBuffered(value) != nil {
+					if writeBulkProtocol(value) != nil {
 						return
 					}
 					if cap(value) <= maxRetainedGetScratch {
@@ -1044,7 +1118,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				continue
 			}
 			if found {
-				if writer.writeBulkBuffered(value) != nil {
+				if writeBulkProtocol(value) != nil {
 					return
 				}
 				if cap(value) <= maxRetainedGetScratch {
