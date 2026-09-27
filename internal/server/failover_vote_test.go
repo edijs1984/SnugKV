@@ -127,6 +127,8 @@ func TestFailoverVoteRPC(t *testing.T) {
 	reply, err := queryFailoverVote(
 		peer.listener.Addr().String(),
 		time.Second,
+		"",
+		"",
 		lineage,
 		5,
 		"candidate-a",
