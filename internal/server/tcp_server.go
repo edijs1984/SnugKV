@@ -142,6 +142,8 @@ func ListenWithJournal(c config.Config, store *engine.Store, journal Journal) (*
 	s.server.failoverGroupID = c.FailoverGroupID
 	s.server.failoverConfigEpoch = c.FailoverConfigEpoch
 	s.server.failoverAdvertiseAddr = c.FailoverAdvertiseAddr
+	s.server.failoverDiscoverySeeds = append([]string(nil), c.FailoverDiscoverySeeds...)
+	s.server.failoverDiscoveryInterval = time.Duration(c.FailoverDiscoveryIntervalMS) * time.Millisecond
 
 	// Redis loads the configured ACL file during startup. A configured ACL
 	// file is authoritative: if it cannot be read or parsed, startup must fail
