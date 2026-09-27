@@ -32,6 +32,7 @@ type Config struct {
 	AOFRewritePath      string `json:"aof_rewrite_path"`
 	SnapshotPath        string `json:"snapshot_path"`
 	SnapshotIntervalMS  int64  `json:"snapshot_interval_ms"`
+	AutoFailoverTimeoutMS int64 `json:"auto_failover_timeout_ms"`
 	ACLFile             string `json:"acl_file"`
 	Fsync               string `json:"fsync"`
 	MaxMemory           uint64 `json:"max_memory"`
@@ -72,6 +73,12 @@ func (c Config) Validate() error {
 				return errors.New("aof_rewrite_path must differ from AOF and snapshot paths")
 			}
 		}
+	}
+	if c.AutoFailoverTimeoutMS < 0 {
+		return errors.New("auto_failover_timeout_ms must not be negative")
+	}
+	if c.AutoFailoverTimeoutMS > int64((24*time.Hour)/time.Millisecond) {
+		return errors.New("auto_failover_timeout_ms must not exceed 24h")
 	}
 	if c.SnapshotIntervalMS < 0 {
 		return errors.New("snapshot_interval_ms must not be negative")
@@ -252,7 +259,7 @@ func (c *Config) ApplyEnv() error {
 			*dst = n
 		}
 	}
-	for name, dst := range map[string]*int64{"READ_TIMEOUT_MS": &c.ReadTimeoutMS, "WRITE_TIMEOUT_MS": &c.WriteTimeoutMS, "CLEANUP_INTERVAL_MS": &c.CleanupIntervalMS, "SNAPSHOT_INTERVAL_MS": &c.SnapshotIntervalMS} {
+	for name, dst := range map[string]*int64{"READ_TIMEOUT_MS": &c.ReadTimeoutMS, "WRITE_TIMEOUT_MS": &c.WriteTimeoutMS, "CLEANUP_INTERVAL_MS": &c.CleanupIntervalMS, "SNAPSHOT_INTERVAL_MS": &c.SnapshotIntervalMS, "AUTO_FAILOVER_TIMEOUT_MS": &c.AutoFailoverTimeoutMS} {
 		if v, ok := os.LookupEnv("SNUGKV_" + name); ok {
 			n, err := strconv.ParseInt(v, 10, 64)
 			if err != nil {
