@@ -325,6 +325,8 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 		}
 		s.unregisterClient(clientSession.id)
 	}()
+	var monitor *monitorSubscription
+	defer func() { s.server.removeMonitor(monitor) }()
 	defer writer.flush()
 	defer clientSession.closeScriptDebugRuntime()
 
@@ -357,10 +359,14 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 	txSession.auth = authSession
 	defer txSession.close()
 
+	var monitorAuthorized bool
+	var monitorCommand [][]byte
+
 	writeProtocol := func(
 		command [][]byte,
 		response []byte,
 	) error {
+		if monitorAuthorized { s.server.feedMonitor(clientSession, command, response) }
 		isReplyControl := len(command) >= 2 &&
 			strings.EqualFold(string(command[0]), "CLIENT") &&
 			strings.EqualFold(string(command[1]), "REPLY")
@@ -382,6 +388,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 	}
 
 	writeBulkProtocol := func(value []byte) error {
+		if monitorAuthorized { s.server.feedMonitor(clientSession, monitorCommand, nil) }
 		if !clientSession.consumeReplyPermission() {
 			return nil
 		}
@@ -400,7 +407,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			}
 		}
 		if reader.Buffered() == 0 {
-			if pubSession.active() {
+			if pubSession.active() || monitor != nil {
 				// Pub/Sub subscriptions are long-lived. Message delivery is outbound,
 				// so an ordinary request read timeout must not kill an idle subscriber.
 				if err := conn.SetReadDeadline(time.Time{}); err != nil {
@@ -477,6 +484,8 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			_ = writer.write([]byte("-ERR invalid RESP\r\n"))
 			return
 		}
+		monitorAuthorized = false
+		monitorCommand = msg
 		requestNow := clientSession.touch(msg)
 		s.waitClientPause(msg)
 
@@ -661,6 +670,24 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				return
 			}
 
+			continue
+		}
+
+		monitorAuthorized = true
+		if len(msg) > 0 && strings.EqualFold(string(msg[0]), "MONITOR") {
+			if len(msg) != 1 {
+				if writer.write([]byte("-ERR wrong number of arguments for 'monitor' command\r\n")) != nil { return }
+				continue
+			}
+			if txSession.multi {
+				txSession.markACLFailure()
+				if writer.write([]byte("-ERR MONITOR is not allowed in MULTI\r\n")) != nil { return }
+				continue
+			}
+			if monitor == nil {
+				if writer.write([]byte("+OK\r\n")) != nil { return }
+				monitor = s.server.addMonitor(peer, writer.write)
+			}
 			continue
 		}
 
@@ -1060,6 +1087,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 							clientSession.replicationOffset.Store(replicationOffset)
 						}
 						for i := range keys {
+							s.server.feedMonitor(clientSession, [][]byte{[]byte("SET"), keys[i], values[i]}, nil)
 							s.invalidateTrackingKeys(clientSession, [][]byte{[]byte("SET"), keys[i], values[i]})
 						}
 					}
