@@ -425,3 +425,58 @@ func queryFailoverLease(addr string, timeout time.Duration, lineage string, term
 	}
 	return reply, nil
 }
+
+
+type failoverLeaseRoundResult struct {
+	Term          uint64
+	LeaderID      string
+	Leases        int
+	QuorumReached bool
+}
+
+func (s *Server) acquireFailoverLeaseRound(now time.Time, lineage string, term uint64, leaderID string) (failoverLeaseRoundResult, error) {
+	result := failoverLeaseRoundResult{
+		Term:     term,
+		LeaderID: leaderID,
+	}
+	if term == 0 || leaderID == "" || lineage == "" || s.failoverQuorum <= 0 {
+		return result, nil
+	}
+
+	const leaseTTL = 3 * time.Second
+
+	local := s.requestFailoverLease(now, lineage, term, leaderID, leaseTTL)
+	if local.Term > term {
+		result.Term = local.Term
+		return result, nil
+	}
+	if local.Granted {
+		result.Leases++
+	}
+
+	for _, addr := range s.failoverPeers {
+		peer, err := queryFailoverPeer(addr, 200*time.Millisecond)
+		if err != nil {
+			continue
+		}
+		if peer.Role != "replica" || peer.MasterRunID != lineage {
+			continue
+		}
+		reply, err := queryFailoverLease(addr, 200*time.Millisecond, lineage, term, leaderID, leaseTTL)
+		if err != nil {
+			continue
+		}
+		if reply.Term > term {
+			result.Term = reply.Term
+			return result, nil
+		}
+		if reply.Granted {
+			result.Leases++
+		}
+		if result.Leases >= s.failoverQuorum {
+			result.QuorumReached = true
+			return result, nil
+		}
+	}
+	return result, nil
+}
