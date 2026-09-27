@@ -52,6 +52,7 @@ type Server struct {
 	failoverPriority         int
 	failoverGroupID          string
 	failoverConfigEpoch      uint64
+	failoverAdvertiseAddr    string
 	failoverMembershipMu     sync.RWMutex
 	failoverJointActive      bool
 	failoverPendingEpoch     uint64
