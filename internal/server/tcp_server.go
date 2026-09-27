@@ -357,6 +357,16 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 		command [][]byte,
 		response []byte,
 	) error {
+		isReplyControl := len(command) >= 2 &&
+			strings.EqualFold(string(command[0]), "CLIENT") &&
+			strings.EqualFold(string(command[1]), "REPLY")
+
+		if !isReplyControl && !clientSession.consumeReplyPermission() {
+			return nil
+		}
+		if len(response) == 0 {
+			return nil
+		}
 		if clientSession.protocolVersion() == 3 {
 			response = resp3AdaptCommand(
 				command,
@@ -365,6 +375,13 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 		}
 
 		return writer.writeBuffered(response)
+	}
+
+	writeBulkProtocol := func(value []byte) error {
+		if !clientSession.consumeReplyPermission() {
+			return nil
+		}
+		return writer.writeBulkBuffered(value)
 	}
 
 	reader := bufio.NewReaderSize(conn, 256<<10)
@@ -681,7 +698,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 
 			if handled, fastErr := s.server.executeAuthorizedConcurrentRawGet(
 				msg,
-				writer.writeBulkBuffered,
+				writeBulkProtocol,
 			); handled {
 				if fastErr != nil {
 					return
@@ -698,7 +715,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 					continue
 				}
 				if found {
-					if writer.writeBulkBuffered(value) != nil {
+					if writeBulkProtocol(value) != nil {
 						return
 					}
 					if cap(value) <= maxRetainedGetScratch {
@@ -781,7 +798,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 
 			if handled, fastErr := s.server.executeAuthorizedConcurrentRawGet(
 				msg,
-				writer.writeBulkBuffered,
+				writeBulkProtocol,
 			); handled {
 				if fastErr != nil {
 					return
@@ -798,7 +815,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 					continue
 				}
 				if found {
-					if writer.writeBulkBuffered(value) != nil {
+					if writeBulkProtocol(value) != nil {
 						return
 					}
 					if cap(value) <= maxRetainedGetScratch {
@@ -1101,7 +1118,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				continue
 			}
 			if found {
-				if writer.writeBulkBuffered(value) != nil {
+				if writeBulkProtocol(value) != nil {
 					return
 				}
 				if cap(value) <= maxRetainedGetScratch {
