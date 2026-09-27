@@ -1330,6 +1330,15 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 				return nil, err
 			}
 			return formatBulkString(payload), nil
+		case "DISCOVERED":
+			if len(args) != 2 {
+				return nil, errors.New("ERR wrong number of arguments for 'snug.failover|discovered' command")
+			}
+			payload, err := s.discoveredFailoverPeersJSON()
+			if err != nil {
+				return nil, err
+			}
+			return formatBulkString(payload), nil
 		case "STATE":
 			if len(args) != 2 {
 				return nil, errors.New("ERR wrong number of arguments for 'snug.failover|state' command")
