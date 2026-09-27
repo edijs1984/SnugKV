@@ -24,8 +24,8 @@ var timeSeriesCommands = map[string]commandInfo{
 	"TS.MADD":       {4, 0, 1, -1, 3, true},
 	"TS.QUERYINDEX": {2, 0, 0, 0, 0, false},
 	"TS.MGET":       {3, 0, 0, 0, 0, false},
-	"TS.MRANGE":     {5, 0, 0, 0, 0, false},
-	"TS.MREVRANGE":  {5, 0, 0, 0, 0, false},
+	"TS.MRANGE":     {4, 0, 0, 0, 0, false},
+	"TS.MREVRANGE":  {4, 0, 0, 0, 0, false},
 }
 
 func init() {
