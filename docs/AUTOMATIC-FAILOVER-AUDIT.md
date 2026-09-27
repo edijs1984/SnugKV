@@ -315,3 +315,45 @@ Still outside this phase:
 - automatic address discovery or NAT-aware membership;
 - richer failover observability and operator controls;
 - Redis Sentinel protocol/API compatibility as a separate product surface.
+
+
+## Peer discovery and controlled adoption
+
+Failover discovery is intentionally separated from membership authority.
+
+Configured `failover_discovery_seeds` and current committed members are polled periodically. Matching peers gossip their committed member list and quorum through `SNUG.FAILOVER STATE`.
+
+Discovery properties:
+
+- discovery is authenticated with the existing replication credentials;
+- only matching failover group ID and committed configuration epoch are accepted;
+- transitive members can be learned breadth-first from seed/member gossip;
+- discovered peers are stored in an ephemeral cache only;
+- discovery never mutates the committed voting membership or quorum;
+- stale peers remain visible briefly for operator diagnosis;
+- very old entries are evicted automatically.
+
+Operator controls:
+
+- `SNUG.FAILOVER DISCOVERED` shows discovered peers with last-seen age and fresh/stale status;
+- `SNUG.FAILOVER DISCOVERYPLAN <quorum>` builds a dry-run additive membership proposal;
+- `SNUG.FAILOVER ADOPTDISCOVERED <quorum>` explicitly submits that proposal through the existing epoch+1 dual-majority membership-change protocol.
+
+Only fresh, same-group, same-epoch, non-retired discovered peers are eligible for adoption. Discovery-based adoption is additive-only and cannot silently remove members.
+
+This preserves the core safety boundary: topology discovery may suggest candidates, but only the durable membership protocol can grant voting rights.
+
+### Discovery validation
+
+Operator-reported race-enabled validation passed for:
+
+- authenticated discovery seed configuration;
+- transitive topology discovery;
+- strict group/epoch rejection;
+- discovery not mutating the authoritative peer/quorum set;
+- committed member/quorum gossip in peer state;
+- stale peer visibility and age reporting;
+- eventual cache eviction;
+- dry-run adoption planning;
+- retired/stale peer exclusion from adoption;
+- explicit discovered-peer adoption through the existing dual-majority membership protocol.
