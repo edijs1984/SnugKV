@@ -165,6 +165,7 @@ func ListenWithJournal(c config.Config, store *engine.Store, journal Journal) (*
 		}
 	}
 	s.server.configAppendOnly = c.AOFPath != ""
+	s.server.snapshotPath = c.SnapshotPath
 
 	s.server.configRewrite = func() error {
 		s.mu.Lock()
