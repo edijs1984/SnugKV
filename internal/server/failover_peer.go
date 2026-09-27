@@ -16,6 +16,8 @@ type failoverPeerState struct {
 	NodeID      string `json:"node_id"`
 	GroupID     string `json:"group_id,omitempty"`
 	ConfigEpoch uint64 `json:"config_epoch,omitempty"`
+	JointActive bool   `json:"joint_active,omitempty"`
+	PendingEpoch uint64 `json:"pending_epoch,omitempty"`
 	Role        string `json:"role"`
 	MasterDown  bool   `json:"master_down"`
 	Offset      int64  `json:"offset"`
@@ -86,6 +88,8 @@ func (s *Server) localFailoverState(now time.Time) failoverPeerState {
 		NodeID:      nodeID,
 		GroupID:     membership.GroupID,
 		ConfigEpoch: membership.ConfigEpoch,
+		JointActive: membership.JointActive,
+		PendingEpoch: membership.PendingEpoch,
 		Role:        roleName,
 		MasterDown:  masterDown,
 		Offset:      offset,
