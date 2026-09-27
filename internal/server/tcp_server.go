@@ -345,7 +345,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			return err
 		},
 	)
-	defer pubSession.close()
+	defer func() { pubSession.close() }()
 
 	authSession := newAuthSession(
 		s.server.acl,
@@ -366,7 +366,9 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 		command [][]byte,
 		response []byte,
 	) error {
-		if monitorAuthorized { s.server.feedMonitor(clientSession, command, response) }
+		if monitorAuthorized {
+			defer s.server.feedMonitor(clientSession, command, response)
+		}
 		isReplyControl := len(command) >= 2 &&
 			strings.EqualFold(string(command[0]), "CLIENT") &&
 			strings.EqualFold(string(command[1]), "REPLY")
@@ -388,7 +390,9 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 	}
 
 	writeBulkProtocol := func(value []byte) error {
-		if monitorAuthorized { s.server.feedMonitor(clientSession, monitorCommand, nil) }
+		if monitorAuthorized {
+			defer s.server.feedMonitor(clientSession, monitorCommand, nil)
+		}
 		if !clientSession.consumeReplyPermission() {
 			return nil
 		}
@@ -537,6 +541,38 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 					continue
 				}
 			}
+		}
+
+		if len(msg) > 0 && strings.EqualFold(string(msg[0]), "RESET") {
+			if len(msg) != 1 {
+				if writer.write([]byte("-ERR wrong number of arguments for 'reset' command\r\n")) != nil { return }
+				continue
+			}
+			s.server.removeMonitor(monitor)
+			monitor = nil
+			txSession.close()
+			pubSession.close()
+			pubSession = newPubSubSession(s.server, func(response []byte) error {
+				if clientSession.protocolVersion() == 3 { response = resp3PubSubPush(response) }
+				err := writer.write(response)
+				if err != nil { _ = peer.Close() }
+				return err
+			})
+			clientSession.closeScriptDebugRuntime()
+			if clientSession.trackingIsEnabled() {
+				atomic.AddUint64(&s.trackingClients, ^uint64(0))
+			}
+			clientSession.mu.Lock()
+			clientSession.name, clientSession.libName, clientSession.libVer = "", "", ""
+			clientSession.noEvict, clientSession.noTouch = false, false
+			clientSession.reply = clientReplyOn
+			clientSession.tracking = clientTrackingState{}
+			clientSession.mu.Unlock()
+			clientSession.setProtocol(2)
+			*authSession = *newAuthSession(s.server.acl)
+			authSession.client = clientSession
+			if writer.write([]byte("+RESET\r\n")) != nil { return }
+			continue
 		}
 
 		if !borrowed && len(msg) > 0 &&
