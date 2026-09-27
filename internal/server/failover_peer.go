@@ -100,17 +100,21 @@ func readRESPBulk(reader *bufio.Reader) ([]byte, error) {
 	return payload, nil
 }
 
-func queryFailoverPeer(addr string, timeout time.Duration) (failoverPeerState, error) {
+func queryFailoverPeer(addr string, timeout time.Duration, username, password string) (failoverPeerState, error) {
 	conn, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
 		return failoverPeerState{}, err
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(timeout))
+	reader := bufio.NewReader(conn)
+	if err := authenticateReplicationUpstream(conn, reader, username, password); err != nil {
+		return failoverPeerState{}, err
+	}
 	if err := writeReplicationRESPCommand(conn, "SNUG.FAILOVER", "STATE"); err != nil {
 		return failoverPeerState{}, err
 	}
-	payload, err := readRESPBulk(bufio.NewReader(conn))
+	payload, err := readRESPBulk(reader)
 	if err != nil {
 		return failoverPeerState{}, err
 	}
@@ -140,7 +144,7 @@ func (s *Server) evaluatePeerFailover(now time.Time) (failoverElectionResult, er
 	}}
 
 	for _, addr := range s.failoverPeers {
-		peer, err := queryFailoverPeer(addr, 200*time.Millisecond)
+		peer, err := queryFailoverPeer(addr, 200*time.Millisecond, s.replicationMasterUser, s.replicationMasterAuth)
 		if err != nil {
 			continue
 		}
@@ -202,13 +206,17 @@ func (s *Server) requestFailoverVote(now time.Time, lineage string, term uint64,
 	return reply, nil
 }
 
-func queryFailoverVote(addr string, timeout time.Duration, lineage string, term uint64, candidateID string, offset int64, priority int) (failoverVoteReply, error) {
+func queryFailoverVote(addr string, timeout time.Duration, username, password, lineage string, term uint64, candidateID string, offset int64, priority int) (failoverVoteReply, error) {
 	conn, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
 		return failoverVoteReply{}, err
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(timeout))
+	reader := bufio.NewReader(conn)
+	if err := authenticateReplicationUpstream(conn, reader, username, password); err != nil {
+		return failoverVoteReply{}, err
+	}
 	if err := writeReplicationRESPCommand(
 		conn,
 		"SNUG.FAILOVER", "REQUESTVOTE",
@@ -220,7 +228,7 @@ func queryFailoverVote(addr string, timeout time.Duration, lineage string, term 
 	); err != nil {
 		return failoverVoteReply{}, err
 	}
-	payload, err := readRESPBulk(bufio.NewReader(conn))
+	payload, err := readRESPBulk(reader)
 	if err != nil {
 		return failoverVoteReply{}, err
 	}
@@ -249,7 +257,7 @@ func (s *Server) collectFailoverPeers(now time.Time) (failoverPeerState, []obser
 	local := s.localFailoverState(now)
 	peers := make([]observedFailoverPeer, 0, len(s.failoverPeers))
 	for _, addr := range s.failoverPeers {
-		peer, err := queryFailoverPeer(addr, 200*time.Millisecond)
+		peer, err := queryFailoverPeer(addr, 200*time.Millisecond, s.replicationMasterUser, s.replicationMasterAuth)
 		if err != nil {
 			continue
 		}
@@ -326,6 +334,8 @@ func (s *Server) runFailoverElectionRound(now time.Time) (failoverRoundResult, e
 		vote, err := queryFailoverVote(
 			peer.addr,
 			200*time.Millisecond,
+			s.replicationMasterUser,
+			s.replicationMasterAuth,
 			local.MasterRunID,
 			term,
 			local.NodeID,
@@ -406,13 +416,17 @@ func (s *Server) requestFailoverLease(now time.Time, lineage string, term uint64
 	return reply
 }
 
-func queryFailoverLease(addr string, timeout time.Duration, lineage string, term uint64, leaderID string, ttl time.Duration) (failoverLeaseReply, error) {
+func queryFailoverLease(addr string, timeout time.Duration, username, password, lineage string, term uint64, leaderID string, ttl time.Duration) (failoverLeaseReply, error) {
 	conn, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
 		return failoverLeaseReply{}, err
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(timeout))
+	reader := bufio.NewReader(conn)
+	if err := authenticateReplicationUpstream(conn, reader, username, password); err != nil {
+		return failoverLeaseReply{}, err
+	}
 	if err := writeReplicationRESPCommand(
 		conn,
 		"SNUG.FAILOVER", "LEASE",
@@ -423,7 +437,7 @@ func queryFailoverLease(addr string, timeout time.Duration, lineage string, term
 	); err != nil {
 		return failoverLeaseReply{}, err
 	}
-	payload, err := readRESPBulk(bufio.NewReader(conn))
+	payload, err := readRESPBulk(reader)
 	if err != nil {
 		return failoverLeaseReply{}, err
 	}
@@ -466,7 +480,7 @@ func (s *Server) acquireFailoverLeaseRound(now time.Time, lineage string, term u
 	}
 
 	for _, addr := range s.failoverPeers {
-		peer, err := queryFailoverPeer(addr, 200*time.Millisecond)
+		peer, err := queryFailoverPeer(addr, 200*time.Millisecond, s.replicationMasterUser, s.replicationMasterAuth)
 		if err != nil {
 			continue
 		}
@@ -474,7 +488,7 @@ func (s *Server) acquireFailoverLeaseRound(now time.Time, lineage string, term u
 			continue
 		}
 		requestStart := time.Now()
-		reply, err := queryFailoverLease(addr, 200*time.Millisecond, lineage, term, leaderID, leaseTTL)
+		reply, err := queryFailoverLease(addr, 200*time.Millisecond, s.replicationMasterUser, s.replicationMasterAuth, lineage, term, leaderID, leaseTTL)
 		if err != nil {
 			continue
 		}
