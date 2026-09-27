@@ -722,3 +722,93 @@ func (s *Server) coordinateFailoverMembershipChange(newEpoch uint64, newMembers 
 	_ = s.retryFailoverMembershipCommit(time.Now())
 	return result, nil
 }
+
+
+type failoverRetireReply struct {
+	GroupID        string `json:"group_id"`
+	ConfigEpoch    uint64 `json:"config_epoch"`
+	Retired        bool   `json:"retired"`
+	RetiredAtEpoch uint64 `json:"retired_at_epoch,omitempty"`
+	Accepted       bool   `json:"accepted"`
+}
+
+func (s *Server) retireFailoverMember(groupID string, currentEpoch, retireAtEpoch uint64) (failoverRetireReply, error) {
+	if groupID == "" || retireAtEpoch <= currentEpoch {
+		return failoverRetireReply{}, errors.New("invalid failover retirement epoch")
+	}
+	if _, ok := replicationPersistencePaths.Load(s); !ok {
+		return failoverRetireReply{}, errors.New("failover membership persistence is unavailable")
+	}
+
+	s.failoverMembershipMu.Lock()
+	if s.failoverGroupID != groupID || s.failoverConfigEpoch != currentEpoch {
+		reply := failoverRetireReply{
+			GroupID: s.failoverGroupID,
+			ConfigEpoch: s.failoverConfigEpoch,
+			Retired: s.failoverRetired,
+			RetiredAtEpoch: s.failoverRetiredAtEpoch,
+		}
+		s.failoverMembershipMu.Unlock()
+		return reply, nil
+	}
+	if s.failoverRetired {
+		reply := failoverRetireReply{
+			GroupID: groupID,
+			ConfigEpoch: currentEpoch,
+			Retired: true,
+			RetiredAtEpoch: s.failoverRetiredAtEpoch,
+			Accepted: s.failoverRetiredAtEpoch == retireAtEpoch,
+		}
+		s.failoverMembershipMu.Unlock()
+		return reply, nil
+	}
+	s.failoverRetired = true
+	s.failoverRetiredAtEpoch = retireAtEpoch
+	s.failoverMembershipMu.Unlock()
+
+	if err := s.persistFailoverMembershipState(); err != nil {
+		s.failoverMembershipMu.Lock()
+		s.failoverRetired = false
+		s.failoverRetiredAtEpoch = 0
+		s.failoverMembershipMu.Unlock()
+		return failoverRetireReply{}, err
+	}
+	return failoverRetireReply{
+		GroupID: groupID,
+		ConfigEpoch: currentEpoch,
+		Retired: true,
+		RetiredAtEpoch: retireAtEpoch,
+		Accepted: true,
+	}, nil
+}
+
+func queryFailoverRetire(addr string, timeout time.Duration, username, password, groupID string, currentEpoch, retireAtEpoch uint64) (failoverRetireReply, error) {
+	conn, err := net.DialTimeout("tcp", addr, timeout)
+	if err != nil {
+		return failoverRetireReply{}, err
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+	reader := bufio.NewReader(conn)
+	if err := authenticateReplicationUpstream(conn, reader, username, password); err != nil {
+		return failoverRetireReply{}, err
+	}
+	if err := writeReplicationRESPCommand(
+		conn,
+		"SNUG.FAILOVER", "RETIRE",
+		groupID,
+		strconv.FormatUint(currentEpoch, 10),
+		strconv.FormatUint(retireAtEpoch, 10),
+	); err != nil {
+		return failoverRetireReply{}, err
+	}
+	payload, err := readRESPBulk(reader)
+	if err != nil {
+		return failoverRetireReply{}, err
+	}
+	var reply failoverRetireReply
+	if err := json.Unmarshal(payload, &reply); err != nil {
+		return failoverRetireReply{}, err
+	}
+	return reply, nil
+}
