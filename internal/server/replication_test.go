@@ -2122,7 +2122,7 @@ func TestRedisFullSyncImportsFunction2Libraries(t *testing.T) {
 	functionPersistencePaths.Store(s, sidecar)
 	defer functionPersistencePaths.Delete(s)
 
-	code := "#!lua name=fromredis\nredis.register_function('hello', function(keys,args) return 'from-fullsync' end)"
+	code := "#!lua name=fromredis\nredis.register_function{function_name='hello', callback=function(keys,args) return 'from-fullsync' end, flags={'no-writes'}}"
 	rdb := []byte("REDIS0012")
 	rdb = append(rdb, redisRDBOpcodeFunction2)
 	rdb = appendRDBRawString(rdb, []byte(code))
@@ -2172,7 +2172,7 @@ func TestRedisFullSyncImportsFunction2Libraries(t *testing.T) {
 
 		deadline := time.Now().Add(2 * time.Second)
 		for time.Now().Before(deadline) {
-			reply, callErr := s.Execute(clientArgs("FCALL", "hello", "0"))
+			reply, callErr := s.Execute(clientArgs("FCALL_RO", "hello", "0"))
 			if callErr == nil && string(reply) == "$13\r\nfrom-fullsync\r\n" {
 				upstreamDone <- nil
 				return
