@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"time"
 )
 
@@ -149,4 +150,145 @@ func (s *Server) failoverHealth(now time.Time) failoverHealthView {
 
 func (s *Server) failoverHealthJSON(now time.Time) ([]byte, error) {
 	return json.Marshal(s.failoverHealth(now))
+}
+
+
+type failoverTransitionTargetStatus struct {
+	Address            string `json:"address"`
+	Kind               string `json:"kind"`
+	Reachable          bool   `json:"reachable"`
+	GroupID            string `json:"group_id,omitempty"`
+	ConfigEpoch        uint64 `json:"config_epoch,omitempty"`
+	JointActive        bool   `json:"joint_active,omitempty"`
+	PendingEpoch       uint64 `json:"pending_epoch,omitempty"`
+	Retired            bool   `json:"retired,omitempty"`
+	RetiredAtEpoch     uint64 `json:"retired_at_epoch,omitempty"`
+	RetirePending      bool   `json:"retire_pending,omitempty"`
+	RetirePendingEpoch uint64 `json:"retire_pending_epoch,omitempty"`
+	Converged          bool   `json:"converged"`
+}
+
+type failoverTransitionDiagnosis struct {
+	Active          bool                             `json:"active"`
+	Phase           string                           `json:"phase,omitempty"`
+	Blocker         string                           `json:"blocker,omitempty"`
+	GroupID         string                           `json:"group_id,omitempty"`
+	CurrentEpoch    uint64                           `json:"current_epoch,omitempty"`
+	PendingEpoch    uint64                           `json:"pending_epoch,omitempty"`
+	CommitEpoch     uint64                           `json:"commit_epoch,omitempty"`
+	CommitPending   bool                             `json:"commit_pending,omitempty"`
+	CanRetry        bool                             `json:"can_retry"`
+	Targets         []failoverTransitionTargetStatus `json:"targets,omitempty"`
+}
+
+func (s *Server) diagnoseFailoverTransition(now time.Time) failoverTransitionDiagnosis {
+	m := s.failoverMembershipSnapshot()
+	d := failoverTransitionDiagnosis{
+		GroupID:       m.GroupID,
+		CurrentEpoch:  m.ConfigEpoch,
+		PendingEpoch:  m.PendingEpoch,
+		CommitEpoch:   m.CommitEpoch,
+		CommitPending: m.CommitPending,
+		CanRetry:      m.CommitPending,
+	}
+	if !m.JointActive && !m.CommitPending {
+		d.Phase = "idle"
+		return d
+	}
+	d.Active = true
+	if m.CommitPending {
+		d.Phase = "commit-forward"
+	} else {
+		d.Phase = "prepared"
+		d.Blocker = "commit intent has not been persisted; inspect quorum and coordinator state"
+	}
+
+	retireSet := make(map[string]struct{}, len(m.CommitRetireTargets))
+	for _, addr := range m.CommitRetireTargets {
+		retireSet[addr] = struct{}{}
+	}
+
+	for _, addr := range unionStrings(m.CommitTargets, m.CommitRetireTargets) {
+		kind := "commit"
+		if _, ok := retireSet[addr]; ok {
+			kind = "retire"
+		}
+		target := failoverTransitionTargetStatus{Address: addr, Kind: kind}
+		if addr == s.failoverAdvertiseAddr {
+			local := s.localFailoverState(now)
+			target.Reachable = true
+			target.GroupID = local.GroupID
+			target.ConfigEpoch = local.ConfigEpoch
+			target.JointActive = local.JointActive
+			target.PendingEpoch = local.PendingEpoch
+			target.Retired = local.Retired
+			target.RetiredAtEpoch = local.RetiredAtEpoch
+			target.RetirePending = local.RetirePending
+			target.RetirePendingEpoch = local.RetirePendingEpoch
+		} else {
+			state, err := queryFailoverPeer(
+				addr,
+				200*time.Millisecond,
+				s.replicationMasterUser,
+				s.replicationMasterAuth,
+			)
+			if err == nil {
+				target.Reachable = true
+				target.GroupID = state.GroupID
+				target.ConfigEpoch = state.ConfigEpoch
+				target.JointActive = state.JointActive
+				target.PendingEpoch = state.PendingEpoch
+				target.Retired = state.Retired
+				target.RetiredAtEpoch = state.RetiredAtEpoch
+				target.RetirePending = state.RetirePending
+				target.RetirePendingEpoch = state.RetirePendingEpoch
+			}
+		}
+		if kind == "retire" {
+			target.Converged = target.Reachable &&
+				target.GroupID == m.GroupID &&
+				target.Retired &&
+				target.RetiredAtEpoch == m.CommitEpoch
+		} else {
+			target.Converged = target.Reachable &&
+				target.GroupID == m.GroupID &&
+				target.ConfigEpoch >= m.CommitEpoch &&
+				!target.JointActive
+		}
+		if d.Blocker == "" && !target.Converged {
+			switch {
+			case !target.Reachable:
+				d.Blocker = "one or more transition targets are unreachable"
+			case target.GroupID != m.GroupID:
+				d.Blocker = "one or more transition targets report a different failover group"
+			case kind == "retire" && !target.Retired:
+				d.Blocker = "one or more removed members have not finalized retirement"
+			default:
+				d.Blocker = "one or more members have not converged to the committed epoch"
+			}
+		}
+		d.Targets = append(d.Targets, target)
+	}
+	if d.Blocker == "" && m.CommitPending {
+		d.Blocker = "recovery is pending final convergence bookkeeping"
+	}
+	return d
+}
+
+func (s *Server) retryFailoverTransitionNow(now time.Time) (failoverTransitionDiagnosis, error) {
+	m := s.failoverMembershipSnapshot()
+	if !m.CommitPending {
+		return s.diagnoseFailoverTransition(now), errors.New("no durable failover membership commit is pending")
+	}
+	s.failoverMembershipMu.Lock()
+	s.failoverCommitLastRetry = time.Time{}
+	s.failoverMembershipMu.Unlock()
+	if err := s.retryFailoverMembershipCommit(now); err != nil {
+		return s.diagnoseFailoverTransition(now), err
+	}
+	return s.diagnoseFailoverTransition(now), nil
+}
+
+func (s *Server) failoverTransitionDiagnosisJSON(now time.Time) ([]byte, error) {
+	return json.Marshal(s.diagnoseFailoverTransition(now))
 }
