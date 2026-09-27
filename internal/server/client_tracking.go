@@ -192,6 +192,51 @@ func (s *TCPServer) executeClientTracking(
 		}
 		return true, integer(int64(state.redirectID)), nil
 
+	case "TRACKINGINFO":
+		if len(args) != 2 {
+			return true, nil, errors.New(
+				"ERR wrong number of arguments for 'client|trackinginfo' command",
+			)
+		}
+
+		state := session.trackingSnapshot()
+		flags := make([][]byte, 0, 5)
+		if state.enabled {
+			flags = append(flags, formatBulkString([]byte("on")))
+		} else {
+			flags = append(flags, formatBulkString([]byte("off")))
+		}
+		if state.bcast {
+			flags = append(flags, formatBulkString([]byte("bcast")))
+		}
+		if state.noLoop {
+			flags = append(flags, formatBulkString([]byte("noloop")))
+		}
+		switch state.mode {
+		case clientTrackingOptIn:
+			flags = append(flags, formatBulkString([]byte("optin")))
+		case clientTrackingOptOut:
+			flags = append(flags, formatBulkString([]byte("optout")))
+		}
+
+		redirect := int64(-1)
+		if state.enabled && state.redirectID != 0 {
+			redirect = int64(state.redirectID)
+		}
+		prefixes := make([][]byte, 0, len(state.prefixes))
+		for _, prefix := range state.prefixes {
+			prefixes = append(prefixes, formatBulkString([]byte(prefix)))
+		}
+
+		return true, array(
+			formatBulkString([]byte("flags")),
+			array(flags...),
+			formatBulkString([]byte("redirect")),
+			integer(redirect),
+			formatBulkString([]byte("prefixes")),
+			array(prefixes...),
+		), nil
+
 	case "CACHING":
 		if len(args) != 3 {
 			return true, nil, errors.New(
