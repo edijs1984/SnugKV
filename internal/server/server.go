@@ -57,6 +57,13 @@ type Server struct {
 	failoverLeaseTerm        uint64
 	failoverLeaseHolder      string
 	failoverLeaseUntil       time.Time
+	failoverLeaderMu         sync.RWMutex
+	failoverLeaderActive     bool
+	failoverLeaderTerm       uint64
+	failoverLeaderLineage    string
+	failoverLeaderID         string
+	failoverLeaderLeaseUntil time.Time
+	failoverLeaderFenced     bool
 
 	// executionACLUsername / executionACLArgs are valid only while durableMu is
 	// held. TCP and transaction execution populate them so dynamic command
