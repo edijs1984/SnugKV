@@ -37,6 +37,8 @@ type failoverMembershipPersistenceState struct {
 	CommitMembers []string `json:"commit_members,omitempty"`
 	CommitQuorum int       `json:"commit_quorum,omitempty"`
 	CommitTargets []string `json:"commit_targets,omitempty"`
+	Retired bool `json:"retired,omitempty"`
+	RetiredAtEpoch uint64 `json:"retired_at_epoch,omitempty"`
 }
 
 type replicationPersistenceState struct {
@@ -83,6 +85,8 @@ func (s *Server) persistFailoverMembershipState() error {
 		CommitMembers: append([]string(nil), s.failoverCommitMembers...),
 		CommitQuorum: s.failoverCommitQuorum,
 		CommitTargets: append([]string(nil), s.failoverCommitTargets...),
+		Retired: s.failoverRetired,
+		RetiredAtEpoch: s.failoverRetiredAtEpoch,
 	}
 	s.failoverMembershipMu.RUnlock()
 
@@ -134,6 +138,8 @@ func (s *Server) loadFailoverMembershipState(replicationPath string) error {
 	s.failoverCommitMembers = append([]string(nil), state.CommitMembers...)
 	s.failoverCommitQuorum = state.CommitQuorum
 	s.failoverCommitTargets = append([]string(nil), state.CommitTargets...)
+	s.failoverRetired = state.Retired
+	s.failoverRetiredAtEpoch = state.RetiredAtEpoch
 	s.failoverMembershipMu.Unlock()
 	return nil
 }
