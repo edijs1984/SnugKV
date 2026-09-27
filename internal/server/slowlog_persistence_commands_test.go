@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -300,5 +301,67 @@ func TestBGRewriteAOFInvalidDestination(t *testing.T) {
 	}
 	if s.aofRewriteRunning || s.journal != nil {
 		t.Fatal("failed rewrite left active state")
+	}
+}
+
+
+func TestSlowlogRedis82TrimsArguments(t *testing.T) {
+	args := make([][]byte, 0, 34)
+	args = append(args, []byte("SADD"), []byte("set"))
+	for i := 3; i <= 34; i++ {
+		args = append(args, []byte(strconv.Itoa(i)))
+	}
+	got := slowlogSanitizeArgs(args)
+	if len(got) != 32 {
+		t.Fatalf("argc=%d, want 32", len(got))
+	}
+	if string(got[31]) != "... (3 more arguments)" {
+		t.Fatalf("tail=%q", got[31])
+	}
+
+	long := bytes.Repeat([]byte("A"), 129)
+	got = slowlogSanitizeArgs([][]byte{[]byte("SADD"), []byte("set"), []byte("foo"), long})
+	want := strings.Repeat("A", 128) + "... (1 more bytes)"
+	if string(got[3]) != want {
+		t.Fatalf("long arg=%q, want %q", got[3], want)
+	}
+}
+
+func TestSlowlogRedis82RedactsSupportedSensitiveArgs(t *testing.T) {
+	cases := []struct {
+		args [][]byte
+		want []string
+	}{
+		{
+			args: clientArgs("ACL", "SETUSER", "alice", ">secret", "+get"),
+			want: []string{"ACL", "SETUSER", "(redacted)", "(redacted)", "(redacted)"},
+		},
+		{
+			args: clientArgs("ACL", "GETUSER", "alice"),
+			want: []string{"ACL", "GETUSER", "(redacted)"},
+		},
+		{
+			args: clientArgs("ACL", "DELUSER", "alice", "bob"),
+			want: []string{"ACL", "DELUSER", "(redacted)", "(redacted)"},
+		},
+		{
+			args: clientArgs("MIGRATE", "127.0.0.1", "6379", "k", "0", "5000", "AUTH", "secret"),
+			want: []string{"MIGRATE", "127.0.0.1", "6379", "k", "0", "5000", "AUTH", "(redacted)"},
+		},
+		{
+			args: clientArgs("MIGRATE", "127.0.0.1", "6379", "k", "0", "5000", "AUTH2", "alice", "secret"),
+			want: []string{"MIGRATE", "127.0.0.1", "6379", "k", "0", "5000", "AUTH2", "(redacted)", "(redacted)"},
+		},
+	}
+	for _, tc := range cases {
+		got := slowlogSanitizeArgs(tc.args)
+		if len(got) != len(tc.want) {
+			t.Fatalf("%q argc=%d want=%d", tc.args[0], len(got), len(tc.want))
+		}
+		for i := range tc.want {
+			if string(got[i]) != tc.want[i] {
+				t.Fatalf("%q arg %d=%q want=%q", tc.args[0], i, got[i], tc.want[i])
+			}
+		}
 	}
 }
