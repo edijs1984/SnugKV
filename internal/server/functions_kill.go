@@ -1,6 +1,7 @@
 package server
 
 import (
+	"time"
 	"context"
 	"errors"
 	"fmt"
@@ -116,6 +117,10 @@ func (s *Server) luaRedisCallFunction(protected bool) lua.LGFunction {
 }
 
 func (s *Server) executeKillableFunctionCall(args [][]byte) ([]byte, error) {
+	started := time.Now()
+	defer func() {
+		s.recordSlowlog(args, time.Since(started))
+	}()
 	if len(args) == 0 {
 		return nil, errors.New("ERR empty command")
 	}
