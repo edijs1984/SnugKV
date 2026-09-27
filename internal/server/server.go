@@ -189,7 +189,7 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		return s.executeLCS(args)
 
 	case "FT.CREATE", "FT.DROPINDEX", "FT._LIST", "FT.INFO", "FT.SEARCH", "FT.AGGREGATE",
-		"FT.ALIASADD", "FT.ALIASUPDATE", "FT.ALIASDEL", "FT.TAGVALS":
+		"FT.ALIASADD", "FT.ALIASUPDATE", "FT.ALIASDEL", "FT.TAGVALS", "FT.ALTER":
 		return s.executeSearchCommand(args)
 
 	case "CONFIG":
