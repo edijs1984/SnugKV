@@ -252,7 +252,7 @@ func TestBLMPOPValidationAndWrongType(t *testing.T) {
 	s := New(engine.New())
 	execute(t, s, "SET", "plain", "value")
 
-	for _, command := range [][]byte{
+	for _, command := range [][][]byte{
 		{[]byte("BLMPOP"), []byte("-1"), []byte("1"), []byte("key"), []byte("LEFT")},
 		{[]byte("BLMPOP"), []byte("1"), []byte("0"), []byte("LEFT")},
 		{[]byte("BLMPOP"), []byte("1"), []byte("1"), []byte("key"), []byte("UP")},
