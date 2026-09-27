@@ -218,6 +218,7 @@ func (s *Server) luaRedisCallReadOnly(protected bool) lua.LGFunction {
 				return s.executePressureMode(args, false)
 			},
 		)
+		s.feedMonitorSource("lua", args, result)
 		if err != nil {
 			return luaPushCommandError(L, protected, err)
 		}
