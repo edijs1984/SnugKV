@@ -1145,6 +1145,7 @@ func (s *Server) promoteReplicaLocked() error {
 }
 
 func (s *Server) maintainAutoFailover(now time.Time) error {
+	s.refreshFailoverDiscovery(now)
 	if err := s.retryFailoverMembershipCommit(now); err != nil {
 		return err
 	}
