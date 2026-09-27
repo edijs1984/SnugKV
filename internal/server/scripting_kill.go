@@ -284,6 +284,7 @@ func (s *Server) luaRedisCallKillableWithOptions(
 				return s.executeScriptNestedPressure(args, allowOOM)
 			},
 		)
+		s.feedMonitorSource("lua", args, result)
 		if err != nil {
 			return luaPushCommandError(L, protected, err)
 		}
