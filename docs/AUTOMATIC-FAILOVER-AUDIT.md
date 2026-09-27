@@ -357,3 +357,53 @@ Operator-reported race-enabled validation passed for:
 - dry-run adoption planning;
 - retired/stale peer exclusion from adoption;
 - explicit discovered-peer adoption through the existing dual-majority membership protocol.
+
+
+## Operator topology and recovery controls
+
+The failover control plane exposes read-only topology/health inspection plus one narrowly scoped recovery action.
+
+Operator commands:
+
+- `SNUG.FAILOVER TOPOLOGY`
+- `SNUG.FAILOVER HEALTH`
+- `SNUG.FAILOVER TRANSITION`
+- `SNUG.FAILOVER RETRYTRANSITION`
+
+`TOPOLOGY` reports the committed membership, quorum, current epoch, joint/pending membership, commit-forward recovery metadata, retirement state, and discovered peers.
+
+`HEALTH` actively probes the committed peer set and reports:
+
+- local role and upstream state;
+- reachable voters versus configured quorum;
+- per-peer reachability and role;
+- joint/commit-forward transition state;
+- promoted-leader lease metadata;
+- write-fence state;
+- summarized status: `healthy`, `degraded`, `transitioning`, `fenced`, or `retired`.
+
+`TRANSITION` diagnoses membership reconfiguration state. It distinguishes:
+
+- idle;
+- prepared but not durably committed;
+- durable commit-forward recovery.
+
+For commit-forward recovery it reports each commit/retirement target, reachability, membership epoch, pending epoch, retirement state, and convergence. Blockers are prioritized for operator usefulness: unreachable target, group mismatch, unfinished retirement, then generic epoch convergence.
+
+`RETRYTRANSITION` cannot invent or alter a membership proposal. It is accepted only when durable commit intent already exists. It clears the normal retry throttle and immediately invokes the same commit-forward recovery path used by maintenance.
+
+A merely prepared transition is not retryable through this command; this prevents an operator action from converting a pre-commit proposal into an implicit commit decision.
+
+### Operator-control validation
+
+Operator-reported race-enabled validation passed for:
+
+- healthy quorum reporting;
+- degraded status when committed quorum is unreachable;
+- topology output for joint transitions and discovery state;
+- fenced promoted-leader reporting;
+- retired-member reporting;
+- prepared transitions being diagnosed as non-retryable;
+- commit-forward transitions being explicitly retryable;
+- explicit retry completing an already durable transition;
+- unreachable-target diagnosis and blocker prioritization.
