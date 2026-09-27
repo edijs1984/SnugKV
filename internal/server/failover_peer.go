@@ -19,6 +19,8 @@ type failoverPeerState struct {
 	ConfigEpoch uint64 `json:"config_epoch,omitempty"`
 	JointActive bool   `json:"joint_active,omitempty"`
 	PendingEpoch uint64 `json:"pending_epoch,omitempty"`
+	Retired      bool   `json:"retired,omitempty"`
+	RetiredAtEpoch uint64 `json:"retired_at_epoch,omitempty"`
 	Role        string `json:"role"`
 	MasterDown  bool   `json:"master_down"`
 	Offset      int64  `json:"offset"`
@@ -53,6 +55,8 @@ type failoverMembershipSnapshot struct {
 	CommitMembers []string
 	CommitQuorum int
 	CommitTargets []string
+	Retired bool
+	RetiredAtEpoch uint64
 }
 
 func (s *Server) failoverMembershipSnapshot() failoverMembershipSnapshot {
@@ -73,6 +77,8 @@ func (s *Server) failoverMembershipSnapshot() failoverMembershipSnapshot {
 		CommitMembers: append([]string(nil), s.failoverCommitMembers...),
 		CommitQuorum: s.failoverCommitQuorum,
 		CommitTargets: append([]string(nil), s.failoverCommitTargets...),
+		Retired: s.failoverRetired,
+		RetiredAtEpoch: s.failoverRetiredAtEpoch,
 	}
 }
 
@@ -104,6 +110,8 @@ func (s *Server) localFailoverState(now time.Time) failoverPeerState {
 		ConfigEpoch: membership.ConfigEpoch,
 		JointActive: membership.JointActive,
 		PendingEpoch: membership.PendingEpoch,
+		Retired: membership.Retired,
+		RetiredAtEpoch: membership.RetiredAtEpoch,
 		Role:        roleName,
 		MasterDown:  masterDown,
 		Offset:      offset,
