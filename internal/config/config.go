@@ -97,6 +97,9 @@ func (c Config) Validate() error {
 	if len(c.FailoverPeers) == 0 && c.FailoverQuorum != 0 {
 		return errors.New("failover_quorum requires failover_peers")
 	}
+	if len(c.FailoverPeers) > 0 && c.MasterAuth == "" {
+		return errors.New("failover_peers requires masterauth for authenticated peer RPC")
+	}
 	if len(c.FailoverPeers) > 0 {
 		totalNodes := len(c.FailoverPeers) + 1
 		majority := totalNodes/2 + 1
