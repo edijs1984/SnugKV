@@ -145,7 +145,7 @@ var commandTable = map[string]commandInfo{
 	"SNUG.MEMORY":     {2, 2, 1, 1, 1, false},
 	"SNUG.SHAPES":     {1, 2, 0, 0, 0, false},
 	"SNUG.STATS":      {1, 1, 0, 0, 0, false},
-	"SNUG.FAILOVER":   {2, 7, 0, 0, 0, false},
+	"SNUG.FAILOVER":   {2, 6, 0, 0, 0, false},
 	"SNUG.POLICY":     {2, 2, 1, 1, 1, false},
 	"AUTH":            {1, 3, 0, 0, 0, false},
 	"ACL":             {1, 0, 0, 0, 0, false},
@@ -1167,6 +1167,30 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 				return nil, errors.New("ERR wrong number of arguments for 'snug.failover|state' command")
 			}
 			payload, err := s.failoverStateJSON(time.Now())
+			if err != nil {
+				return nil, err
+			}
+			return formatBulkString(payload), nil
+		case "LEASE":
+			if len(args) != 6 {
+				return nil, errors.New("ERR wrong number of arguments for 'snug.failover|lease' command")
+			}
+			term, err := strconv.ParseUint(string(args[3]), 10, 64)
+			if err != nil {
+				return nil, errors.New("ERR invalid failover term")
+			}
+			ttlMS, err := strconv.ParseInt(string(args[5]), 10, 64)
+			if err != nil || ttlMS <= 0 {
+				return nil, errors.New("ERR invalid failover lease ttl")
+			}
+			reply := s.requestFailoverLease(
+				time.Now(),
+				string(args[2]),
+				term,
+				string(args[4]),
+				time.Duration(ttlMS)*time.Millisecond,
+			)
+			payload, err := json.Marshal(reply)
 			if err != nil {
 				return nil, err
 			}
