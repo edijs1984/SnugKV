@@ -321,6 +321,10 @@ func (s *Server) executeBGRewriteAOF() ([]byte, error) {
 	writer, ok := s.journal.(interface {
 		Rewrite([]persistence.Record) error
 	})
+	bufferedWriter, buffered := s.journal.(interface {
+		BeginRewrite() error
+		FinishRewrite([]persistence.Record) error
+	})
 	if !ok && s.aofRewritePath == "" {
 		return nil, errors.New("ERR AOF is disabled")
 	}
@@ -352,20 +356,33 @@ func (s *Server) executeBGRewriteAOF() ([]byte, error) {
 	s.aofRewriteRunning = true
 	s.persistenceJobMu.Unlock()
 
-	// An active journal must not accept writes between export and replacement.
-	// Start after this command releases durableMu, then hold it across both.
-	// One-off exports have no active journal and can capture immediately.
+	// Active journals establish a rewrite-buffer boundary while this command
+	// still owns durableMu. The base image therefore reflects the exact command
+	// position, while later writes continue through the live AOF and are copied
+	// into the rewrite delta. One-off exports keep the synchronous Rewrite API.
 	var records []persistence.Record
 	if temporary != nil {
 		records = s.store.Export(nil)
+	} else if buffered {
+		if err := bufferedWriter.BeginRewrite(); err != nil {
+			s.persistenceJobMu.Lock()
+			s.aofRewriteRunning = false
+			s.aofLastRewriteFailed = true
+			s.persistenceJobMu.Unlock()
+			return nil, errors.New("ERR cannot start AOF rewrite")
+		}
+		records = s.store.Export(nil)
 	}
 	s.startPersistenceJob(func() {
-		if temporary == nil {
+		var rewriteErr error
+		if temporary != nil {
+			rewriteErr = writer.Rewrite(records)
+		} else if buffered {
+			rewriteErr = bufferedWriter.FinishRewrite(records)
+		} else {
 			s.durableMu.Lock()
 			records = s.store.Export(nil)
-		}
-		rewriteErr := writer.Rewrite(records)
-		if temporary == nil {
+			rewriteErr = writer.Rewrite(records)
 			s.durableMu.Unlock()
 		}
 		if temporary != nil {

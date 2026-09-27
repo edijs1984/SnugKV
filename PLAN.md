@@ -6,6 +6,7 @@
 - [x] Operator-reported full race/vet/RESP-fuzz gates and scoped live Redis 8.10.2 comparisons. Evidence: `docs/SLOWLOG-PERSISTENCE-AUDIT.md`.
 - [ ] PR review and GitHub CI for this batch; implementation is not yet merged.
 - [x] SLOWLOG argument truncation/redaction parity for the currently supported sensitive command surface.
+- [x] Concurrent AOF rewrite buffering so durable writes remain responsive during BGREWRITEAOF.
 - [x] Review remaining persistence lifecycle gaps listed in the audit before claiming full parity. SLOWLOG fast-path / transaction / scripting / Function visibility, background-job shutdown/handoff safety, SAVE/BGSAVE mutual exclusion, transaction-time persistence scheduling, and automatic periodic snapshots are complete.
 - [x] MONITOR: command stream, RESET/QUIT lifecycle, ACL gating, binary escaping, MULTI/EXEC ordering, and nested Lua/Function events are implemented and race-tested. Audit: `docs/MONITOR-AUDIT.md`.
 

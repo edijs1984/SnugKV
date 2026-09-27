@@ -31,7 +31,7 @@ Targeted race suites and the live checks above also passed. GitHub CI is a separ
 - This is an audited subset, not full Redis parity or completion of Phase F.
 - SnugKV retains Redis 8.2's six-field SLOWLOG entry. Redis 8.10.2 returns an additional original-argument-count field.
 - With no active AOF, SnugKV requires an explicit export destination; Redis retains a default destination even with appendonly=no.
-- Active rewrites block commands participating in durableMu, including INFO and scheduling requests arriving during that interval. Scheduling tests exercise the state machine directly; fully responsive Redis-style concurrent rewrites need buffering.
+- Active AOF rewrites now use a rewrite-delta buffer, so ordinary durable writes continue during the background disk phase and only append admission is briefly serialized for the final delta flush and atomic file swap.
 - Automatic periodic snapshots are now implemented as an opt-in lifecycle feature. Transaction-time persistence scheduling, SAVE/BGSAVE mutual exclusion, shutdown/handoff safety, and periodic background snapshots are covered by lifecycle tests.
 - Fast TCP GET/SET paths, MULTI/EXEC executed-command visibility, outer EVAL/EVALSHA/EVAL_RO/EVALSHA_RO, FCALL/FCALL_RO, and Redis-style SLOWLOG truncation/redaction are now covered by focused race-enabled regressions.
 - Persistence INFO is a subset; native SnugKV snapshot/AOF files are not Redis RDB/AOF file-format exports.
@@ -180,3 +180,32 @@ Operator-reported passing gates:
 - `go test ./internal/resp -run=^$ -fuzz=FuzzReadCommand -fuzztime=20s`
 
 With this slice complete, the audited SLOWLOG coverage gaps identified in this document are closed for SnugKV's currently supported command surface.
+
+
+## Concurrent AOF rewrite buffering — 2026-09-27
+
+This follow-up closes the final persistence concurrency gap identified by the Section F audit.
+
+Changes:
+
+- Active AOF rewrites establish a rewrite boundary before capturing the base logical image.
+- Writes accepted after that boundary continue to the live AOF and are also copied into an in-memory rewrite delta buffer.
+- The base image is written in the background without holding `durableMu`.
+- Append admission is only serialized briefly during final delta flush, fsync, directory sync, and atomic file replacement.
+- Existing synchronous `Rewrite()` callers continue to use the same buffered lifecycle through `BeginRewrite()` / `FinishRewrite()`.
+- BGREWRITEAOF preserves transaction-position correctness: writes that occur after the rewrite command in the same EXEC are retained through the rewrite delta.
+- The previous blocking regression was inverted: durable writes must now complete while the background rewrite is paused.
+- Persistence scheduling, shutdown waiting, status reporting, fsync policy handling, replay/recovery, and one-off rewrite behavior remain covered.
+
+Operator-reported passing gates:
+
+- `go test -race ./internal/persistence -run '^TestBufferedRewrite' -count=1 -v`
+- `go test -race ./internal/server -run '^TestTransactionBGRewriteAOFIncludesLaterTransactionWrites$' -count=1 -v`
+- `go test -race ./internal/server -run '^TestBGRewriteAOFAllowsWritesDuringBackgroundRewrite$' -count=1 -v`
+- `go test -race ./internal/persistence -count=1 -v`
+- `go test -race ./internal/server -run '^(TestPersistence|TestSave|TestBGSave|TestBGRewriteAOF|TestTransactionBGRewriteAOF|TestBuffered|TestAOF)' -count=1 -v`
+- `go test -race -count=1 ./...`
+- `go vet ./...`
+- `go test ./internal/resp -run=^$ -fuzz=FuzzReadCommand -fuzztime=20s`
+
+With this slice complete, the persistence/SLOWLOG lifecycle and concurrency items tracked by Section F are closed for the current SnugKV architecture.
