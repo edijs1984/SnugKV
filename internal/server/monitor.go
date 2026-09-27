@@ -14,6 +14,7 @@ type monitorSubscription struct {
 	done chan struct{}
 	conn net.Conn
 	once sync.Once
+	deliveryMu sync.Mutex
 }
 
 func (s *Server) removeMonitor(m *monitorSubscription) {
@@ -25,6 +26,9 @@ func (s *Server) removeMonitor(m *monitorSubscription) {
 		s.monitorMu.Unlock()
 		close(m.done)
 	})
+	// Wait for any in-flight event before RESET writes its reply.
+	m.deliveryMu.Lock()
+	m.deliveryMu.Unlock()
 }
 
 func (s *Server) addMonitor(conn net.Conn, write func([]byte) error) *monitorSubscription {
@@ -41,7 +45,16 @@ func (s *Server) addMonitor(conn net.Conn, write func([]byte) error) *monitorSub
 			case <-m.done:
 				return
 			case line := <-m.queue:
-				if err := write(line); err != nil {
+				m.deliveryMu.Lock()
+				select {
+				case <-m.done:
+					m.deliveryMu.Unlock()
+					return
+				default:
+				}
+				err := write(line)
+				m.deliveryMu.Unlock()
+				if err != nil {
 					_ = conn.Close()
 					return
 				}
