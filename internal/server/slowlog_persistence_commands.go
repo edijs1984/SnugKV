@@ -25,7 +25,7 @@ func cloneCommandArgs(args [][]byte) [][]byte {
 }
 
 func (s *Server) recordSlowlog(args [][]byte, elapsed time.Duration) {
-	if len(args) == 0 {
+	if len(args) == 0 || strings.EqualFold(string(args[0]), "SLOWLOG") {
 		return
 	}
 	duration := elapsed.Microseconds()
