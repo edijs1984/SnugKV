@@ -404,7 +404,8 @@ lands.
 - [x] Replication Phase 2 hardening: native Redis 8.2 RDB object/opcode compatibility for the supported single-node architecture. Redis Module payloads and pre-GA Function payloads remain explicit unsupported boundaries.
 - [x] Automatic failover core: timeout-based failure detection, authenticated static peer health exchange, majority election, durable one-vote-per-term state, deterministic candidate ranking, majority leader leases, promotion gating, lease renewal, and READONLY fencing after quorum loss. Audit: `docs/AUTOMATIC-FAILOVER-AUDIT.md`.
 - [x] Sentinel-like static-topology convergence: automatically reparent surviving replicas to the elected leader and safely reconcile a returning old primary through authenticated, quorum-verified demotion. Audit: `docs/AUTOMATIC-FAILOVER-AUDIT.md`.
-- [ ] Dynamic failover membership/discovery and richer operator/topology controls.
+- [x] Dynamic failover membership: group/epoch identity, advertised endpoints, dual-majority joint reconfiguration, durable commit-forward recovery, and safe member retirement/removal. Audit: `docs/AUTOMATIC-FAILOVER-AUDIT.md`.
+- [ ] Automatic failover peer discovery/gossip and richer operator/topology controls.
 - [ ] Cluster/sharding protocol.
 - [ ] Multi-node consistency and recovery model.
 
