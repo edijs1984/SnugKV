@@ -110,3 +110,32 @@ func TestReplicationTLSEnv(t *testing.T) {
 		t.Fatalf("unexpected TLS env config: %+v", c)
 	}
 }
+
+
+func TestSnapshotIntervalValidationAndEnv(t *testing.T) {
+	c := Default()
+	c.SnapshotIntervalMS = 1000
+	if err := c.Validate(); err == nil {
+		t.Fatal("accepted snapshot interval without snapshot path")
+	}
+
+	c.SnapshotPath = filepath.Join(t.TempDir(), "dump.snap")
+	if err := c.Validate(); err != nil {
+		t.Fatalf("rejected snapshot interval with path: %v", err)
+	}
+
+	c = Default()
+	t.Setenv("SNUGKV_SNAPSHOT_PATH", filepath.Join(t.TempDir(), "env.snap"))
+	t.Setenv("SNUGKV_SNAPSHOT_INTERVAL_MS", "2500")
+	if err := c.ApplyEnv(); err != nil {
+		t.Fatal(err)
+	}
+	if c.SnapshotIntervalMS != 2500 || c.SnapshotPath == "" {
+		t.Fatalf("unexpected snapshot env config: %+v", c)
+	}
+
+	c.SnapshotIntervalMS = -1
+	if err := c.Validate(); err == nil {
+		t.Fatal("accepted negative snapshot interval")
+	}
+}

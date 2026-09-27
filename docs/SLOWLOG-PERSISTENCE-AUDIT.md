@@ -32,7 +32,7 @@ Targeted race suites and the live checks above also passed. GitHub CI is a separ
 - SnugKV retains Redis 8.2's six-field SLOWLOG entry. Redis 8.10.2 returns an additional original-argument-count field.
 - With no active AOF, SnugKV requires an explicit export destination; Redis retains a default destination even with appendonly=no.
 - Active rewrites block commands participating in durableMu, including INFO and scheduling requests arriving during that interval. Scheduling tests exercise the state machine directly; fully responsive Redis-style concurrent rewrites need buffering.
-- Automatic periodic snapshots need further lifecycle review. Transaction-time persistence scheduling, SAVE/BGSAVE mutual exclusion, and shutdown while background persistence work is running or handed off to a queued successor are now covered by lifecycle tests.
+- Automatic periodic snapshots are now implemented as an opt-in lifecycle feature. Transaction-time persistence scheduling, SAVE/BGSAVE mutual exclusion, shutdown/handoff safety, and periodic background snapshots are covered by lifecycle tests.
 - Fast TCP GET/SET paths, MULTI/EXEC executed-command visibility, outer EVAL/EVALSHA/EVAL_RO/EVALSHA_RO, and FCALL/FCALL_RO are now covered by focused race-enabled regressions. Argument truncation/redaction remains a separate hardening area.
 - Persistence INFO is a subset; native SnugKV snapshot/AOF files are not Redis RDB/AOF file-format exports.
 
@@ -126,3 +126,26 @@ Operator-reported passing gates:
 - `go test ./internal/resp -run=^$ -fuzz=FuzzReadCommand -fuzztime=20s`
 
 Remaining persistence lifecycle work: automatic periodic snapshot scheduling.
+
+
+## Automatic periodic snapshot scheduling — 2026-09-27
+
+This follow-up closes the remaining audited persistence lifecycle gap.
+
+Changes:
+
+- Added opt-in `snapshot_interval_ms` configuration. The default is `0`, which disables automatic snapshots.
+- Added `SNUGKV_SNAPSHOT_INTERVAL_MS` and `-snapshot-interval-ms` configuration surfaces.
+- Enabling the interval requires a configured `snapshot_path`.
+- The process scheduler triggers the existing background-save lifecycle rather than implementing a separate persistence worker.
+- Periodic ticks skip cleanly while conflicting persistence work is already active, preserving the existing BGSAVE/AOF rewrite state machine.
+- Shutdown waiting, persistence status tracking, failure logging, and record capture semantics remain centralized in the existing background-save implementation.
+
+Operator-reported passing gates:
+
+- `go test -race ./internal/config ./internal/server ./cmd/snugkv -count=1`
+- `go test -race ./...`
+- `go vet ./...`
+- `go test ./internal/resp -run=^$ -fuzz=FuzzReadCommand -fuzztime=20s`
+
+With this slice complete, the persistence lifecycle items identified by this audit are closed. Remaining Section F work, if any, is compatibility hardening outside this lifecycle list, such as exact SLOWLOG argument truncation/redaction and the larger architectural question of fully concurrent Redis-style AOF rewrite buffering.

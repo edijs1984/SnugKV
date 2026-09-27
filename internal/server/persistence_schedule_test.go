@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"snugkv/internal/config"
 	"snugkv/internal/engine"
 	"snugkv/internal/persistence"
 )
@@ -442,5 +443,62 @@ func TestTransactionBGRewriteAOFIncludesLaterTransactionWrites(t *testing.T) {
 	}
 	if values["before"] != "one" || values["after"] != "two" {
 		t.Fatalf("rewritten AOF lost transaction writes: %v", values)
+	}
+}
+
+func TestPeriodicSnapshotTriggerUsesBackgroundSaveLifecycle(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Default()
+	cfg.ListenAddr = "127.0.0.1:0"
+	cfg.AdminAddr = ""
+	cfg.SnapshotPath = filepath.Join(dir, "dump.snap")
+	cfg.SnapshotIntervalMS = 10
+
+	tcp, err := ListenWithConfig(cfg, engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tcp.Close()
+
+	execute(t, tcp.server, "SET", "periodic", "value")
+	if err := tcp.TriggerPeriodicSnapshot(); err != nil {
+		t.Fatal(err)
+	}
+	tcp.server.waitPersistenceJobs()
+
+	found := false
+	if err := persistence.ReplaySnapshot(cfg.SnapshotPath, func(records []persistence.Record) error {
+		for _, record := range records {
+			if string(record.Key) == "periodic" && string(record.Value) == "value" {
+				found = true
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("periodic snapshot trigger did not persist data")
+	}
+}
+
+func TestPeriodicSnapshotTriggerSkipsBusyPersistence(t *testing.T) {
+	cfg := config.Default()
+	cfg.ListenAddr = "127.0.0.1:0"
+	cfg.AdminAddr = ""
+	cfg.SnapshotPath = filepath.Join(t.TempDir(), "dump.snap")
+	cfg.SnapshotIntervalMS = 10
+
+	tcp, err := ListenWithConfig(cfg, engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tcp.Close()
+
+	tcp.server.persistenceJobMu.Lock()
+	tcp.server.bgsaveRunning = true
+	tcp.server.persistenceJobMu.Unlock()
+	if err := tcp.TriggerPeriodicSnapshot(); err != nil {
+		t.Fatalf("busy BGSAVE should skip periodic tick: %v", err)
 	}
 }
