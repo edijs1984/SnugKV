@@ -774,10 +774,12 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				}
 			}
 
+			rawGetStarted := time.Now()
 			if handled, fastErr := s.server.executeAuthorizedConcurrentRawGet(
 				msg,
 				writeBulkProtocol,
 			); handled {
+				s.server.recordSlowlogForClient(clientSession, msg, time.Since(rawGetStarted))
 				if fastErr != nil {
 					return
 				}
@@ -785,7 +787,9 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				continue
 			}
 
+			knownGetStarted := time.Now()
 			if value, found, handled, fastErr := s.server.executeAuthorizedConcurrentKnownGetIntoAt(msg[1], getScratch, requestNow); handled {
+				s.server.recordSlowlogForClient(clientSession, msg, time.Since(knownGetStarted))
 				if fastErr != nil {
 					if writeProtocol(msg, errorResponse(fastErr)) != nil {
 						return
@@ -874,10 +878,12 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				continue
 			}
 
+			rawGetStarted := time.Now()
 			if handled, fastErr := s.server.executeAuthorizedConcurrentRawGet(
 				msg,
 				writeBulkProtocol,
 			); handled {
+				s.server.recordSlowlogForClient(clientSession, msg, time.Since(rawGetStarted))
 				if fastErr != nil {
 					return
 				}
@@ -885,7 +891,9 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				continue
 			}
 
+			knownGetStarted := time.Now()
 			if value, found, handled, fastErr := s.server.executeAuthorizedConcurrentKnownGetIntoAt(msg[1], getScratch, requestNow); handled {
+				s.server.recordSlowlogForClient(clientSession, msg, time.Since(knownGetStarted))
 				if fastErr != nil {
 					if writeProtocol(msg, errorResponse(fastErr)) != nil {
 						return
@@ -1148,7 +1156,9 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			}
 		}
 
+		aofSetStarted := time.Now()
 		if result, durabilitySequence, handled, fastErr := s.server.executeAuthorizedConcurrentAOFSet(msg); handled {
+			s.server.recordSlowlogForClient(clientSession, msg, time.Since(aofSetStarted))
 			if fastErr != nil {
 				result = errorResponse(fastErr)
 			}
@@ -1163,7 +1173,9 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			continue
 		}
 
+		replicatedSetStarted := time.Now()
 		if result, replicationOffset, handled, fastErr := s.server.executeAuthorizedSerializedReplicatedSet(msg); handled {
+			s.server.recordSlowlogForClient(clientSession, msg, time.Since(replicatedSetStarted))
 			if fastErr != nil {
 				result = errorResponse(fastErr)
 			}
@@ -1178,10 +1190,12 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			continue
 		}
 
+		rawGetStarted := time.Now()
 		if handled, fastErr := s.server.executeAuthorizedConcurrentRawGet(
 			msg,
 			writer.writeBulkBuffered,
 		); handled {
+			s.server.recordSlowlogForClient(clientSession, msg, time.Since(rawGetStarted))
 			if fastErr != nil {
 				return
 			}
@@ -1189,7 +1203,9 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			continue
 		}
 
+		concurrentGetStarted := time.Now()
 		if value, found, handled, fastErr := s.server.executeAuthorizedConcurrentGetInto(msg, getScratch); handled {
+			s.server.recordSlowlogForClient(clientSession, msg, time.Since(concurrentGetStarted))
 			if fastErr != nil {
 				if writeProtocol(msg, errorResponse(fastErr)) != nil {
 					return
@@ -1212,7 +1228,9 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			continue
 		}
 
+		concurrentSetStarted := time.Now()
 		if result, handled, fastErr := s.server.executeAuthorizedConcurrentSet(msg); handled {
+			s.server.recordSlowlogForClient(clientSession, msg, time.Since(concurrentSetStarted))
 			if fastErr != nil {
 				result = errorResponse(fastErr)
 			}
