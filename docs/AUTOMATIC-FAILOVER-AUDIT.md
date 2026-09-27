@@ -4,7 +4,7 @@ Date: 2026-09-27
 
 ## Scope
 
-This audit covers SnugKV's first automatic failover implementation for a statically configured replica group.
+This audit covers SnugKV's automatic failover implementation, including static-topology convergence and versioned dynamic membership changes for an explicitly configured failover group.
 
 The implementation builds on the existing replication control plane and deliberately separates three concerns:
 
@@ -12,7 +12,7 @@ The implementation builds on the existing replication control plane and delibera
 2. quorum-backed leader election;
 3. fenced promotion with renewable majority leases.
 
-It now includes static-topology convergence after promotion: surviving replicas are automatically reparented to the elected leader, and a returning old primary is authenticated, quorum-verified, demoted, and reparented before it can rejoin as a second writable primary. Dynamic peer discovery and membership changes remain outside this phase.
+It includes static-topology convergence after promotion, plus durable membership identity, dual-majority reconfiguration, crash recovery, and safe member retirement/removal. Automatic peer discovery remains outside this phase.
 
 ## Configuration
 
@@ -25,6 +25,9 @@ Peer-backed failover additionally uses:
 - `failover_peers`: static peer RESP endpoints;
 - `failover_quorum`: required majority;
 - `failover_priority`: positive candidate priority, where zero makes a replica ineligible;
+- `failover_group_id`: stable identity for one failover membership;
+- `failover_config_epoch`: monotonically increasing membership version;
+- `failover_advertise_addr`: canonical host:port identity used during runtime membership changes;
 - existing `masteruser` / `masterauth` credentials for authenticated failover peer RPC.
 
 Peer mode requires `masterauth`. This prevents unauthenticated clients from participating in election, vote, or lease RPCs.
@@ -216,4 +219,99 @@ Still outside this phase:
 - dynamic peer discovery and membership changes;
 - richer failover observability/operator controls;
 - explicit reconfiguration semantics when membership changes during an active election;
+- Redis Sentinel protocol/API compatibility as a separate product surface.
+
+
+## Dynamic membership
+
+Dynamic membership uses an explicit group identity and monotonically increasing configuration epoch.
+
+Peer state includes:
+
+- failover group ID;
+- committed configuration epoch;
+- joint-transition state and pending epoch;
+- canonical advertised endpoint;
+- retirement and retirement-prepare status.
+
+Election, vote, lease, leader resolution, reparenting, and demotion ignore peers whose group/epoch does not match the local committed membership.
+
+### Joint reconfiguration
+
+A membership change is coordinated only by the current primary and advances the configuration epoch by exactly one.
+
+The coordinator distributes one canonical full member list. Each node derives its local peer list as the full set minus its own `failover_advertise_addr`.
+
+Before commit:
+
+1. retained/new members durably enter a joint PREPARE state;
+2. the proposed membership must independently reach its configured majority;
+3. the current membership must independently reach its configured majority;
+4. the coordinator persists commit-forward recovery metadata.
+
+While a joint transition is staged, new automatic failover elections are frozen. An already promoted leader may continue renewing its existing lease.
+
+If either majority is missing before commit intent, the coordinator broadcasts ABORT and keeps the current epoch.
+
+### Commit-forward recovery
+
+Once commit intent is durably recorded, the transition never rolls back to the old configuration.
+
+The recovery record contains:
+
+- old epoch;
+- target epoch;
+- target full membership;
+- target quorum;
+- convergence targets;
+- retirement targets.
+
+After restart, maintenance resumes the transition. A stale node that missed PREPARE can receive a replayed PREPARE followed by COMMIT. The recovery record is cleared only after tracked retained/new members report the committed epoch.
+
+### Safe member removal
+
+Member removal uses a two-step retirement protocol.
+
+Removed nodes first durably accept `RETIREPREPARE` for the target epoch. This records consent but does not yet make the node ineligible.
+
+Only after dual-majority PREPARE succeeds and commit intent is durable does recovery/finalization issue `RETIRE`.
+
+A retired node:
+
+- is permanently ineligible for automatic promotion;
+- is excluded from candidate selection;
+- does not vote;
+- does not grant leader leases;
+- does not reparent or demote peers;
+- reports its retirement tombstone in failover state;
+- restores that tombstone after restart.
+
+The coordinator will not install the new epoch until every removal target in the commit record has become durably retired. This prevents the new membership from becoming active while an excluded old member can still participate in failover.
+
+### Additional validation
+
+Operator-reported race-enabled tests passed for:
+
+- failover membership group/epoch identity;
+- rejecting mismatched membership from quorum/election paths;
+- durable PREPARE/COMMIT/ABORT state;
+- restart recovery of a staged joint transition;
+- dual-majority additive membership changes;
+- commit-forward recovery after coordinator restart;
+- replaying PREPARE+COMMIT to nodes that missed the original transition;
+- safe member removal through retirement prepare/finalize;
+- retirement tombstone recovery after restart;
+- blocking retired nodes from automatic promotion;
+- recovery finalizing retirement before committing the new epoch;
+- duplicate node observations not upgrading eligibility or contributing extra votes.
+
+## Remaining distributed orchestration work
+
+The configured failover group now supports static convergence and explicit runtime membership changes with durable recovery.
+
+Still outside this phase:
+
+- automatic peer discovery / gossip;
+- automatic address discovery or NAT-aware membership;
+- richer failover observability and operator controls;
 - Redis Sentinel protocol/API compatibility as a separate product surface.

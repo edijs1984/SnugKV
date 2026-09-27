@@ -26,15 +26,8 @@ func evaluateFailoverElection(observations []failoverObservation, quorum int) fa
 		if observation.NodeID == "" {
 			continue
 		}
-		if current, exists := unique[observation.NodeID]; exists {
-			if observation.Offset < current.Offset {
-				observation.Offset = current.Offset
-			}
-			observation.MasterDown = observation.MasterDown || current.MasterDown
-			observation.Eligible = observation.Eligible || current.Eligible
-			if observation.Priority == 0 || current.Priority != 0 && current.Priority < observation.Priority {
-				observation.Priority = current.Priority
-			}
+		if _, exists := unique[observation.NodeID]; exists {
+			continue
 		}
 		unique[observation.NodeID] = observation
 	}

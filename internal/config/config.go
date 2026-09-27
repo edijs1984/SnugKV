@@ -37,6 +37,9 @@ type Config struct {
 	FailoverPeers          []string `json:"failover_peers"`
 	FailoverQuorum         int      `json:"failover_quorum"`
 	FailoverPriority       int      `json:"failover_priority"`
+	FailoverGroupID        string   `json:"failover_group_id"`
+	FailoverConfigEpoch    uint64   `json:"failover_config_epoch"`
+	FailoverAdvertiseAddr  string   `json:"failover_advertise_addr"`
 	ACLFile             string `json:"acl_file"`
 	Fsync               string `json:"fsync"`
 	MaxMemory           uint64 `json:"max_memory"`
@@ -77,6 +80,22 @@ func (c Config) Validate() error {
 				return errors.New("aof_rewrite_path must differ from AOF and snapshot paths")
 			}
 		}
+	}
+	if c.FailoverAdvertiseAddr != "" {
+		host, port, err := net.SplitHostPort(c.FailoverAdvertiseAddr)
+		if err != nil || host == "" || port == "" {
+			return errors.New("failover_advertise_addr must be host:port")
+		}
+		p, err := strconv.Atoi(port)
+		if err != nil || p <= 0 || p > 65535 {
+			return errors.New("failover_advertise_addr must use a valid port")
+		}
+	}
+	if len(c.FailoverGroupID) > 128 {
+		return errors.New("failover_group_id must not exceed 128 bytes")
+	}
+	if c.FailoverConfigEpoch > 0 && c.FailoverGroupID == "" {
+		return errors.New("failover_config_epoch requires failover_group_id")
 	}
 	if c.FailoverPriority < 0 {
 		return errors.New("failover_priority must not be negative")
@@ -263,10 +282,17 @@ func (c *Config) ApplyEnv() error {
 		}
 		c.JSONShape = b
 	}
-	for name, dst := range map[string]*string{"AOF_PATH": &c.AOFPath, "AOF_REWRITE_PATH": &c.AOFRewritePath, "SNAPSHOT_PATH": &c.SnapshotPath, "ACL_FILE": &c.ACLFile, "FSYNC": &c.Fsync, "EVICTION_POLICY": &c.EvictionPolicy, "METRICS_LISTEN": &c.MetricsAddr, "ADMIN_LISTEN": &c.AdminAddr, "OPTIMIZER_MODE": &c.OptimizerMode, "MASTERUSER": &c.MasterUser, "MASTERAUTH": &c.MasterAuth, "MASTERTLS_CA_CERT": &c.MasterTLSCACert, "MASTERTLS_CERT": &c.MasterTLSCert, "MASTERTLS_KEY": &c.MasterTLSKey, "MASTERTLS_SERVER_NAME": &c.MasterTLSServerName} {
+	for name, dst := range map[string]*string{"AOF_PATH": &c.AOFPath, "AOF_REWRITE_PATH": &c.AOFRewritePath, "SNAPSHOT_PATH": &c.SnapshotPath, "ACL_FILE": &c.ACLFile, "FSYNC": &c.Fsync, "EVICTION_POLICY": &c.EvictionPolicy, "METRICS_LISTEN": &c.MetricsAddr, "ADMIN_LISTEN": &c.AdminAddr, "OPTIMIZER_MODE": &c.OptimizerMode, "MASTERUSER": &c.MasterUser, "MASTERAUTH": &c.MasterAuth, "FAILOVER_GROUP_ID": &c.FailoverGroupID, "FAILOVER_ADVERTISE_ADDR": &c.FailoverAdvertiseAddr, "MASTERTLS_CA_CERT": &c.MasterTLSCACert, "MASTERTLS_CERT": &c.MasterTLSCert, "MASTERTLS_KEY": &c.MasterTLSKey, "MASTERTLS_SERVER_NAME": &c.MasterTLSServerName} {
 		if v, ok := os.LookupEnv("SNUGKV_" + name); ok {
 			*dst = v
 		}
+	}
+	if v, ok := os.LookupEnv("SNUGKV_FAILOVER_CONFIG_EPOCH"); ok {
+		n, err := strconv.ParseUint(v, 10, 64)
+		if err != nil {
+			return errors.New("invalid SNUGKV_FAILOVER_CONFIG_EPOCH")
+		}
+		c.FailoverConfigEpoch = n
 	}
 	if v, ok := os.LookupEnv("SNUGKV_MAX_MEMORY"); ok {
 		n, err := strconv.ParseUint(v, 10, 64)

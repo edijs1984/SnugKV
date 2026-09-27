@@ -50,6 +50,26 @@ type Server struct {
 	failoverPeers            []string
 	failoverQuorum           int
 	failoverPriority         int
+	failoverGroupID          string
+	failoverConfigEpoch      uint64
+	failoverAdvertiseAddr    string
+	failoverMembershipMu     sync.RWMutex
+	failoverJointActive      bool
+	failoverPendingEpoch     uint64
+	failoverPendingPeers     []string
+	failoverPendingQuorum    int
+	failoverCommitPending     bool
+	failoverCommitOldEpoch    uint64
+	failoverCommitEpoch       uint64
+	failoverCommitMembers     []string
+	failoverCommitQuorum      int
+	failoverCommitTargets     []string
+	failoverCommitLastRetry   time.Time
+	failoverRetired           bool
+	failoverRetiredAtEpoch    uint64
+	failoverRetirePending     bool
+	failoverRetirePendingEpoch uint64
+	failoverCommitRetireTargets []string
 	failoverVoteMu           sync.Mutex
 	failoverTerm             uint64
 	failoverVotedFor         string
@@ -1172,6 +1192,138 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 
 	case "SNUG.FAILOVER":
 		switch strings.ToUpper(string(args[1])) {
+		case "RETIREPREPARE":
+			if len(args) != 5 {
+				return nil, errors.New("ERR wrong number of arguments for 'snug.failover|retireprepare' command")
+			}
+			currentEpoch, err := strconv.ParseUint(string(args[3]), 10, 64)
+			if err != nil {
+				return nil, errors.New("ERR invalid current failover membership epoch")
+			}
+			retireAtEpoch, err := strconv.ParseUint(string(args[4]), 10, 64)
+			if err != nil {
+				return nil, errors.New("ERR invalid failover retirement epoch")
+			}
+			reply, err := s.prepareFailoverRetirement(string(args[2]), currentEpoch, retireAtEpoch)
+			if err != nil {
+				return nil, fmt.Errorf("ERR %s", err.Error())
+			}
+			payload, err := json.Marshal(reply)
+			if err != nil {
+				return nil, err
+			}
+			return formatBulkString(payload), nil
+		case "RETIRE":
+			if len(args) != 5 {
+				return nil, errors.New("ERR wrong number of arguments for 'snug.failover|retire' command")
+			}
+			currentEpoch, err := strconv.ParseUint(string(args[3]), 10, 64)
+			if err != nil {
+				return nil, errors.New("ERR invalid current failover membership epoch")
+			}
+			retireAtEpoch, err := strconv.ParseUint(string(args[4]), 10, 64)
+			if err != nil {
+				return nil, errors.New("ERR invalid failover retirement epoch")
+			}
+			reply, err := s.retireFailoverMember(string(args[2]), currentEpoch, retireAtEpoch)
+			if err != nil {
+				return nil, fmt.Errorf("ERR %s", err.Error())
+			}
+			payload, err := json.Marshal(reply)
+			if err != nil {
+				return nil, err
+			}
+			return formatBulkString(payload), nil
+		case "MEMBERSHIPCHANGE":
+			if len(args) != 5 {
+				return nil, errors.New("ERR wrong number of arguments for 'snug.failover|membershipchange' command")
+			}
+			newEpoch, err := strconv.ParseUint(string(args[2]), 10, 64)
+			if err != nil {
+				return nil, errors.New("ERR invalid new failover membership epoch")
+			}
+			quorum, err := strconv.Atoi(string(args[3]))
+			if err != nil {
+				return nil, errors.New("ERR invalid failover membership quorum")
+			}
+			result, err := s.coordinateFailoverMembershipChange(
+				newEpoch,
+				parseFailoverPeerCSV(string(args[4])),
+				quorum,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("ERR %s", err.Error())
+			}
+			payload, err := json.Marshal(result)
+			if err != nil {
+				return nil, err
+			}
+			return formatBulkString(payload), nil
+		case "MEMBERSHIPPREPARE":
+			if len(args) != 7 {
+				return nil, errors.New("ERR wrong number of arguments for 'snug.failover|membershipprepare' command")
+			}
+			currentEpoch, err := strconv.ParseUint(string(args[3]), 10, 64)
+			if err != nil {
+				return nil, errors.New("ERR invalid current failover membership epoch")
+			}
+			newEpoch, err := strconv.ParseUint(string(args[4]), 10, 64)
+			if err != nil {
+				return nil, errors.New("ERR invalid new failover membership epoch")
+			}
+			quorum, err := strconv.Atoi(string(args[5]))
+			if err != nil {
+				return nil, errors.New("ERR invalid failover membership quorum")
+			}
+			reply, err := s.prepareFailoverMembershipMembers(
+				string(args[2]),
+				currentEpoch,
+				newEpoch,
+				parseFailoverPeerCSV(string(args[6])),
+				quorum,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("ERR %s", err.Error())
+			}
+			payload, err := json.Marshal(reply)
+			if err != nil {
+				return nil, err
+			}
+			return formatBulkString(payload), nil
+		case "MEMBERSHIPCOMMIT":
+			if len(args) != 4 {
+				return nil, errors.New("ERR wrong number of arguments for 'snug.failover|membershipcommit' command")
+			}
+			epoch, err := strconv.ParseUint(string(args[3]), 10, 64)
+			if err != nil {
+				return nil, errors.New("ERR invalid failover membership epoch")
+			}
+			reply, err := s.commitFailoverMembership(string(args[2]), epoch)
+			if err != nil {
+				return nil, fmt.Errorf("ERR %s", err.Error())
+			}
+			payload, err := json.Marshal(reply)
+			if err != nil {
+				return nil, err
+			}
+			return formatBulkString(payload), nil
+		case "MEMBERSHIPABORT":
+			if len(args) != 4 {
+				return nil, errors.New("ERR wrong number of arguments for 'snug.failover|membershipabort' command")
+			}
+			epoch, err := strconv.ParseUint(string(args[3]), 10, 64)
+			if err != nil {
+				return nil, errors.New("ERR invalid failover membership epoch")
+			}
+			reply, err := s.abortFailoverMembership(string(args[2]), epoch)
+			if err != nil {
+				return nil, fmt.Errorf("ERR %s", err.Error())
+			}
+			payload, err := json.Marshal(reply)
+			if err != nil {
+				return nil, err
+			}
+			return formatBulkString(payload), nil
 		case "STATE":
 			if len(args) != 2 {
 				return nil, errors.New("ERR wrong number of arguments for 'snug.failover|state' command")

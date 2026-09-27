@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -18,6 +19,31 @@ type failoverPersistenceState struct {
 	VotedFor string `json:"voted_for,omitempty"`
 }
 
+const failoverMembershipPersistenceVersion = 1
+
+type failoverMembershipPersistenceState struct {
+	Version       int      `json:"version"`
+	GroupID       string   `json:"group_id"`
+	ConfigEpoch   uint64   `json:"config_epoch"`
+	Peers         []string `json:"peers"`
+	Quorum        int      `json:"quorum"`
+	JointActive   bool     `json:"joint_active"`
+	PendingEpoch  uint64   `json:"pending_epoch,omitempty"`
+	PendingPeers  []string `json:"pending_peers,omitempty"`
+	PendingQuorum int      `json:"pending_quorum,omitempty"`
+	CommitPending bool     `json:"commit_pending,omitempty"`
+	CommitOldEpoch uint64  `json:"commit_old_epoch,omitempty"`
+	CommitEpoch uint64     `json:"commit_epoch,omitempty"`
+	CommitMembers []string `json:"commit_members,omitempty"`
+	CommitQuorum int       `json:"commit_quorum,omitempty"`
+	CommitTargets []string `json:"commit_targets,omitempty"`
+	Retired bool `json:"retired,omitempty"`
+	RetiredAtEpoch uint64 `json:"retired_at_epoch,omitempty"`
+	RetirePending bool `json:"retire_pending,omitempty"`
+	RetirePendingEpoch uint64 `json:"retire_pending_epoch,omitempty"`
+	CommitRetireTargets []string `json:"commit_retire_targets,omitempty"`
+}
+
 type replicationPersistenceState struct {
 	Version     int    `json:"version"`
 	MasterHost  string `json:"master_host"`
@@ -29,6 +55,106 @@ type replicationPersistenceState struct {
 
 var replicationPersistencePaths sync.Map // map[*Server]string
 
+
+
+func failoverMembershipPersistencePath(replicationPath string) string {
+	if replicationPath == "" {
+		return ""
+	}
+	return replicationPath + ".membership"
+}
+
+func (s *Server) persistFailoverMembershipState() error {
+	value, ok := replicationPersistencePaths.Load(s)
+	if !ok {
+		return errors.New("failover membership persistence is unavailable")
+	}
+	path := failoverMembershipPersistencePath(value.(string))
+
+	s.failoverMembershipMu.RLock()
+	state := failoverMembershipPersistenceState{
+		Version:       failoverMembershipPersistenceVersion,
+		GroupID:       s.failoverGroupID,
+		ConfigEpoch:   s.failoverConfigEpoch,
+		Peers:         append([]string(nil), s.failoverPeers...),
+		Quorum:        s.failoverQuorum,
+		JointActive:   s.failoverJointActive,
+		PendingEpoch:  s.failoverPendingEpoch,
+		PendingPeers:  append([]string(nil), s.failoverPendingPeers...),
+		PendingQuorum: s.failoverPendingQuorum,
+		CommitPending: s.failoverCommitPending,
+		CommitOldEpoch: s.failoverCommitOldEpoch,
+		CommitEpoch: s.failoverCommitEpoch,
+		CommitMembers: append([]string(nil), s.failoverCommitMembers...),
+		CommitQuorum: s.failoverCommitQuorum,
+		CommitTargets: append([]string(nil), s.failoverCommitTargets...),
+		Retired: s.failoverRetired,
+		RetiredAtEpoch: s.failoverRetiredAtEpoch,
+		RetirePending: s.failoverRetirePending,
+		RetirePendingEpoch: s.failoverRetirePendingEpoch,
+		CommitRetireTargets: append([]string(nil), s.failoverCommitRetireTargets...),
+	}
+	s.failoverMembershipMu.RUnlock()
+
+	payload, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	return writeSidecarStateAtomic(path, payload)
+}
+
+func (s *Server) loadFailoverMembershipState(replicationPath string) error {
+	path := failoverMembershipPersistencePath(replicationPath)
+	if path == "" {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var state failoverMembershipPersistenceState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return err
+	}
+	if state.Version != failoverMembershipPersistenceVersion {
+		return fmt.Errorf("unsupported failover membership state version %d", state.Version)
+	}
+	if state.JointActive && (state.PendingEpoch <= state.ConfigEpoch || len(state.PendingPeers) == 0 || state.PendingQuorum <= 0) {
+		return errors.New("invalid persisted failover membership transition")
+	}
+	if state.CommitPending && (state.CommitEpoch == 0 || state.CommitEpoch <= state.CommitOldEpoch || len(state.CommitMembers) == 0 || state.CommitQuorum <= 0) {
+		return errors.New("invalid persisted failover membership commit recovery")
+	}
+	if state.RetirePending && state.RetirePendingEpoch <= state.ConfigEpoch {
+		return errors.New("invalid persisted failover retirement prepare")
+	}
+
+	s.failoverMembershipMu.Lock()
+	s.failoverGroupID = state.GroupID
+	s.failoverConfigEpoch = state.ConfigEpoch
+	s.failoverPeers = append([]string(nil), state.Peers...)
+	s.failoverQuorum = state.Quorum
+	s.failoverJointActive = state.JointActive
+	s.failoverPendingEpoch = state.PendingEpoch
+	s.failoverPendingPeers = append([]string(nil), state.PendingPeers...)
+	s.failoverPendingQuorum = state.PendingQuorum
+	s.failoverCommitPending = state.CommitPending
+	s.failoverCommitOldEpoch = state.CommitOldEpoch
+	s.failoverCommitEpoch = state.CommitEpoch
+	s.failoverCommitMembers = append([]string(nil), state.CommitMembers...)
+	s.failoverCommitQuorum = state.CommitQuorum
+	s.failoverCommitTargets = append([]string(nil), state.CommitTargets...)
+	s.failoverRetired = state.Retired
+	s.failoverRetiredAtEpoch = state.RetiredAtEpoch
+	s.failoverRetirePending = state.RetirePending
+	s.failoverRetirePendingEpoch = state.RetirePendingEpoch
+	s.failoverCommitRetireTargets = append([]string(nil), state.CommitRetireTargets...)
+	s.failoverMembershipMu.Unlock()
+	return nil
+}
 
 func failoverPersistencePath(replicationPath string) string {
 	if replicationPath == "" {
@@ -113,6 +239,9 @@ func (s *TCPServer) ConfigureReplicationPersistenceRecovered(
 	replicationPersistencePaths.Store(s.server, path)
 	if err := s.server.loadFailoverVoteState(path); err != nil {
 		return fmt.Errorf("failover recovery: %w", err)
+	}
+	if err := s.server.loadFailoverMembershipState(path); err != nil {
+		return fmt.Errorf("failover membership recovery: %w", err)
 	}
 
 	var state replicationPersistenceState

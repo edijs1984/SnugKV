@@ -14,6 +14,15 @@ import (
 
 type failoverPeerState struct {
 	NodeID      string `json:"node_id"`
+	AdvertiseAddr string `json:"advertise_addr,omitempty"`
+	GroupID     string `json:"group_id,omitempty"`
+	ConfigEpoch uint64 `json:"config_epoch,omitempty"`
+	JointActive bool   `json:"joint_active,omitempty"`
+	PendingEpoch uint64 `json:"pending_epoch,omitempty"`
+	Retired      bool   `json:"retired,omitempty"`
+	RetiredAtEpoch uint64 `json:"retired_at_epoch,omitempty"`
+	RetirePending bool `json:"retire_pending,omitempty"`
+	RetirePendingEpoch uint64 `json:"retire_pending_epoch,omitempty"`
 	Role        string `json:"role"`
 	MasterDown  bool   `json:"master_down"`
 	Offset      int64  `json:"offset"`
@@ -33,6 +42,54 @@ type failoverLeaseReply struct {
 	ExpiresMS int64  `json:"expires_ms"`
 }
 
+type failoverMembershipSnapshot struct {
+	GroupID       string
+	ConfigEpoch   uint64
+	Peers         []string
+	Quorum        int
+	JointActive   bool
+	PendingEpoch  uint64
+	PendingPeers  []string
+	PendingQuorum int
+	CommitPending bool
+	CommitOldEpoch uint64
+	CommitEpoch uint64
+	CommitMembers []string
+	CommitQuorum int
+	CommitTargets []string
+	Retired bool
+	RetiredAtEpoch uint64
+	RetirePending bool
+	RetirePendingEpoch uint64
+	CommitRetireTargets []string
+}
+
+func (s *Server) failoverMembershipSnapshot() failoverMembershipSnapshot {
+	s.failoverMembershipMu.RLock()
+	defer s.failoverMembershipMu.RUnlock()
+	return failoverMembershipSnapshot{
+		GroupID:       s.failoverGroupID,
+		ConfigEpoch:   s.failoverConfigEpoch,
+		Peers:         append([]string(nil), s.failoverPeers...),
+		Quorum:        s.failoverQuorum,
+		JointActive:   s.failoverJointActive,
+		PendingEpoch:  s.failoverPendingEpoch,
+		PendingPeers:  append([]string(nil), s.failoverPendingPeers...),
+		PendingQuorum: s.failoverPendingQuorum,
+		CommitPending: s.failoverCommitPending,
+		CommitOldEpoch: s.failoverCommitOldEpoch,
+		CommitEpoch: s.failoverCommitEpoch,
+		CommitMembers: append([]string(nil), s.failoverCommitMembers...),
+		CommitQuorum: s.failoverCommitQuorum,
+		CommitTargets: append([]string(nil), s.failoverCommitTargets...),
+		Retired: s.failoverRetired,
+		RetiredAtEpoch: s.failoverRetiredAtEpoch,
+		RetirePending: s.failoverRetirePending,
+		RetirePendingEpoch: s.failoverRetirePendingEpoch,
+		CommitRetireTargets: append([]string(nil), s.failoverCommitRetireTargets...),
+	}
+}
+
 func (s *Server) localFailoverState(now time.Time) failoverPeerState {
 	s.replication.mu.RLock()
 	role := s.replication.role
@@ -50,11 +107,21 @@ func (s *Server) localFailoverState(now time.Time) failoverPeerState {
 	if role == replicationReplica {
 		roleName = "replica"
 	}
+	membership := s.failoverMembershipSnapshot()
 	s.failoverVoteMu.Lock()
 	term := s.failoverTerm
 	s.failoverVoteMu.Unlock()
 	return failoverPeerState{
 		NodeID:      nodeID,
+		AdvertiseAddr: s.failoverAdvertiseAddr,
+		GroupID:     membership.GroupID,
+		ConfigEpoch: membership.ConfigEpoch,
+		JointActive: membership.JointActive,
+		PendingEpoch: membership.PendingEpoch,
+		Retired: membership.Retired,
+		RetiredAtEpoch: membership.RetiredAtEpoch,
+		RetirePending: membership.RetirePending,
+		RetirePendingEpoch: membership.RetirePendingEpoch,
 		Role:        roleName,
 		MasterDown:  masterDown,
 		Offset:      offset,
@@ -62,6 +129,16 @@ func (s *Server) localFailoverState(now time.Time) failoverPeerState {
 		MasterRunID: masterRunID,
 		Term:        term,
 	}
+}
+
+
+func (s *Server) failoverMembershipMatches(groupID string, epoch uint64) bool {
+	membership := s.failoverMembershipSnapshot()
+	return membership.GroupID == groupID && membership.ConfigEpoch == epoch
+}
+
+func (s *Server) failoverPeerMembershipMatches(peer failoverPeerState) bool {
+	return s.failoverMembershipMatches(peer.GroupID, peer.ConfigEpoch)
 }
 
 func (s *Server) failoverStateJSON(now time.Time) ([]byte, error) {
@@ -130,6 +207,7 @@ func queryFailoverPeer(addr string, timeout time.Duration, username, password st
 
 
 func (s *Server) evaluatePeerFailover(now time.Time) (failoverElectionResult, error) {
+	membership := s.failoverMembershipSnapshot()
 	local := s.localFailoverState(now)
 	if local.Role != "replica" || !local.MasterDown || local.MasterRunID == "" {
 		return failoverElectionResult{}, nil
@@ -138,17 +216,17 @@ func (s *Server) evaluatePeerFailover(now time.Time) (failoverElectionResult, er
 	observations := []failoverObservation{{
 		NodeID:     local.NodeID,
 		MasterDown: local.MasterDown,
-		Eligible:   local.Priority > 0,
+		Eligible:   local.Priority > 0 && !local.Retired,
 		Offset:     local.Offset,
 		Priority:   local.Priority,
 	}}
 
-	for _, addr := range s.failoverPeers {
+	for _, addr := range membership.Peers {
 		peer, err := queryFailoverPeer(addr, 200*time.Millisecond, s.replicationMasterUser, s.replicationMasterAuth)
 		if err != nil {
 			continue
 		}
-		if peer.Role != "replica" || peer.MasterRunID == "" || peer.MasterRunID != local.MasterRunID {
+		if !s.failoverPeerMembershipMatches(peer) || peer.Retired || peer.Role != "replica" || peer.MasterRunID == "" || peer.MasterRunID != local.MasterRunID {
 			continue
 		}
 		observations = append(observations, failoverObservation{
@@ -159,7 +237,7 @@ func (s *Server) evaluatePeerFailover(now time.Time) (failoverElectionResult, er
 			Priority:   peer.Priority,
 		})
 	}
-	return evaluateFailoverElection(observations, s.failoverQuorum), nil
+	return evaluateFailoverElection(observations, membership.Quorum), nil
 }
 
 
@@ -179,7 +257,8 @@ func (s *Server) requestFailoverVote(now time.Time, lineage string, term uint64,
 		changed = true
 	}
 	reply := failoverVoteReply{Term: s.failoverTerm}
-	eligible := local.Role == "replica" &&
+	eligible := !local.Retired &&
+		local.Role == "replica" &&
 		local.MasterDown &&
 		local.MasterRunID != "" &&
 		local.MasterRunID == lineage &&
@@ -254,14 +333,17 @@ type observedFailoverPeer struct {
 }
 
 func (s *Server) collectFailoverPeers(now time.Time) (failoverPeerState, []observedFailoverPeer) {
+	membership := s.failoverMembershipSnapshot()
 	local := s.localFailoverState(now)
-	peers := make([]observedFailoverPeer, 0, len(s.failoverPeers))
-	for _, addr := range s.failoverPeers {
+	peers := make([]observedFailoverPeer, 0, len(membership.Peers))
+	for _, addr := range membership.Peers {
 		peer, err := queryFailoverPeer(addr, 200*time.Millisecond, s.replicationMasterUser, s.replicationMasterAuth)
 		if err != nil {
 			continue
 		}
-		if peer.Role != "replica" ||
+		if !s.failoverPeerMembershipMatches(peer) ||
+			peer.Retired ||
+			peer.Role != "replica" ||
 			peer.MasterRunID == "" ||
 			peer.MasterRunID != local.MasterRunID {
 			continue
@@ -272,6 +354,7 @@ func (s *Server) collectFailoverPeers(now time.Time) (failoverPeerState, []obser
 }
 
 func (s *Server) runFailoverElectionRound(now time.Time) (failoverRoundResult, error) {
+	membership := s.failoverMembershipSnapshot()
 	local, peers := s.collectFailoverPeers(now)
 	if local.Role != "replica" || !local.MasterDown || local.MasterRunID == "" {
 		return failoverRoundResult{}, nil
@@ -299,7 +382,7 @@ func (s *Server) runFailoverElectionRound(now time.Time) (failoverRoundResult, e
 		}
 	}
 
-	election := evaluateFailoverElection(observations, s.failoverQuorum)
+	election := evaluateFailoverElection(observations, membership.Quorum)
 	result := failoverRoundResult{
 		CandidateID:   election.CandidateID,
 		QuorumReached: election.QuorumReached,
@@ -352,7 +435,7 @@ func (s *Server) runFailoverElectionRound(now time.Time) (failoverRoundResult, e
 		if vote.Granted {
 			result.Votes++
 		}
-		if result.Votes >= s.failoverQuorum {
+		if result.Votes >= membership.Quorum {
 			result.Won = true
 			return result, nil
 		}
@@ -363,6 +446,9 @@ func (s *Server) runFailoverElectionRound(now time.Time) (failoverRoundResult, e
 
 func (s *Server) requestFailoverLease(now time.Time, lineage string, term uint64, leaderID string, ttl time.Duration) failoverLeaseReply {
 	local := s.localFailoverState(now)
+	if local.Retired {
+		return failoverLeaseReply{}
+	}
 
 	s.failoverVoteMu.Lock()
 	currentTerm := s.failoverTerm
@@ -458,11 +544,12 @@ type failoverLeaseRoundResult struct {
 }
 
 func (s *Server) acquireFailoverLeaseRound(now time.Time, lineage string, term uint64, leaderID string) (failoverLeaseRoundResult, error) {
+	membership := s.failoverMembershipSnapshot()
 	result := failoverLeaseRoundResult{
 		Term:     term,
 		LeaderID: leaderID,
 	}
-	if term == 0 || leaderID == "" || lineage == "" || s.failoverQuorum <= 0 {
+	if term == 0 || leaderID == "" || lineage == "" || membership.Quorum <= 0 {
 		return result, nil
 	}
 
@@ -479,12 +566,12 @@ func (s *Server) acquireFailoverLeaseRound(now time.Time, lineage string, term u
 		result.ExpiresAt = localRequestStart.Add(leaseTTL - 250*time.Millisecond)
 	}
 
-	for _, addr := range s.failoverPeers {
+	for _, addr := range membership.Peers {
 		peer, err := queryFailoverPeer(addr, 200*time.Millisecond, s.replicationMasterUser, s.replicationMasterAuth)
 		if err != nil {
 			continue
 		}
-		if peer.Role != "replica" || peer.MasterRunID != lineage {
+		if !s.failoverPeerMembershipMatches(peer) || peer.Role != "replica" || peer.MasterRunID != lineage {
 			continue
 		}
 		requestStart := time.Now()
@@ -503,7 +590,7 @@ func (s *Server) acquireFailoverLeaseRound(now time.Time, lineage string, term u
 				result.ExpiresAt = expires
 			}
 		}
-		if result.Leases >= s.failoverQuorum {
+		if result.Leases >= membership.Quorum {
 			result.QuorumReached = true
 			return result, nil
 		}
@@ -603,10 +690,11 @@ type failoverReparentReply struct {
 }
 
 func (s *Server) resolveFailoverLeaderAddr(leaderID string) (string, error) {
+	membership := s.failoverMembershipSnapshot()
 	if leaderID == "" {
 		return "", errors.New("empty failover leader id")
 	}
-	for _, addr := range s.failoverPeers {
+	for _, addr := range membership.Peers {
 		state, err := queryFailoverPeer(
 			addr,
 			200*time.Millisecond,
@@ -616,7 +704,7 @@ func (s *Server) resolveFailoverLeaderAddr(leaderID string) (string, error) {
 		if err != nil {
 			continue
 		}
-		if state.NodeID == leaderID && state.Role == "master" {
+		if s.failoverPeerMembershipMatches(state) && !state.Retired && state.NodeID == leaderID && state.Role == "master" {
 			return addr, nil
 		}
 	}
@@ -624,6 +712,9 @@ func (s *Server) resolveFailoverLeaderAddr(leaderID string) (string, error) {
 }
 
 func (s *Server) requestFailoverReparent(now time.Time, lineage string, term uint64, leaderID string) (failoverReparentReply, error) {
+	if s.failoverMembershipSnapshot().Retired {
+		return failoverReparentReply{}, nil
+	}
 	s.failoverVoteMu.Lock()
 	currentTerm := s.failoverTerm
 	s.failoverVoteMu.Unlock()
@@ -710,18 +801,19 @@ func queryFailoverReparent(addr string, timeout time.Duration, username, passwor
 }
 
 func (s *Server) convergeFailoverReplicas(now time.Time) {
+	membership := s.failoverMembershipSnapshot()
 	active, term, lineage, leaderID, expiresAt, fenced := s.failoverLeaderState()
 	if !active || fenced || lineage == "" || leaderID == "" || expiresAt.IsZero() || !now.Before(expiresAt) {
 		return
 	}
-	for _, addr := range s.failoverPeers {
+	for _, addr := range membership.Peers {
 		state, err := queryFailoverPeer(
 			addr,
 			200*time.Millisecond,
 			s.replicationMasterUser,
 			s.replicationMasterAuth,
 		)
-		if err != nil || state.NodeID == leaderID {
+		if err != nil || !s.failoverPeerMembershipMatches(state) || state.Retired || state.NodeID == leaderID {
 			continue
 		}
 
@@ -759,6 +851,9 @@ type failoverDemoteReply struct {
 }
 
 func (s *Server) requestFailoverDemote(now time.Time, lineage string, term uint64, leaderID string) (failoverDemoteReply, error) {
+	if s.failoverMembershipSnapshot().Retired {
+		return failoverDemoteReply{}, nil
+	}
 	s.failoverVoteMu.Lock()
 	currentTerm := s.failoverTerm
 	s.failoverVoteMu.Unlock()
@@ -855,7 +950,8 @@ func queryFailoverDemote(addr string, timeout time.Duration, username, password,
 
 
 func (s *Server) verifyFailoverLeaderQuorum(now time.Time, lineage string, term uint64, leaderID string) (bool, uint64) {
-	if lineage == "" || leaderID == "" || term == 0 || s.failoverQuorum <= 0 {
+	membership := s.failoverMembershipSnapshot()
+	if lineage == "" || leaderID == "" || term == 0 || membership.Quorum <= 0 {
 		return false, term
 	}
 
@@ -863,7 +959,7 @@ func (s *Server) verifyFailoverLeaderQuorum(now time.Time, lineage string, term 
 	grants := 0
 	highestTerm := term
 
-	for _, addr := range s.failoverPeers {
+	for _, addr := range membership.Peers {
 		state, err := queryFailoverPeer(
 			addr,
 			200*time.Millisecond,
@@ -877,6 +973,9 @@ func (s *Server) verifyFailoverLeaderQuorum(now time.Time, lineage string, term 
 		// The elected leader no longer reports masterRunID after promotion, so
 		// identify it by node ID. Other voters must still report the original
 		// lineage.
+		if !s.failoverPeerMembershipMatches(state) {
+			continue
+		}
 		if state.NodeID != leaderID &&
 			(state.Role != "replica" || state.MasterRunID != lineage) {
 			continue
@@ -904,7 +1003,7 @@ func (s *Server) verifyFailoverLeaderQuorum(now time.Time, lineage string, term 
 		if reply.Granted {
 			grants++
 		}
-		if grants >= s.failoverQuorum {
+		if grants >= membership.Quorum {
 			return true, highestTerm
 		}
 	}
