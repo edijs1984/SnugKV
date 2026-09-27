@@ -725,21 +725,34 @@ func (s *Server) convergeFailoverReplicas(now time.Time) {
 			s.replicationMasterUser,
 			s.replicationMasterAuth,
 		)
-		if err != nil {
+		if err != nil || state.NodeID == leaderID {
 			continue
 		}
-		if state.NodeID == leaderID || state.Role != "replica" || state.MasterRunID != lineage {
+
+		if state.Role == "master" && state.NodeID == lineage {
+			_, _ = queryFailoverDemote(
+				addr,
+				200*time.Millisecond,
+				s.replicationMasterUser,
+				s.replicationMasterAuth,
+				lineage,
+				term,
+				leaderID,
+			)
 			continue
 		}
-		_, _ = queryFailoverReparent(
-			addr,
-			200*time.Millisecond,
-			s.replicationMasterUser,
-			s.replicationMasterAuth,
-			lineage,
-			term,
-			leaderID,
-		)
+
+		if state.Role == "replica" && state.MasterRunID == lineage {
+			_, _ = queryFailoverReparent(
+				addr,
+				200*time.Millisecond,
+				s.replicationMasterUser,
+				s.replicationMasterAuth,
+				lineage,
+				term,
+				leaderID,
+			)
+		}
 	}
 }
 
