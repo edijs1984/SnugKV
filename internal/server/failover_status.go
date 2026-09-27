@@ -208,6 +208,11 @@ func (s *Server) diagnoseFailoverTransition(now time.Time) failoverTransitionDia
 		retireSet[addr] = struct{}{}
 	}
 
+	hasUnreachable := false
+	hasWrongGroup := false
+	hasUnretired := false
+	hasUnconverged := false
+
 	for _, addr := range unionStrings(m.CommitTargets, m.CommitRetireTargets) {
 		kind := "commit"
 		if _, ok := retireSet[addr]; ok {
@@ -255,22 +260,33 @@ func (s *Server) diagnoseFailoverTransition(now time.Time) failoverTransitionDia
 				target.ConfigEpoch >= m.CommitEpoch &&
 				!target.JointActive
 		}
-		if d.Blocker == "" && !target.Converged {
+		if !target.Converged {
 			switch {
 			case !target.Reachable:
-				d.Blocker = "one or more transition targets are unreachable"
+				hasUnreachable = true
 			case target.GroupID != m.GroupID:
-				d.Blocker = "one or more transition targets report a different failover group"
+				hasWrongGroup = true
 			case kind == "retire" && !target.Retired:
-				d.Blocker = "one or more removed members have not finalized retirement"
+				hasUnretired = true
 			default:
-				d.Blocker = "one or more members have not converged to the committed epoch"
+				hasUnconverged = true
 			}
 		}
 		d.Targets = append(d.Targets, target)
 	}
-	if d.Blocker == "" && m.CommitPending {
-		d.Blocker = "recovery is pending final convergence bookkeeping"
+	if m.CommitPending {
+		switch {
+		case hasUnreachable:
+			d.Blocker = "one or more transition targets are unreachable"
+		case hasWrongGroup:
+			d.Blocker = "one or more transition targets report a different failover group"
+		case hasUnretired:
+			d.Blocker = "one or more removed members have not finalized retirement"
+		case hasUnconverged:
+			d.Blocker = "one or more members have not converged to the committed epoch"
+		default:
+			d.Blocker = "recovery is pending final convergence bookkeeping"
+		}
 	}
 	return d
 }
