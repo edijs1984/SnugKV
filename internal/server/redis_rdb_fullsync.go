@@ -24,6 +24,8 @@ const (
 	redisRDBTypeZSetZiplist    = byte(12)
 	redisRDBTypeHashZiplist    = byte(13)
 	redisRDBTypeListQuicklist  = byte(14)
+	redisRDBTypeStreamListpacks = byte(15)
+	redisRDBTypeStreamListpacks2 = byte(19)
 	redisRDBTypeHashMetadataPreGA     = byte(22)
 	redisRDBTypeHashListpackExPreGA   = byte(23)
 	redisRDBTypeHashMetadata          = byte(24)
@@ -603,8 +605,8 @@ func decodeRedisRDBObjectAtWithTemplates(data []byte, pos *int, objectType byte,
 		}
 		return decodedKeyObject{valueType: engine.TypeZSet, zset: items}, nil
 
-	case keyRDBTypeStreamListpacks3:
-		snapshot, err := decodeStreamDump(data, pos)
+	case redisRDBTypeStreamListpacks, redisRDBTypeStreamListpacks2, keyRDBTypeStreamListpacks3:
+		snapshot, err := decodeStreamDumpVersion(data, pos, objectType)
 		if err != nil {
 			return decodedKeyObject{}, errors.New("invalid Redis RDB stream")
 		}
