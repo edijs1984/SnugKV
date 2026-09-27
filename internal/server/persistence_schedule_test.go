@@ -374,3 +374,73 @@ func TestTransactionBGSAVECapturesStateAtCommandPosition(t *testing.T) {
 		t.Fatalf("live state missing post-BGSAVE write: %q", got)
 	}
 }
+
+
+func TestTransactionBGRewriteAOFIncludesLaterTransactionWrites(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "active.aof")
+	journal, err := persistence.Open(path, "always")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+
+	s := New(engine.New())
+	s.SetJournal(journal)
+
+	tx := newTransactionSession(s)
+	if handled, got, err := tx.handleCommand(clientArgs("MULTI")); !handled || err != nil || string(got) != "+OK\r\n" {
+		t.Fatalf("MULTI handled=%v got=%q err=%v", handled, got, err)
+	}
+	for _, args := range [][][]byte{
+		clientArgs("SET", "before", "one"),
+		clientArgs("BGREWRITEAOF"),
+		clientArgs("SET", "after", "two"),
+	} {
+		if handled, got, err := tx.handleCommand(args); !handled || err != nil || string(got) != "+QUEUED\r\n" {
+			t.Fatalf("queue %q handled=%v got=%q err=%v", args[0], handled, got, err)
+		}
+	}
+
+	done := make(chan struct{})
+	var execReply []byte
+	var execErr error
+	go func() {
+		execReply, execErr = tx.exec()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("EXEC deadlocked with BGREWRITEAOF")
+	}
+	if execErr != nil {
+		t.Fatal(execErr)
+	}
+	if !strings.Contains(string(execReply), "+Background append only file rewriting started\r\n") {
+		t.Fatalf("EXEC response=%q", execReply)
+	}
+
+	s.waitPersistenceJobs()
+
+	values := map[string]string{}
+	if err := persistence.Replay(path, func(records []persistence.Record) error {
+		for _, record := range records {
+			if record.Reset {
+				values = map[string]string{}
+				continue
+			}
+			if record.Deleted {
+				delete(values, string(record.Key))
+				continue
+			}
+			values[string(record.Key)] = string(record.Value)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if values["before"] != "one" || values["after"] != "two" {
+		t.Fatalf("rewritten AOF lost transaction writes: %v", values)
+	}
+}
