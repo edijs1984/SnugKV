@@ -269,7 +269,7 @@ func appendStreamGroupsRDB(out []byte, groups []engine.StreamSnapshotGroup) []by
 	return out
 }
 
-func decodeStreamGroupsRDB(body []byte, pos *int) ([]engine.StreamSnapshotGroup, error) {
+func decodeStreamGroupsRDBVersion(body []byte, pos *int, streamType byte, entries []engine.StreamEntry) ([]engine.StreamSnapshotGroup, error) {
 	groupCount, encoded, err := readRDBLen(body, pos)
 	if err != nil || encoded || groupCount > uint64(len(body)) {
 		return nil, errors.New("ERR Bad data format")
@@ -288,16 +288,25 @@ func decodeStreamGroupsRDB(body []byte, pos *int) ([]engine.StreamSnapshotGroup,
 		if err != nil || enc {
 			return nil, errors.New("ERR Bad data format")
 		}
-		entriesReadRaw, enc, err := readRDBLen(body, pos)
-		if err != nil || enc {
-			return nil, errors.New("ERR Bad data format")
-		}
 		entriesRead := int64(-1)
-		if entriesReadRaw != math.MaxUint64 {
-			if entriesReadRaw > math.MaxInt64 {
+		if streamType >= redisRDBTypeStreamListpacks2 {
+			entriesReadRaw, enc, err := readRDBLen(body, pos)
+			if err != nil || enc {
 				return nil, errors.New("ERR Bad data format")
 			}
-			entriesRead = int64(entriesReadRaw)
+			if entriesReadRaw != math.MaxUint64 {
+				if entriesReadRaw > math.MaxInt64 {
+					return nil, errors.New("ERR Bad data format")
+				}
+				entriesRead = int64(entriesReadRaw)
+			}
+		} else {
+			entriesRead = 0
+			for _, entry := range entries {
+				if entry.ID.Millis < lastMS || (entry.ID.Millis == lastMS && entry.ID.Sequence <= lastSeq) {
+					entriesRead++
+				}
+			}
 		}
 		group := engine.StreamSnapshotGroup{
 			Name: string(name),
@@ -348,14 +357,17 @@ func decodeStreamGroupsRDB(body []byte, pos *int) ([]engine.StreamSnapshotGroup,
 			if err != nil {
 				return nil, err
 			}
-			activeAt, err := readRDBFixedI64(body, pos)
-			if err != nil {
-				return nil, err
-			}
-			// Redis persists -1 for a consumer that has never been active.
-			// SnugKV uses zero internally for the same state.
-			if activeAt < 0 {
-				activeAt = 0
+			activeAt := seenAt
+			if streamType >= keyRDBTypeStreamListpacks3 {
+				activeAt, err = readRDBFixedI64(body, pos)
+				if err != nil {
+					return nil, err
+				}
+				// Redis persists -1 for a consumer that has never been active.
+				// SnugKV uses zero internally for the same state.
+				if activeAt < 0 {
+					activeAt = 0
+				}
 			}
 			group.Consumers = append(group.Consumers, engine.StreamSnapshotConsumer{
 				Name: string(consumerName), SeenAt: seenAt, ActiveAt: activeAt,
@@ -429,6 +441,10 @@ func encodeStreamDump(snapshot engine.StreamSnapshot) ([]byte, error) {
 }
 
 func decodeStreamDump(body []byte, pos *int) (engine.StreamSnapshot, error) {
+	return decodeStreamDumpVersion(body, pos, keyRDBTypeStreamListpacks3)
+}
+
+func decodeStreamDumpVersion(body []byte, pos *int, streamType byte) (engine.StreamSnapshot, error) {
 	nodeCount, enc, err := readRDBLen(body, pos)
 	if err != nil || enc || nodeCount > uint64(len(body)) {
 		return engine.StreamSnapshot{}, errors.New("ERR Bad data format")
@@ -466,27 +482,36 @@ func decodeStreamDump(body []byte, pos *int) (engine.StreamSnapshot, error) {
 	if err != nil || enc {
 		return engine.StreamSnapshot{}, errors.New("ERR Bad data format")
 	}
-	firstMS, enc, err := readRDBLen(body, pos)
-	if err != nil || enc {
-		return engine.StreamSnapshot{}, errors.New("ERR Bad data format")
+	var firstMS, firstSeq, maxDelMS, maxDelSeq, entriesAdded uint64
+	if streamType >= redisRDBTypeStreamListpacks2 {
+		firstMS, enc, err = readRDBLen(body, pos)
+		if err != nil || enc {
+			return engine.StreamSnapshot{}, errors.New("ERR Bad data format")
+		}
+		firstSeq, enc, err = readRDBLen(body, pos)
+		if err != nil || enc {
+			return engine.StreamSnapshot{}, errors.New("ERR Bad data format")
+		}
+		maxDelMS, enc, err = readRDBLen(body, pos)
+		if err != nil || enc {
+			return engine.StreamSnapshot{}, errors.New("ERR Bad data format")
+		}
+		maxDelSeq, enc, err = readRDBLen(body, pos)
+		if err != nil || enc {
+			return engine.StreamSnapshot{}, errors.New("ERR Bad data format")
+		}
+		entriesAdded, enc, err = readRDBLen(body, pos)
+		if err != nil || enc {
+			return engine.StreamSnapshot{}, errors.New("ERR Bad data format")
+		}
+	} else {
+		entriesAdded = length
+		if len(snapshot.Entries) > 0 {
+			firstMS = snapshot.Entries[0].ID.Millis
+			firstSeq = snapshot.Entries[0].ID.Sequence
+		}
 	}
-	firstSeq, enc, err := readRDBLen(body, pos)
-	if err != nil || enc {
-		return engine.StreamSnapshot{}, errors.New("ERR Bad data format")
-	}
-	maxDelMS, enc, err := readRDBLen(body, pos)
-	if err != nil || enc {
-		return engine.StreamSnapshot{}, errors.New("ERR Bad data format")
-	}
-	maxDelSeq, enc, err := readRDBLen(body, pos)
-	if err != nil || enc {
-		return engine.StreamSnapshot{}, errors.New("ERR Bad data format")
-	}
-	entriesAdded, enc, err := readRDBLen(body, pos)
-	if err != nil || enc {
-		return engine.StreamSnapshot{}, errors.New("ERR Bad data format")
-	}
-	groups, err := decodeStreamGroupsRDB(body, pos)
+	groups, err := decodeStreamGroupsRDBVersion(body, pos, streamType, snapshot.Entries)
 	if err != nil {
 		return engine.StreamSnapshot{}, err
 	}

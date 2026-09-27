@@ -30,6 +30,8 @@ Existing support retained:
 - LIST_QUICKLIST_2
 - SET_LISTPACK
 - STREAM_LISTPACKS_3
+- legacy STREAM_LISTPACKS (RDB type 15)
+- legacy STREAM_LISTPACKS_2 (RDB type 19)
 
 ## Shared string encodings
 
@@ -157,3 +159,34 @@ Future work should be driven by real datasets and Redis-version fixtures, especi
 - any additional Redis object types observed in production RDBs
 - broader stream consumer-group / pending-entry edge cases
 - exact compatibility audits against older Redis-generated fixtures
+
+
+## Legacy stream RDB compatibility
+
+SnugKV now decodes the two historical Redis stream object encodings that precede `STREAM_LISTPACKS_3`:
+
+- `RDB_TYPE_STREAM_LISTPACKS` (type 15)
+- `RDB_TYPE_STREAM_LISTPACKS_2` (type 19)
+
+The listpack node payload is shared with the existing type-21 decoder. The compatibility work is in the metadata tail:
+
+- type 15 does not persist first-entry ID, max-deleted ID, or entries-added;
+  SnugKV reconstructs first-entry ID from decoded entries, sets max-deleted ID to zero, and initializes entries-added to the live stream length, matching Redis load behavior.
+- type 19 persists first-entry ID, max-deleted ID, and entries-added.
+- type 15 does not persist consumer-group entries-read; SnugKV reconstructs it from the group's last-delivered ID and decoded stream entries.
+- types 15 and 19 do not persist consumer active-time; SnugKV restores active-time from seen-time, matching Redis's legacy load behavior.
+- global PEL entries, per-consumer PEL ownership, delivery timestamps, and delivery counts are restored through the existing stream snapshot model.
+
+Validation added:
+
+- direct decoder fixtures for types 15 and 19;
+- consumer-group and PEL fixtures for both legacy formats;
+- full-sync RDB fixtures covering byte-level RDB decode -> persistence records -> engine restore -> stream snapshot.
+
+Operator-reported passing focused matrices:
+
+- `go test -race ./internal/server -run '^TestDecodeRedisLegacyStreamListpacksType(15|19)$' -count=1 -v`
+- `go test -race ./internal/server -run '^TestDecodeRedisLegacyStreamGroupsType(15|19)$' -count=1 -v`
+- `go test -race ./internal/server -run '^TestDecodeRedisFullSyncLegacyStreamTypes$' -count=1 -v`
+- `go test -race ./internal/server -run '^(TestDecodeRedis|TestReplication|TestKeyRestoreRedis|TestKeyRestoreAcceptsRedis)' -count=1 -v`
+- `go test -race ./internal/engine -run '^TestStream' -count=1 -v`
