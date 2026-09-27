@@ -97,3 +97,37 @@ func (s *Server) configureClusterSlots(enabled bool, nodeAddr string, ranges map
 	}
 	return nil
 }
+
+
+func (s *Server) enforceClusterRouting(args [][]byte) error {
+	if !s.clusterEnabled {
+		return nil
+	}
+	if len(args) == 0 || strings.EqualFold(string(args[0]), "CLUSTER") {
+		return nil
+	}
+
+	keys, err := commandKeys(args)
+	if err != nil {
+		return err
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+
+	slot := clusterKeySlot(keys[0].value)
+	for _, key := range keys[1:] {
+		if clusterKeySlot(key.value) != slot {
+			return errors.New("CROSSSLOT Keys in request don't hash to the same slot")
+		}
+	}
+
+	owner := s.clusterSlotOwners[slot]
+	if owner == "" {
+		return errors.New("CLUSTERDOWN Hash slot not served")
+	}
+	if owner != s.clusterNodeAddr {
+		return fmt.Errorf("MOVED %d %s", slot, owner)
+	}
+	return nil
+}
