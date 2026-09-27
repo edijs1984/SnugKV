@@ -213,3 +213,29 @@ func TestSlowlogRedis810LogsOwnCommands(t *testing.T) {
 		t.Fatalf("disabled logging: LEN=%q", got)
 	}
 }
+
+func TestPersistenceRedis810ArgumentErrors(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"SAVE", "extra"}, "ERR wrong number of arguments for 'save' command"},
+		{[]string{"LASTSAVE", "extra"}, "ERR wrong number of arguments for 'lastsave' command"},
+		{[]string{"BGSAVE", "invalid"}, "ERR syntax error"},
+		{[]string{"BGSAVE", "SCHEDULE", "extra"}, "ERR syntax error"},
+		{[]string{"BGREWRITEAOF", "extra"}, "ERR wrong number of arguments for 'bgrewriteaof' command"},
+	}
+	for _, tc := range cases {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			s := New(engine.New())
+			args := make([][]byte, len(tc.args))
+			for i, arg := range tc.args {
+				args[i] = []byte(arg)
+			}
+			_, err := s.Execute(args)
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("error=%v, want %q", err, tc.want)
+			}
+		})
+	}
+}
