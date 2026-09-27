@@ -669,6 +669,12 @@ func commandInfoFlags(
 	case "BITOP":
 		return []string{"write", "denyoom"}
 
+	case "BITFIELD":
+		return []string{"write", "denyoom"}
+
+	case "BITFIELD_RO":
+		return []string{"readonly", "fast"}
+
 	case "SORT":
 		return []string{"write", "denyoom", "movablekeys"}
 
@@ -836,6 +842,20 @@ func commandInfoACL(
 			"@write",
 			"@bitmap",
 			"@slow",
+		}
+
+	case "BITFIELD":
+		return []string{
+			"@write",
+			"@bitmap",
+			"@slow",
+		}
+
+	case "BITFIELD_RO":
+		return []string{
+			"@read",
+			"@bitmap",
+			"@fast",
 		}
 
 	case "SINTERCARD":

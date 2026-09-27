@@ -128,6 +128,8 @@ var commandTable = map[string]commandInfo{
 	"GETRANGE":       {4, 4, 1, 1, 1, false},
 	"SETRANGE":       {4, 4, 1, 1, 1, true},
 	"GETBIT":         {3, 3, 1, 1, 1, false},
+	"BITFIELD":       {2, 0, 1, 1, 1, true},
+	"BITFIELD_RO":    {2, 0, 1, 1, 1, false},
 	"SETBIT":         {4, 4, 1, 1, 1, true},
 	"BITCOUNT":       {2, 5, 1, 1, 1, false},
 	"BITPOS":         {3, 6, 1, 1, 1, false},
@@ -617,6 +619,9 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		}
 
 		return integer(int64(length)), nil
+
+	case "BITFIELD", "BITFIELD_RO":
+		return s.executeBitField(args)
 
 	case "GETBIT":
 		offset, err := parseInt64(args[2])
