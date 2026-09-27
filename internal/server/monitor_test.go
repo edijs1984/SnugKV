@@ -99,3 +99,40 @@ func TestMonitorACLRejected(t *testing.T) {
 	monitorTestSend(t, conn, "MONITOR")
 	if got := monitorTestReply(t, r); !strings.HasPrefix(got, "-NOPERM") { t.Fatalf("MONITOR=%q", got) }
 }
+
+func TestMonitorResetAndQuit(t *testing.T) {
+	conn := connectTestServer(t)
+	r := bufio.NewReader(conn)
+	for _, args := range [][]string{{"CLIENT", "SETNAME", "before-reset"}, {"MONITOR"}} {
+		monitorTestSend(t, conn, args...)
+		if got := monitorTestReply(t, r); got != "+OK\r\n" { t.Fatalf("%v=%q", args, got) }
+	}
+	monitorTestSend(t, conn, "PING")
+	if got := monitorTestReply(t, r); got != "+PONG\r\n" { t.Fatalf("PING reply must precede event: %q", got) }
+	line, err := r.ReadString('\n')
+	if err != nil || !strings.HasSuffix(line, " \"PING\"\r\n") { t.Fatalf("PING event=%q err=%v", line, err) }
+	monitorTestSend(t, conn, "RESET")
+	if got := monitorTestReply(t, r); got != "+RESET\r\n" { t.Fatalf("RESET=%q", got) }
+	monitorTestSend(t, conn, "CLIENT", "GETNAME")
+	if got := monitorTestReply(t, r); got != "$-1\r\n" { t.Fatalf("name after RESET=%q", got) }
+	monitorTestSend(t, conn, "PING")
+	if got := monitorTestReply(t, r); got != "+PONG\r\n" { t.Fatalf("PING after RESET=%q", got) }
+	monitorTestSend(t, conn, "QUIT")
+	if got := monitorTestReply(t, r); got != "+OK\r\n" { t.Fatalf("QUIT=%q (unexpected monitor event after RESET)", got) }
+	if _, err := r.ReadByte(); err != io.EOF { t.Fatalf("QUIT should close connection: %v", err) }
+}
+
+func TestMonitorCanSubscribeAgainAfterReset(t *testing.T) {
+	conn := connectTestServer(t)
+	r := bufio.NewReader(conn)
+	for i := 0; i < 3; i++ {
+		monitorTestSend(t, conn, "MONITOR")
+		if got := monitorTestReply(t, r); got != "+OK\r\n" { t.Fatalf("MONITOR=%q", got) }
+		monitorTestSend(t, conn, "PING")
+		if got := monitorTestReply(t, r); got != "+PONG\r\n" { t.Fatalf("PING=%q", got) }
+		line, err := r.ReadString('\n')
+		if err != nil || !strings.HasSuffix(line, " \"PING\"\r\n") { t.Fatalf("event=%q err=%v", line, err) }
+		monitorTestSend(t, conn, "RESET")
+		if got := monitorTestReply(t, r); got != "+RESET\r\n" { t.Fatalf("RESET=%q", got) }
+	}
+}
