@@ -16,14 +16,6 @@ type slowlogEntry struct {
 	args      [][]byte
 }
 
-func cloneCommandArgs(args [][]byte) [][]byte {
-	out := make([][]byte, len(args))
-	for i := range args {
-		out[i] = append([]byte(nil), args[i]...)
-	}
-	return out
-}
-
 func (s *Server) recordSlowlog(args [][]byte, elapsed time.Duration) {
 	if len(args) == 0 || strings.EqualFold(string(args[0]), "SLOWLOG") {
 		return
