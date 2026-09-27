@@ -14,6 +14,8 @@ import (
 
 type failoverPeerState struct {
 	NodeID      string `json:"node_id"`
+	GroupID     string `json:"group_id,omitempty"`
+	ConfigEpoch uint64 `json:"config_epoch,omitempty"`
 	Role        string `json:"role"`
 	MasterDown  bool   `json:"master_down"`
 	Offset      int64  `json:"offset"`
@@ -55,6 +57,8 @@ func (s *Server) localFailoverState(now time.Time) failoverPeerState {
 	s.failoverVoteMu.Unlock()
 	return failoverPeerState{
 		NodeID:      nodeID,
+		GroupID:     s.failoverGroupID,
+		ConfigEpoch: s.failoverConfigEpoch,
 		Role:        roleName,
 		MasterDown:  masterDown,
 		Offset:      offset,
@@ -62,6 +66,15 @@ func (s *Server) localFailoverState(now time.Time) failoverPeerState {
 		MasterRunID: masterRunID,
 		Term:        term,
 	}
+}
+
+
+func (s *Server) failoverMembershipMatches(groupID string, epoch uint64) bool {
+	return s.failoverGroupID == groupID && s.failoverConfigEpoch == epoch
+}
+
+func (s *Server) failoverPeerMembershipMatches(peer failoverPeerState) bool {
+	return s.failoverMembershipMatches(peer.GroupID, peer.ConfigEpoch)
 }
 
 func (s *Server) failoverStateJSON(now time.Time) ([]byte, error) {
@@ -148,7 +161,7 @@ func (s *Server) evaluatePeerFailover(now time.Time) (failoverElectionResult, er
 		if err != nil {
 			continue
 		}
-		if peer.Role != "replica" || peer.MasterRunID == "" || peer.MasterRunID != local.MasterRunID {
+		if !s.failoverPeerMembershipMatches(peer) || peer.Role != "replica" || peer.MasterRunID == "" || peer.MasterRunID != local.MasterRunID {
 			continue
 		}
 		observations = append(observations, failoverObservation{
@@ -261,7 +274,8 @@ func (s *Server) collectFailoverPeers(now time.Time) (failoverPeerState, []obser
 		if err != nil {
 			continue
 		}
-		if peer.Role != "replica" ||
+		if !s.failoverPeerMembershipMatches(peer) ||
+			peer.Role != "replica" ||
 			peer.MasterRunID == "" ||
 			peer.MasterRunID != local.MasterRunID {
 			continue
@@ -484,7 +498,7 @@ func (s *Server) acquireFailoverLeaseRound(now time.Time, lineage string, term u
 		if err != nil {
 			continue
 		}
-		if peer.Role != "replica" || peer.MasterRunID != lineage {
+		if !s.failoverPeerMembershipMatches(peer) || peer.Role != "replica" || peer.MasterRunID != lineage {
 			continue
 		}
 		requestStart := time.Now()
@@ -616,7 +630,7 @@ func (s *Server) resolveFailoverLeaderAddr(leaderID string) (string, error) {
 		if err != nil {
 			continue
 		}
-		if state.NodeID == leaderID && state.Role == "master" {
+		if s.failoverPeerMembershipMatches(state) && state.NodeID == leaderID && state.Role == "master" {
 			return addr, nil
 		}
 	}
@@ -721,7 +735,7 @@ func (s *Server) convergeFailoverReplicas(now time.Time) {
 			s.replicationMasterUser,
 			s.replicationMasterAuth,
 		)
-		if err != nil || state.NodeID == leaderID {
+		if err != nil || !s.failoverPeerMembershipMatches(state) || state.NodeID == leaderID {
 			continue
 		}
 
@@ -877,6 +891,9 @@ func (s *Server) verifyFailoverLeaderQuorum(now time.Time, lineage string, term 
 		// The elected leader no longer reports masterRunID after promotion, so
 		// identify it by node ID. Other voters must still report the original
 		// lineage.
+		if !s.failoverPeerMembershipMatches(state) {
+			continue
+		}
 		if state.NodeID != leaderID &&
 			(state.Role != "replica" || state.MasterRunID != lineage) {
 			continue
