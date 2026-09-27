@@ -29,6 +29,16 @@ var searchCommands = map[string]commandInfo{
 	"FT.EXPLAIN":     {3, 5, 0, 0, 0, false},
 	"FT.EXPLAINCLI":  {3, 5, 0, 0, 0, false},
 	"FT.PROFILE":     {5, 0, 0, 0, 0, false},
+	"FT.DICTADD":     {3, 0, 0, 0, 0, true},
+	"FT.DICTDEL":     {3, 0, 0, 0, 0, true},
+	"FT.DICTDUMP":    {2, 2, 0, 0, 0, false},
+	"FT.SPELLCHECK":  {3, 0, 0, 0, 0, false},
+	"FT.SYNUPDATE":   {4, 0, 0, 0, 0, true},
+	"FT.SYNDUMP":     {2, 2, 0, 0, 0, false},
+	"FT.SUGADD":      {4, 0, 0, 0, 0, true},
+	"FT.SUGDEL":      {3, 3, 0, 0, 0, true},
+	"FT.SUGGET":      {3, 0, 0, 0, 0, false},
+	"FT.SUGLEN":      {2, 2, 0, 0, 0, false},
 }
 
 func init() {
@@ -2539,6 +2549,14 @@ func (s *Server) executeSearchCommand(args [][]byte) ([]byte, error) {
 		return executeFTExplain(s.store, resolved, strings.EqualFold(string(args[0]), "FT.EXPLAINCLI"))
 	case "FT.PROFILE":
 		return s.executeFTProfile(args)
+	case "FT.DICTADD", "FT.DICTDEL", "FT.DICTDUMP":
+		return s.executeFTDict(args)
+	case "FT.SPELLCHECK":
+		return s.executeFTSpellCheck(args)
+	case "FT.SYNUPDATE", "FT.SYNDUMP":
+		return s.executeFTSynonym(args)
+	case "FT.SUGADD", "FT.SUGDEL", "FT.SUGGET", "FT.SUGLEN":
+		return s.executeFTSuggestion(args)
 	case "FT.INFO", "FT.SEARCH", "FT.AGGREGATE":
 		resolved, err := resolveSearchReadIndex(s.store, args)
 		if err != nil {
