@@ -84,3 +84,52 @@ func TestBGSaveScheduleRunsAfterRewrite(t *testing.T) {
 	}
 	requirePersistenceStatus(t, s, "rdb_last_bgsave_status:ok", "rdb_bgsave_in_progress:0")
 }
+
+func TestBGRewriteAOFScheduleAfterSave(t *testing.T) {
+	for _, failSave := range []bool{false, true} {
+		name := "successful-save"
+		if failSave {
+			name = "failed-save"
+		}
+		t.Run(name, func(t *testing.T) {
+			s := New(engine.New())
+			dir := t.TempDir()
+			s.snapshotPath = filepath.Join(dir, "dump.snap")
+			if failSave {
+				s.snapshotPath = filepath.Join(dir, "missing", "dump.snap")
+			}
+			s.aofRewritePath = filepath.Join(dir, "export.aof")
+			execute(t, s, "SET", "queued", "value")
+			// Hold the save in its running state deterministically, then
+			// invoke the real save worker to exercise completion and handoff.
+			s.persistenceJobMu.Lock()
+			s.bgsaveRunning = true
+			s.persistenceJobMu.Unlock()
+			for i := 0; i < 2; i++ {
+				got := execute(t, s, "BGREWRITEAOF")
+				if got != "+Background append only file rewriting scheduled\r\n" {
+					t.Fatalf("BGREWRITEAOF=%q", got)
+				}
+			}
+			requirePersistenceStatus(t, s, "aof_rewrite_scheduled:1", "aof_rewrite_in_progress:0")
+			s.runBackgroundSave()
+			waitPersistenceStatusJob(t, s)
+			requirePersistenceStatus(t, s, "aof_rewrite_scheduled:0", "aof_rewrite_in_progress:0",
+				"aof_last_bgrewrite_status:ok", "aof_enabled:0")
+			found := false
+			if err := persistence.Replay(s.aofRewritePath, func(records []persistence.Record) error {
+				for _, record := range records {
+					if string(record.Key) == "queued" && string(record.Value) == "value" {
+						found = true
+					}
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if !found {
+				t.Fatal("queued rewrite did not persist data")
+			}
+		})
+	}
+}
