@@ -10,6 +10,7 @@ import (
 )
 
 type authSession struct {
+	client          *clientSession
 	username        string
 	authenticated   bool
 	aclVersion      uint64
