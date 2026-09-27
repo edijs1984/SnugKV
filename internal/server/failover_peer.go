@@ -19,6 +19,12 @@ type failoverPeerState struct {
 	Offset      int64  `json:"offset"`
 	Priority    int    `json:"priority"`
 	MasterRunID string `json:"master_run_id,omitempty"`
+	Term        uint64 `json:"term"`
+}
+
+type failoverVoteReply struct {
+	Term    uint64 `json:"term"`
+	Granted bool   `json:"granted"`
 }
 
 func (s *Server) localFailoverState(now time.Time) failoverPeerState {
@@ -38,13 +44,17 @@ func (s *Server) localFailoverState(now time.Time) failoverPeerState {
 	if role == replicationReplica {
 		roleName = "replica"
 	}
+	s.failoverVoteMu.Lock()
+	term := s.failoverTerm
+	s.failoverVoteMu.Unlock()
 	return failoverPeerState{
-		NodeID:     nodeID,
-		Role:       roleName,
-		MasterDown: masterDown,
-		Offset:     offset,
+		NodeID:      nodeID,
+		Role:        roleName,
+		MasterDown:  masterDown,
+		Offset:      offset,
 		Priority:    s.failoverPriority,
 		MasterRunID: masterRunID,
+		Term:        term,
 	}
 }
 
@@ -140,4 +150,64 @@ func (s *Server) evaluatePeerFailover(now time.Time) (failoverElectionResult, er
 		})
 	}
 	return evaluateFailoverElection(observations, s.failoverQuorum), nil
+}
+
+
+func (s *Server) requestFailoverVote(now time.Time, lineage string, term uint64, candidateID string, candidateOffset int64, candidatePriority int) failoverVoteReply {
+	local := s.localFailoverState(now)
+	s.failoverVoteMu.Lock()
+	defer s.failoverVoteMu.Unlock()
+
+	if term < s.failoverTerm {
+		return failoverVoteReply{Term: s.failoverTerm}
+	}
+	if term > s.failoverTerm {
+		s.failoverTerm = term
+		s.failoverVotedFor = ""
+	}
+	reply := failoverVoteReply{Term: s.failoverTerm}
+	if local.Role != "replica" || !local.MasterDown || local.MasterRunID == "" || local.MasterRunID != lineage {
+		return reply
+	}
+	if candidateID == "" || candidatePriority <= 0 {
+		return reply
+	}
+	if candidateOffset < local.Offset {
+		return reply
+	}
+	if s.failoverVotedFor != "" && s.failoverVotedFor != candidateID {
+		return reply
+	}
+	s.failoverVotedFor = candidateID
+	reply.Granted = true
+	return reply
+}
+
+func queryFailoverVote(addr string, timeout time.Duration, lineage string, term uint64, candidateID string, offset int64, priority int) (failoverVoteReply, error) {
+	conn, err := net.DialTimeout("tcp", addr, timeout)
+	if err != nil {
+		return failoverVoteReply{}, err
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+	if err := writeReplicationRESPCommand(
+		conn,
+		"SNUG.FAILOVER", "REQUESTVOTE",
+		lineage,
+		strconv.FormatUint(term, 10),
+		candidateID,
+		strconv.FormatInt(offset, 10),
+		strconv.Itoa(priority),
+	); err != nil {
+		return failoverVoteReply{}, err
+	}
+	payload, err := readRESPBulk(bufio.NewReader(conn))
+	if err != nil {
+		return failoverVoteReply{}, err
+	}
+	var reply failoverVoteReply
+	if err := json.Unmarshal(payload, &reply); err != nil {
+		return failoverVoteReply{}, err
+	}
+	return reply, nil
 }
