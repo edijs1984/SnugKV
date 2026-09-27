@@ -16,7 +16,7 @@
 - [x] Continue from imported RDB into the live Redis replication command stream.
 - [x] Preserve replica READONLY semantics after Redis-origin full sync.
 - [x] EOF-marker / diskless RDB full-sync framing. Audit: `docs/REPLICATION-DISKLESS-EOF-AUDIT.md`.
-- [ ] Additional RDB object encodings as demanded by real datasets.
+- [x] Native Redis 8.2 RDB object encodings and relevant special opcodes for the supported single-node architecture, including legacy STREAM types 15/19 and FUNCTION2/SLOT_INFO handling. Redis Module payloads and pre-GA Function payloads remain explicit unsupported boundaries.
 - [x] Redis HFE LISTPACK_EX RDB compatibility (types 23/25), including live Redis 8.10.2 type-25 validation.
 - [x] Redis hash-template RDB compatibility (types 29–32 plus opcode 242), including live full-sync and HIMPORT/RESTORE propagation. Audit: `docs/REPLICATION-HASH-TEMPLATE-AUDIT.md`.
 - [x] Redis hash-field expiration command surface and Redis RDB HFE hashtable metadata (types 22/24). Audit: `docs/HASH-FIELD-EXPIRATION-AUDIT.md`.
@@ -401,7 +401,7 @@ lands.
 - [x] Replication Phase 2 hardening: Redis RDB full-sync interoperability, diskless-transfer hardening, authentication topology support. See `docs/REPLICATION-RDB-FULLSYNC-AUDIT.md`, `docs/REPLICATION-DISKLESS-EOF-AUDIT.md`, and `docs/REPLICATION-AUTH-AUDIT.md`.
 - [x] Replication Phase 2 hardening: TLS topology support. Audit: `docs/REPLICATION-TLS-AUDIT.md`.
 - [x] Replication Phase 2 hardening: broaden Redis RDB encoding compatibility. Audit: `docs/REPLICATION-RDB-ENCODINGS-AUDIT.md`.
-- [ ] Replication Phase 2 hardening: newer/remaining RDB encodings as demanded by real datasets.
+- [x] Replication Phase 2 hardening: native Redis 8.2 RDB object/opcode compatibility for the supported single-node architecture. Redis Module payloads and pre-GA Function payloads remain explicit unsupported boundaries.
 - [ ] Automatic failover / Sentinel-like behavior.
 - [ ] Cluster/sharding protocol.
 - [ ] Multi-node consistency and recovery model.
