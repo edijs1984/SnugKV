@@ -282,7 +282,7 @@ func (s *Server) executeBGRewriteAOF() ([]byte, error) {
 		}
 		s.persistenceJobMu.Unlock()
 		if startSave {
-			go s.runBackgroundSave()
+			s.startPersistenceJob(s.runBackgroundSave)
 		}
 		if rewriteErr != nil {
 			log.Printf("event=aof_rewrite_failed error=%q", rewriteErr)
