@@ -190,3 +190,24 @@ Operator-reported passing focused matrices:
 - `go test -race ./internal/server -run '^TestDecodeRedisFullSyncLegacyStreamTypes$' -count=1 -v`
 - `go test -race ./internal/server -run '^(TestDecodeRedis|TestReplication|TestKeyRestoreRedis|TestKeyRestoreAcceptsRedis)' -count=1 -v`
 - `go test -race ./internal/engine -run '^TestStream' -count=1 -v`
+
+
+## RDB special opcode compatibility
+
+Redis full-sync RDB parsing now also covers the standard special opcodes that materially affect SnugKV interoperability:
+
+- `RDB_OPCODE_FUNCTION2` (245): function-library source is decoded, compiled before commit, installed into the replica function registry during full sync, and persisted through SnugKV's function sidecar. Read-only imported functions are immediately callable through `FCALL_RO` on the replica.
+- `RDB_OPCODE_SLOT_INFO` (244): the three length-prefixed slot metadata values are validated and ignored. SnugKV is single-node and does not reconstruct Redis cluster slot topology from RDB metadata.
+- `RDB_OPCODE_FUNCTION_PRE_GA` (246): explicitly rejected as an unsupported pre-GA function-library format.
+- `RDB_OPCODE_MODULE_AUX` (247): explicitly rejected because payload semantics are owned by the Redis module implementation and cannot be decoded generically without that module.
+
+The existing Redis RDB full-sync API used by keyspace-only callers remains unchanged; an internal decoded-state form carries both persistence records and function-library source for replication application.
+
+Function-library installation is prepared before the durability critical section. Incoming libraries and rollback libraries are compiled before keyspace replacement, then the registry is replaced only after keyspace restore. The function sidecar is persisted during full-sync commit, and the previous registry is restored if the later persistence step fails.
+
+Operator-reported passing validation:
+
+- `go test -race ./internal/server -run '^(TestDecodeRedisFullSyncRDBFunction2|TestDecodeRedisFullSyncRDBSlotInfoIgnored|TestDecodeRedisFullSyncRDBRejectsUnsupportedSpecialOpcodes)$' -count=1 -v`
+- `go test -race ./internal/server -run '^TestRedisFullSyncImportsFunction2Libraries$' -count=1 -v`
+- `go test -race ./internal/server -run '^(TestDecodeRedisFullSyncRDB|TestRedisFullSync|TestRedisPartialResync|TestFunction|TestReplication)' -count=1 -v`
+- `go test -race ./internal/engine -run '^TestStream' -count=1 -v`
