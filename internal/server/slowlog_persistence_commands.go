@@ -215,6 +215,12 @@ func (s *Server) executeBGRewriteAOF() ([]byte, error) {
 		s.persistenceJobMu.Unlock()
 		return nil, errors.New("ERR Background append only file rewriting already in progress")
 	}
+	if s.bgsaveRunning {
+		s.aofRewriteScheduled = true
+		s.persistenceJobMu.Unlock()
+		return []byte("+Background append only file rewriting scheduled\r\n"), nil
+	}
+	s.aofRewriteScheduled = false
 	// Open only a temporary writer: never install it as the active journal.
 	// Open holds the persistence file lock until Close, including during Rewrite.
 	var temporary *persistence.Log
@@ -222,6 +228,7 @@ func (s *Server) executeBGRewriteAOF() ([]byte, error) {
 		var err error
 		temporary, err = persistence.Open(s.aofRewritePath, "no")
 		if err != nil {
+			s.aofLastRewriteFailed = true
 			s.persistenceJobMu.Unlock()
 			return nil, errors.New("ERR cannot open AOF rewrite destination")
 		}
@@ -271,7 +278,10 @@ func (s *Server) executeBGRewriteAOF() ([]byte, error) {
 
 func (s *Server) persistenceInfo() string {
 	s.persistenceJobMu.Lock()
-	saving, rewriting := 0, 0
+	saving, rewriting, rewriteScheduled := 0, 0, 0
+	if s.aofRewriteScheduled {
+		rewriteScheduled = 1
+	}
 	if s.bgsaveRunning {
 		saving = 1
 	}
@@ -290,13 +300,27 @@ func (s *Server) persistenceInfo() string {
 	if s.journal != nil {
 		enabled = 1
 	}
-	return fmt.Sprintf("# Persistence\r\nrdb_bgsave_in_progress:%d\r\nrdb_last_save_time:%d\r\nrdb_last_bgsave_status:%s\r\naof_enabled:%d\r\naof_rewrite_in_progress:%d\r\naof_last_bgrewrite_status:%s\r\n",
-		saving, s.lastSaveUnix.Load(), rdbStatus, enabled, rewriting, aofStatus)
+	return fmt.Sprintf("# Persistence\r\nrdb_bgsave_in_progress:%d\r\nrdb_last_save_time:%d\r\nrdb_last_bgsave_status:%s\r\naof_enabled:%d\r\naof_rewrite_in_progress:%d\r\naof_rewrite_scheduled:%d\r\naof_last_bgrewrite_status:%s\r\n",
+		saving, s.lastSaveUnix.Load(), rdbStatus, enabled, rewriting, rewriteScheduled, aofStatus)
 }
 
 func (s *Server) runBackgroundSave() {
 	_ = s.snapshotNow() // snapshotNow records and logs failures.
+	// Serialize the handoff with commands so another job cannot start
+	// between clearing the save flag and starting its queued rewrite.
+	s.durableMu.Lock()
+	defer s.durableMu.Unlock()
 	s.persistenceJobMu.Lock()
 	s.bgsaveRunning = false
+	startRewrite := s.aofRewriteScheduled
 	s.persistenceJobMu.Unlock()
+	if startRewrite {
+		if _, err := s.executeBGRewriteAOF(); err != nil {
+			s.persistenceJobMu.Lock()
+			s.aofRewriteScheduled = false
+			s.aofLastRewriteFailed = true
+			s.persistenceJobMu.Unlock()
+			log.Printf("event=scheduled_aof_rewrite_failed error=%q", err)
+		}
+	}
 }
