@@ -641,15 +641,19 @@ func (s *Server) requestFailoverReparent(now time.Time, lineage string, term uin
 		return reply, nil
 	}
 
-	s.failoverLeaseMu.Lock()
-	leaseTerm := s.failoverLeaseTerm
-	leaseHolder := s.failoverLeaseHolder
-	leaseUntil := s.failoverLeaseUntil
-	s.failoverLeaseMu.Unlock()
-	if leaseTerm != term ||
-		leaseHolder != leaderID ||
-		leaseUntil.IsZero() ||
-		!now.Before(leaseUntil) {
+	// A returning old primary may have been offline for the entire election and
+	// therefore may not hold a local lease record. Prove that this node is the
+	// failed lineage itself, then independently verify the elected leader still
+	// controls lease quorum before demoting.
+	if local.NodeID != lineage {
+		return reply, nil
+	}
+	verified, higherTerm := s.verifyFailoverLeaderQuorum(now, lineage, term, leaderID)
+	if higherTerm > term {
+		reply.Term = higherTerm
+		return reply, nil
+	}
+	if !verified {
 		return reply, nil
 	}
 
@@ -834,4 +838,63 @@ func queryFailoverDemote(addr string, timeout time.Duration, username, password,
 		return failoverDemoteReply{}, err
 	}
 	return reply, nil
+}
+
+
+func (s *Server) verifyFailoverLeaderQuorum(now time.Time, lineage string, term uint64, leaderID string) (bool, uint64) {
+	if lineage == "" || leaderID == "" || term == 0 || s.failoverQuorum <= 0 {
+		return false, term
+	}
+
+	const leaseTTL = 3 * time.Second
+	grants := 0
+	highestTerm := term
+
+	for _, addr := range s.failoverPeers {
+		state, err := queryFailoverPeer(
+			addr,
+			200*time.Millisecond,
+			s.replicationMasterUser,
+			s.replicationMasterAuth,
+		)
+		if err != nil {
+			continue
+		}
+
+		// The elected leader no longer reports masterRunID after promotion, so
+		// identify it by node ID. Other voters must still report the original
+		// lineage.
+		if state.NodeID != leaderID &&
+			(state.Role != "replica" || state.MasterRunID != lineage) {
+			continue
+		}
+
+		reply, err := queryFailoverLease(
+			addr,
+			200*time.Millisecond,
+			s.replicationMasterUser,
+			s.replicationMasterAuth,
+			lineage,
+			term,
+			leaderID,
+			leaseTTL,
+		)
+		if err != nil {
+			continue
+		}
+		if reply.Term > highestTerm {
+			highestTerm = reply.Term
+		}
+		if reply.Term > term {
+			return false, highestTerm
+		}
+		if reply.Granted {
+			grants++
+		}
+		if grants >= s.failoverQuorum {
+			return true, highestTerm
+		}
+	}
+
+	return false, highestTerm
 }
