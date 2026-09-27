@@ -585,6 +585,13 @@ func commandInfoFlags(
 	case "HSETEX":
 		return []string{"write", "denyoom", "fast"}
 
+	case "LCS":
+		return []string{
+			"@read",
+			"@string",
+			"@slow",
+		}
+
 	case "HGETEX", "HGETDEL":
 		return []string{"write", "fast"}
 
