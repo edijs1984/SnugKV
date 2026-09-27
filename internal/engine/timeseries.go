@@ -36,6 +36,13 @@ type TimeSeriesSample struct {
 	Value     float64
 }
 
+type TimeSeriesRule struct {
+	DestKey        string
+	BucketDuration int64
+	Aggregator     string
+	Alignment      int64
+}
+
 type TimeSeriesInfo struct {
 	TotalSamples      int
 	MemoryUsage       int64
@@ -49,6 +56,17 @@ type TimeSeriesInfo struct {
 	Labels            []TimeSeriesLabel
 	IgnoreMaxTimeDiff int64
 	IgnoreMaxValDiff  float64
+	SourceKey         string
+	Rules             []TimeSeriesRule
+}
+
+type timeSeriesRule struct {
+	destKey        string
+	bucketDuration int64
+	aggregator     string
+	alignment      int64
+	startAfter     int64
+	lastBucket     int64
 }
 
 type timeSeries struct {
@@ -56,6 +74,8 @@ type timeSeries struct {
 	policy    TimeSeriesDuplicatePolicy
 	labels    []TimeSeriesLabel
 	samples   []TimeSeriesSample
+	sourceKey string
+	rules     []timeSeriesRule
 }
 
 func timeSeriesWrongType() error {
@@ -93,6 +113,13 @@ func encodeTimeSeries(ts *timeSeries) []byte {
 	for _, label := range ts.labels {
 		size += 8 + len(label.Key) + len(label.Value)
 	}
+	hasMeta := ts.sourceKey != "" || len(ts.rules) > 0
+	if hasMeta {
+		size += 12 + len(ts.sourceKey)
+		for _, rule := range ts.rules {
+			size += 40 + len(rule.destKey) + len(rule.aggregator)
+		}
+	}
 	out := make([]byte, size)
 	copy(out[:4], timeSeriesMagic[:])
 	binary.LittleEndian.PutUint64(out[8:16], uint64(ts.retention))
@@ -113,6 +140,29 @@ func encodeTimeSeries(ts *timeSeries) []byte {
 		binary.LittleEndian.PutUint64(out[off:off+8], uint64(sample.Timestamp))
 		binary.LittleEndian.PutUint64(out[off+8:off+16], math.Float64bits(sample.Value))
 		off += 16
+	}
+	if hasMeta {
+		copy(out[off:off+4], []byte{'T','S','R','1'})
+		off += 4
+		binary.LittleEndian.PutUint32(out[off:off+4], uint32(len(ts.sourceKey)))
+		binary.LittleEndian.PutUint32(out[off+4:off+8], uint32(len(ts.rules)))
+		off += 8
+		copy(out[off:], ts.sourceKey)
+		off += len(ts.sourceKey)
+		for _, rule := range ts.rules {
+			binary.LittleEndian.PutUint32(out[off:off+4], uint32(len(rule.destKey)))
+			binary.LittleEndian.PutUint32(out[off+4:off+8], uint32(len(rule.aggregator)))
+			binary.LittleEndian.PutUint64(out[off+8:off+16], uint64(rule.bucketDuration))
+			binary.LittleEndian.PutUint64(out[off+16:off+24], uint64(rule.alignment))
+			binary.LittleEndian.PutUint64(out[off+24:off+32], uint64(rule.startAfter))
+			off += 32
+			binary.LittleEndian.PutUint64(out[off:off+8], uint64(rule.lastBucket))
+			off += 8
+			copy(out[off:], rule.destKey)
+			off += len(rule.destKey)
+			copy(out[off:], rule.aggregator)
+			off += len(rule.aggregator)
+		}
 	}
 	return out
 }
@@ -140,31 +190,62 @@ func decodeTimeSeries(value []byte) (*timeSeries, error) {
 		kl := int(binary.LittleEndian.Uint32(value[off : off+4]))
 		vl := int(binary.LittleEndian.Uint32(value[off+4 : off+8]))
 		off += 8
-		if kl < 0 || vl < 0 || off+kl+vl > len(value) {
+		if off+kl+vl > len(value) {
 			return nil, errors.New("invalid TimeSeries")
 		}
-		labels[i] = TimeSeriesLabel{
-			Key: string(value[off : off+kl]),
-			Value: string(value[off+kl : off+kl+vl]),
-		}
-		off += kl + vl
+		labels[i] = TimeSeriesLabel{Key:string(value[off:off+kl]), Value:string(value[off+kl:off+kl+vl])}
+		off += kl+vl
 	}
-	if sampleCount < 0 || off+sampleCount*16 != len(value) {
+	if sampleCount < 0 || off+sampleCount*16 > len(value) {
 		return nil, errors.New("invalid TimeSeries")
 	}
 	samples := make([]TimeSeriesSample, sampleCount)
 	var last int64 = -1 << 63
 	for i := 0; i < sampleCount; i++ {
-		ts := int64(binary.LittleEndian.Uint64(value[off : off+8]))
-		v := math.Float64frombits(binary.LittleEndian.Uint64(value[off+8 : off+16]))
+		ts := int64(binary.LittleEndian.Uint64(value[off:off+8]))
+		v := math.Float64frombits(binary.LittleEndian.Uint64(value[off+8:off+16]))
 		off += 16
 		if i > 0 && ts <= last {
 			return nil, errors.New("invalid TimeSeries")
 		}
-		samples[i] = TimeSeriesSample{Timestamp: ts, Value: v}
+		samples[i] = TimeSeriesSample{Timestamp:ts, Value:v}
 		last = ts
 	}
-	return &timeSeries{retention: retention, policy: policy, labels: labels, samples: samples}, nil
+	ts := &timeSeries{retention:retention, policy:policy, labels:labels, samples:samples}
+	if off == len(value) {
+		return ts,nil
+	}
+	if off+12 > len(value) || !bytes.Equal(value[off:off+4], []byte{'T','S','R','1'}) {
+		return nil, errors.New("invalid TimeSeries")
+	}
+	off += 4
+	sourceLen := int(binary.LittleEndian.Uint32(value[off:off+4]))
+	ruleCount := int(binary.LittleEndian.Uint32(value[off+4:off+8]))
+	off += 8
+	if off+sourceLen > len(value) {
+		return nil, errors.New("invalid TimeSeries")
+	}
+	ts.sourceKey = string(value[off:off+sourceLen])
+	off += sourceLen
+	ts.rules = make([]timeSeriesRule, ruleCount)
+	for i:=0;i<ruleCount;i++ {
+		if off+40 > len(value) { return nil, errors.New("invalid TimeSeries") }
+		dl:=int(binary.LittleEndian.Uint32(value[off:off+4]))
+		al:=int(binary.LittleEndian.Uint32(value[off+4:off+8]))
+		rule:=timeSeriesRule{
+			bucketDuration:int64(binary.LittleEndian.Uint64(value[off+8:off+16])),
+			alignment:int64(binary.LittleEndian.Uint64(value[off+16:off+24])),
+			startAfter:int64(binary.LittleEndian.Uint64(value[off+24:off+32])),
+			lastBucket:int64(binary.LittleEndian.Uint64(value[off+32:off+40])),
+		}
+		off += 40
+		if dl<0 || al<0 || off+dl+al>len(value) { return nil, errors.New("invalid TimeSeries") }
+		rule.destKey=string(value[off:off+dl]); off+=dl
+		rule.aggregator=string(value[off:off+al]); off+=al
+		ts.rules[i]=rule
+	}
+	if off != len(value) { return nil, errors.New("invalid TimeSeries") }
+	return ts,nil
 }
 
 func newTimeSeries(retention int64, policy TimeSeriesDuplicatePolicy, labels []TimeSeriesLabel) (*timeSeries, error) {
@@ -456,6 +537,16 @@ func (s *Store) TimeSeriesInfo(key string) (TimeSeriesInfo, error) {
 		ChunkType: "compressed",
 		DuplicatePolicy: timeSeriesPolicyName(ts.policy),
 		Labels: append([]TimeSeriesLabel(nil), ts.labels...),
+		SourceKey: ts.sourceKey,
+		Rules: make([]TimeSeriesRule, len(ts.rules)),
+	}
+	for i, rule := range ts.rules {
+		info.Rules[i] = TimeSeriesRule{
+			DestKey: rule.destKey,
+			BucketDuration: rule.bucketDuration,
+			Aggregator: rule.aggregator,
+			Alignment: rule.alignment,
+		}
 	}
 	if len(ts.samples) > 0 {
 		info.FirstTimestamp = ts.samples[0].Timestamp
