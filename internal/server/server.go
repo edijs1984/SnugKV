@@ -84,6 +84,7 @@ type Server struct {
 	snapshotPath      string
 	persistenceJobMu  sync.Mutex
 	persistenceJobs   sync.WaitGroup
+	saveRunning       bool
 	bgsaveRunning     bool
 	bgsaveScheduled   bool
 	aofRewriteRunning bool

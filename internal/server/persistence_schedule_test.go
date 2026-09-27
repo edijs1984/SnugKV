@@ -289,3 +289,36 @@ func TestPersistenceJobsWaitThroughSaveToScheduledRewrite(t *testing.T) {
 		t.Fatal("scheduled rewrite had not completed when persistence wait returned")
 	}
 }
+
+
+func TestSaveRejectsActiveBGSave(t *testing.T) {
+	s := New(engine.New())
+	s.snapshotPath = filepath.Join(t.TempDir(), "dump.snap")
+	s.persistenceJobMu.Lock()
+	s.bgsaveRunning = true
+	s.persistenceJobMu.Unlock()
+
+	_, err := s.executeSave(false, false)
+	if err == nil || err.Error() != "ERR Background save already in progress" {
+		t.Fatalf("SAVE during BGSAVE err=%v", err)
+	}
+}
+
+
+func TestBGSaveRejectsActiveSave(t *testing.T) {
+	s := New(engine.New())
+	s.snapshotPath = filepath.Join(t.TempDir(), "dump.snap")
+	s.persistenceJobMu.Lock()
+	s.saveRunning = true
+	s.persistenceJobMu.Unlock()
+
+	for _, schedule := range []bool{false, true} {
+		_, err := s.executeSave(true, schedule)
+		if err == nil || err.Error() != "ERR Background save already in progress" {
+			t.Fatalf("BGSAVE schedule=%v during SAVE err=%v", schedule, err)
+		}
+	}
+	if s.bgsaveScheduled {
+		t.Fatal("BGSAVE SCHEDULE must not queue behind synchronous SAVE")
+	}
+}
