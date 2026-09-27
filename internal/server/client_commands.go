@@ -480,6 +480,40 @@ func (s *TCPServer) executeClientConnectionCommand(
 
 		return true, nil, errors.New("ERR syntax error")
 
+	case "PAUSE":
+		if len(args) != 3 && len(args) != 4 {
+			return true, nil, errors.New(
+				"ERR wrong number of arguments for 'client|pause' command",
+			)
+		}
+		timeoutMS, err := strconv.ParseInt(string(args[2]), 10, 64)
+		if err != nil || timeoutMS < 0 {
+			return true, nil, errors.New(
+				"ERR timeout is not an integer or out of range",
+			)
+		}
+		writeOnly := false
+		if len(args) == 4 {
+			switch strings.ToUpper(string(args[3])) {
+			case "WRITE":
+				writeOnly = true
+			case "ALL":
+			default:
+				return true, nil, errors.New("ERR syntax error")
+			}
+		}
+		s.setClientPause(time.Duration(timeoutMS)*time.Millisecond, writeOnly)
+		return true, []byte("+OK\r\n"), nil
+
+	case "UNPAUSE":
+		if len(args) != 2 {
+			return true, nil, errors.New(
+				"ERR wrong number of arguments for 'client|unpause' command",
+			)
+		}
+		s.clearClientPause()
+		return true, []byte("+OK\r\n"), nil
+
 	case "NO-EVICT", "NO-TOUCH":
 		if len(args) != 3 {
 			return true, nil, errors.New(
@@ -766,6 +800,10 @@ func clientHelpRESP() []byte {
 		"    Return the ID of the current connection.",
 		"INFO",
 		"    Return information about the current client connection.",
+		"PAUSE <timeout-ms> [WRITE|ALL]",
+		"    Pause client command processing.",
+		"UNPAUSE",
+		"    Resume client command processing.",
 		"NO-EVICT <ON|OFF>",
 		"    Toggle client eviction protection.",
 		"NO-TOUCH <ON|OFF>",
