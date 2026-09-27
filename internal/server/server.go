@@ -57,14 +57,35 @@ type Server struct {
 	configMu             sync.RWMutex
 	configSetAppendFsync func(string) error
 	configRewrite        func() error
+
+	searchCursorMu     sync.Mutex
+	searchCursors      map[uint64]*searchCursor
+	searchNextCursorID uint64
+	searchConfigMu     sync.RWMutex
+	searchConfig       map[string]string
+
+	searchAuxMu        sync.RWMutex
+	searchDictionaries map[string]map[string]struct{}
+	searchSuggestions  map[string]map[string]searchSuggestion
+	searchSynonyms     map[string]map[string][]string
 }
 
 func New(store *engine.Store) *Server {
 	s := &Server{
-		store:   store,
-		metrics: stats.New(),
-		acl:     NewACL(),
-		aclLog:  NewACLLog(),
+		store:         store,
+		metrics:       stats.New(),
+		acl:           NewACL(),
+		aclLog:        NewACLLog(),
+		searchCursors: make(map[uint64]*searchCursor),
+		searchConfig: map[string]string{
+			"DEFAULT_DIALECT": "1",
+			"MAXSEARCHRESULTS": "1000000",
+			"MAXAGGREGATERESULTS": "1000000",
+			"CURSOR_MAX_IDLE": "300000",
+		},
+		searchDictionaries: make(map[string]map[string]struct{}),
+		searchSuggestions:  make(map[string]map[string]searchSuggestion),
+		searchSynonyms:     make(map[string]map[string][]string),
 	}
 	s.replication.init()
 	return s
@@ -189,7 +210,10 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		return s.executeLCS(args)
 
 	case "FT.CREATE", "FT.DROPINDEX", "FT._LIST", "FT.INFO", "FT.SEARCH", "FT.AGGREGATE",
-		"FT.ALIASADD", "FT.ALIASUPDATE", "FT.ALIASDEL", "FT.TAGVALS", "FT.ALTER":
+		"FT.ALIASADD", "FT.ALIASUPDATE", "FT.ALIASDEL", "FT.TAGVALS", "FT.ALTER", "FT.CURSOR", "FT.CONFIG",
+		"FT.EXPLAIN", "FT.EXPLAINCLI", "FT.PROFILE",
+		"FT.DICTADD", "FT.DICTDEL", "FT.DICTDUMP", "FT.SPELLCHECK",
+		"FT.SYNUPDATE", "FT.SYNDUMP", "FT.SUGADD", "FT.SUGDEL", "FT.SUGGET", "FT.SUGLEN":
 		return s.executeSearchCommand(args)
 
 	case "CONFIG":
