@@ -91,6 +91,10 @@ func markRunningScriptWrite(s *Server) error {
 }
 
 func (s *Server) executeKillableScripting(args [][]byte) ([]byte, error) {
+	started := time.Now()
+	defer func() {
+		s.recordSlowlog(args, time.Since(started))
+	}()
 	if len(args) < 3 {
 		cmd := "eval"
 		if len(args) > 0 {
