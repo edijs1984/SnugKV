@@ -10,18 +10,36 @@ import (
 type failoverDiscoveredPeer struct {
 	Address      string            `json:"address"`
 	LastSeenUnix int64             `json:"last_seen_unix"`
+	AgeMS        int64             `json:"age_ms,omitempty"`
+	Fresh        bool              `json:"fresh"`
 	State        failoverPeerState `json:"state"`
 }
 
-func (s *Server) discoveredFailoverPeers() []failoverDiscoveredPeer {
+func (s *Server) discoveredFailoverPeersAt(now time.Time) []failoverDiscoveredPeer {
+	freshFor := 2 * s.failoverDiscoveryInterval
+	if freshFor <= 0 {
+		freshFor = 10 * time.Second
+	}
+
 	s.failoverDiscoveryMu.RLock()
 	out := make([]failoverDiscoveredPeer, 0, len(s.failoverDiscovered))
 	for _, peer := range s.failoverDiscovered {
+		seen := time.Unix(peer.LastSeenUnix, 0)
+		age := now.Sub(seen)
+		if age < 0 {
+			age = 0
+		}
+		peer.AgeMS = age.Milliseconds()
+		peer.Fresh = age <= freshFor
 		out = append(out, peer)
 	}
 	s.failoverDiscoveryMu.RUnlock()
 	sort.Slice(out, func(i, j int) bool { return out[i].Address < out[j].Address })
 	return out
+}
+
+func (s *Server) discoveredFailoverPeers() []failoverDiscoveredPeer {
+	return s.discoveredFailoverPeersAt(time.Now())
 }
 
 func (s *Server) discoveredFailoverPeersJSON() ([]byte, error) {
@@ -40,6 +58,22 @@ func (s *Server) refreshFailoverDiscovery(now time.Time) {
 		return
 	}
 	s.failoverDiscoveryLastRun = now
+	s.failoverDiscoveryMu.Unlock()
+
+	// Keep the cache bounded. Entries are retained for a small grace period so
+	// operators can observe transient loss, then evicted once they are well
+	// beyond the freshness window.
+	freshFor := 2 * s.failoverDiscoveryInterval
+	if freshFor <= 0 {
+		freshFor = 10 * time.Second
+	}
+	evictBefore := now.Add(-3 * freshFor).Unix()
+	s.failoverDiscoveryMu.Lock()
+	for addr, peer := range s.failoverDiscovered {
+		if peer.LastSeenUnix < evictBefore {
+			delete(s.failoverDiscovered, addr)
+		}
+	}
 	s.failoverDiscoveryMu.Unlock()
 
 	membership := s.failoverMembershipSnapshot()
@@ -125,8 +159,8 @@ func (s *Server) buildFailoverDiscoveryAdoptionPlan(now time.Time, quorum int) (
 
 	members := append([]string(nil), current...)
 	added := make([]string, 0)
-	for _, peer := range s.discoveredFailoverPeers() {
-		if peer.LastSeenUnix < cutoff ||
+	for _, peer := range s.discoveredFailoverPeersAt(now) {
+		if !peer.Fresh || peer.LastSeenUnix < cutoff ||
 			peer.State.GroupID != membership.GroupID ||
 			peer.State.ConfigEpoch != membership.ConfigEpoch ||
 			peer.State.Retired ||
