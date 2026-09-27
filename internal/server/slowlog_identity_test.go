@@ -186,3 +186,72 @@ func TestSlowlogTCPTransactionAndScriptingPaths(t *testing.T) {
 		}
 	}
 }
+
+
+func TestSlowlogTCPFunctionPaths(t *testing.T) {
+	srv := connectTestServerInstance(t)
+	conn := connectTCPServer(t, srv)
+	reader := bufio.NewReader(conn)
+
+	code := "#!lua name=slowlogfn\nredis.register_function('reader', function(keys,args) return redis.call('GET',keys[1]) end)\nredis.register_function{function_name='reader_ro',callback=function(keys,args) return redis.call('GET',keys[1]) end,flags={'no-writes'}}"
+	if got := loadFunctionLibrary(t, srv.server, code); !strings.HasPrefix(got, "$") {
+		t.Fatalf("FUNCTION LOAD=%q", got)
+	}
+
+	send := func(args ...string) {
+		t.Helper()
+		var wire strings.Builder
+		fmt.Fprintf(&wire, "*%d\r\n", len(args))
+		for _, arg := range args {
+			fmt.Fprintf(&wire, "$%d\r\n%s\r\n", len(arg), arg)
+		}
+		if _, err := fmt.Fprint(conn, wire.String()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	readLine := func() string {
+		t.Helper()
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		return line
+	}
+	drain := func() string {
+		t.Helper()
+		var out strings.Builder
+		for {
+			line := readLine()
+			out.WriteString(line)
+			if reader.Buffered() == 0 {
+				break
+			}
+		}
+		return out.String()
+	}
+
+	send("CONFIG", "SET", "slowlog-log-slower-than", "0")
+	if got := readLine(); got != "+OK\r\n" { t.Fatalf("CONFIG SET=%q", got) }
+	send("CONFIG", "SET", "slowlog-max-len", "32")
+	if got := readLine(); got != "+OK\r\n" { t.Fatalf("CONFIG SET maxlen=%q", got) }
+	send("SET", "slowlog:fn", "v")
+	if got := readLine(); got != "+OK\r\n" { t.Fatalf("SET=%q", got) }
+	send("SLOWLOG", "RESET")
+	if got := readLine(); got != "+OK\r\n" { t.Fatalf("RESET=%q", got) }
+
+	send("FCALL", "reader", "1", "slowlog:fn")
+	if got := drain(); !strings.Contains(got, "v\r\n") { t.Fatalf("FCALL=%q", got) }
+	send("FCALL_RO", "reader_ro", "1", "slowlog:fn")
+	if got := drain(); !strings.Contains(got, "v\r\n") { t.Fatalf("FCALL_RO=%q", got) }
+
+	send("SLOWLOG", "GET", "32")
+	got := drain()
+	for _, want := range []string{
+		"$5\r\nFCALL\r\n",
+		"$8\r\nFCALL_RO\r\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("SLOWLOG missing %q: %q", want, got)
+		}
+	}
+}
