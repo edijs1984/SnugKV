@@ -587,10 +587,327 @@ func (s *Server) maintainFailoverLeaderLease(now time.Time) error {
 	}
 	if lease.QuorumReached && !lease.ExpiresAt.IsZero() {
 		s.updateFailoverLeaderLease(lease.ExpiresAt, false)
+		s.convergeFailoverReplicas(now)
 		return nil
 	}
 	if expiresAt.IsZero() || !now.Before(expiresAt) {
 		s.updateFailoverLeaderLease(expiresAt, true)
 	}
 	return nil
+}
+
+
+type failoverReparentReply struct {
+	Term     uint64 `json:"term"`
+	Accepted bool   `json:"accepted"`
+}
+
+func (s *Server) resolveFailoverLeaderAddr(leaderID string) (string, error) {
+	if leaderID == "" {
+		return "", errors.New("empty failover leader id")
+	}
+	for _, addr := range s.failoverPeers {
+		state, err := queryFailoverPeer(
+			addr,
+			200*time.Millisecond,
+			s.replicationMasterUser,
+			s.replicationMasterAuth,
+		)
+		if err != nil {
+			continue
+		}
+		if state.NodeID == leaderID && state.Role == "master" {
+			return addr, nil
+		}
+	}
+	return "", errors.New("failover leader endpoint not found")
+}
+
+func (s *Server) requestFailoverReparent(now time.Time, lineage string, term uint64, leaderID string) (failoverReparentReply, error) {
+	s.failoverVoteMu.Lock()
+	currentTerm := s.failoverTerm
+	s.failoverVoteMu.Unlock()
+
+	reply := failoverReparentReply{Term: currentTerm}
+	if term < currentTerm || lineage == "" || leaderID == "" {
+		return reply, nil
+	}
+
+	s.replication.mu.RLock()
+	role := s.replication.role
+	currentLineage := s.replication.masterRunID
+	s.replication.mu.RUnlock()
+	if role != replicationReplica || currentLineage == "" || currentLineage != lineage {
+		return reply, nil
+	}
+
+	s.failoverLeaseMu.Lock()
+	leaseTerm := s.failoverLeaseTerm
+	leaseHolder := s.failoverLeaseHolder
+	leaseUntil := s.failoverLeaseUntil
+	s.failoverLeaseMu.Unlock()
+	if leaseTerm != term ||
+		leaseHolder != leaderID ||
+		leaseUntil.IsZero() ||
+		!now.Before(leaseUntil) {
+		return reply, nil
+	}
+
+	addr, err := s.resolveFailoverLeaderAddr(leaderID)
+	if err != nil {
+		return reply, nil
+	}
+	host, portText, err := net.SplitHostPort(addr)
+	if err != nil {
+		return reply, err
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port <= 0 || port > 65535 {
+		return reply, errors.New("invalid failover leader port")
+	}
+
+	if err := s.persistReplicationCheckpointClearLocked(host, port); err != nil {
+		s.durabilityFailed = true
+		return reply, errors.New("failover reparent persistence update failed")
+	}
+	if err := s.clearReplicationPersistence(); err != nil {
+		return reply, errors.New("failover reparent persistence update failed")
+	}
+	s.startReplicaFollow(host, port)
+	reply.Accepted = true
+	return reply, nil
+}
+
+func queryFailoverReparent(addr string, timeout time.Duration, username, password, lineage string, term uint64, leaderID string) (failoverReparentReply, error) {
+	conn, err := net.DialTimeout("tcp", addr, timeout)
+	if err != nil {
+		return failoverReparentReply{}, err
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+	reader := bufio.NewReader(conn)
+	if err := authenticateReplicationUpstream(conn, reader, username, password); err != nil {
+		return failoverReparentReply{}, err
+	}
+	if err := writeReplicationRESPCommand(
+		conn,
+		"SNUG.FAILOVER", "REPARENT",
+		lineage,
+		strconv.FormatUint(term, 10),
+		leaderID,
+	); err != nil {
+		return failoverReparentReply{}, err
+	}
+	payload, err := readRESPBulk(reader)
+	if err != nil {
+		return failoverReparentReply{}, err
+	}
+	var reply failoverReparentReply
+	if err := json.Unmarshal(payload, &reply); err != nil {
+		return failoverReparentReply{}, err
+	}
+	return reply, nil
+}
+
+func (s *Server) convergeFailoverReplicas(now time.Time) {
+	active, term, lineage, leaderID, expiresAt, fenced := s.failoverLeaderState()
+	if !active || fenced || lineage == "" || leaderID == "" || expiresAt.IsZero() || !now.Before(expiresAt) {
+		return
+	}
+	for _, addr := range s.failoverPeers {
+		state, err := queryFailoverPeer(
+			addr,
+			200*time.Millisecond,
+			s.replicationMasterUser,
+			s.replicationMasterAuth,
+		)
+		if err != nil || state.NodeID == leaderID {
+			continue
+		}
+
+		if state.Role == "master" && state.NodeID == lineage {
+			_, _ = queryFailoverDemote(
+				addr,
+				200*time.Millisecond,
+				s.replicationMasterUser,
+				s.replicationMasterAuth,
+				lineage,
+				term,
+				leaderID,
+			)
+			continue
+		}
+
+		if state.Role == "replica" && state.MasterRunID == lineage {
+			_, _ = queryFailoverReparent(
+				addr,
+				200*time.Millisecond,
+				s.replicationMasterUser,
+				s.replicationMasterAuth,
+				lineage,
+				term,
+				leaderID,
+			)
+		}
+	}
+}
+
+
+type failoverDemoteReply struct {
+	Term     uint64 `json:"term"`
+	Accepted bool   `json:"accepted"`
+}
+
+func (s *Server) requestFailoverDemote(now time.Time, lineage string, term uint64, leaderID string) (failoverDemoteReply, error) {
+	s.failoverVoteMu.Lock()
+	currentTerm := s.failoverTerm
+	s.failoverVoteMu.Unlock()
+
+	reply := failoverDemoteReply{Term: currentTerm}
+	if term < currentTerm || lineage == "" || leaderID == "" {
+		return reply, nil
+	}
+
+	local := s.localFailoverState(now)
+	if local.Role != "master" {
+		return reply, nil
+	}
+
+	// A returning old primary may have been offline for the entire election and
+	// therefore may not hold a local lease record. Prove that this node is the
+	// failed lineage itself, then independently verify the elected leader still
+	// controls lease quorum before demoting.
+	if local.NodeID != lineage {
+		return reply, nil
+	}
+	verified, higherTerm := s.verifyFailoverLeaderQuorum(now, lineage, term, leaderID)
+	if higherTerm > term {
+		reply.Term = higherTerm
+		return reply, nil
+	}
+	if !verified {
+		return reply, nil
+	}
+
+	addr, err := s.resolveFailoverLeaderAddr(leaderID)
+	if err != nil {
+		return reply, nil
+	}
+	host, portText, err := net.SplitHostPort(addr)
+	if err != nil {
+		return reply, err
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port <= 0 || port > 65535 {
+		return reply, errors.New("invalid failover leader port")
+	}
+
+	s.failoverLeaderMu.RLock()
+	activeLocalLeader := s.failoverLeaderActive
+	localLeaderLineage := s.failoverLeaderLineage
+	s.failoverLeaderMu.RUnlock()
+	if activeLocalLeader && localLeaderLineage != "" && localLeaderLineage != lineage {
+		return reply, nil
+	}
+
+	if err := s.persistReplicationCheckpointClearLocked(host, port); err != nil {
+		s.durabilityFailed = true
+		return reply, errors.New("failover demote persistence update failed")
+	}
+	if err := s.clearReplicationPersistence(); err != nil {
+		return reply, errors.New("failover demote persistence update failed")
+	}
+	s.startReplicaFollow(host, port)
+	reply.Accepted = true
+	return reply, nil
+}
+
+func queryFailoverDemote(addr string, timeout time.Duration, username, password, lineage string, term uint64, leaderID string) (failoverDemoteReply, error) {
+	conn, err := net.DialTimeout("tcp", addr, timeout)
+	if err != nil {
+		return failoverDemoteReply{}, err
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+	reader := bufio.NewReader(conn)
+	if err := authenticateReplicationUpstream(conn, reader, username, password); err != nil {
+		return failoverDemoteReply{}, err
+	}
+	if err := writeReplicationRESPCommand(
+		conn,
+		"SNUG.FAILOVER", "DEMOTE",
+		lineage,
+		strconv.FormatUint(term, 10),
+		leaderID,
+	); err != nil {
+		return failoverDemoteReply{}, err
+	}
+	payload, err := readRESPBulk(reader)
+	if err != nil {
+		return failoverDemoteReply{}, err
+	}
+	var reply failoverDemoteReply
+	if err := json.Unmarshal(payload, &reply); err != nil {
+		return failoverDemoteReply{}, err
+	}
+	return reply, nil
+}
+
+
+func (s *Server) verifyFailoverLeaderQuorum(now time.Time, lineage string, term uint64, leaderID string) (bool, uint64) {
+	if lineage == "" || leaderID == "" || term == 0 || s.failoverQuorum <= 0 {
+		return false, term
+	}
+
+	const leaseTTL = 3 * time.Second
+	grants := 0
+	highestTerm := term
+
+	for _, addr := range s.failoverPeers {
+		state, err := queryFailoverPeer(
+			addr,
+			200*time.Millisecond,
+			s.replicationMasterUser,
+			s.replicationMasterAuth,
+		)
+		if err != nil {
+			continue
+		}
+
+		// The elected leader no longer reports masterRunID after promotion, so
+		// identify it by node ID. Other voters must still report the original
+		// lineage.
+		if state.NodeID != leaderID &&
+			(state.Role != "replica" || state.MasterRunID != lineage) {
+			continue
+		}
+
+		reply, err := queryFailoverLease(
+			addr,
+			200*time.Millisecond,
+			s.replicationMasterUser,
+			s.replicationMasterAuth,
+			lineage,
+			term,
+			leaderID,
+			leaseTTL,
+		)
+		if err != nil {
+			continue
+		}
+		if reply.Term > highestTerm {
+			highestTerm = reply.Term
+		}
+		if reply.Term > term {
+			return false, highestTerm
+		}
+		if reply.Granted {
+			grants++
+		}
+		if grants >= s.failoverQuorum {
+			return true, highestTerm
+		}
+	}
+
+	return false, highestTerm
 }

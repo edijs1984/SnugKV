@@ -1181,6 +1181,50 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 				return nil, err
 			}
 			return formatBulkString(payload), nil
+		case "DEMOTE":
+			if len(args) != 5 {
+				return nil, errors.New("ERR wrong number of arguments for 'snug.failover|demote' command")
+			}
+			term, err := strconv.ParseUint(string(args[3]), 10, 64)
+			if err != nil {
+				return nil, errors.New("ERR invalid failover term")
+			}
+			reply, err := s.requestFailoverDemote(
+				time.Now(),
+				string(args[2]),
+				term,
+				string(args[4]),
+			)
+			if err != nil {
+				return nil, errors.New("ERR failover demote failed")
+			}
+			payload, err := json.Marshal(reply)
+			if err != nil {
+				return nil, err
+			}
+			return formatBulkString(payload), nil
+		case "REPARENT":
+			if len(args) != 5 {
+				return nil, errors.New("ERR wrong number of arguments for 'snug.failover|reparent' command")
+			}
+			term, err := strconv.ParseUint(string(args[3]), 10, 64)
+			if err != nil {
+				return nil, errors.New("ERR invalid failover term")
+			}
+			reply, err := s.requestFailoverReparent(
+				time.Now(),
+				string(args[2]),
+				term,
+				string(args[4]),
+			)
+			if err != nil {
+				return nil, errors.New("ERR failover reparent failed")
+			}
+			payload, err := json.Marshal(reply)
+			if err != nil {
+				return nil, err
+			}
+			return formatBulkString(payload), nil
 		case "LEASE":
 			if len(args) != 6 {
 				return nil, errors.New("ERR wrong number of arguments for 'snug.failover|lease' command")

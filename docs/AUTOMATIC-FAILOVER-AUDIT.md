@@ -12,7 +12,7 @@ The implementation builds on the existing replication control plane and delibera
 2. quorum-backed leader election;
 3. fenced promotion with renewable majority leases.
 
-It does not yet implement full Sentinel-style topology convergence, service discovery, or automatic reparenting of surviving replicas to the newly promoted leader.
+It now includes static-topology convergence after promotion: surviving replicas are automatically reparented to the elected leader, and a returning old primary is authenticated, quorum-verified, demoted, and reparented before it can rejoin as a second writable primary. Dynamic peer discovery and membership changes remain outside this phase.
 
 ## Configuration
 
@@ -162,17 +162,58 @@ Operator-reported race-enabled validation passed for:
 
 The branch must still pass the project-wide release gates before merge.
 
-## Remaining Sentinel-like work
+## Topology convergence
 
-This phase implements the safe automatic promotion core, not complete Sentinel compatibility.
+After promotion, the elected leader actively converges the statically configured topology.
 
-Remaining orchestration work includes:
+### Surviving replicas
 
-- notifying surviving replicas of the elected leader;
-- automatically issuing/reconciling replica reparenting toward the new leader;
-- topology convergence after the failed primary returns;
-- peer discovery/dynamic membership rather than static configuration;
-- richer failover observability and operator controls;
-- explicit behavior for membership changes during an active election.
+The leader sends an authenticated `SNUG.FAILOVER REPARENT` request to replicas that still report the failed primary's replication lineage.
 
-Until reparenting is implemented, operators must treat automatic promotion and automatic topology convergence as separate capabilities.
+A replica accepts reparenting only when:
+
+- it is still a replica of the failed lineage;
+- the requested election term is current;
+- its locally recorded live lease names the requesting leader;
+- the claimed leader node ID resolves to a configured peer endpoint that currently reports itself as master.
+
+The replica then durably clears its old replication continuation state and starts following the elected leader.
+
+Convergence runs immediately after promotion and again after successful leader-lease renewals, so temporarily unavailable replicas can be reconciled when they return.
+
+### Returning old primary
+
+A returning old primary is handled separately because it may have been offline for the entire election and therefore may not have a local copy of the new leader lease.
+
+The leader sends an authenticated `SNUG.FAILOVER DEMOTE` request only to a peer that:
+
+- currently reports role master; and
+- has a node ID equal to the failed replication lineage.
+
+Before accepting demotion, the old primary independently verifies that the claimed leader can still obtain the configured lease quorum from the remaining peer set for the current election term.
+
+If quorum verification succeeds, the old primary durably transitions to replica mode and begins following the elected leader. If quorum cannot be proven, it refuses the topology change.
+
+This prevents a stale or isolated node from coercing a primary to step down without evidence of a currently valid majority-backed leader.
+
+## Validation additions
+
+Operator-reported race-enabled tests also passed for:
+
+- authenticated replica reparenting;
+- rejection when the requested leader does not own the active lease;
+- returning old-primary demotion with independently verified lease quorum;
+- refusal to demote when quorum cannot be verified;
+- leader-driven convergence that demotes a returning old primary;
+- broader replication/failover/config regression coverage after topology convergence.
+
+## Remaining distributed orchestration work
+
+Static Sentinel-like topology convergence is implemented for the configured peer set.
+
+Still outside this phase:
+
+- dynamic peer discovery and membership changes;
+- richer failover observability/operator controls;
+- explicit reconfiguration semantics when membership changes during an active election;
+- Redis Sentinel protocol/API compatibility as a separate product surface.
