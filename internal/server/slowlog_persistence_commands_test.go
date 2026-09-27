@@ -30,14 +30,14 @@ func TestSlowlogGetLenResetAndConfig(t *testing.T) {
 	}
 
 	got = execute(t, s, "SLOWLOG", "GET", "1")
-	if !strings.HasPrefix(got, "*1\r\n") || !strings.Contains(got, "PING") {
+	if !strings.HasPrefix(got, "*1\r\n") || !strings.Contains(got, "LEN") {
 		t.Fatalf("SLOWLOG GET=%q", got)
 	}
 
 	if got := execute(t, s, "SLOWLOG", "RESET"); got != "+OK\r\n" {
 		t.Fatalf("SLOWLOG RESET=%q", got)
 	}
-	if got := execute(t, s, "SLOWLOG", "LEN"); got != ":0\r\n" {
+	if got := execute(t, s, "SLOWLOG", "LEN"); got != ":1\r\n" {
 		t.Fatalf("SLOWLOG LEN after reset=%q", got)
 	}
 
@@ -175,5 +175,41 @@ func TestSlowlogRedis810HelpExact(t *testing.T) {
 	want := "*12\r\n$64\r\nSLOWLOG <subcommand> [<arg> [value] [opt] ...]. Subcommands are:\r\n$13\r\nGET [<count>]\r\n$75\r\n    Return top <count> entries from the slowlog (default: 10, -1 mean all).\r\n$24\r\n    Entries are made of:\r\n$77\r\n    id, timestamp, time in microseconds, arguments array, client IP and port,\r\n$15\r\n    client name\r\n$3\r\nLEN\r\n$37\r\n    Return the length of the slowlog.\r\n$5\r\nRESET\r\n$22\r\n    Reset the slowlog.\r\n$4\r\nHELP\r\n$20\r\n    Print this help.\r\n"
 	if got := execute(t, s, "SLOWLOG", "HELP"); got != want {
 		t.Fatalf("HELP=%q, want %q", got, want)
+	}
+}
+
+func TestSlowlogRedis810LogsOwnCommands(t *testing.T) {
+	s := New(engine.New())
+	execute(t, s, "CONFIG", "SET", "slowlog-log-slower-than", "0")
+	execute(t, s, "SLOWLOG", "RESET")
+	execute(t, s, "PING")
+	if got := execute(t, s, "SLOWLOG", "LEN"); got != ":2\r\n" {
+		t.Fatalf("LEN before recording itself=%q", got)
+	}
+	got := execute(t, s, "SLOWLOG", "GET", "-1")
+	if !strings.HasPrefix(got, "*3\r\n") {
+		t.Fatalf("GET must return RESET, PING, LEN before recording itself: %q", got)
+	}
+	// GET was appended after producing its response. IDs start at zero
+	// and RESET clears entries without restarting the ID sequence.
+	for i, want := range []string{"SLOWLOG GET -1", "SLOWLOG LEN", "PING", "SLOWLOG RESET"} {
+		entry := s.slowlogEntries[i]
+		parts := make([]string, len(entry.args))
+		for j, arg := range entry.args {
+			parts[j] = string(arg)
+		}
+		command := strings.Join(parts, " ")
+		if command != want || entry.id != int64(4-i) {
+			t.Fatalf("entry %d: command=%q id=%d, want %q id=%d", i, command, entry.id, want, 4-i)
+		}
+	}
+	execute(t, s, "SLOWLOG", "RESET")
+	if got := execute(t, s, "SLOWLOG", "LEN"); got != ":1\r\n" {
+		t.Fatalf("RESET must log itself: LEN=%q", got)
+	}
+	execute(t, s, "CONFIG", "SET", "slowlog-log-slower-than", "-1")
+	execute(t, s, "SLOWLOG", "RESET")
+	if got := execute(t, s, "SLOWLOG", "LEN"); got != ":0\r\n" {
+		t.Fatalf("disabled logging: LEN=%q", got)
 	}
 }
