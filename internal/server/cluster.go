@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 )
@@ -130,4 +131,102 @@ func (s *Server) enforceClusterRouting(args [][]byte) error {
 		return fmt.Errorf("MOVED %d %s", slot, owner)
 	}
 	return nil
+}
+
+
+type clusterSlotRange struct {
+	Start int
+	End   int
+	Owner string
+}
+
+func (s *Server) clusterSlotRanges() []clusterSlotRange {
+	out := make([]clusterSlotRange, 0)
+	start := -1
+	owner := ""
+	for slot := 0; slot < clusterSlotCount; slot++ {
+		current := s.clusterSlotOwners[slot]
+		if current == owner {
+			continue
+		}
+		if owner != "" {
+			out = append(out, clusterSlotRange{Start: start, End: slot - 1, Owner: owner})
+		}
+		owner = current
+		start = slot
+	}
+	if owner != "" {
+		out = append(out, clusterSlotRange{Start: start, End: clusterSlotCount - 1, Owner: owner})
+	}
+	return out
+}
+
+func clusterNodeEndpointReply(addr string) ([]byte, error) {
+	host, portText, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		return nil, err
+	}
+	return array(
+		formatBulkString([]byte(host)),
+		integer(int64(port)),
+		formatBulkString([]byte(addr)),
+	), nil
+}
+
+func (s *Server) clusterSlotsReply() ([]byte, error) {
+	ranges := s.clusterSlotRanges()
+	items := make([][]byte, 0, len(ranges))
+	for _, r := range ranges {
+		node, err := clusterNodeEndpointReply(r.Owner)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, array(
+			integer(int64(r.Start)),
+			integer(int64(r.End)),
+			node,
+		))
+	}
+	return array(items...), nil
+}
+
+func (s *Server) clusterShardsReply() ([]byte, error) {
+	ranges := s.clusterSlotRanges()
+	items := make([][]byte, 0, len(ranges))
+	for _, r := range ranges {
+		host, portText, err := net.SplitHostPort(r.Owner)
+		if err != nil {
+			return nil, err
+		}
+		port, err := strconv.Atoi(portText)
+		if err != nil {
+			return nil, err
+		}
+		node := array(
+			formatBulkString([]byte("id")),
+			formatBulkString([]byte(r.Owner)),
+			formatBulkString([]byte("endpoint")),
+			formatBulkString([]byte(host)),
+			formatBulkString([]byte("ip")),
+			formatBulkString([]byte(host)),
+			formatBulkString([]byte("port")),
+			integer(int64(port)),
+			formatBulkString([]byte("role")),
+			formatBulkString([]byte("master")),
+			formatBulkString([]byte("health")),
+			formatBulkString([]byte("online")),
+		)
+		shard := array(
+			formatBulkString([]byte("slots")),
+			array(integer(int64(r.Start)), integer(int64(r.End))),
+			formatBulkString([]byte("nodes")),
+			array(node),
+		)
+		items = append(items, shard)
+	}
+	return array(items...), nil
 }
