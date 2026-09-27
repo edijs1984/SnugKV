@@ -4,7 +4,9 @@ import (
 	"encoding/binary"
 	"errors"
 	"math"
+	"math/rand"
 	"strconv"
+	"time"
 	"strings"
 )
 
@@ -14,7 +16,11 @@ var vectorSetCommands = map[string]commandInfo{
 	"VDIM":      {2, 2, 1, 1, 1, false},
 	"VEMB":      {3, 4, 1, 1, 1, false},
 	"VISMEMBER": {3, 3, 1, 1, 1, false},
-	"VREM":      {3, 3, 1, 1, 1, true},
+	"VREM":        {3, 3, 1, 1, 1, true},
+	"VGETATTR":    {3, 3, 1, 1, 1, false},
+	"VSETATTR":    {4, 4, 1, 1, 1, true},
+	"VRANDMEMBER": {2, 3, 1, 1, 1, false},
+	"VINFO":       {2, 2, 1, 1, 1, false},
 }
 
 func init() {
@@ -222,6 +228,80 @@ func (s *Server) executeVectorSet(args [][]byte) ([]byte, error) {
 			return nil, err
 		}
 		return boolean(removed), nil
+
+	case "VGETATTR":
+		attrs, found, err := s.store.VectorSetGetAttr(key, string(args[2]))
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nullBulk(), nil
+		}
+		return []byte("+" + string(attrs) + "\r\n"), nil
+
+	case "VSETATTR":
+		updated, err := s.store.VectorSetSetAttr(key, string(args[2]), args[3])
+		if err != nil {
+			return nil, err
+		}
+		return boolean(updated), nil
+
+	case "VRANDMEMBER":
+		names, found, err := s.store.VectorSetMembers(key)
+		if err != nil {
+			return nil, err
+		}
+		if len(args) == 2 {
+			if !found || len(names) == 0 {
+				return nullBulk(), nil
+			}
+			r := rand.New(rand.NewSource(time.Now().UnixNano()))
+			return formatBulkString([]byte(names[r.Intn(len(names))])), nil
+		}
+
+		count, err := strconv.ParseInt(string(args[2]), 10, 64)
+		if err != nil {
+			return nil, errors.New("ERR value is not an integer or out of range")
+		}
+		if !found || len(names) == 0 || count == 0 {
+			return array(), nil
+		}
+		r := rand.New(rand.NewSource(time.Now().UnixNano()))
+		items := make([][]byte, 0)
+
+		if count > 0 {
+			limit := int(count)
+			if limit > len(names) {
+				limit = len(names)
+			}
+			perm := r.Perm(len(names))
+			for _, idx := range perm[:limit] {
+				items = append(items, formatBulkString([]byte(names[idx])))
+			}
+		} else {
+			limit := int(-count)
+			for i := 0; i < limit; i++ {
+				items = append(items, formatBulkString([]byte(names[r.Intn(len(names))])))
+			}
+		}
+		return array(items...), nil
+
+	case "VINFO":
+		info, found, err := s.store.VectorSetInfo(key)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return []byte("*-1\r\n"), nil
+		}
+		return array(
+			[]byte("+quant-type\r\n"), []byte("+fp32\r\n"),
+			[]byte("+vector-dim\r\n"), integer(info.Dim),
+			[]byte("+size\r\n"), integer(info.Size),
+			[]byte("+max-level\r\n"), integer(0),
+			[]byte("+vset-uid\r\n"), integer(1),
+			[]byte("+hnsw-max-node-uid\r\n"), integer(info.Size),
+		), nil
 	}
 
 	return nil, errors.New("ERR unknown vector set command")
