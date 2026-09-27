@@ -33,7 +33,7 @@ func TestFailoverPeerStateExchange(t *testing.T) {
 	setFailoverReplicaState(peer.server, runID, 123, 50, now.Add(-time.Second))
 
 	addr := peer.listener.Addr().(*net.TCPAddr)
-	state, err := queryFailoverPeer(addr.String(), time.Second)
+	state, err := queryFailoverPeer(addr.String(), time.Second, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
