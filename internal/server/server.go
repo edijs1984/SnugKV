@@ -52,6 +52,11 @@ type Server struct {
 	failoverPriority         int
 	failoverGroupID          string
 	failoverConfigEpoch      uint64
+	failoverMembershipMu     sync.RWMutex
+	failoverJointActive      bool
+	failoverPendingEpoch     uint64
+	failoverPendingPeers     []string
+	failoverPendingQuorum    int
 	failoverVoteMu           sync.Mutex
 	failoverTerm             uint64
 	failoverVotedFor         string
