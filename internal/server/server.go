@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -45,6 +46,24 @@ type Server struct {
 	replicationMasterTLSCert string
 	replicationMasterTLSKey  string
 	replicationMasterTLSSNI  string
+	autoFailoverTimeout      time.Duration
+	failoverPeers            []string
+	failoverQuorum           int
+	failoverPriority         int
+	failoverVoteMu           sync.Mutex
+	failoverTerm             uint64
+	failoverVotedFor         string
+	failoverLeaseMu          sync.Mutex
+	failoverLeaseTerm        uint64
+	failoverLeaseHolder      string
+	failoverLeaseUntil       time.Time
+	failoverLeaderMu         sync.RWMutex
+	failoverLeaderActive     bool
+	failoverLeaderTerm       uint64
+	failoverLeaderLineage    string
+	failoverLeaderID         string
+	failoverLeaderLeaseUntil time.Time
+	failoverLeaderFenced     bool
 
 	// executionACLUsername / executionACLArgs are valid only while durableMu is
 	// held. TCP and transaction execution populate them so dynamic command
@@ -133,6 +152,7 @@ var commandTable = map[string]commandInfo{
 	"SNUG.MEMORY":     {2, 2, 1, 1, 1, false},
 	"SNUG.SHAPES":     {1, 2, 0, 0, 0, false},
 	"SNUG.STATS":      {1, 1, 0, 0, 0, false},
+	"SNUG.FAILOVER":   {2, 7, 0, 0, 0, false},
 	"SNUG.POLICY":     {2, 2, 1, 1, 1, false},
 	"AUTH":            {1, 3, 0, 0, 0, false},
 	"ACL":             {1, 0, 0, 0, 0, false},
@@ -234,6 +254,9 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			return nil, errors.New("ERR wrong number of arguments for 'FT.AGGREGATE' command")
 		}
 		return nil, fmt.Errorf("ERR wrong number of arguments for '%s' command", strings.ToLower(cmd))
+	}
+	if info.write && s.failoverWritesFenced(time.Now()) {
+		return nil, errors.New("READONLY failover leader lease is not valid")
 	}
 	key := ""
 	if len(args) > 1 {
@@ -1147,6 +1170,77 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 
 		return formatBulkString([]byte(b.String())), nil
 
+	case "SNUG.FAILOVER":
+		switch strings.ToUpper(string(args[1])) {
+		case "STATE":
+			if len(args) != 2 {
+				return nil, errors.New("ERR wrong number of arguments for 'snug.failover|state' command")
+			}
+			payload, err := s.failoverStateJSON(time.Now())
+			if err != nil {
+				return nil, err
+			}
+			return formatBulkString(payload), nil
+		case "LEASE":
+			if len(args) != 6 {
+				return nil, errors.New("ERR wrong number of arguments for 'snug.failover|lease' command")
+			}
+			term, err := strconv.ParseUint(string(args[3]), 10, 64)
+			if err != nil {
+				return nil, errors.New("ERR invalid failover term")
+			}
+			ttlMS, err := strconv.ParseInt(string(args[5]), 10, 64)
+			if err != nil || ttlMS <= 0 {
+				return nil, errors.New("ERR invalid failover lease ttl")
+			}
+			reply := s.requestFailoverLease(
+				time.Now(),
+				string(args[2]),
+				term,
+				string(args[4]),
+				time.Duration(ttlMS)*time.Millisecond,
+			)
+			payload, err := json.Marshal(reply)
+			if err != nil {
+				return nil, err
+			}
+			return formatBulkString(payload), nil
+		case "REQUESTVOTE":
+			if len(args) != 7 {
+				return nil, errors.New("ERR wrong number of arguments for 'snug.failover|requestvote' command")
+			}
+			term, err := strconv.ParseUint(string(args[3]), 10, 64)
+			if err != nil {
+				return nil, errors.New("ERR invalid failover term")
+			}
+			offset, err := strconv.ParseInt(string(args[5]), 10, 64)
+			if err != nil {
+				return nil, errors.New("ERR invalid failover offset")
+			}
+			priority, err := strconv.Atoi(string(args[6]))
+			if err != nil {
+				return nil, errors.New("ERR invalid failover priority")
+			}
+			reply, err := s.requestFailoverVote(
+				time.Now(),
+				string(args[2]),
+				term,
+				string(args[4]),
+				offset,
+				priority,
+			)
+			if err != nil {
+				return nil, errors.New("ERR failover vote persistence failed")
+			}
+			payload, err := json.Marshal(reply)
+			if err != nil {
+				return nil, err
+			}
+			return formatBulkString(payload), nil
+		default:
+			return nil, errors.New("ERR unknown SNUG.FAILOVER subcommand")
+		}
+
 	case "SNUG.STATS":
 		m := s.store.Memory()
 		arenaWaste := uint64(0)
@@ -1565,21 +1659,19 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		clearHost, clearPort := host, port
 		if detach {
-			clearHost, clearPort = "", 0
+			s.stopReplicaFollow()
+			if err := s.promoteReplicaLocked(); err != nil {
+				return nil, err
+			}
+			return []byte("+OK\r\n"), nil
 		}
-		if err := s.persistReplicationCheckpointClearLocked(clearHost, clearPort); err != nil {
+		if err := s.persistReplicationCheckpointClearLocked(host, port); err != nil {
 			s.durabilityFailed = true
 			return nil, errors.New("ERR replication persistence update failed")
 		}
 		if clearErr := s.clearReplicationPersistence(); clearErr != nil {
 			return nil, errors.New("ERR replication persistence update failed")
-		}
-		if detach {
-			s.stopReplicaFollow()
-			s.replication.promote()
-			return []byte("+OK\r\n"), nil
 		}
 		s.startReplicaFollow(host, port)
 		return []byte("+OK\r\n"), nil

@@ -54,6 +54,7 @@ type replicationState struct {
 	masterPort           int
 	masterLinkStatus     string
 	masterSyncInProgress bool
+	masterDownSince       time.Time
 
 	connectedReplicas int
 	runID             string
@@ -125,6 +126,7 @@ func (r *replicationState) setReplica(host string, port int) {
 	r.masterPort = port
 	r.masterLinkStatus = "down"
 	r.masterSyncInProgress = true
+	r.masterDownSince = time.Now()
 	r.mu.Unlock()
 }
 
@@ -133,6 +135,7 @@ func (r *replicationState) setReplicaConnected() {
 	if r.role == replicationReplica {
 		r.masterLinkStatus = "up"
 		r.masterSyncInProgress = false
+		r.masterDownSince = time.Time{}
 	}
 	r.mu.Unlock()
 }
@@ -142,6 +145,9 @@ func (r *replicationState) setReplicaDisconnected() {
 	if r.role == replicationReplica {
 		r.masterLinkStatus = "down"
 		r.masterSyncInProgress = false
+		if r.masterDownSince.IsZero() {
+			r.masterDownSince = time.Now()
+		}
 	}
 	r.mu.Unlock()
 }
@@ -155,6 +161,7 @@ func (r *replicationState) promote() {
 	r.masterSyncInProgress = false
 	r.masterRunID = ""
 	r.masterRedisStream = false
+	r.masterDownSince = time.Time{}
 	r.mu.Unlock()
 }
 
@@ -226,6 +233,18 @@ func (r *replicationState) requestReplicaACKs() {
 			r.unregisterReplica(id)
 		}
 	}
+}
+
+func (r *replicationState) autoFailoverDue(now time.Time, timeout time.Duration) bool {
+	if timeout <= 0 {
+		return false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.role == replicationReplica &&
+		r.masterLinkStatus == "down" &&
+		!r.masterDownSince.IsZero() &&
+		now.Sub(r.masterDownSince) >= timeout
 }
 
 func (r *replicationState) isReadOnlyReplica() bool {
@@ -1112,7 +1131,67 @@ func (s *Server) writeReplicationACK(conn net.Conn, ackOffset int64) error {
 	return writeReplicationRESPCommand(conn, args...)
 }
 
+func (s *Server) promoteReplicaLocked() error {
+	if err := s.persistReplicationCheckpointClearLocked("", 0); err != nil {
+		s.durabilityFailed = true
+		return errors.New("ERR replication persistence update failed")
+	}
+	if err := s.clearReplicationPersistence(); err != nil {
+		return errors.New("ERR replication persistence update failed")
+	}
+	s.replication.promote()
+	return nil
+}
+
+func (s *Server) maintainAutoFailover(now time.Time) error {
+	if active, _, _, _, _, _ := s.failoverLeaderState(); active {
+		return s.maintainFailoverLeaderLease(now)
+	}
+	if !s.replication.autoFailoverDue(now, s.autoFailoverTimeout) {
+		return nil
+	}
+	if len(s.failoverPeers) > 0 {
+		election, err := s.runFailoverElectionRound(now)
+		if err != nil {
+			return err
+		}
+		if !election.Won {
+			return nil
+		}
+		s.replication.mu.RLock()
+		lineage := s.replication.masterRunID
+		localID := s.replication.runID
+		s.replication.mu.RUnlock()
+		lease, err := s.acquireFailoverLeaseRound(now, lineage, election.Term, localID)
+		if err != nil {
+			return err
+		}
+		if !lease.QuorumReached {
+			return nil
+		}
+		s.stopReplicaFollow()
+		s.durableMu.Lock()
+		defer s.durableMu.Unlock()
+		if !s.replication.autoFailoverDue(now, s.autoFailoverTimeout) {
+			return nil
+		}
+		if err := s.promoteReplicaLocked(); err != nil {
+			return err
+		}
+		s.activateFailoverLeader(election.Term, lineage, localID, lease.ExpiresAt)
+		return nil
+	}
+	s.stopReplicaFollow()
+	s.durableMu.Lock()
+	defer s.durableMu.Unlock()
+	if !s.replication.autoFailoverDue(now, s.autoFailoverTimeout) {
+		return nil
+	}
+	return s.promoteReplicaLocked()
+}
+
 func (s *Server) startReplicaFollow(host string, port int) {
+	s.deactivateFailoverLeader()
 	s.stopReplicaFollow()
 	s.resetReplicaAOFTracking()
 	s.replication.setReplica(host, port)

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"snugkv/internal/resp"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -32,6 +33,10 @@ type Config struct {
 	AOFRewritePath      string `json:"aof_rewrite_path"`
 	SnapshotPath        string `json:"snapshot_path"`
 	SnapshotIntervalMS  int64  `json:"snapshot_interval_ms"`
+	AutoFailoverTimeoutMS int64    `json:"auto_failover_timeout_ms"`
+	FailoverPeers          []string `json:"failover_peers"`
+	FailoverQuorum         int      `json:"failover_quorum"`
+	FailoverPriority       int      `json:"failover_priority"`
 	ACLFile             string `json:"acl_file"`
 	Fsync               string `json:"fsync"`
 	MaxMemory           uint64 `json:"max_memory"`
@@ -49,7 +54,7 @@ type Config struct {
 }
 
 func Default() Config {
-	return Config{AdminAddr: "127.0.0.1:6381", EvictionPolicy: "noeviction", Fsync: "everysec", OptimizerMode: "dedicated", ListenAddr: "127.0.0.1:6380", Shards: 256, MaxConnections: 10000, ReadTimeoutMS: 30000, WriteTimeoutMS: 30000, MaxRequestBytes: 64 << 20, MaxBulkBytes: 32 << 20, MaxArguments: 1024, CleanupIntervalMS: 100}
+	return Config{AdminAddr: "127.0.0.1:6381", EvictionPolicy: "noeviction", Fsync: "everysec", OptimizerMode: "dedicated", ListenAddr: "127.0.0.1:6380", Shards: 256, MaxConnections: 10000, ReadTimeoutMS: 30000, WriteTimeoutMS: 30000, MaxRequestBytes: 64 << 20, MaxBulkBytes: 32 << 20, MaxArguments: 1024, CleanupIntervalMS: 100, FailoverPriority: 100}
 }
 func (c Config) Limits() resp.Limits {
 	return resp.Limits{MaxRequestBytes: c.MaxRequestBytes, MaxBulkBytes: c.MaxBulkBytes, MaxArguments: c.MaxArguments}
@@ -72,6 +77,41 @@ func (c Config) Validate() error {
 				return errors.New("aof_rewrite_path must differ from AOF and snapshot paths")
 			}
 		}
+	}
+	if c.FailoverPriority < 0 {
+		return errors.New("failover_priority must not be negative")
+	}
+	if c.FailoverQuorum < 0 {
+		return errors.New("failover_quorum must not be negative")
+	}
+	for _, peer := range c.FailoverPeers {
+		host, port, err := net.SplitHostPort(peer)
+		if err != nil || host == "" || port == "" {
+			return errors.New("failover_peers entries must be host:port")
+		}
+		p, err := strconv.Atoi(port)
+		if err != nil || p <= 0 || p > 65535 {
+			return errors.New("failover_peers entries must use a valid port")
+		}
+	}
+	if len(c.FailoverPeers) == 0 && c.FailoverQuorum != 0 {
+		return errors.New("failover_quorum requires failover_peers")
+	}
+	if len(c.FailoverPeers) > 0 && c.MasterAuth == "" {
+		return errors.New("failover_peers requires masterauth for authenticated peer RPC")
+	}
+	if len(c.FailoverPeers) > 0 {
+		totalNodes := len(c.FailoverPeers) + 1
+		majority := totalNodes/2 + 1
+		if c.FailoverQuorum < majority || c.FailoverQuorum > totalNodes {
+			return fmt.Errorf("failover_quorum must be between majority (%d) and failover_peers+1", majority)
+		}
+	}
+	if c.AutoFailoverTimeoutMS < 0 {
+		return errors.New("auto_failover_timeout_ms must not be negative")
+	}
+	if c.AutoFailoverTimeoutMS > int64((24*time.Hour)/time.Millisecond) {
+		return errors.New("auto_failover_timeout_ms must not exceed 24h")
 	}
 	if c.SnapshotIntervalMS < 0 {
 		return errors.New("snapshot_interval_ms must not be negative")
@@ -193,6 +233,15 @@ func Load(path string) (Config, error) {
 	return c, nil
 }
 func (c *Config) ApplyEnv() error {
+	if v, ok := os.LookupEnv("SNUGKV_FAILOVER_PEERS"); ok {
+		c.FailoverPeers = nil
+		for _, peer := range strings.Split(v, ",") {
+			peer = strings.TrimSpace(peer)
+			if peer != "" {
+				c.FailoverPeers = append(c.FailoverPeers, peer)
+			}
+		}
+	}
 	if v, ok := os.LookupEnv("SNUGKV_MASTERTLS"); ok {
 		b, err := strconv.ParseBool(v)
 		if err != nil {
@@ -243,7 +292,7 @@ func (c *Config) ApplyEnv() error {
 	if v, ok := os.LookupEnv("SNUGKV_LISTEN"); ok {
 		c.ListenAddr = v
 	}
-	for name, dst := range map[string]*int{"SHARDS": &c.Shards, "MAX_CONNECTIONS": &c.MaxConnections, "MAX_REQUEST_BYTES": &c.MaxRequestBytes, "MAX_BULK_BYTES": &c.MaxBulkBytes, "MAX_ARGUMENTS": &c.MaxArguments} {
+	for name, dst := range map[string]*int{"SHARDS": &c.Shards, "MAX_CONNECTIONS": &c.MaxConnections, "MAX_REQUEST_BYTES": &c.MaxRequestBytes, "MAX_BULK_BYTES": &c.MaxBulkBytes, "MAX_ARGUMENTS": &c.MaxArguments, "FAILOVER_QUORUM": &c.FailoverQuorum, "FAILOVER_PRIORITY": &c.FailoverPriority} {
 		if v, ok := os.LookupEnv("SNUGKV_" + name); ok {
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -252,7 +301,7 @@ func (c *Config) ApplyEnv() error {
 			*dst = n
 		}
 	}
-	for name, dst := range map[string]*int64{"READ_TIMEOUT_MS": &c.ReadTimeoutMS, "WRITE_TIMEOUT_MS": &c.WriteTimeoutMS, "CLEANUP_INTERVAL_MS": &c.CleanupIntervalMS, "SNAPSHOT_INTERVAL_MS": &c.SnapshotIntervalMS} {
+	for name, dst := range map[string]*int64{"READ_TIMEOUT_MS": &c.ReadTimeoutMS, "WRITE_TIMEOUT_MS": &c.WriteTimeoutMS, "CLEANUP_INTERVAL_MS": &c.CleanupIntervalMS, "SNAPSHOT_INTERVAL_MS": &c.SnapshotIntervalMS, "AUTO_FAILOVER_TIMEOUT_MS": &c.AutoFailoverTimeoutMS} {
 		if v, ok := os.LookupEnv("SNUGKV_" + name); ok {
 			n, err := strconv.ParseInt(v, 10, 64)
 			if err != nil {
