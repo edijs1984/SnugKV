@@ -21,6 +21,8 @@ type failoverPeerState struct {
 	PendingEpoch uint64 `json:"pending_epoch,omitempty"`
 	Retired      bool   `json:"retired,omitempty"`
 	RetiredAtEpoch uint64 `json:"retired_at_epoch,omitempty"`
+	RetirePending bool `json:"retire_pending,omitempty"`
+	RetirePendingEpoch uint64 `json:"retire_pending_epoch,omitempty"`
 	Role        string `json:"role"`
 	MasterDown  bool   `json:"master_down"`
 	Offset      int64  `json:"offset"`
@@ -118,6 +120,8 @@ func (s *Server) localFailoverState(now time.Time) failoverPeerState {
 		PendingEpoch: membership.PendingEpoch,
 		Retired: membership.Retired,
 		RetiredAtEpoch: membership.RetiredAtEpoch,
+		RetirePending: membership.RetirePending,
+		RetirePendingEpoch: membership.RetirePendingEpoch,
 		Role:        roleName,
 		MasterDown:  masterDown,
 		Offset:      offset,
