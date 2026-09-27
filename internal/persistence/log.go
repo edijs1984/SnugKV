@@ -779,37 +779,183 @@ func ReplaySnapshot(path string, apply func([]Record) error) error {
 	return nil
 }
 
-// Rewrite atomically replaces history with a reset marker and current logical
-// records. Reset makes replay safe even over a snapshot from an older keyspace.
-func (l *Log) Rewrite(records []Record) error {
+// BeginRewrite establishes an append boundary for a background AOF rewrite.
+// Appends accepted after this point continue to the live AOF and are also
+// retained in rewriteBuffer until FinishRewrite atomically installs the new file.
+func (l *Log) BeginRewrite() error {
 	l.enqueueMu.Lock()
 	defer l.enqueueMu.Unlock()
+
+	if l.rewriteActive {
+		return errors.New("AOF rewrite already in progress")
+	}
 	if err := l.drainEverysec(); err != nil {
 		return err
 	}
+
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.failed != nil {
 		return l.failed
 	}
+
+	l.rewriteActive = true
+	l.rewriteBuffer = nil
+	return nil
+}
+
+func (l *Log) abortRewrite() {
+	l.enqueueMu.Lock()
+	l.rewriteActive = false
+	l.rewriteBuffer = nil
+	l.enqueueMu.Unlock()
+}
+
+// FinishRewrite writes the supplied base image without blocking ordinary
+// appends, then briefly blocks append admission to append the rewrite delta and
+// atomically replace the live AOF.
+func (l *Log) FinishRewrite(records []Record) error {
+	l.enqueueMu.Lock()
+	if !l.rewriteActive {
+		l.enqueueMu.Unlock()
+		return errors.New("AOF rewrite is not in progress")
+	}
+	l.mu.Lock()
+	if l.failed != nil {
+		err := l.failed
+		l.mu.Unlock()
+		l.rewriteActive = false
+		l.rewriteBuffer = nil
+		l.enqueueMu.Unlock()
+		return err
+	}
 	path := l.file.Name()
+	l.mu.Unlock()
+	l.enqueueMu.Unlock()
+
 	full := make([]Record, 0, len(records)+1)
 	full = append(full, Record{Reset: true})
 	full = append(full, records...)
-	if err := Snapshot(path, full); err != nil {
-		l.failed = err
-		return err
-	}
-	next, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND, 0600)
+
+	dir := filepath.Dir(path)
+	holder, err := os.CreateTemp(dir, ".snug-aof-rewrite-*")
 	if err != nil {
-		l.failed = err
+		l.abortRewrite()
 		return err
 	}
+	tempPath := holder.Name()
+	if closeErr := holder.Close(); closeErr != nil {
+		os.Remove(tempPath)
+		l.abortRewrite()
+		return closeErr
+	}
+	if err := os.Remove(tempPath); err != nil {
+		l.abortRewrite()
+		return err
+	}
+	defer os.Remove(tempPath)
+
+	if err := Snapshot(tempPath, full); err != nil {
+		l.abortRewrite()
+		return err
+	}
+
+	l.enqueueMu.Lock()
+	defer l.enqueueMu.Unlock()
+	if !l.rewriteActive {
+		return errors.New("AOF rewrite is not in progress")
+	}
+	if err := l.drainEverysec(); err != nil {
+		l.rewriteActive = false
+		l.rewriteBuffer = nil
+		return err
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.failed != nil {
+		l.rewriteActive = false
+		l.rewriteBuffer = nil
+		return l.failed
+	}
+
+	next, err := os.OpenFile(tempPath, os.O_RDWR|os.O_APPEND, 0600)
+	if err != nil {
+		l.rewriteActive = false
+		l.rewriteBuffer = nil
+		return err
+	}
+	keepNext := false
+	defer func() {
+		if !keepNext {
+			next.Close()
+		}
+	}()
+
+	rewriteWriter := bufio.NewWriterSize(next, 256<<10)
+	for _, frame := range l.rewriteBuffer {
+		if err := writeAll(rewriteWriter, frame); err != nil {
+			l.rewriteActive = false
+			l.rewriteBuffer = nil
+			return err
+		}
+	}
+	if err := rewriteWriter.Flush(); err != nil {
+		l.rewriteActive = false
+		l.rewriteBuffer = nil
+		return err
+	}
+	if err := next.Sync(); err != nil {
+		l.rewriteActive = false
+		l.rewriteBuffer = nil
+		return err
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		l.rewriteActive = false
+		l.rewriteBuffer = nil
+		return err
+	}
+	d, err := os.Open(dir)
+	if err != nil {
+		l.rewriteActive = false
+		l.rewriteBuffer = nil
+		return err
+	}
+	syncErr := d.Sync()
+	closeErr := d.Close()
+	if syncErr != nil {
+		l.rewriteActive = false
+		l.rewriteBuffer = nil
+		return syncErr
+	}
+	if closeErr != nil {
+		l.rewriteActive = false
+		l.rewriteBuffer = nil
+		return closeErr
+	}
+
 	previous := l.file
 	l.file = next
 	l.writer.Reset(next)
-	if err = previous.Close(); err != nil {
+	keepNext = true
+	l.rewriteActive = false
+	l.rewriteBuffer = nil
+	l.writtenSeq = l.appendedSeq
+	l.markSyncedLocked()
+
+	if err := previous.Close(); err != nil {
 		l.failed = err
+		return err
 	}
-	return l.failed
+	return nil
 }
+
+// Rewrite preserves the synchronous persistence API while using the same
+// buffered rewrite machinery as BGREWRITEAOF.
+func (l *Log) Rewrite(records []Record) error {
+	if err := l.BeginRewrite(); err != nil {
+		return err
+	}
+	return l.FinishRewrite(records)
+}
+
