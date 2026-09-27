@@ -672,10 +672,3 @@ func (s *Server) executeVectorSet(args [][]byte) ([]byte, error) {
 
 	return nil, errors.New("ERR unknown vector set command")
 }
-
-func btoi(v bool) int {
-	if v {
-		return 1
-	}
-	return 0
-}
