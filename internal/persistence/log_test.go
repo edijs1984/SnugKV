@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -256,5 +257,85 @@ func TestLogAppendPlainSetBatchDurabilitySequence(t *testing.T) {
 	}
 	if got != 3 {
 		t.Fatalf("replayed records=%d want=3", got)
+	}
+}
+
+
+func TestBufferedRewritePreservesConcurrentAppends(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "aof")
+	log, err := Open(path, "always")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+
+	if err := log.Append([]Record{{Key: []byte("before"), Value: []byte("one")}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := log.BeginRewrite(); err != nil {
+		t.Fatal(err)
+	}
+
+	base := []Record{{Key: []byte("before"), Value: []byte("one")}}
+	if err := log.Append([]Record{{Key: []byte("during"), Value: []byte("two")}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := log.AppendPlainSet([]byte("plain"), []byte("three")); err != nil {
+		t.Fatal(err)
+	}
+	if err := log.FinishRewrite(base); err != nil {
+		t.Fatal(err)
+	}
+	if err := log.Append([]Record{{Key: []byte("after"), Value: []byte("four")}}); err != nil {
+		t.Fatal(err)
+	}
+
+	state := map[string]string{}
+	if err := Replay(path, func(records []Record) error {
+		for _, record := range records {
+			if record.Reset {
+				clear(state)
+				continue
+			}
+			if record.Deleted {
+				delete(state, string(record.Key))
+				continue
+			}
+			if len(record.Key) != 0 {
+				state[string(record.Key)] = string(record.Value)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]string{
+		"before": "one",
+		"during": "two",
+		"plain":  "three",
+		"after":  "four",
+	}
+	if !reflect.DeepEqual(state, want) {
+		t.Fatalf("replayed state=%v want=%v", state, want)
+	}
+}
+
+func TestBufferedRewriteRejectsOverlappingRewrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "aof")
+	log, err := Open(path, "always")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+
+	if err := log.BeginRewrite(); err != nil {
+		t.Fatal(err)
+	}
+	if err := log.BeginRewrite(); err == nil {
+		t.Fatal("accepted overlapping rewrite")
+	}
+	if err := log.FinishRewrite(nil); err != nil {
+		t.Fatal(err)
 	}
 }
