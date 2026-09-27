@@ -84,7 +84,9 @@ type Log struct {
 	wake        chan struct{}
 	stop        chan struct{}
 	done        chan struct{}
-	once        sync.Once
+	once          sync.Once
+	rewriteActive bool
+	rewriteBuffer [][]byte
 }
 
 func Open(path, policy string) (*Log, error) {
@@ -362,6 +364,13 @@ func (l *Log) finishAppendLocked() error {
 	return l.failed
 }
 
+func (l *Log) bufferRewriteFrameLocked(frame []byte) {
+	if !l.rewriteActive {
+		return
+	}
+	l.rewriteBuffer = append(l.rewriteBuffer, append([]byte(nil), frame...))
+}
+
 func (l *Log) appendEncoded(frame []byte, count uint64) error {
 	l.enqueueMu.Lock()
 
@@ -393,12 +402,24 @@ func (l *Log) appendEncoded(frame []byte, count uint64) error {
 		case l.wake <- struct{}{}:
 		default:
 		}
-		l.enqueueMu.Unlock()
 
-		if done != nil {
-			return <-done
+		if done == nil {
+			l.bufferRewriteFrameLocked(frame)
+			l.enqueueMu.Unlock()
+			return nil
 		}
-		return nil
+
+		if l.rewriteActive {
+			err := <-done
+			if err == nil {
+				l.bufferRewriteFrameLocked(frame)
+			}
+			l.enqueueMu.Unlock()
+			return err
+		}
+
+		l.enqueueMu.Unlock()
+		return <-done
 	}
 	l.mu.Unlock()
 
@@ -423,6 +444,7 @@ func (l *Log) appendEncoded(frame []byte, count uint64) error {
 		l.failed = err
 		return err
 	}
+	l.bufferRewriteFrameLocked(frame)
 	return nil
 }
 
