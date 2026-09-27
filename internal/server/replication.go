@@ -243,6 +243,7 @@ func (r *replicationState) autoFailoverDue(now time.Time, timeout time.Duration)
 	defer r.mu.RUnlock()
 	return r.role == replicationReplica &&
 		r.masterLinkStatus == "down" &&
+		r.masterRunID != "" &&
 		!r.masterDownSince.IsZero() &&
 		now.Sub(r.masterDownSince) >= timeout
 }
