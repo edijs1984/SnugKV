@@ -1147,6 +1147,9 @@ func (s *Server) maintainAutoFailover(now time.Time) error {
 	if active, _, _, _, _, _ := s.failoverLeaderState(); active {
 		return s.maintainFailoverLeaderLease(now)
 	}
+	if s.failoverMembershipSnapshot().JointActive {
+		return nil
+	}
 	if !s.replication.autoFailoverDue(now, s.autoFailoverTimeout) {
 		return nil
 	}
