@@ -143,7 +143,7 @@ func TestLMPOPWrongTypeAndValidation(t *testing.T) {
 		t.Fatalf("expected WRONGTYPE before later ready list, err=%v", err)
 	}
 
-	for _, command := range [][]byte{
+	for _, command := range [][][]byte{
 		{[]byte("LMPOP"), []byte("0"), []byte("LEFT")},
 		{[]byte("LMPOP"), []byte("1"), []byte("list"), []byte("UP")},
 		{[]byte("LMPOP"), []byte("1"), []byte("list"), []byte("LEFT"), []byte("COUNT"), []byte("0")},
