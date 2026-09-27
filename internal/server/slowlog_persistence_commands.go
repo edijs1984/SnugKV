@@ -169,20 +169,21 @@ func (s *Server) executeSave(background bool, schedule bool) ([]byte, error) {
 	s.persistenceJobMu.Lock()
 	if s.bgsaveRunning {
 		s.persistenceJobMu.Unlock()
+		return nil, errors.New("ERR Background save already in progress")
+	}
+	if s.aofRewriteRunning {
 		if schedule {
+			s.bgsaveScheduled = true
+			s.persistenceJobMu.Unlock()
 			return []byte("+Background saving scheduled\r\n"), nil
 		}
-		return nil, errors.New("ERR Background save already in progress")
+		s.persistenceJobMu.Unlock()
+		return nil, errors.New("ERR Another child process is active (AOF?): can't BGSAVE right now. Use BGSAVE SCHEDULE in order to schedule a BGSAVE whenever possible.")
 	}
 	s.bgsaveRunning = true
 	s.persistenceJobMu.Unlock()
 
-	go func() {
-		_ = s.snapshotNow()
-		s.persistenceJobMu.Lock()
-		s.bgsaveRunning = false
-		s.persistenceJobMu.Unlock()
-	}()
+	go s.runBackgroundSave()
 
 	return []byte("+Background saving started\r\n"), nil
 }
@@ -251,7 +252,15 @@ func (s *Server) executeBGRewriteAOF() ([]byte, error) {
 		s.persistenceJobMu.Lock()
 		s.aofLastRewriteFailed = rewriteErr != nil
 		s.aofRewriteRunning = false
+		startSave := s.bgsaveScheduled
+		if startSave {
+			s.bgsaveScheduled = false
+			s.bgsaveRunning = true
+		}
 		s.persistenceJobMu.Unlock()
+		if startSave {
+			go s.runBackgroundSave()
+		}
 		if rewriteErr != nil {
 			log.Printf("event=aof_rewrite_failed error=%q", rewriteErr)
 		}
@@ -283,4 +292,11 @@ func (s *Server) persistenceInfo() string {
 	}
 	return fmt.Sprintf("# Persistence\r\nrdb_bgsave_in_progress:%d\r\nrdb_last_save_time:%d\r\nrdb_last_bgsave_status:%s\r\naof_enabled:%d\r\naof_rewrite_in_progress:%d\r\naof_last_bgrewrite_status:%s\r\n",
 		saving, s.lastSaveUnix.Load(), rdbStatus, enabled, rewriting, aofStatus)
+}
+
+func (s *Server) runBackgroundSave() {
+	_ = s.snapshotNow() // snapshotNow records and logs failures.
+	s.persistenceJobMu.Lock()
+	s.bgsaveRunning = false
+	s.persistenceJobMu.Unlock()
 }
