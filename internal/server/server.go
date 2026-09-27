@@ -1192,6 +1192,27 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 
 	case "SNUG.FAILOVER":
 		switch strings.ToUpper(string(args[1])) {
+		case "RETIREPREPARE":
+			if len(args) != 5 {
+				return nil, errors.New("ERR wrong number of arguments for 'snug.failover|retireprepare' command")
+			}
+			currentEpoch, err := strconv.ParseUint(string(args[3]), 10, 64)
+			if err != nil {
+				return nil, errors.New("ERR invalid current failover membership epoch")
+			}
+			retireAtEpoch, err := strconv.ParseUint(string(args[4]), 10, 64)
+			if err != nil {
+				return nil, errors.New("ERR invalid failover retirement epoch")
+			}
+			reply, err := s.prepareFailoverRetirement(string(args[2]), currentEpoch, retireAtEpoch)
+			if err != nil {
+				return nil, fmt.Errorf("ERR %s", err.Error())
+			}
+			payload, err := json.Marshal(reply)
+			if err != nil {
+				return nil, err
+			}
+			return formatBulkString(payload), nil
 		case "RETIRE":
 			if len(args) != 5 {
 				return nil, errors.New("ERR wrong number of arguments for 'snug.failover|retire' command")
