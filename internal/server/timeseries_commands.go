@@ -26,6 +26,8 @@ var timeSeriesCommands = map[string]commandInfo{
 	"TS.MGET":       {3, 0, 0, 0, 0, false},
 	"TS.MRANGE":     {4, 0, 0, 0, 0, false},
 	"TS.MREVRANGE":  {4, 0, 0, 0, 0, false},
+	"TS.CREATERULE": {6, 7, 1, 2, 1, true},
+	"TS.DELETERULE": {3, 3, 1, 2, 1, true},
 }
 
 func init() {
@@ -485,6 +487,38 @@ func (s *Server) executeTimeSeries(args [][]byte)([]byte,error){
 		}
 		return array(items...), nil
 
+	case "TS.CREATERULE":
+		if !strings.EqualFold(string(args[3]), "AGGREGATION") {
+			return nil, errors.New("ERR TSDB: unknown argument")
+		}
+		bucketDuration, err := strconv.ParseInt(string(args[5]), 10, 64)
+		if err != nil || bucketDuration <= 0 {
+			return nil, errors.New("ERR TSDB: bucketDuration must be greater than 0")
+		}
+		var alignment int64
+		if len(args) == 7 {
+			alignment, err = strconv.ParseInt(string(args[6]), 10, 64)
+			if err != nil {
+				return nil, errors.New("ERR TSDB: invalid alignTimestamp")
+			}
+		}
+		if err := s.store.TimeSeriesCreateRule(
+			string(args[1]),
+			string(args[2]),
+			string(args[4]),
+			bucketDuration,
+			alignment,
+		); err != nil {
+			return nil, err
+		}
+		return []byte("+OK\r\n"), nil
+
+	case "TS.DELETERULE":
+		if err := s.store.TimeSeriesDeleteRule(string(args[1]), string(args[2])); err != nil {
+			return nil, err
+		}
+		return []byte("+OK\r\n"), nil
+
 	case "TS.INFO":
 		v,err:=s.store.TimeSeriesInfo(key)
 		if err!=nil{
@@ -494,6 +528,19 @@ func (s *Server) executeTimeSeries(args [][]byte)([]byte,error){
 		labelItems:=make([][]byte,len(v.Labels))
 		for i,label:=range v.Labels{
 			labelItems[i]=array(formatBulkString([]byte(label.Key)),formatBulkString([]byte(label.Value)))
+		}
+		ruleItems:=make([][]byte,len(v.Rules))
+		for i,rule:=range v.Rules{
+			ruleItems[i]=array(
+				formatBulkString([]byte(rule.DestKey)),
+				integer(rule.BucketDuration),
+				[]byte("+"+rule.Aggregator+"\r\n"),
+				integer(rule.Alignment),
+			)
+		}
+		sourceReply:=nullBulk()
+		if v.SourceKey!=""{
+			sourceReply=formatBulkString([]byte(v.SourceKey))
 		}
 		return array(
 			[]byte("+totalSamples\r\n"),integer(int64(v.TotalSamples)),
@@ -506,8 +553,8 @@ func (s *Server) executeTimeSeries(args [][]byte)([]byte,error){
 			[]byte("+chunkType\r\n"),[]byte("+compressed\r\n"),
 			[]byte("+duplicatePolicy\r\n"),[]byte("+"+v.DuplicatePolicy+"\r\n"),
 			[]byte("+labels\r\n"),array(labelItems...),
-			[]byte("+sourceKey\r\n"),nullBulk(),
-			[]byte("+rules\r\n"),array(),
+			[]byte("+sourceKey\r\n"),sourceReply,
+			[]byte("+rules\r\n"),array(ruleItems...),
 			[]byte("+ignoreMaxTimeDiff\r\n"),integer(v.IgnoreMaxTimeDiff),
 			[]byte("+ignoreMaxValDiff\r\n"),formatBulkString([]byte("0")),
 		),nil
