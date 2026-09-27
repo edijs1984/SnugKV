@@ -234,3 +234,68 @@ func stringSlicesEqual(a, b []string) bool {
 	}
 	return true
 }
+
+
+func deriveFailoverPeersForMember(members []string, self string) ([]string, error) {
+	if self == "" {
+		return nil, errors.New("failover_advertise_addr is required for dynamic membership")
+	}
+	seen := make(map[string]struct{}, len(members))
+	foundSelf := false
+	peers := make([]string, 0, len(members))
+	for _, member := range members {
+		member = strings.TrimSpace(member)
+		if member == "" {
+			return nil, errors.New("empty failover member address")
+		}
+		if _, exists := seen[member]; exists {
+			return nil, errors.New("duplicate failover member address")
+		}
+		seen[member] = struct{}{}
+		host, portText, err := net.SplitHostPort(member)
+		if err != nil || host == "" || portText == "" {
+			return nil, errors.New("invalid failover member address")
+		}
+		port, err := strconv.Atoi(portText)
+		if err != nil || port <= 0 || port > 65535 {
+			return nil, errors.New("invalid failover member port")
+		}
+		if member == self {
+			foundSelf = true
+			continue
+		}
+		peers = append(peers, member)
+	}
+	if !foundSelf {
+		return nil, errors.New("dynamic membership must include this node")
+	}
+	return peers, nil
+}
+
+func (s *Server) prepareFailoverMembershipMembers(groupID string, currentEpoch, newEpoch uint64, members []string, quorum int) (failoverMembershipReply, error) {
+	peers, err := deriveFailoverPeersForMember(members, s.failoverAdvertiseAddr)
+	if err != nil {
+		return failoverMembershipReply{}, err
+	}
+	return s.prepareFailoverMembership(groupID, currentEpoch, newEpoch, peers, quorum)
+}
+
+func (s *Server) failoverCurrentMembers() ([]string, error) {
+	membership := s.failoverMembershipSnapshot()
+	if s.failoverAdvertiseAddr == "" {
+		return nil, errors.New("failover_advertise_addr is required for dynamic membership")
+	}
+	members := make([]string, 0, len(membership.Peers)+1)
+	members = append(members, s.failoverAdvertiseAddr)
+	members = append(members, membership.Peers...)
+	return members, nil
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
