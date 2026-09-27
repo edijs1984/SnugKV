@@ -33,7 +33,30 @@ Targeted race suites and the live checks above also passed. GitHub CI is a separ
 - With no active AOF, SnugKV requires an explicit export destination; Redis retains a default destination even with appendonly=no.
 - Active rewrites block commands participating in durableMu, including INFO and scheduling requests arriving during that interval. Scheduling tests exercise the state machine directly; fully responsive Redis-style concurrent rewrites need buffering.
 - Transaction-time persistence scheduling, shutdown while a job is pending/running, simultaneous synchronous SAVE and BGSAVE, and automatic periodic snapshots need further lifecycle review.
-- Full SLOWLOG coverage (fast execution paths, argument truncation/redaction, scripting/transaction details) is not established by these probes.
+- Fast TCP GET/SET paths, MULTI/EXEC executed-command visibility, outer EVAL/EVALSHA/EVAL_RO/EVALSHA_RO, and FCALL/FCALL_RO are now covered by focused race-enabled regressions. Argument truncation/redaction remains a separate hardening area.
 - Persistence INFO is a subset; native SnugKV snapshot/AOF files are not Redis RDB/AOF file-format exports.
 
-Next Phase F target after review/merge: MONITOR. See aof-one-off-rewrite.md for the export option and locking trade-off.
+MONITOR is complete on main. This follow-up SLOWLOG hardening slice closes the previously documented fast-path / transaction / scripting / Function visibility gap. See aof-one-off-rewrite.md for the export option and locking trade-off.
+
+
+## Follow-up hardening — 2026-09-27
+
+The post-MONITOR audit closed a SLOWLOG coverage gap caused by execution paths that bypass `Server.execute()`.
+
+New coverage and fixes:
+
+- TCP fast-path `GET` and `SET` record SLOWLOG entries with the correct client identity without mutating shared execution context.
+- Transaction control commands are recorded when executed.
+- Commands queued in `MULTI` are recorded when they actually execute under `EXEC`, not when merely queued.
+- Killable Lua entry points record outer `EVAL`, `EVALSHA`, `EVAL_RO`, and `EVALSHA_RO` invocations.
+- Killable Function entry points record outer `FCALL` and `FCALL_RO` invocations.
+- Client identity capture for concurrent fast paths uses an explicit client parameter, avoiding races through `executionClient`.
+
+Operator-reported passing gates on the hardened branch:
+
+- `go test -race ./internal/server -run '^TestSlowlog' -count=1 -v`
+- `go test -race ./...`
+- `go vet ./...`
+- `go test ./internal/resp -run=^$ -fuzz=FuzzReadCommand -fuzztime=20s`
+
+Remaining SLOWLOG hardening is primarily exact Redis argument truncation/redaction behavior and any future command-specific edge cases.
