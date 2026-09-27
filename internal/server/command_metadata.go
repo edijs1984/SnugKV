@@ -645,6 +645,12 @@ func commandInfoFlags(
 	case "ZMPOP":
 		return []string{"write", "movablekeys"}
 
+	case "LMPOP":
+		return []string{"write", "movablekeys"}
+
+	case "BLMPOP":
+		return []string{"write", "blocking", "movablekeys"}
+
 	case "BZMPOP":
 		return []string{"write", "blocking", "movablekeys"}
 
@@ -774,6 +780,21 @@ func commandInfoACL(
 			"@write",
 			"@bitmap",
 			"@slow",
+		}
+
+	case "LMPOP":
+		return []string{
+			"@write",
+			"@list",
+			"@slow",
+		}
+
+	case "BLMPOP":
+		return []string{
+			"@write",
+			"@list",
+			"@slow",
+			"@blocking",
 		}
 
 	case "EVAL", "EVALSHA",
