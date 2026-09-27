@@ -1145,16 +1145,20 @@ func (s *Server) promoteReplicaLocked() error {
 }
 
 func (s *Server) maintainAutoFailover(now time.Time) error {
+	if err := s.retryFailoverMembershipCommit(now); err != nil {
+		return err
+	}
+	membership := s.failoverMembershipSnapshot()
 	if active, _, _, _, _, _ := s.failoverLeaderState(); active {
 		return s.maintainFailoverLeaderLease(now)
 	}
-	if s.failoverMembershipSnapshot().JointActive {
+	if membership.JointActive {
 		return nil
 	}
 	if !s.replication.autoFailoverDue(now, s.autoFailoverTimeout) {
 		return nil
 	}
-	if len(s.failoverPeers) > 0 {
+	if len(membership.Peers) > 0 {
 		election, err := s.runFailoverElectionRound(now)
 		if err != nil {
 			return err
