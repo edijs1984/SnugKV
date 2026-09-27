@@ -406,7 +406,8 @@ lands.
 - [x] Sentinel-like static-topology convergence: automatically reparent surviving replicas to the elected leader and safely reconcile a returning old primary through authenticated, quorum-verified demotion. Audit: `docs/AUTOMATIC-FAILOVER-AUDIT.md`.
 - [x] Dynamic failover membership: group/epoch identity, advertised endpoints, dual-majority joint reconfiguration, durable commit-forward recovery, and safe member retirement/removal. Audit: `docs/AUTOMATIC-FAILOVER-AUDIT.md`.
 - [x] Authenticated failover peer discovery/gossip with stale-health observability, dry-run discovery planning, and explicit discovered-peer adoption through the dual-majority membership protocol. Audit: `docs/AUTOMATIC-FAILOVER-AUDIT.md`.
-- [ ] Richer failover operator/topology controls and optional fully automatic membership admission policy.
+- [x] Richer failover operator/topology controls: topology/health views, transition diagnosis, and explicit retry of already-durable commit-forward recovery. Audit: `docs/AUTOMATIC-FAILOVER-AUDIT.md`.
+- [ ] Optional fully automatic membership admission policy.
 - [ ] Cluster/sharding protocol.
 - [ ] Multi-node consistency and recovery model.
 
