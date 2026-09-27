@@ -727,6 +727,13 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			continue
 		}
 
+		if commandIsWrite(msg) && s.server.failoverWritesFenced(requestNow) {
+			if writeProtocol(msg, []byte("-READONLY failover leader lease is not valid\r\n")) != nil {
+				return
+			}
+			continue
+		}
+
 		monitorAuthorized = true
 		if !txSession.multi && monitorScriptCommand(msg) {
 			s.server.feedMonitor(clientSession, msg, nil)
