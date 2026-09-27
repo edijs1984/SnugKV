@@ -140,7 +140,7 @@ var commandTable = map[string]commandInfo{
 	"SNUG.MEMORY":     {2, 2, 1, 1, 1, false},
 	"SNUG.SHAPES":     {1, 2, 0, 0, 0, false},
 	"SNUG.STATS":      {1, 1, 0, 0, 0, false},
-	"SNUG.FAILOVER":   {2, 2, 0, 0, 0, false},
+	"SNUG.FAILOVER":   {2, 7, 0, 0, 0, false},
 	"SNUG.POLICY":     {2, 2, 1, 1, 1, false},
 	"AUTH":            {1, 3, 0, 0, 0, false},
 	"ACL":             {1, 0, 0, 0, 0, false},
@@ -1156,14 +1156,51 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		return formatBulkString([]byte(b.String())), nil
 
 	case "SNUG.FAILOVER":
-		if !strings.EqualFold(string(args[1]), "STATE") {
+		switch strings.ToUpper(string(args[1])) {
+		case "STATE":
+			if len(args) != 2 {
+				return nil, errors.New("ERR wrong number of arguments for 'snug.failover|state' command")
+			}
+			payload, err := s.failoverStateJSON(time.Now())
+			if err != nil {
+				return nil, err
+			}
+			return formatBulkString(payload), nil
+		case "REQUESTVOTE":
+			if len(args) != 7 {
+				return nil, errors.New("ERR wrong number of arguments for 'snug.failover|requestvote' command")
+			}
+			term, err := strconv.ParseUint(string(args[3]), 10, 64)
+			if err != nil {
+				return nil, errors.New("ERR invalid failover term")
+			}
+			offset, err := strconv.ParseInt(string(args[5]), 10, 64)
+			if err != nil {
+				return nil, errors.New("ERR invalid failover offset")
+			}
+			priority, err := strconv.Atoi(string(args[6]))
+			if err != nil {
+				return nil, errors.New("ERR invalid failover priority")
+			}
+			reply, err := s.requestFailoverVote(
+				time.Now(),
+				string(args[2]),
+				term,
+				string(args[4]),
+				offset,
+				priority,
+			)
+			if err != nil {
+				return nil, errors.New("ERR failover vote persistence failed")
+			}
+			payload, err := json.Marshal(reply)
+			if err != nil {
+				return nil, err
+			}
+			return formatBulkString(payload), nil
+		default:
 			return nil, errors.New("ERR unknown SNUG.FAILOVER subcommand")
 		}
-		payload, err := s.failoverStateJSON(time.Now())
-		if err != nil {
-			return nil, err
-		}
-		return formatBulkString(payload), nil
 
 	case "SNUG.STATS":
 		m := s.store.Memory()
