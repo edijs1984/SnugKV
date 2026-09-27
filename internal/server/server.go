@@ -81,6 +81,7 @@ type Server struct {
 	snapshotPath      string
 	persistenceJobMu  sync.Mutex
 	bgsaveRunning     bool
+	bgsaveScheduled   bool
 	aofRewriteRunning bool
 	rdbLastSaveFailed bool
 	aofLastRewriteFailed bool
