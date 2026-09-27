@@ -886,3 +886,35 @@ func queryFailoverRetire(addr string, timeout time.Duration, username, password,
 	}
 	return reply, nil
 }
+
+
+func queryFailoverRetirePrepare(addr string, timeout time.Duration, username, password, groupID string, currentEpoch, retireAtEpoch uint64) (failoverRetireReply, error) {
+	conn, err := net.DialTimeout("tcp", addr, timeout)
+	if err != nil {
+		return failoverRetireReply{}, err
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+	reader := bufio.NewReader(conn)
+	if err := authenticateReplicationUpstream(conn, reader, username, password); err != nil {
+		return failoverRetireReply{}, err
+	}
+	if err := writeReplicationRESPCommand(
+		conn,
+		"SNUG.FAILOVER", "RETIREPREPARE",
+		groupID,
+		strconv.FormatUint(currentEpoch, 10),
+		strconv.FormatUint(retireAtEpoch, 10),
+	); err != nil {
+		return failoverRetireReply{}, err
+	}
+	payload, err := readRESPBulk(reader)
+	if err != nil {
+		return failoverRetireReply{}, err
+	}
+	var reply failoverRetireReply
+	if err := json.Unmarshal(payload, &reply); err != nil {
+		return failoverRetireReply{}, err
+	}
+	return reply, nil
+}
