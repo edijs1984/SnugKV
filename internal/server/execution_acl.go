@@ -15,6 +15,12 @@ func (s *Server) withExecutionACLContextLocked(
 	args [][]byte,
 	fn func() ([]byte, error),
 ) ([]byte, error) {
+	previousClient := s.executionClient
+	s.executionClient = nil
+	if session != nil {
+		s.executionClient = session.client
+	}
+
 	previousUser := s.executionACLUsername
 	previousArgs := s.executionACLArgs
 
@@ -27,6 +33,7 @@ func (s *Server) withExecutionACLContextLocked(
 	}
 
 	defer func() {
+		s.executionClient = previousClient
 		s.executionACLUsername = previousUser
 		s.executionACLArgs = previousArgs
 	}()
