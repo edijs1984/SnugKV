@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"net"
 	"testing"
-	"time"
 )
 
 func clientArgs(parts ...string) [][]byte {
@@ -292,24 +291,13 @@ func TestClientInfoBasicFields(t *testing.T) {
 
 
 func BenchmarkClientSessionTouchGET(b *testing.B) {
+	session := newClientSession(1, nil, "remote", "local")
 	get := [][]byte{[]byte("GET"), []byte("bench:key")}
 
-	b.Run("exact-now", func(b *testing.B) {
-		session := newClientSession(1, nil, "remote", "local")
-		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
-			session.touch(get)
-		}
-	})
-
-	b.Run("reused-now", func(b *testing.B) {
-		session := newClientSession(1, nil, "remote", "local")
-		now := time.Now()
-		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
-			session.touchAt(get, now)
-		}
-	})
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		session.touch(get)
+	}
 }
 
 
