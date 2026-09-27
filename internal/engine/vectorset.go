@@ -410,13 +410,15 @@ func cosineSimilarity32(a, b []float32) float64 {
 	if an == 0 || bn == 0 {
 		return 0
 	}
-	score := dot / (math.Sqrt(an) * math.Sqrt(bn))
-	if score > 1 {
-		score = 1
-	} else if score < -1 {
-		score = -1
+	cosine := dot / (math.Sqrt(an) * math.Sqrt(bn))
+	if cosine > 1 {
+		cosine = 1
+	} else if cosine < -1 {
+		cosine = -1
 	}
-	return score
+	// Redis Vector Set similarity is normalized to [0,1]:
+	// identical=1, orthogonal=0.5, opposite=0.
+	return (cosine + 1) / 2
 }
 
 func (s *Store) VectorSetSearch(
