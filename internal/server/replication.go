@@ -1355,8 +1355,23 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 			return err
 		}
 		var records []persistence.Record
+		var incomingFunctions []*functionLibrary
+		var rollbackFunctions []*functionLibrary
 		if isRedisRDB {
-			records, err = decodeRedisFullSyncRDB(snapshot)
+			decoded, decodeErr := decodeRedisFullSyncRDBState(snapshot)
+			if decodeErr != nil {
+				return decodeErr
+			}
+			records = decoded.records
+			incomingFunctions, err = s.compileFunctionLibraries(decoded.functionCodes)
+			if err != nil {
+				return fmt.Errorf("replication full-sync function compile failed: %w", err)
+			}
+			rollbackFunctions, err = s.compileFunctionLibraries(functionRegistryForServer(s).libraryCodes())
+			if err != nil {
+				closeFunctionLibraries(incomingFunctions)
+				return fmt.Errorf("replication full-sync function rollback preparation failed: %w", err)
+			}
 			redisStream = true
 		} else {
 			records, err = decodeReplicationFrame(snapshot)
@@ -1368,9 +1383,26 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 		if isRedisRDB {
 			err = s.store.Restore(records, true)
 			if err == nil {
-				err = s.persistRedisFullSyncStateLocked(fullResyncRunID, off, redisStream)
+				err = functionRegistryForServer(s).restoreCompiled(incomingFunctions, "FLUSH")
 				if err == nil {
-					s.noteReplicaAOFOffset(off)
+					incomingFunctions = nil
+				}
+			}
+			if err == nil {
+				err = s.persistRedisFullSyncStateLocked(fullResyncRunID, off, redisStream)
+			}
+			if err == nil {
+				err = s.persistFunctionRegistry()
+			}
+			if err == nil {
+				s.noteReplicaAOFOffset(off)
+				closeFunctionLibraries(rollbackFunctions)
+				rollbackFunctions = nil
+			} else {
+				if len(rollbackFunctions) > 0 || len(functionRegistryForServer(s).libraryCodes()) > 0 {
+					if rollbackErr := functionRegistryForServer(s).restoreCompiled(rollbackFunctions, "FLUSH"); rollbackErr == nil {
+						rollbackFunctions = nil
+					}
 				}
 			}
 		} else {
@@ -1380,6 +1412,8 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 			}
 		}
 		s.durableMu.Unlock()
+		closeFunctionLibraries(incomingFunctions)
+		closeFunctionLibraries(rollbackFunctions)
 		if err != nil {
 			return err
 		}
