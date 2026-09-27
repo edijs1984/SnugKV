@@ -594,3 +594,146 @@ func (s *Server) maintainFailoverLeaderLease(now time.Time) error {
 	}
 	return nil
 }
+
+
+type failoverReparentReply struct {
+	Term     uint64 `json:"term"`
+	Accepted bool   `json:"accepted"`
+}
+
+func (s *Server) resolveFailoverLeaderAddr(leaderID string) (string, error) {
+	if leaderID == "" {
+		return "", errors.New("empty failover leader id")
+	}
+	for _, addr := range s.failoverPeers {
+		state, err := queryFailoverPeer(
+			addr,
+			200*time.Millisecond,
+			s.replicationMasterUser,
+			s.replicationMasterAuth,
+		)
+		if err != nil {
+			continue
+		}
+		if state.NodeID == leaderID && state.Role == "master" {
+			return addr, nil
+		}
+	}
+	return "", errors.New("failover leader endpoint not found")
+}
+
+func (s *Server) requestFailoverReparent(now time.Time, lineage string, term uint64, leaderID string) (failoverReparentReply, error) {
+	s.failoverVoteMu.Lock()
+	currentTerm := s.failoverTerm
+	s.failoverVoteMu.Unlock()
+
+	reply := failoverReparentReply{Term: currentTerm}
+	if term < currentTerm || lineage == "" || leaderID == "" {
+		return reply, nil
+	}
+
+	s.replication.mu.RLock()
+	role := s.replication.role
+	currentLineage := s.replication.masterRunID
+	s.replication.mu.RUnlock()
+	if role != replicationReplica || currentLineage == "" || currentLineage != lineage {
+		return reply, nil
+	}
+
+	s.failoverLeaseMu.Lock()
+	leaseTerm := s.failoverLeaseTerm
+	leaseHolder := s.failoverLeaseHolder
+	leaseUntil := s.failoverLeaseUntil
+	s.failoverLeaseMu.Unlock()
+	if leaseTerm != term ||
+		leaseHolder != leaderID ||
+		leaseUntil.IsZero() ||
+		!now.Before(leaseUntil) {
+		return reply, nil
+	}
+
+	addr, err := s.resolveFailoverLeaderAddr(leaderID)
+	if err != nil {
+		return reply, nil
+	}
+	host, portText, err := net.SplitHostPort(addr)
+	if err != nil {
+		return reply, err
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port <= 0 || port > 65535 {
+		return reply, errors.New("invalid failover leader port")
+	}
+
+	if err := s.persistReplicationCheckpointClearLocked(host, port); err != nil {
+		s.durabilityFailed = true
+		return reply, errors.New("failover reparent persistence update failed")
+	}
+	if err := s.clearReplicationPersistence(); err != nil {
+		return reply, errors.New("failover reparent persistence update failed")
+	}
+	s.startReplicaFollow(host, port)
+	reply.Accepted = true
+	return reply, nil
+}
+
+func queryFailoverReparent(addr string, timeout time.Duration, username, password, lineage string, term uint64, leaderID string) (failoverReparentReply, error) {
+	conn, err := net.DialTimeout("tcp", addr, timeout)
+	if err != nil {
+		return failoverReparentReply{}, err
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+	reader := bufio.NewReader(conn)
+	if err := authenticateReplicationUpstream(conn, reader, username, password); err != nil {
+		return failoverReparentReply{}, err
+	}
+	if err := writeReplicationRESPCommand(
+		conn,
+		"SNUG.FAILOVER", "REPARENT",
+		lineage,
+		strconv.FormatUint(term, 10),
+		leaderID,
+	); err != nil {
+		return failoverReparentReply{}, err
+	}
+	payload, err := readRESPBulk(reader)
+	if err != nil {
+		return failoverReparentReply{}, err
+	}
+	var reply failoverReparentReply
+	if err := json.Unmarshal(payload, &reply); err != nil {
+		return failoverReparentReply{}, err
+	}
+	return reply, nil
+}
+
+func (s *Server) convergeFailoverReplicas(now time.Time) {
+	active, term, lineage, leaderID, expiresAt, fenced := s.failoverLeaderState()
+	if !active || fenced || lineage == "" || leaderID == "" || expiresAt.IsZero() || !now.Before(expiresAt) {
+		return
+	}
+	for _, addr := range s.failoverPeers {
+		state, err := queryFailoverPeer(
+			addr,
+			200*time.Millisecond,
+			s.replicationMasterUser,
+			s.replicationMasterAuth,
+		)
+		if err != nil {
+			continue
+		}
+		if state.NodeID == leaderID || state.Role != "replica" || state.MasterRunID != lineage {
+			continue
+		}
+		_, _ = queryFailoverReparent(
+			addr,
+			200*time.Millisecond,
+			s.replicationMasterUser,
+			s.replicationMasterAuth,
+			lineage,
+			term,
+			leaderID,
+		)
+	}
+}
