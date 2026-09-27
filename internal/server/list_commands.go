@@ -24,6 +24,8 @@ var listCommands = map[string]commandInfo{
 	"LPOS":       {3, 0, 1, 1, 1, false},
 	"LMOVE":      {5, 5, 1, 2, 1, true},
 	"RPOPLPUSH":  {3, 3, 1, 2, 1, true},
+	"LMPOP":      {4, 0, 0, 0, 0, true},
+	"BLMPOP":     {5, 0, 0, 0, 0, true},
 }
 
 func init() {
@@ -38,6 +40,94 @@ func isListCommand(args [][]byte) bool {
 	}
 	_, ok := listCommands[strings.ToUpper(string(args[0]))]
 	return ok
+}
+
+type listMPopRequest struct {
+	keys  []string
+	left  bool
+	count int
+}
+
+func parseListMPop(args [][]byte, numKeysIndex int) (listMPopRequest, error) {
+	var request listMPopRequest
+
+	numKeys64, err := strconv.ParseInt(string(args[numKeysIndex]), 10, 64)
+	if err != nil || numKeys64 <= 0 {
+		return request, errors.New("ERR numkeys should be greater than 0")
+	}
+	if numKeys64 > int64(len(args)) {
+		return request, errors.New("ERR syntax error")
+	}
+	numKeys := int(numKeys64)
+
+	firstKey := numKeysIndex + 1
+	sideIndex := firstKey + numKeys
+	if sideIndex >= len(args) {
+		return request, errors.New("ERR syntax error")
+	}
+
+	request.keys = make([]string, numKeys)
+	for i := 0; i < numKeys; i++ {
+		request.keys[i] = string(args[firstKey+i])
+	}
+
+	switch strings.ToUpper(string(args[sideIndex])) {
+	case "LEFT":
+		request.left = true
+	case "RIGHT":
+		request.left = false
+	default:
+		return request, errors.New("ERR syntax error")
+	}
+
+	request.count = 1
+	if sideIndex+1 < len(args) {
+		if sideIndex+3 != len(args) || !strings.EqualFold(string(args[sideIndex+1]), "COUNT") {
+			return request, errors.New("ERR syntax error")
+		}
+		count64, err := strconv.ParseInt(string(args[sideIndex+2]), 10, 64)
+		if err != nil || count64 <= 0 || uint64(count64) > uint64(^uint(0)>>1) {
+			return request, errors.New("ERR count should be greater than 0")
+		}
+		request.count = int(count64)
+	}
+
+	return request, nil
+}
+
+func listMPopResponse(key string, elements [][]byte) []byte {
+	return array(
+		formatBulkString([]byte(key)),
+		listElementsResponse(elements),
+	)
+}
+
+func (s *Server) executeListMPop(request listMPopRequest) ([]byte, error) {
+	for _, key := range request.keys {
+		length, err := s.store.ListLen(key)
+		if err != nil {
+			return nil, err
+		}
+		if length == 0 {
+			continue
+		}
+
+		var elements [][]byte
+		if request.left {
+			elements, err = s.store.ListPopLeft(key, request.count)
+		} else {
+			elements, err = s.store.ListPopRight(key, request.count)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if len(elements) == 0 {
+			continue
+		}
+		return listMPopResponse(key, elements), nil
+	}
+
+	return []byte("*-1\r\n"), nil
 }
 
 func (s *Server) executeList(args [][]byte) ([]byte, error) {
@@ -55,6 +145,13 @@ func (s *Server) executeList(args [][]byte) ([]byte, error) {
 
 	key := string(args[1])
 	switch cmd {
+	case "LMPOP":
+		request, err := parseListMPop(args, 1)
+		if err != nil {
+			return nil, err
+		}
+		return s.executeListMPop(request)
+
 	case "LPUSH", "LPUSHX":
 		var length int64
 		var err error
