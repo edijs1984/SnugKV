@@ -1,5 +1,11 @@
 # Changelog
 
+### Implemented — SLOWLOG and persistence controls (pending review)
+
+- Added audited SLOWLOG operations, client identity capture, SAVE/BGSAVE/BGREWRITEAOF controls, one-off AOF export, background status/error reporting, and queued save/rewrite handoffs.
+- Prevent active-AOF writes from being lost between export and replacement by holding the durability lock; writes wait during rewrite.
+- Full local race/vet/RESP-fuzz gates passed according to the operator. Live reference: Redis 8.10.2; six-field SLOWLOG targets Redis 8.2. Limits and evidence: `docs/SLOWLOG-PERSISTENCE-AUDIT.md`.
+
 ### Verified — graceful-restart Redis PSYNC continuation
 
 - SnugKV now persists upstream replid/offset/stream-mode state across graceful restart when AOF or snapshot durability is configured. The shutdown path first checkpoints the exact replica dataset, then atomically stores the PSYNC continuation tuple. Live Redis validation resumed with partial synchronization from the next-byte offset and continued replicating new writes after restart. Crash-resume continuity remains a documented future hardening item. Audit: `docs/REPLICATION-RESTART-PSYNC-AUDIT.md`.
