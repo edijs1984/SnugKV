@@ -102,3 +102,136 @@ func TestFailoverStateGossipsCommittedMembers(t *testing.T) {
 		t.Fatalf("incomplete gossiped membership: %v", state.Members)
 	}
 }
+
+
+func TestFailoverDiscoveryPlanFiltersStaleAndRetiredPeers(t *testing.T) {
+	now := time.Now()
+	s := New(engine.New())
+	configureDiscoveryNode(
+		s,
+		"cluster-a",
+		5,
+		"127.0.0.1:7001",
+		[]string{"127.0.0.1:7002"},
+		2,
+	)
+	s.failoverDiscoveryInterval = time.Second
+
+	s.failoverDiscoveryMu.Lock()
+	s.failoverDiscovered["127.0.0.1:7003"] = failoverDiscoveredPeer{
+		Address:      "127.0.0.1:7003",
+		LastSeenUnix: now.Unix(),
+		State: failoverPeerState{
+			AdvertiseAddr: "127.0.0.1:7003",
+			GroupID:       "cluster-a",
+			ConfigEpoch:   5,
+		},
+	}
+	s.failoverDiscovered["127.0.0.1:7004"] = failoverDiscoveredPeer{
+		Address:      "127.0.0.1:7004",
+		LastSeenUnix: now.Add(-10 * time.Second).Unix(),
+		State: failoverPeerState{
+			AdvertiseAddr: "127.0.0.1:7004",
+			GroupID:       "cluster-a",
+			ConfigEpoch:   5,
+		},
+	}
+	s.failoverDiscovered["127.0.0.1:7005"] = failoverDiscoveredPeer{
+		Address:      "127.0.0.1:7005",
+		LastSeenUnix: now.Unix(),
+		State: failoverPeerState{
+			AdvertiseAddr: "127.0.0.1:7005",
+			GroupID:       "cluster-a",
+			ConfigEpoch:   5,
+			Retired:       true,
+		},
+	}
+	s.failoverDiscoveryMu.Unlock()
+
+	plan, err := s.buildFailoverDiscoveryAdoptionPlan(now, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Added) != 1 || plan.Added[0] != "127.0.0.1:7003" {
+		t.Fatalf("added=%v", plan.Added)
+	}
+	if !containsString(plan.Members, "127.0.0.1:7001") ||
+		!containsString(plan.Members, "127.0.0.1:7002") ||
+		!containsString(plan.Members, "127.0.0.1:7003") {
+		t.Fatalf("members=%v", plan.Members)
+	}
+}
+
+func TestAdoptDiscoveredFailoverPeerUsesMembershipChange(t *testing.T) {
+	const group = "cluster-adopt"
+
+	coordinator, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer coordinator.Close()
+	existing, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer existing.Close()
+	discovered, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer discovered.Close()
+
+	coordAddr := coordinator.listener.Addr().String()
+	existingAddr := existing.listener.Addr().String()
+	discoveredAddr := discovered.listener.Addr().String()
+
+	configureDynamicMembershipNode(t, coordinator, group, 1, []string{existingAddr}, 2)
+	configureDynamicMembershipNode(t, existing, group, 1, []string{coordAddr}, 2)
+	configureDynamicMembershipNode(t, discovered, group, 1, []string{coordAddr, existingAddr}, 2)
+	coordinator.server.failoverDiscoveryInterval = time.Second
+
+	coordinator.server.failoverDiscoveryMu.Lock()
+	coordinator.server.failoverDiscovered[discoveredAddr] = failoverDiscoveredPeer{
+		Address:      discoveredAddr,
+		LastSeenUnix: time.Now().Unix(),
+		State:        discovered.server.localFailoverState(time.Now()),
+	}
+	coordinator.server.failoverDiscoveryMu.Unlock()
+
+	result, plan, err := coordinator.server.adoptDiscoveredFailoverPeers(time.Now(), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Prepared || !result.Committed {
+		t.Fatalf("result=%+v plan=%+v", result, plan)
+	}
+	if plan.NextEpoch != 2 || len(plan.Added) != 1 || plan.Added[0] != discoveredAddr {
+		t.Fatalf("plan=%+v", plan)
+	}
+
+	for name, srv := range map[string]*TCPServer{
+		"coordinator": coordinator,
+		"existing": existing,
+		"discovered": discovered,
+	} {
+		state := srv.server.failoverMembershipSnapshot()
+		if state.ConfigEpoch != 2 || state.JointActive {
+			t.Fatalf("%s membership=%+v", name, state)
+		}
+	}
+}
+
+func TestFailoverDiscoveryPlanRejectsNoEligiblePeers(t *testing.T) {
+	s := New(engine.New())
+	configureDiscoveryNode(
+		s,
+		"cluster-a",
+		2,
+		"127.0.0.1:7001",
+		[]string{"127.0.0.1:7002"},
+		2,
+	)
+	if _, err := s.buildFailoverDiscoveryAdoptionPlan(time.Now(), 2); err == nil {
+		t.Fatal("expected no eligible discovered peers error")
+	}
+}
