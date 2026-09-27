@@ -308,9 +308,7 @@ func (s *Server) clusterNodesReply() []byte {
 	if len(lines) == 0 {
 		return formatBulkString(nil)
 	}
-	return formatBulkString([]byte(strings.Join(lines, "
-") + "
-"))
+	return formatBulkString([]byte(strings.Join(lines, "\n") + "\n"))
 }
 
 func (s *Server) clusterInfoReply() []byte {
