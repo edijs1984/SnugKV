@@ -39,6 +39,9 @@ type failoverMembershipPersistenceState struct {
 	CommitTargets []string `json:"commit_targets,omitempty"`
 	Retired bool `json:"retired,omitempty"`
 	RetiredAtEpoch uint64 `json:"retired_at_epoch,omitempty"`
+	RetirePending bool `json:"retire_pending,omitempty"`
+	RetirePendingEpoch uint64 `json:"retire_pending_epoch,omitempty"`
+	CommitRetireTargets []string `json:"commit_retire_targets,omitempty"`
 }
 
 type replicationPersistenceState struct {
@@ -87,6 +90,9 @@ func (s *Server) persistFailoverMembershipState() error {
 		CommitTargets: append([]string(nil), s.failoverCommitTargets...),
 		Retired: s.failoverRetired,
 		RetiredAtEpoch: s.failoverRetiredAtEpoch,
+		RetirePending: s.failoverRetirePending,
+		RetirePendingEpoch: s.failoverRetirePendingEpoch,
+		CommitRetireTargets: append([]string(nil), s.failoverCommitRetireTargets...),
 	}
 	s.failoverMembershipMu.RUnlock()
 
@@ -122,6 +128,9 @@ func (s *Server) loadFailoverMembershipState(replicationPath string) error {
 	if state.CommitPending && (state.CommitEpoch == 0 || state.CommitEpoch <= state.CommitOldEpoch || len(state.CommitMembers) == 0 || state.CommitQuorum <= 0) {
 		return errors.New("invalid persisted failover membership commit recovery")
 	}
+	if state.RetirePending && state.RetirePendingEpoch <= state.ConfigEpoch {
+		return errors.New("invalid persisted failover retirement prepare")
+	}
 
 	s.failoverMembershipMu.Lock()
 	s.failoverGroupID = state.GroupID
@@ -140,6 +149,9 @@ func (s *Server) loadFailoverMembershipState(replicationPath string) error {
 	s.failoverCommitTargets = append([]string(nil), state.CommitTargets...)
 	s.failoverRetired = state.Retired
 	s.failoverRetiredAtEpoch = state.RetiredAtEpoch
+	s.failoverRetirePending = state.RetirePending
+	s.failoverRetirePendingEpoch = state.RetirePendingEpoch
+	s.failoverCommitRetireTargets = append([]string(nil), state.CommitRetireTargets...)
 	s.failoverMembershipMu.Unlock()
 	return nil
 }
