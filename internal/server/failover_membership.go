@@ -160,6 +160,10 @@ func (s *Server) commitFailoverMembership(groupID string, newEpoch uint64) (fail
 	s.failoverPendingEpoch = 0
 	s.failoverPendingPeers = nil
 	s.failoverPendingQuorum = 0
+	if s.failoverRetirePending && s.failoverRetirePendingEpoch == newEpoch {
+		s.failoverRetirePending = false
+		s.failoverRetirePendingEpoch = 0
+	}
 	s.failoverMembershipMu.Unlock()
 
 	if err := s.persistFailoverMembershipState(); err != nil {
@@ -911,6 +915,8 @@ func (s *Server) retireFailoverMember(groupID string, currentEpoch, retireAtEpoc
 		s.failoverMembershipMu.Lock()
 		s.failoverRetired = false
 		s.failoverRetiredAtEpoch = 0
+		s.failoverRetirePending = true
+		s.failoverRetirePendingEpoch = retireAtEpoch
 		s.failoverMembershipMu.Unlock()
 		return failoverRetireReply{}, err
 	}
