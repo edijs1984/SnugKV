@@ -25,6 +25,7 @@ type Server struct {
 	optimizer                *optimizer.Optimizer
 	store                    *engine.Store
 	commands                 uint64
+	lastSaveUnix             atomic.Int64
 	journal                  Journal
 	durableMu                sync.RWMutex
 	durabilityFailed         bool
@@ -87,6 +88,7 @@ func New(store *engine.Store) *Server {
 		searchSuggestions:  make(map[string]map[string]searchSuggestion),
 		searchSynonyms:     make(map[string]map[string][]string),
 	}
+	s.lastSaveUnix.Store(time.Now().Unix())
 	s.replication.init()
 	return s
 }
@@ -111,6 +113,8 @@ var commandTable = map[string]commandInfo{
 	"PING":            {1, 2, 0, 0, 0, false}, "ECHO": {2, 2, 0, 0, 0, false}, "QUIT": {1, 1, 0, 0, 0, false},
 	"SELECT": {2, 2, 0, 0, 0, false}, "HELLO": {1, 0, 0, 0, 0, false}, "INFO": {1, 2, 0, 0, 0, false},
 	"DBSIZE": {1, 1, 0, 0, 0, false}, "COMMAND": {1, 0, 0, 0, 0, false},
+	"TIME": {1, 1, 0, 0, 0, false}, "LASTSAVE": {1, 1, 0, 0, 0, false},
+	"OBJECT": {2, 3, 0, 0, 0, false},
 	"ROLE":        {1, 1, 0, 0, 0, false},
 	"REPLICAOF":   {3, 3, 0, 0, 0, false},
 	"PSYNC":       {3, 3, 0, 0, 0, false},
@@ -1498,6 +1502,15 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 	case "DBSIZE":
 		return integer(int64(s.store.Stats().Keys)), nil
 
+	case "TIME":
+		return timeReply(time.Now()), nil
+
+	case "LASTSAVE":
+		return integer(s.lastSaveUnix.Load()), nil
+
+	case "OBJECT":
+		return s.executeObject(args)
+
 	case "ROLE":
 		return s.replicationRoleReply(), nil
 
@@ -1693,6 +1706,9 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		subcommand := strings.ToUpper(string(args[1]))
 
 		switch subcommand {
+		case "LIST":
+			return commandListReply(args)
+
 		case "COUNT":
 			if len(args) != 2 {
 				return nil, errors.New("ERR wrong number of arguments for 'command|count' command")
