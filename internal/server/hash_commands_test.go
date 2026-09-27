@@ -187,3 +187,127 @@ func TestHashSetNXPreservesTTL(t *testing.T) {
 		t.Fatalf("HSETNX lost TTL: %q", got)
 	}
 }
+
+
+func TestHGetDelRedis8Semantics(t *testing.T) {
+	s := New(engine.New())
+	execute(t, s, "HSET", "h", "a", "1", "b", "2", "c", "3", "e", "5")
+
+	got := execute(t, s, "HGETDEL", "h", "FIELDS", "4", "c", "a", "c", "e")
+	want := "*4\r\n$1\r\n3\r\n$1\r\n1\r\n$-1\r\n$1\r\n5\r\n"
+	if got != want {
+		t.Fatalf("HGETDEL = %q want %q", got, want)
+	}
+
+	if got := execute(t, s, "HGETALL", "h"); got != "*2\r\n$1\r\nb\r\n$1\r\n2\r\n" {
+		t.Fatalf("HGETALL after HGETDEL = %q", got)
+	}
+
+	if got := execute(t, s, "HGETDEL", "missing", "FIELDS", "2", "a", "b"); got != "*2\r\n$-1\r\n$-1\r\n" {
+		t.Fatalf("HGETDEL missing = %q", got)
+	}
+}
+
+func TestHGetExRedis8Semantics(t *testing.T) {
+	s := New(engine.New())
+	execute(t, s, "HSET", "h", "a", "1", "b", "2")
+	execute(t, s, "HPEXPIRE", "h", "60000", "FIELDS", "1", "a")
+
+	got := execute(t, s, "HGETEX", "h", "PERSIST", "FIELDS", "2", "a", "b")
+	if got != "*2\r\n$1\r\n1\r\n$1\r\n2\r\n" {
+		t.Fatalf("HGETEX PERSIST = %q", got)
+	}
+	if got := execute(t, s, "HPTTL", "h", "FIELDS", "1", "a"); got != "*1\r\n:-1\r\n" {
+		t.Fatalf("HPTTL after HGETEX PERSIST = %q", got)
+	}
+
+	got = execute(t, s, "HGETEX", "h", "PX", "60000", "FIELDS", "2", "a", "missing")
+	if got != "*2\r\n$1\r\n1\r\n$-1\r\n" {
+		t.Fatalf("HGETEX PX = %q", got)
+	}
+	ttl := execute(t, s, "HPTTL", "h", "FIELDS", "1", "a")
+	if ttl == "*1\r\n:-1\r\n" || ttl == "*1\r\n:-2\r\n" {
+		t.Fatalf("expected HGETEX PX to set TTL, got %q", ttl)
+	}
+
+	past := strconv.FormatInt(time.Now().Add(-time.Second).UnixMilli(), 10)
+	got = execute(t, s, "HGETEX", "h", "PXAT", past, "FIELDS", "1", "b")
+	if got != "*1\r\n$1\r\n2\r\n" {
+		t.Fatalf("HGETEX past PXAT = %q", got)
+	}
+	if got := execute(t, s, "HEXISTS", "h", "b"); got != ":0\r\n" {
+		t.Fatalf("field should be deleted by past HGETEX PXAT, got %q", got)
+	}
+}
+
+func TestHSetExRedis8Semantics(t *testing.T) {
+	s := New(engine.New())
+
+	if got := execute(t, s, "HSETEX", "h", "FIELDS", "2", "a", "1", "b", "2"); got != ":1\r\n" {
+		t.Fatalf("HSETEX basic = %q", got)
+	}
+	if got := execute(t, s, "HMGET", "h", "a", "b"); got != "*2\r\n$1\r\n1\r\n$1\r\n2\r\n" {
+		t.Fatalf("HMGET after HSETEX = %q", got)
+	}
+
+	if got := execute(t, s, "HSETEX", "h", "FNX", "FIELDS", "2", "c", "3", "a", "x"); got != ":0\r\n" {
+		t.Fatalf("HSETEX FNX = %q", got)
+	}
+	if got := execute(t, s, "HEXISTS", "h", "c"); got != ":0\r\n" {
+		t.Fatalf("FNX must be all-or-nothing, c exists: %q", got)
+	}
+	if got := execute(t, s, "HGET", "h", "a"); got != "$1\r\n1\r\n" {
+		t.Fatalf("FNX changed existing field: %q", got)
+	}
+
+	if got := execute(t, s, "HSETEX", "h", "FXX", "FIELDS", "2", "a", "A", "missing", "x"); got != ":0\r\n" {
+		t.Fatalf("HSETEX FXX miss = %q", got)
+	}
+	if got := execute(t, s, "HGET", "h", "a"); got != "$1\r\n1\r\n" {
+		t.Fatalf("FXX partial update occurred: %q", got)
+	}
+
+	if got := execute(t, s, "HSETEX", "h", "PX", "60000", "FIELDS", "1", "a", "ttl"); got != ":1\r\n" {
+		t.Fatalf("HSETEX PX = %q", got)
+	}
+	before := execute(t, s, "HPEXPIRETIME", "h", "FIELDS", "1", "a")
+	if strings.Contains(before, ":-1\r\n") || strings.Contains(before, ":-2\r\n") {
+		t.Fatalf("expected expiry after HSETEX PX, got %q", before)
+	}
+
+	if got := execute(t, s, "HSETEX", "h", "KEEPTTL", "FIELDS", "1", "a", "kept"); got != ":1\r\n" {
+		t.Fatalf("HSETEX KEEPTTL = %q", got)
+	}
+	after := execute(t, s, "HPEXPIRETIME", "h", "FIELDS", "1", "a")
+	if after != before {
+		t.Fatalf("KEEPTTL changed expiry: before=%q after=%q", before, after)
+	}
+
+	if got := execute(t, s, "HSETEX", "h", "FIELDS", "1", "a", "clear"); got != ":1\r\n" {
+		t.Fatalf("HSETEX clear TTL = %q", got)
+	}
+	if got := execute(t, s, "HPTTL", "h", "FIELDS", "1", "a"); got != "*1\r\n:-1\r\n" {
+		t.Fatalf("ordinary HSETEX should clear TTL, got %q", got)
+	}
+}
+
+func TestHashRedis8ExCommandErrors(t *testing.T) {
+	s := New(engine.New())
+
+	assertErrContains := func(want string, args ...string) {
+		t.Helper()
+		raw := make([][]byte, len(args))
+		for i := range args {
+			raw[i] = []byte(args[i])
+		}
+		_, err := s.Execute(raw)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("%q error=%v want substring %q", args, err, want)
+		}
+	}
+
+	assertErrContains("Mandatory argument FIELDS", "HGETDEL", "h", "BAD", "1", "a")
+	assertErrContains("Mandatory argument FIELDS", "HGETEX", "h", "EX", "10", "BAD", "1", "a")
+	assertErrContains("Only one of FXX or FNX", "HSETEX", "h", "FNX", "FXX", "FIELDS", "1", "a", "1")
+	assertErrContains("Only one of EX, PX, EXAT, PXAT or KEEPTTL", "HSETEX", "h", "EX", "10", "KEEPTTL", "FIELDS", "1", "a", "1")
+}
