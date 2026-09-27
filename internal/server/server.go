@@ -53,6 +53,10 @@ type Server struct {
 	failoverVoteMu           sync.Mutex
 	failoverTerm             uint64
 	failoverVotedFor         string
+	failoverLeaseMu          sync.Mutex
+	failoverLeaseTerm        uint64
+	failoverLeaseHolder      string
+	failoverLeaseUntil       time.Time
 
 	// executionACLUsername / executionACLArgs are valid only while durableMu is
 	// held. TCP and transaction execution populate them so dynamic command
