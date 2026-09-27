@@ -135,6 +135,7 @@ func ListenWithJournal(c config.Config, store *engine.Store, journal Journal) (*
 	s.server.replicationMasterTLSCert = c.MasterTLSCert
 	s.server.replicationMasterTLSKey = c.MasterTLSKey
 	s.server.replicationMasterTLSSNI = c.MasterTLSServerName
+	s.server.autoFailoverTimeout = time.Duration(c.AutoFailoverTimeoutMS) * time.Millisecond
 
 	// Redis loads the configured ACL file during startup. A configured ACL
 	// file is authoritative: if it cannot be read or parsed, startup must fail
@@ -1456,4 +1457,7 @@ func (s *TCPServer) Maintain() {
 	s.server.refreshWatchesLocked()
 	s.server.durableMu.Unlock()
 	s.OptimizeSample()
+	if err := s.server.maintainAutoFailover(time.Now()); err != nil {
+		log.Printf("event=auto_failover_failed error=%q", err)
+	}
 }
