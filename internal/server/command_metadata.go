@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -520,6 +521,66 @@ func commandKeyFlags(
 	}
 
 	return []string{"RO", "access"}
+}
+
+
+func commandListReply(args [][]byte) ([]byte, error) {
+	if len(args) != 2 && len(args) != 5 {
+		return nil, errors.New("ERR wrong number of arguments for 'command|list' command")
+	}
+
+	filterType := ""
+	filterValue := ""
+	if len(args) == 5 {
+		if !strings.EqualFold(string(args[2]), "FILTERBY") {
+			return nil, errors.New("ERR syntax error")
+		}
+		filterType = strings.ToUpper(string(args[3]))
+		filterValue = string(args[4])
+		switch filterType {
+		case "PATTERN", "ACLCAT", "MODULE":
+		default:
+			return nil, errors.New("ERR syntax error")
+		}
+	}
+
+	names := make([]string, 0, len(commandTable))
+	for name, info := range commandTable {
+		include := true
+		switch filterType {
+		case "PATTERN":
+			matched, err := path.Match(strings.ToLower(filterValue), strings.ToLower(name))
+			include = err == nil && matched
+
+		case "ACLCAT":
+			category := strings.ToLower(filterValue)
+			category = strings.TrimPrefix(category, "@")
+			include = false
+			for _, acl := range commandInfoACL(name, info) {
+				if strings.TrimPrefix(strings.ToLower(acl), "@") == category {
+					include = true
+					break
+				}
+			}
+
+		case "MODULE":
+			// SnugKV implements these commands natively rather than through
+			// dynamically loaded Redis modules, so no command belongs to a
+			// module namespace for COMMAND LIST FILTERBY MODULE.
+			include = false
+		}
+
+		if include {
+			names = append(names, strings.ToLower(name))
+		}
+	}
+	sort.Strings(names)
+
+	items := make([][]byte, 0, len(names))
+	for _, name := range names {
+		items = append(items, formatBulkString([]byte(name)))
+	}
+	return array(items...), nil
 }
 
 func commandGetKeysReply(refs []commandKeyRef) []byte {
