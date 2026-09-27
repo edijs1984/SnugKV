@@ -572,6 +572,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			*authSession = *newAuthSession(s.server.acl)
 			authSession.client = clientSession
 			if writer.write([]byte("+RESET\r\n")) != nil { return }
+			s.server.feedMonitor(clientSession, msg, nil)
 			continue
 		}
 
@@ -710,6 +711,10 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 		}
 
 		monitorAuthorized = true
+		if !txSession.multi && monitorScriptCommand(msg) {
+			s.server.feedMonitor(clientSession, msg, nil)
+			monitorAuthorized = false // Outer invocation precedes its Lua calls.
+		}
 		if len(msg) > 0 && strings.EqualFold(string(msg[0]), "MONITOR") {
 			if len(msg) != 1 {
 				if writer.write([]byte("-ERR wrong number of arguments for 'monitor' command\r\n")) != nil { return }
