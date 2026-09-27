@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"snugkv/internal/engine"
@@ -199,5 +200,93 @@ func TestClusterRoutingDisabledPreservesStandaloneBehavior(t *testing.T) {
 		[]byte("bar"),
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+
+func TestClusterSlotRangesCollapseAdjacentOwners(t *testing.T) {
+	s := New(engine.New())
+	if err := s.configureClusterSlots(true, "127.0.0.1:7000", map[string]string{
+		"0-100":   "127.0.0.1:7000",
+		"101-200": "127.0.0.1:7000",
+		"201-300": "127.0.0.1:7001",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ranges := s.clusterSlotRanges()
+	if len(ranges) != 2 {
+		t.Fatalf("ranges=%+v", ranges)
+	}
+	if ranges[0].Start != 0 || ranges[0].End != 200 || ranges[0].Owner != "127.0.0.1:7000" {
+		t.Fatalf("range0=%+v", ranges[0])
+	}
+	if ranges[1].Start != 201 || ranges[1].End != 300 || ranges[1].Owner != "127.0.0.1:7001" {
+		t.Fatalf("range1=%+v", ranges[1])
+	}
+}
+
+func TestClusterSlotsReply(t *testing.T) {
+	s := New(engine.New())
+	if err := s.configureClusterSlots(true, "127.0.0.1:7000", map[string]string{
+		"0-8191":     "127.0.0.1:7000",
+		"8192-16383": "127.0.0.1:7001",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reply, err := s.execute([][]byte{[]byte("CLUSTER"), []byte("SLOTS")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(reply)
+	for _, want := range []string{
+		":0\r\n",
+		":8191\r\n",
+		":8192\r\n",
+		":16383\r\n",
+		"127.0.0.1",
+		":7000\r\n",
+		":7001\r\n",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("CLUSTER SLOTS reply missing %q: %q", want, text)
+		}
+	}
+}
+
+func TestClusterShardsReply(t *testing.T) {
+	s := New(engine.New())
+	if err := s.configureClusterSlots(true, "127.0.0.1:7000", map[string]string{
+		"0-16383": "127.0.0.1:7000",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reply, err := s.execute([][]byte{[]byte("CLUSTER"), []byte("SHARDS")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(reply)
+	for _, want := range []string{
+		"slots",
+		"nodes",
+		"endpoint",
+		"127.0.0.1",
+		"role",
+		"master",
+		"health",
+		"online",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("CLUSTER SHARDS reply missing %q: %q", want, text)
+		}
+	}
+}
+
+func TestClusterTopologyCommandsArity(t *testing.T) {
+	s := New(engine.New())
+	if _, err := s.execute([][]byte{[]byte("CLUSTER"), []byte("SLOTS"), []byte("extra")}); err == nil {
+		t.Fatal("expected CLUSTER SLOTS arity error")
+	}
+	if _, err := s.execute([][]byte{[]byte("CLUSTER"), []byte("SHARDS"), []byte("extra")}); err == nil {
+		t.Fatal("expected CLUSTER SHARDS arity error")
 	}
 }
