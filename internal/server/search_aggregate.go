@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"time"
 	"fmt"
 	"math"
 	"sort"
@@ -61,9 +62,21 @@ type aggregateStage struct {
 }
 
 type aggregateOptions struct {
-	stages  []aggregateStage
-	dialect int
+	stages       []aggregateStage
+	dialect      int
+	withCursor   bool
+	cursorCount  int
+	cursorMaxIdle int64
 }
+
+type searchCursor struct {
+	indexName string
+	rows      [][]byte
+	position  int
+	count     int
+	expiresAt time.Time
+}
+
 
 func aggregateSchemaField(def engine.SearchDefinition, name string) (engine.SearchField, bool) {
 	name = strings.TrimPrefix(name, "@")
@@ -306,6 +319,41 @@ func parseAggregateOptions(args [][]byte) (aggregateOptions, error) {
 			options.dialect = dialect
 			pos += 2
 
+		case "WITHCURSOR":
+			if options.withCursor {
+				return aggregateOptions{}, errors.New("ERR syntax error")
+			}
+			options.withCursor = true
+			options.cursorCount = 1000
+			pos++
+			for pos < len(args) {
+				switch strings.ToUpper(string(args[pos])) {
+				case "COUNT":
+					if pos+1 >= len(args) {
+						return aggregateOptions{}, errors.New("ERR syntax error")
+					}
+					count, err := strconv.Atoi(string(args[pos+1]))
+					if err != nil || count <= 0 {
+						return aggregateOptions{}, errors.New("ERR value is not an integer or out of range")
+					}
+					options.cursorCount = count
+					pos += 2
+				case "MAXIDLE":
+					if pos+1 >= len(args) {
+						return aggregateOptions{}, errors.New("ERR syntax error")
+					}
+					maxIdle, err := strconv.ParseInt(string(args[pos+1]), 10, 64)
+					if err != nil || maxIdle <= 0 {
+						return aggregateOptions{}, errors.New("ERR value is not an integer or out of range")
+					}
+					options.cursorMaxIdle = maxIdle
+					pos += 2
+				default:
+					goto cursorOptionsDone
+				}
+			}
+		cursorOptionsDone:
+
 		default:
 			return aggregateOptions{}, fmt.Errorf("SEARCH_ARG_UNRECOGNIZED Unknown argument `%s`", string(args[pos]))
 		}
@@ -387,7 +435,8 @@ func evaluateAggregateFilter(store *engine.Store, def engine.SearchDefinition, r
 	return true, nil
 }
 
-func executeFTAggregate(store *engine.Store, args [][]byte) ([]byte, error) {
+func executeFTAggregate(s *Server, args [][]byte) ([]byte, error) {
+	store := s.store
 	if len(args) < 3 {
 		return nil, errors.New("ERR wrong number of arguments for 'FT.AGGREGATE' command")
 	}
@@ -659,8 +708,7 @@ func executeFTAggregate(store *engine.Store, args [][]byte) ([]byte, error) {
 		rows = []aggregateRow{merged}
 	}
 
-	items := make([][]byte, 0, len(rows)+1)
-	items = append(items, integer(int64(reportedTotal)))
+	rowReplies := make([][]byte, 0, len(rows))
 	for _, row := range rows {
 		fields := make([][]byte, 0, len(row.order)*2)
 		for _, name := range row.order {
@@ -671,7 +719,47 @@ func executeFTAggregate(store *engine.Store, args [][]byte) ([]byte, error) {
 				formatBulkString([]byte(value.text)),
 			)
 		}
-		items = append(items, array(fields...))
+		rowReplies = append(rowReplies, array(fields...))
 	}
-	return array(items...), nil
+
+	if !options.withCursor {
+		items := make([][]byte, 0, len(rowReplies)+1)
+		items = append(items, integer(int64(reportedTotal)))
+		items = append(items, rowReplies...)
+		return array(items...), nil
+	}
+
+	count := options.cursorCount
+	if count <= 0 {
+		count = 1000
+	}
+	end := count
+	if end > len(rowReplies) {
+		end = len(rowReplies)
+	}
+	first := make([][]byte, 0, end+1)
+	first = append(first, integer(int64(reportedTotal)))
+	first = append(first, rowReplies[:end]...)
+
+	if end == len(rowReplies) {
+		return array(array(first...), integer(0)), nil
+	}
+
+	maxIdle := options.cursorMaxIdle
+	if maxIdle <= 0 {
+		maxIdle = 300000
+	}
+	s.searchCursorMu.Lock()
+	s.searchNextCursorID++
+	cursorID := s.searchNextCursorID
+	s.searchCursors[cursorID] = &searchCursor{
+		indexName: indexName,
+		rows:      rowReplies,
+		position:  end,
+		count:     count,
+		expiresAt: time.Now().Add(time.Duration(maxIdle) * time.Millisecond),
+	}
+	s.searchCursorMu.Unlock()
+
+	return array(array(first...), integer(int64(cursorID))), nil
 }
