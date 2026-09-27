@@ -53,6 +53,11 @@ type Server struct {
 	failoverGroupID          string
 	failoverConfigEpoch      uint64
 	failoverAdvertiseAddr    string
+	failoverDiscoverySeeds   []string
+	failoverDiscoveryInterval time.Duration
+	failoverDiscoveryMu      sync.RWMutex
+	failoverDiscoveryLastRun time.Time
+	failoverDiscovered       map[string]failoverDiscoveredPeer
 	failoverMembershipMu     sync.RWMutex
 	failoverJointActive      bool
 	failoverPendingEpoch     uint64
@@ -150,6 +155,7 @@ func New(store *engine.Store) *Server {
 		searchSynonyms:     make(map[string]map[string][]string),
 		slowlogThresholdMicros: 10000,
 		slowlogMaxLen:          128,
+		failoverDiscovered:      make(map[string]failoverDiscoveredPeer),
 	}
 	s.lastSaveUnix.Store(time.Now().Unix())
 	s.replication.init()
