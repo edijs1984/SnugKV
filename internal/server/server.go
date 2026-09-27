@@ -65,6 +65,8 @@ type Server struct {
 	failoverCommitQuorum      int
 	failoverCommitTargets     []string
 	failoverCommitLastRetry   time.Time
+	failoverRetired           bool
+	failoverRetiredAtEpoch    uint64
 	failoverVoteMu           sync.Mutex
 	failoverTerm             uint64
 	failoverVotedFor         string
