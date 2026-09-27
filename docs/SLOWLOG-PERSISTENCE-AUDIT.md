@@ -32,7 +32,7 @@ Targeted race suites and the live checks above also passed. GitHub CI is a separ
 - SnugKV retains Redis 8.2's six-field SLOWLOG entry. Redis 8.10.2 returns an additional original-argument-count field.
 - With no active AOF, SnugKV requires an explicit export destination; Redis retains a default destination even with appendonly=no.
 - Active rewrites block commands participating in durableMu, including INFO and scheduling requests arriving during that interval. Scheduling tests exercise the state machine directly; fully responsive Redis-style concurrent rewrites need buffering.
-- Transaction-time persistence scheduling, shutdown while a job is pending/running, simultaneous synchronous SAVE and BGSAVE, and automatic periodic snapshots need further lifecycle review.
+- Transaction-time persistence scheduling, simultaneous synchronous SAVE and BGSAVE, and automatic periodic snapshots need further lifecycle review. Shutdown while background persistence work is running or handed off to a queued successor is now covered by tracked-job lifecycle tests.
 - Fast TCP GET/SET paths, MULTI/EXEC executed-command visibility, outer EVAL/EVALSHA/EVAL_RO/EVALSHA_RO, and FCALL/FCALL_RO are now covered by focused race-enabled regressions. Argument truncation/redaction remains a separate hardening area.
 - Persistence INFO is a subset; native SnugKV snapshot/AOF files are not Redis RDB/AOF file-format exports.
 
@@ -60,3 +60,27 @@ Operator-reported passing gates on the hardened branch:
 - `go test ./internal/resp -run=^$ -fuzz=FuzzReadCommand -fuzztime=20s`
 
 Remaining SLOWLOG hardening is primarily exact Redis argument truncation/redaction behavior and any future command-specific edge cases.
+
+
+## Persistence shutdown lifecycle hardening — 2026-09-27
+
+This follow-up closes the audited shutdown gap for background persistence jobs.
+
+Changes:
+
+- Background BGSAVE and BGREWRITEAOF work is registered in a dedicated persistence-job wait group.
+- TCP server shutdown waits for all tracked persistence jobs before returning.
+- Rewrite -> scheduled BGSAVE handoffs are registered before the parent job completes.
+- BGSAVE -> scheduled BGREWRITEAOF handoffs remain inside the same lifecycle wait.
+- Regression coverage verifies that shutdown waiting does not return while an active rewrite is paused and does not return before queued successor persistence work completes.
+
+A real race was exposed during the audit: the rewrite -> scheduled BGSAVE handoff originally launched the save with a plain goroutine, allowing the persistence wait to return early. The regression reproduced the consequence by letting the test temp directory be removed while the untracked save was still running. The handoff now uses the tracked persistence-job launcher.
+
+Operator-reported passing gates:
+
+- `go test -race ./internal/server -run '^(TestPersistence|TestBGSave|TestBGRewriteAOF)' -count=1 -v`
+- `go test -race ./...`
+- `go vet ./...`
+- `go test ./internal/resp -run=^$ -fuzz=FuzzReadCommand -fuzztime=20s`
+
+Remaining persistence lifecycle work: transaction-time scheduling, SAVE/BGSAVE interaction parity, and automatic periodic snapshot scheduling.

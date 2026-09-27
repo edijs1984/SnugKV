@@ -231,6 +231,7 @@ func (s *TCPServer) Close() error {
 			child.Close()
 		}
 		s.wg.Wait()
+		s.server.waitPersistenceJobs()
 		if s.ownsOptimizer && s.server.optimizer != nil {
 			s.server.optimizer.Close()
 		}

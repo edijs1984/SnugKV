@@ -143,6 +143,18 @@ func (s *Server) executeSlowlog(args [][]byte) ([]byte, error) {
 	}
 }
 
+func (s *Server) startPersistenceJob(run func()) {
+	s.persistenceJobs.Add(1)
+	go func() {
+		defer s.persistenceJobs.Done()
+		run()
+	}()
+}
+
+func (s *Server) waitPersistenceJobs() {
+	s.persistenceJobs.Wait()
+}
+
 func (s *Server) snapshotNow() (resultErr error) {
 	defer func() {
 		s.persistenceJobMu.Lock()
@@ -187,7 +199,7 @@ func (s *Server) executeSave(background bool, schedule bool) ([]byte, error) {
 	s.bgsaveRunning = true
 	s.persistenceJobMu.Unlock()
 
-	go s.runBackgroundSave()
+	s.startPersistenceJob(s.runBackgroundSave)
 
 	return []byte("+Background saving started\r\n"), nil
 }
@@ -248,7 +260,7 @@ func (s *Server) executeBGRewriteAOF() ([]byte, error) {
 	if temporary != nil {
 		records = s.store.Export(nil)
 	}
-	go func() {
+	s.startPersistenceJob(func() {
 		if temporary == nil {
 			s.durableMu.Lock()
 			records = s.store.Export(nil)
@@ -270,12 +282,12 @@ func (s *Server) executeBGRewriteAOF() ([]byte, error) {
 		}
 		s.persistenceJobMu.Unlock()
 		if startSave {
-			go s.runBackgroundSave()
+			s.startPersistenceJob(s.runBackgroundSave)
 		}
 		if rewriteErr != nil {
 			log.Printf("event=aof_rewrite_failed error=%q", rewriteErr)
 		}
-	}()
+	})
 
 	return []byte("+Background append only file rewriting started\r\n"), nil
 }
