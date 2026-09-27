@@ -176,6 +176,12 @@ func (s *Server) snapshotNow() (resultErr error) {
 
 func (s *Server) executeSave(background bool, schedule bool) ([]byte, error) {
 	if !background {
+		s.persistenceJobMu.Lock()
+		if s.bgsaveRunning {
+			s.persistenceJobMu.Unlock()
+			return nil, errors.New("ERR Background save already in progress")
+		}
+		s.persistenceJobMu.Unlock()
 		if err := s.snapshotNow(); err != nil {
 			return nil, err
 		}
