@@ -97,8 +97,12 @@ func (c Config) Validate() error {
 	if len(c.FailoverPeers) == 0 && c.FailoverQuorum != 0 {
 		return errors.New("failover_quorum requires failover_peers")
 	}
-	if len(c.FailoverPeers) > 0 && (c.FailoverQuorum < 1 || c.FailoverQuorum > len(c.FailoverPeers)+1) {
-		return errors.New("failover_quorum must be between 1 and failover_peers+1")
+	if len(c.FailoverPeers) > 0 {
+		totalNodes := len(c.FailoverPeers) + 1
+		majority := totalNodes/2 + 1
+		if c.FailoverQuorum < majority || c.FailoverQuorum > totalNodes {
+			return fmt.Errorf("failover_quorum must be between majority (%d) and failover_peers+1", majority)
+		}
 	}
 	if c.AutoFailoverTimeoutMS < 0 {
 		return errors.New("auto_failover_timeout_ms must not be negative")
