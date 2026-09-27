@@ -35,6 +35,10 @@ const (
 	redisRDBTypeHashTmplArray         = byte(31)
 	redisRDBTypeHashTmplArrayRef      = byte(32)
 	redisRDBOpcodeHashTemplate = byte(242)
+	redisRDBOpcodeSlotInfo     = byte(244)
+	redisRDBOpcodeFunction2    = byte(245)
+	redisRDBOpcodeFunctionPreGA = byte(246)
+	redisRDBOpcodeModuleAux    = byte(247)
 	redisRDBOpcodeIdle         = byte(248)
 	redisRDBOpcodeFreq         = byte(249)
 	redisRDBOpcodeAux          = byte(250)
@@ -616,28 +620,34 @@ func decodeRedisRDBObjectAtWithTemplates(data []byte, pos *int, objectType byte,
 	}
 }
 
-func decodeRedisFullSyncRDB(data []byte) ([]persistence.Record, error) {
+type redisFullSyncRDB struct {
+	records       []persistence.Record
+	functionCodes []string
+}
+
+func decodeRedisFullSyncRDBState(data []byte) (redisFullSyncRDB, error) {
 	if len(data) < 18 || len(data) > persistence.MaxFrameBytes {
-		return nil, errors.New("invalid Redis RDB length")
+		return redisFullSyncRDB{}, errors.New("invalid Redis RDB length")
 	}
 	if string(data[:5]) != "REDIS" {
-		return nil, errors.New("invalid Redis RDB magic")
+		return redisFullSyncRDB{}, errors.New("invalid Redis RDB magic")
 	}
 	version, err := strconv.Atoi(string(data[5:9]))
 	if err != nil || version < 1 || version > redisRDBMaxSupportedVersion {
-		return nil, errors.New("unsupported Redis RDB version")
+		return redisFullSyncRDB{}, errors.New("unsupported Redis RDB version")
 	}
 
 	checksumPos := len(data) - 8
 	storedChecksum := binary.LittleEndian.Uint64(data[checksumPos:])
 	if storedChecksum != 0 && redisCRC64(data[:checksumPos]) != storedChecksum {
-		return nil, errors.New("Redis RDB checksum mismatch")
+		return redisFullSyncRDB{}, errors.New("Redis RDB checksum mismatch")
 	}
 
 	pos := 9
 	currentDB := uint64(0)
 	var expiresAtMS int64
 	records := []persistence.Record{{Reset: true}}
+	functionCodes := make([]string, 0)
 	templates := make(map[uint64]redisRDBHashTemplate)
 
 	for pos < checksumPos {
@@ -645,64 +655,86 @@ func decodeRedisFullSyncRDB(data []byte) ([]persistence.Record, error) {
 		pos++
 
 		switch opcode {
+		case redisRDBOpcodeFunction2:
+			code, err := decodeRDBString(data[:checksumPos], &pos)
+			if err != nil {
+				return redisFullSyncRDB{}, errors.New("invalid Redis RDB function library")
+			}
+			functionCodes = append(functionCodes, string(code))
+			continue
+
+		case redisRDBOpcodeFunctionPreGA:
+			return redisFullSyncRDB{}, errors.New("unsupported Redis RDB pre-GA function library")
+
+		case redisRDBOpcodeModuleAux:
+			return redisFullSyncRDB{}, errors.New("unsupported Redis RDB module aux data")
+
+		case redisRDBOpcodeSlotInfo:
+			for i := 0; i < 3; i++ {
+				if _, encoded, err := readRDBLen(data[:checksumPos], &pos); err != nil || encoded {
+					return redisFullSyncRDB{}, errors.New("invalid Redis RDB slot info")
+				}
+			}
+			continue
+
 		case redisRDBOpcodeHashTemplate:
 			id, encoded, err := readRDBLen(data[:checksumPos], &pos)
 			if err != nil || encoded {
-				return nil, errors.New("invalid Redis RDB hash template ID")
+				return redisFullSyncRDB{}, errors.New("invalid Redis RDB hash template ID")
 			}
 			if _, exists := templates[id]; exists {
-				return nil, errors.New("duplicate Redis RDB hash template ID")
+				return redisFullSyncRDB{}, errors.New("duplicate Redis RDB hash template ID")
 			}
 			count, encoded, err := readRDBLen(data[:checksumPos], &pos)
 			if err != nil || encoded || count == 0 || count > uint64(checksumPos-pos) {
-				return nil, errors.New("invalid Redis RDB hash template field count")
+				return redisFullSyncRDB{}, errors.New("invalid Redis RDB hash template field count")
 			}
 			fields := make([][]byte, 0, count)
 			for i := uint64(0); i < count; i++ {
 				field, err := decodeRDBString(data[:checksumPos], &pos)
 				if err != nil {
-					return nil, errors.New("invalid Redis RDB hash template field")
+					return redisFullSyncRDB{}, errors.New("invalid Redis RDB hash template field")
 				}
 				fields = append(fields, field)
 			}
 			if err := validateRedisRDBTemplateFields(fields); err != nil {
-				return nil, err
+				return redisFullSyncRDB{}, err
 			}
 			templates[id] = redisRDBHashTemplate{fields: fields}
 			continue
 
 		case redisRDBOpcodeAux:
 			if _, err := decodeRDBString(data[:checksumPos], &pos); err != nil {
-				return nil, errors.New("invalid Redis RDB AUX key")
+				return redisFullSyncRDB{}, errors.New("invalid Redis RDB AUX key")
 			}
 			if _, err := decodeRDBString(data[:checksumPos], &pos); err != nil {
-				return nil, errors.New("invalid Redis RDB AUX value")
+				return redisFullSyncRDB{}, errors.New("invalid Redis RDB AUX value")
 			}
 			continue
 
 		case redisRDBOpcodeSelectDB:
 			db, encoded, err := readRDBLen(data[:checksumPos], &pos)
 			if err != nil || encoded {
-				return nil, errors.New("invalid Redis RDB database selector")
+				return redisFullSyncRDB{}, errors.New("invalid Redis RDB database selector")
 			}
 			currentDB = db
 			if currentDB != 0 {
-				return nil, errors.New("Redis RDB contains unsupported nonzero database")
+				return redisFullSyncRDB{}, errors.New("Redis RDB contains unsupported nonzero database")
 			}
 			continue
 
 		case redisRDBOpcodeResizeDB:
 			if _, encoded, err := readRDBLen(data[:checksumPos], &pos); err != nil || encoded {
-				return nil, errors.New("invalid Redis RDB resize hint")
+				return redisFullSyncRDB{}, errors.New("invalid Redis RDB resize hint")
 			}
 			if _, encoded, err := readRDBLen(data[:checksumPos], &pos); err != nil || encoded {
-				return nil, errors.New("invalid Redis RDB expire resize hint")
+				return redisFullSyncRDB{}, errors.New("invalid Redis RDB expire resize hint")
 			}
 			continue
 
 		case redisRDBOpcodeExpireTimeMS:
 			if pos+8 > checksumPos {
-				return nil, errors.New("truncated Redis RDB millisecond expiry")
+				return redisFullSyncRDB{}, errors.New("truncated Redis RDB millisecond expiry")
 			}
 			expiresAtMS = int64(binary.LittleEndian.Uint64(data[pos : pos+8]))
 			pos += 8
@@ -710,11 +742,11 @@ func decodeRedisFullSyncRDB(data []byte) ([]persistence.Record, error) {
 
 		case redisRDBOpcodeExpireTime:
 			if pos+4 > checksumPos {
-				return nil, errors.New("truncated Redis RDB second expiry")
+				return redisFullSyncRDB{}, errors.New("truncated Redis RDB second expiry")
 			}
 			seconds := uint64(binary.LittleEndian.Uint32(data[pos : pos+4]))
 			if seconds > uint64(^uint64(0)>>1)/1000 {
-				return nil, errors.New("Redis RDB expiry out of range")
+				return redisFullSyncRDB{}, errors.New("Redis RDB expiry out of range")
 			}
 			expiresAtMS = int64(seconds * 1000)
 			pos += 4
@@ -722,45 +754,53 @@ func decodeRedisFullSyncRDB(data []byte) ([]persistence.Record, error) {
 
 		case redisRDBOpcodeIdle:
 			if _, encoded, err := readRDBLen(data[:checksumPos], &pos); err != nil || encoded {
-				return nil, errors.New("invalid Redis RDB idle metadata")
+				return redisFullSyncRDB{}, errors.New("invalid Redis RDB idle metadata")
 			}
 			continue
 
 		case redisRDBOpcodeFreq:
 			if pos >= checksumPos {
-				return nil, errors.New("truncated Redis RDB frequency metadata")
+				return redisFullSyncRDB{}, errors.New("truncated Redis RDB frequency metadata")
 			}
 			pos++
 			continue
 
 		case redisRDBOpcodeEOF:
 			if pos != checksumPos {
-				return nil, errors.New("unexpected bytes after Redis RDB EOF")
+				return redisFullSyncRDB{}, errors.New("unexpected bytes after Redis RDB EOF")
 			}
-			return records, nil
+			return redisFullSyncRDB{records: records, functionCodes: functionCodes}, nil
 		}
 
 		if currentDB != 0 {
-			return nil, errors.New("Redis RDB contains unsupported nonzero database")
+			return redisFullSyncRDB{}, errors.New("Redis RDB contains unsupported nonzero database")
 		}
 
 		key, err := decodeRDBString(data[:checksumPos], &pos)
 		if err != nil {
-			return nil, errors.New("invalid Redis RDB key")
+			return redisFullSyncRDB{}, errors.New("invalid Redis RDB key")
 		}
 		object, err := decodeRedisRDBObjectAtWithTemplates(data[:checksumPos], &pos, opcode, templates)
 		if err != nil {
-			return nil, err
+			return redisFullSyncRDB{}, err
 		}
 		record, err := buildRestoreRecord(string(key), object, expiresAtMS)
 		if err != nil {
-			return nil, err
+			return redisFullSyncRDB{}, err
 		}
 		records = append(records, record)
 		expiresAtMS = 0
 	}
 
-	return nil, errors.New("Redis RDB missing EOF")
+	return redisFullSyncRDB{}, errors.New("Redis RDB missing EOF")
+}
+
+func decodeRedisFullSyncRDB(data []byte) ([]persistence.Record, error) {
+	decoded, err := decodeRedisFullSyncRDBState(data)
+	if err != nil {
+		return nil, err
+	}
+	return decoded.records, nil
 }
 
 func isRedisRDBPayload(payload []byte) bool {
