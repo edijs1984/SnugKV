@@ -15,6 +15,8 @@ type slowlogEntry struct {
 	timestamp int64
 	duration  int64
 	args      [][]byte
+	peer      string
+	name      string
 }
 
 func (s *Server) recordSlowlog(args [][]byte, elapsed time.Duration) {
@@ -22,6 +24,12 @@ func (s *Server) recordSlowlog(args [][]byte, elapsed time.Duration) {
 		return
 	}
 	duration := elapsed.Microseconds()
+	var peer, name string
+	if client := s.executionClient; client != nil {
+		client.mu.RLock()
+		peer, name = client.remoteAddr, client.name
+		client.mu.RUnlock()
+	}
 
 	s.slowlogMu.Lock()
 	defer s.slowlogMu.Unlock()
@@ -34,6 +42,8 @@ func (s *Server) recordSlowlog(args [][]byte, elapsed time.Duration) {
 		timestamp: time.Now().Unix(),
 		duration:  duration,
 		args:      cloneCommandArgs(args),
+		peer:      peer,
+		name:      name,
 	}
 	s.slowlogNextID++
 	s.slowlogEntries = append([]slowlogEntry{entry}, s.slowlogEntries...)
@@ -117,8 +127,8 @@ func (s *Server) executeSlowlog(args [][]byte) ([]byte, error) {
 				integer(entry.timestamp),
 				integer(entry.duration),
 				array(command...),
-				formatBulkString(nil),
-				formatBulkString(nil),
+				formatBulkString([]byte(entry.peer)),
+				formatBulkString([]byte(entry.name)),
 			))
 		}
 		return array(items...), nil
