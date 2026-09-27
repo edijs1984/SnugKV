@@ -133,3 +133,48 @@ func TestBGRewriteAOFScheduleAfterSave(t *testing.T) {
 		})
 	}
 }
+
+
+func TestPersistenceJobsWaitForActiveRewrite(t *testing.T) {
+	dir := t.TempDir()
+	log, err := persistence.Open(filepath.Join(dir, "active.aof"), "always")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+
+	j := &pausedSlowlogRewriteJournal{
+		log: log,
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	s := New(engine.New())
+	s.SetJournal(j)
+	execute(t, s, "SET", "before", "value")
+	execute(t, s, "BGREWRITEAOF")
+
+	select {
+	case <-j.entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("rewrite did not start")
+	}
+
+	waited := make(chan struct{})
+	go func() {
+		s.waitPersistenceJobs()
+		close(waited)
+	}()
+
+	select {
+	case <-waited:
+		t.Fatal("persistence wait returned while rewrite was still running")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(j.release)
+	select {
+	case <-waited:
+	case <-time.After(3 * time.Second):
+		t.Fatal("persistence wait did not return after rewrite completed")
+	}
+}
