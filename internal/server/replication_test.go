@@ -2111,3 +2111,108 @@ func TestChainedReplicationWAITAOFCountsOnlyDirectFACKs(t *testing.T) {
 		t.Fatalf("WAITAOF counted transitive replica: %q", got)
 	}
 }
+
+
+func TestRedisFullSyncImportsFunction2Libraries(t *testing.T) {
+	s := New(engine.New())
+	s.replication.init()
+	s.replication.setReplica("127.0.0.1", 6379)
+
+	sidecar := filepath.Join(t.TempDir(), "replica.functions")
+	functionPersistencePaths.Store(s, sidecar)
+	defer functionPersistencePaths.Delete(s)
+
+	code := "#!lua name=fromredis\nredis.register_function('hello', function(keys,args) return 'from-fullsync' end)"
+	rdb := []byte("REDIS0012")
+	rdb = append(rdb, redisRDBOpcodeFunction2)
+	rdb = appendRDBRawString(rdb, []byte(code))
+	rdb = append(rdb, redisRDBOpcodeEOF)
+	var checksum [8]byte
+	binary.LittleEndian.PutUint64(checksum[:], redisCRC64(rdb))
+	rdb = append(rdb, checksum[:]...)
+
+	client, upstream := net.Pipe()
+	defer client.Close()
+
+	upstreamDone := make(chan error, 1)
+	go func() {
+		defer upstream.Close()
+		reader := bufio.NewReader(upstream)
+
+		args, _, err := readRedisReplicationCommand(reader)
+		if err != nil {
+			upstreamDone <- err
+			return
+		}
+		if len(args) != 3 || string(args[0]) != "REPLCONF" {
+			upstreamDone <- fmt.Errorf("unexpected REPLCONF: %q", args)
+			return
+		}
+		if _, err := upstream.Write([]byte("+OK\r\n")); err != nil {
+			upstreamDone <- err
+			return
+		}
+
+		args, _, err = readRedisReplicationCommand(reader)
+		if err != nil {
+			upstreamDone <- err
+			return
+		}
+		if len(args) != 3 || string(args[0]) != "PSYNC" {
+			upstreamDone <- fmt.Errorf("unexpected PSYNC: %q", args)
+			return
+		}
+
+		const runID = "1111111111111111111111111111111111111111"
+		header := fmt.Sprintf("+FULLRESYNC %s 0\r\n$%d\r\n", runID, len(rdb))
+		if _, err := upstream.Write(append([]byte(header), rdb...)); err != nil {
+			upstreamDone <- err
+			return
+		}
+
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			reply, callErr := s.Execute(clientArgs("FCALL", "hello", "0"))
+			if callErr == nil && string(reply) == "$13\r\nfrom-fullsync\r\n" {
+				upstreamDone <- nil
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		upstreamDone <- errors.New("FUNCTION2 library was not available after full sync")
+	}()
+
+	cancel := make(chan struct{})
+	consumeDone := make(chan error, 1)
+	go func() {
+		consumeDone <- s.consumeReplicationConnection(client, cancel)
+	}()
+
+	if err := <-upstreamDone; err != nil {
+		close(cancel)
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(sidecar)
+	if err != nil {
+		close(cancel)
+		t.Fatalf("function sidecar: %v", err)
+	}
+	codes, err := decodeFunctionDump(data)
+	if err != nil {
+		close(cancel)
+		t.Fatalf("decode function sidecar: %v", err)
+	}
+	if len(codes) != 1 || codes[0] != code {
+		close(cancel)
+		t.Fatalf("persisted function codes=%q", codes)
+	}
+
+	close(cancel)
+	_ = client.Close()
+	select {
+	case <-consumeDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("replication consumer did not stop")
+	}
+}
