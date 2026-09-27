@@ -18,7 +18,7 @@ type slowlogEntry struct {
 }
 
 func (s *Server) recordSlowlog(args [][]byte, elapsed time.Duration) {
-	if len(args) == 0 || strings.EqualFold(string(args[0]), "SLOWLOG") {
+	if len(args) == 0 {
 		return
 	}
 	duration := elapsed.Microseconds()
@@ -29,13 +29,13 @@ func (s *Server) recordSlowlog(args [][]byte, elapsed time.Duration) {
 	if s.slowlogThresholdMicros < 0 || duration < s.slowlogThresholdMicros {
 		return
 	}
-	s.slowlogNextID++
 	entry := slowlogEntry{
 		id:        s.slowlogNextID,
 		timestamp: time.Now().Unix(),
 		duration:  duration,
 		args:      cloneCommandArgs(args),
 	}
+	s.slowlogNextID++
 	s.slowlogEntries = append([]slowlogEntry{entry}, s.slowlogEntries...)
 	if s.slowlogMaxLen >= 0 && len(s.slowlogEntries) > s.slowlogMaxLen {
 		s.slowlogEntries = s.slowlogEntries[:s.slowlogMaxLen]
