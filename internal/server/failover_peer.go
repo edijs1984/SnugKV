@@ -107,3 +107,37 @@ func queryFailoverPeer(addr string, timeout time.Duration) (failoverPeerState, e
 	}
 	return state, nil
 }
+
+
+func (s *Server) evaluatePeerFailover(now time.Time) (failoverElectionResult, error) {
+	local := s.localFailoverState(now)
+	if local.Role != "replica" || !local.MasterDown || local.MasterRunID == "" {
+		return failoverElectionResult{}, nil
+	}
+
+	observations := []failoverObservation{{
+		NodeID:     local.NodeID,
+		MasterDown: local.MasterDown,
+		Eligible:   local.Priority > 0,
+		Offset:     local.Offset,
+		Priority:   local.Priority,
+	}}
+
+	for _, addr := range s.failoverPeers {
+		peer, err := queryFailoverPeer(addr, 200*time.Millisecond)
+		if err != nil {
+			continue
+		}
+		if peer.Role != "replica" || peer.MasterRunID == "" || peer.MasterRunID != local.MasterRunID {
+			continue
+		}
+		observations = append(observations, failoverObservation{
+			NodeID:     peer.NodeID,
+			MasterDown: peer.MasterDown,
+			Eligible:   peer.Priority > 0,
+			Offset:     peer.Offset,
+			Priority:   peer.Priority,
+		})
+	}
+	return evaluateFailoverElection(observations, s.failoverQuorum), nil
+}
