@@ -153,34 +153,47 @@ func (s *Server) evaluatePeerFailover(now time.Time) (failoverElectionResult, er
 }
 
 
-func (s *Server) requestFailoverVote(now time.Time, lineage string, term uint64, candidateID string, candidateOffset int64, candidatePriority int) failoverVoteReply {
+func (s *Server) requestFailoverVote(now time.Time, lineage string, term uint64, candidateID string, candidateOffset int64, candidatePriority int) (failoverVoteReply, error) {
 	local := s.localFailoverState(now)
 	s.failoverVoteMu.Lock()
-	defer s.failoverVoteMu.Unlock()
 
 	if term < s.failoverTerm {
-		return failoverVoteReply{Term: s.failoverTerm}
+		reply := failoverVoteReply{Term: s.failoverTerm}
+		s.failoverVoteMu.Unlock()
+		return reply, nil
 	}
+	changed := false
 	if term > s.failoverTerm {
 		s.failoverTerm = term
 		s.failoverVotedFor = ""
+		changed = true
 	}
 	reply := failoverVoteReply{Term: s.failoverTerm}
-	if local.Role != "replica" || !local.MasterDown || local.MasterRunID == "" || local.MasterRunID != lineage {
-		return reply
+	eligible := local.Role == "replica" &&
+		local.MasterDown &&
+		local.MasterRunID != "" &&
+		local.MasterRunID == lineage &&
+		candidateID != "" &&
+		candidatePriority > 0 &&
+		candidateOffset >= local.Offset &&
+		(s.failoverVotedFor == "" || s.failoverVotedFor == candidateID)
+	if eligible && s.failoverVotedFor != candidateID {
+		s.failoverVotedFor = candidateID
+		changed = true
 	}
-	if candidateID == "" || candidatePriority <= 0 {
-		return reply
+	persistTerm := s.failoverTerm
+	persistVote := s.failoverVotedFor
+	s.failoverVoteMu.Unlock()
+
+	if changed {
+		if err := s.persistFailoverVoteState(persistTerm, persistVote); err != nil {
+			return failoverVoteReply{Term: persistTerm}, err
+		}
 	}
-	if candidateOffset < local.Offset {
-		return reply
+	if eligible {
+		reply.Granted = true
 	}
-	if s.failoverVotedFor != "" && s.failoverVotedFor != candidateID {
-		return reply
-	}
-	s.failoverVotedFor = candidateID
-	reply.Granted = true
-	return reply
+	return reply, nil
 }
 
 func queryFailoverVote(addr string, timeout time.Duration, lineage string, term uint64, candidateID string, offset int64, priority int) (failoverVoteReply, error) {
