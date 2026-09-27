@@ -58,6 +58,13 @@ type Server struct {
 	failoverPendingEpoch     uint64
 	failoverPendingPeers     []string
 	failoverPendingQuorum    int
+	failoverCommitPending     bool
+	failoverCommitOldEpoch    uint64
+	failoverCommitEpoch       uint64
+	failoverCommitMembers     []string
+	failoverCommitQuorum      int
+	failoverCommitTargets     []string
+	failoverCommitLastRetry   time.Time
 	failoverVoteMu           sync.Mutex
 	failoverTerm             uint64
 	failoverVotedFor         string
