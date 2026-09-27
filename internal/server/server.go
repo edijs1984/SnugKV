@@ -49,6 +49,9 @@ type Server struct {
 	failoverPeers            []string
 	failoverQuorum           int
 	failoverPriority         int
+	failoverVoteMu           sync.Mutex
+	failoverTerm             uint64
+	failoverVotedFor         string
 
 	// executionACLUsername / executionACLArgs are valid only while durableMu is
 	// held. TCP and transaction execution populate them so dynamic command
