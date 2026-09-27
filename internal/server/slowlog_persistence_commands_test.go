@@ -2,6 +2,8 @@ package server
 
 import (
 	"bytes"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -368,11 +370,40 @@ func TestSlowlogRedis82RedactsSupportedSensitiveArgs(t *testing.T) {
 
 
 func TestSlowlogRecordedOutputUsesTrimmingAndRedaction(t *testing.T) {
-	s := New(engine.New())
+	tcp, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tcp.Close()
+	s := tcp.server
+
 	execute(t, s, "CONFIG", "SET", "slowlog-log-slower-than", "0")
 	execute(t, s, "SLOWLOG", "RESET")
 
-	execute(t, s, "ACL", "SETUSER", "slowlog-user", ">supersecret", "+get")
+	conn, err := net.DialTimeout("tcp", tcp.listener.Addr().String(), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	wire := "*5\r\n" +
+		"$3\r\nACL\r\n" +
+		"$7\r\nSETUSER\r\n" +
+		"$12\r\nslowlog-user\r\n" +
+		"$12\r\n>supersecret\r\n" +
+		"$4\r\n+get\r\n"
+	if _, err := io.WriteString(conn, wire); err != nil {
+		t.Fatal(err)
+	}
+	reply := make([]byte, len("+OK\r\n"))
+	if _, err := io.ReadFull(conn, reply); err != nil {
+		t.Fatal(err)
+	}
+	if string(reply) != "+OK\r\n" {
+		t.Fatalf("ACL SETUSER reply=%q", reply)
+	}
 
 	long := strings.Repeat("A", 129)
 	execute(t, s, "SADD", "slowlog:set", "foo", long)
@@ -393,7 +424,7 @@ func TestSlowlogRecordedOutputUsesTrimmingAndRedaction(t *testing.T) {
 			t.Fatalf("SLOWLOG GET missing %q: %q", want, got)
 		}
 	}
-	if strings.Contains(got, "supersecret") {
+	if strings.Contains(got, "supersecret") || strings.Contains(got, "slowlog-user") {
 		t.Fatalf("SLOWLOG leaked sensitive ACL payload: %q", got)
 	}
 }
