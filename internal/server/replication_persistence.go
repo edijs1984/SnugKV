@@ -10,6 +10,13 @@ import (
 )
 
 const replicationPersistenceVersion = 1
+const failoverPersistenceVersion = 1
+
+type failoverPersistenceState struct {
+	Version  int    `json:"version"`
+	Term     uint64 `json:"term"`
+	VotedFor string `json:"voted_for,omitempty"`
+}
 
 type replicationPersistenceState struct {
 	Version     int    `json:"version"`
@@ -21,6 +28,60 @@ type replicationPersistenceState struct {
 }
 
 var replicationPersistencePaths sync.Map // map[*Server]string
+
+
+func failoverPersistencePath(replicationPath string) string {
+	if replicationPath == "" {
+		return ""
+	}
+	return replicationPath + ".failover"
+}
+
+func (s *Server) persistFailoverVoteStateLocked() error {
+	value, ok := replicationPersistencePaths.Load(s)
+	if !ok {
+		return nil
+	}
+	path := failoverPersistencePath(value.(string))
+	s.failoverVoteMu.Lock()
+	state := failoverPersistenceState{
+		Version:  failoverPersistenceVersion,
+		Term:     s.failoverTerm,
+		VotedFor: s.failoverVotedFor,
+	}
+	s.failoverVoteMu.Unlock()
+	payload, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	return writeSidecarStateAtomic(path, payload)
+}
+
+func (s *Server) loadFailoverVoteState(replicationPath string) error {
+	path := failoverPersistencePath(replicationPath)
+	if path == "" {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var state failoverPersistenceState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return err
+	}
+	if state.Version != failoverPersistenceVersion {
+		return fmt.Errorf("unsupported failover state version %d", state.Version)
+	}
+	s.failoverVoteMu.Lock()
+	s.failoverTerm = state.Term
+	s.failoverVotedFor = state.VotedFor
+	s.failoverVoteMu.Unlock()
+	return nil
+}
 
 func replicationPersistencePath(aofPath, snapshotPath string) string {
 	if aofPath != "" {
@@ -52,6 +113,9 @@ func (s *TCPServer) ConfigureReplicationPersistenceRecovered(
 		return nil
 	}
 	replicationPersistencePaths.Store(s.server, path)
+	if err := s.server.loadFailoverVoteState(path); err != nil {
+		return fmt.Errorf("failover recovery: %w", err)
+	}
 
 	var state replicationPersistenceState
 	if recovered != nil && recovered.Clear {
