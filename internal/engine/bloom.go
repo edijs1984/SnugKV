@@ -541,3 +541,39 @@ func (s *Store) BloomInsert(key string, capacity uint64, errorRate float64, item
 	}
 	return out, nil
 }
+
+
+func (s *Store) BloomDump(key string) ([]byte, error) {
+	sh := s.shardFor(key)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
+
+	e, ok := sh.get(key)
+	if !ok || sh.expired(key, e, s.now()) {
+		return nil, errors.New("ERR not found")
+	}
+	if e.valueType != TypeBloom {
+		return nil, bloomWrongType()
+	}
+	value := s.decode(sh, e)
+	if _, err := decodeBloom(value); err != nil {
+		return nil, err
+	}
+	return append([]byte(nil), value...), nil
+}
+
+func (s *Store) BloomLoadDump(key string, value []byte) error {
+	if _, err := decodeBloom(value); err != nil {
+		return err
+	}
+
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	if e, ok := sh.get(key); ok && !sh.expired(key, e, s.now()) {
+		return errors.New("ERR item exists")
+	}
+
+	return s.publish(sh, key, bloomPreparedEntry(value))
+}
