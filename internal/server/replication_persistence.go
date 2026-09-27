@@ -31,6 +31,12 @@ type failoverMembershipPersistenceState struct {
 	PendingEpoch  uint64   `json:"pending_epoch,omitempty"`
 	PendingPeers  []string `json:"pending_peers,omitempty"`
 	PendingQuorum int      `json:"pending_quorum,omitempty"`
+	CommitPending bool     `json:"commit_pending,omitempty"`
+	CommitOldEpoch uint64  `json:"commit_old_epoch,omitempty"`
+	CommitEpoch uint64     `json:"commit_epoch,omitempty"`
+	CommitMembers []string `json:"commit_members,omitempty"`
+	CommitQuorum int       `json:"commit_quorum,omitempty"`
+	CommitTargets []string `json:"commit_targets,omitempty"`
 }
 
 type replicationPersistenceState struct {
@@ -71,6 +77,12 @@ func (s *Server) persistFailoverMembershipState() error {
 		PendingEpoch:  s.failoverPendingEpoch,
 		PendingPeers:  append([]string(nil), s.failoverPendingPeers...),
 		PendingQuorum: s.failoverPendingQuorum,
+		CommitPending: s.failoverCommitPending,
+		CommitOldEpoch: s.failoverCommitOldEpoch,
+		CommitEpoch: s.failoverCommitEpoch,
+		CommitMembers: append([]string(nil), s.failoverCommitMembers...),
+		CommitQuorum: s.failoverCommitQuorum,
+		CommitTargets: append([]string(nil), s.failoverCommitTargets...),
 	}
 	s.failoverMembershipMu.RUnlock()
 
@@ -103,6 +115,9 @@ func (s *Server) loadFailoverMembershipState(replicationPath string) error {
 	if state.JointActive && (state.PendingEpoch <= state.ConfigEpoch || len(state.PendingPeers) == 0 || state.PendingQuorum <= 0) {
 		return errors.New("invalid persisted failover membership transition")
 	}
+	if state.CommitPending && (state.CommitEpoch == 0 || state.CommitEpoch <= state.CommitOldEpoch || len(state.CommitMembers) == 0 || state.CommitQuorum <= 0) {
+		return errors.New("invalid persisted failover membership commit recovery")
+	}
 
 	s.failoverMembershipMu.Lock()
 	s.failoverGroupID = state.GroupID
@@ -113,6 +128,12 @@ func (s *Server) loadFailoverMembershipState(replicationPath string) error {
 	s.failoverPendingEpoch = state.PendingEpoch
 	s.failoverPendingPeers = append([]string(nil), state.PendingPeers...)
 	s.failoverPendingQuorum = state.PendingQuorum
+	s.failoverCommitPending = state.CommitPending
+	s.failoverCommitOldEpoch = state.CommitOldEpoch
+	s.failoverCommitEpoch = state.CommitEpoch
+	s.failoverCommitMembers = append([]string(nil), state.CommitMembers...)
+	s.failoverCommitQuorum = state.CommitQuorum
+	s.failoverCommitTargets = append([]string(nil), state.CommitTargets...)
 	s.failoverMembershipMu.Unlock()
 	return nil
 }
