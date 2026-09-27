@@ -189,13 +189,13 @@ func TestMonitorLuaOrdering(t *testing.T) {
 func TestMonitorScriptFamilies(t *testing.T) {
 	tests := []struct {
 		name       string
-		setup      func(t *testing.T, actor net.Conn, ar *bufio.Reader)
+		setup      func(t *testing.T, srv *Server, actor net.Conn, ar *bufio.Reader)
 		command    []string
 		wantNested string
 	}{
 		{
 			name: "evalsha",
-			setup: func(t *testing.T, actor net.Conn, ar *bufio.Reader) {
+			setup: func(t *testing.T, srv *Server, actor net.Conn, ar *bufio.Reader) {
 				script := "return redis.call('GET',KEYS[1])"
 				monitorTestSend(t, actor, "SET", "monitor:script", "hello")
 				monitorTestReply(t, ar)
@@ -207,7 +207,7 @@ func TestMonitorScriptFamilies(t *testing.T) {
 		},
 		{
 			name: "eval_ro",
-			setup: func(t *testing.T, actor net.Conn, ar *bufio.Reader) {
+			setup: func(t *testing.T, srv *Server, actor net.Conn, ar *bufio.Reader) {
 				monitorTestSend(t, actor, "SET", "monitor:script", "hello")
 				monitorTestReply(t, ar)
 			},
@@ -216,24 +216,26 @@ func TestMonitorScriptFamilies(t *testing.T) {
 		},
 		{
 			name: "fcall",
-			setup: func(t *testing.T, actor net.Conn, ar *bufio.Reader) {
+			setup: func(t *testing.T, srv *Server, actor net.Conn, ar *bufio.Reader) {
 				code := "#!lua name=monitorlib\\nredis.register_function('reader', function(keys,args) return redis.call('GET',keys[1]) end)"
 				monitorTestSend(t, actor, "SET", "monitor:script", "hello")
 				monitorTestReply(t, ar)
-				monitorTestSend(t, actor, "FUNCTION", "LOAD", code)
-				monitorTestReply(t, ar)
+				if got := loadFunctionLibrary(t, srv, code); !strings.HasPrefix(got, "$") {
+					t.Fatalf("FUNCTION LOAD=%q", got)
+				}
 			},
 			command: []string{"FCALL", "reader", "1", "monitor:script"},
 			wantNested: " [0 lua] \"GET\" \"monitor:script\"\r\n",
 		},
 		{
 			name: "fcall_ro",
-			setup: func(t *testing.T, actor net.Conn, ar *bufio.Reader) {
+			setup: func(t *testing.T, srv *Server, actor net.Conn, ar *bufio.Reader) {
 				code := "#!lua name=monitorlibro\\nredis.register_function{function_name='reader_ro',callback=function(keys,args) return redis.call('GET',keys[1]) end,flags={'no-writes'}}"
 				monitorTestSend(t, actor, "SET", "monitor:script", "hello")
 				monitorTestReply(t, ar)
-				monitorTestSend(t, actor, "FUNCTION", "LOAD", code)
-				monitorTestReply(t, ar)
+				if got := loadFunctionLibrary(t, srv, code); !strings.HasPrefix(got, "$") {
+					t.Fatalf("FUNCTION LOAD=%q", got)
+				}
 			},
 			command: []string{"FCALL_RO", "reader_ro", "1", "monitor:script"},
 			wantNested: " [0 lua] \"GET\" \"monitor:script\"\r\n",
@@ -256,7 +258,7 @@ func TestMonitorScriptFamilies(t *testing.T) {
 
 			monitor, actor := dial(), dial()
 			mr, ar := bufio.NewReader(monitor), bufio.NewReader(actor)
-			tc.setup(t, actor, ar)
+			tc.setup(t, s.server, actor, ar)
 
 			monitorTestSend(t, monitor, "MONITOR")
 			if got := monitorTestReply(t, mr); got != "+OK\r\n" { t.Fatalf("MONITOR=%q", got) }
