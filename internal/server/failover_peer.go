@@ -738,3 +738,100 @@ func (s *Server) convergeFailoverReplicas(now time.Time) {
 		)
 	}
 }
+
+
+type failoverDemoteReply struct {
+	Term     uint64 `json:"term"`
+	Accepted bool   `json:"accepted"`
+}
+
+func (s *Server) requestFailoverDemote(now time.Time, lineage string, term uint64, leaderID string) (failoverDemoteReply, error) {
+	s.failoverVoteMu.Lock()
+	currentTerm := s.failoverTerm
+	s.failoverVoteMu.Unlock()
+
+	reply := failoverDemoteReply{Term: currentTerm}
+	if term < currentTerm || lineage == "" || leaderID == "" {
+		return reply, nil
+	}
+
+	local := s.localFailoverState(now)
+	if local.Role != "master" {
+		return reply, nil
+	}
+
+	s.failoverLeaseMu.Lock()
+	leaseTerm := s.failoverLeaseTerm
+	leaseHolder := s.failoverLeaseHolder
+	leaseUntil := s.failoverLeaseUntil
+	s.failoverLeaseMu.Unlock()
+	if leaseTerm != term ||
+		leaseHolder != leaderID ||
+		leaseUntil.IsZero() ||
+		!now.Before(leaseUntil) {
+		return reply, nil
+	}
+
+	addr, err := s.resolveFailoverLeaderAddr(leaderID)
+	if err != nil {
+		return reply, nil
+	}
+	host, portText, err := net.SplitHostPort(addr)
+	if err != nil {
+		return reply, err
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port <= 0 || port > 65535 {
+		return reply, errors.New("invalid failover leader port")
+	}
+
+	s.failoverLeaderMu.RLock()
+	activeLocalLeader := s.failoverLeaderActive
+	localLeaderLineage := s.failoverLeaderLineage
+	s.failoverLeaderMu.RUnlock()
+	if activeLocalLeader && localLeaderLineage != "" && localLeaderLineage != lineage {
+		return reply, nil
+	}
+
+	if err := s.persistReplicationCheckpointClearLocked(host, port); err != nil {
+		s.durabilityFailed = true
+		return reply, errors.New("failover demote persistence update failed")
+	}
+	if err := s.clearReplicationPersistence(); err != nil {
+		return reply, errors.New("failover demote persistence update failed")
+	}
+	s.startReplicaFollow(host, port)
+	reply.Accepted = true
+	return reply, nil
+}
+
+func queryFailoverDemote(addr string, timeout time.Duration, username, password, lineage string, term uint64, leaderID string) (failoverDemoteReply, error) {
+	conn, err := net.DialTimeout("tcp", addr, timeout)
+	if err != nil {
+		return failoverDemoteReply{}, err
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+	reader := bufio.NewReader(conn)
+	if err := authenticateReplicationUpstream(conn, reader, username, password); err != nil {
+		return failoverDemoteReply{}, err
+	}
+	if err := writeReplicationRESPCommand(
+		conn,
+		"SNUG.FAILOVER", "DEMOTE",
+		lineage,
+		strconv.FormatUint(term, 10),
+		leaderID,
+	); err != nil {
+		return failoverDemoteReply{}, err
+	}
+	payload, err := readRESPBulk(reader)
+	if err != nil {
+		return failoverDemoteReply{}, err
+	}
+	var reply failoverDemoteReply
+	if err := json.Unmarshal(payload, &reply); err != nil {
+		return failoverDemoteReply{}, err
+	}
+	return reply, nil
+}
