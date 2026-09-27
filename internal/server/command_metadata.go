@@ -619,6 +619,7 @@ func commandDenyOOM(name string) bool {
 		"TOPK.RESERVE", "TOPK.ADD", "TOPK.INCRBY",
 		"TDIGEST.CREATE", "TDIGEST.ADD", "TDIGEST.RESET", "TDIGEST.MERGE",
 		"TS.CREATE", "TS.ADD", "TS.INCRBY", "TS.DECRBY",
+		"VADD",
 		"GEOADD",
 		"BITOP",
 		"COPY",

@@ -36,6 +36,7 @@ const (
 	TypeTopK
 	TypeTDigest
 	TypeTimeSeries
+	TypeVectorSet
 )
 
 func (t ValueType) String() string {
@@ -76,6 +77,8 @@ func (t ValueType) String() string {
 		return "TDIGEST"
 	case TypeTimeSeries:
 		return "TIMESERIES"
+	case TypeVectorSet:
+		return "VECTORSET"
 	default:
 		return "UNKNOWN"
 	}
