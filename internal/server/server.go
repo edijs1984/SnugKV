@@ -77,6 +77,7 @@ type Server struct {
 	slowlogThresholdMicros int64
 	slowlogMaxLen          int
 
+	aofRewritePath    string
 	snapshotPath      string
 	persistenceJobMu  sync.Mutex
 	bgsaveRunning     bool
