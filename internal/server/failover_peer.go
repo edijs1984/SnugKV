@@ -57,6 +57,9 @@ type failoverMembershipSnapshot struct {
 	CommitTargets []string
 	Retired bool
 	RetiredAtEpoch uint64
+	RetirePending bool
+	RetirePendingEpoch uint64
+	CommitRetireTargets []string
 }
 
 func (s *Server) failoverMembershipSnapshot() failoverMembershipSnapshot {
@@ -79,6 +82,9 @@ func (s *Server) failoverMembershipSnapshot() failoverMembershipSnapshot {
 		CommitTargets: append([]string(nil), s.failoverCommitTargets...),
 		Retired: s.failoverRetired,
 		RetiredAtEpoch: s.failoverRetiredAtEpoch,
+		RetirePending: s.failoverRetirePending,
+		RetirePendingEpoch: s.failoverRetirePendingEpoch,
+		CommitRetireTargets: append([]string(nil), s.failoverCommitRetireTargets...),
 	}
 }
 
