@@ -99,12 +99,14 @@ type searchManager struct {
 	mu      sync.RWMutex
 	indexes map[string]*searchIndex
 	pending map[string]*searchPendingBuild
+	aliases map[string]string
 }
 
 func newSearchManager() *searchManager {
 	return &searchManager{
 		indexes: make(map[string]*searchIndex),
 		pending: make(map[string]*searchPendingBuild),
+		aliases: make(map[string]string),
 	}
 }
 
@@ -602,6 +604,76 @@ func (m *searchManager) names() []string {
 	return names
 }
 
+
+
+func (m *searchManager) resolve(name string) (string, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if _, ok := m.indexes[name]; ok {
+		return name, true
+	}
+	target, ok := m.aliases[name]
+	if !ok {
+		return "", false
+	}
+	if _, exists := m.indexes[target]; !exists {
+		return "", false
+	}
+	return target, true
+}
+
+func (m *searchManager) aliasAdd(alias, index string, update bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.indexes[index]; !ok {
+		return errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + index)
+	}
+	if _, conflicts := m.indexes[alias]; conflicts {
+		return errors.New("ERR alias conflicts with an index name")
+	}
+	if _, exists := m.aliases[alias]; exists && !update {
+		return errors.New("ERR alias already exists")
+	}
+	m.aliases[alias] = index
+	return nil
+}
+
+func (m *searchManager) aliasDelete(alias string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.aliases[alias]; !ok {
+		return false
+	}
+	delete(m.aliases, alias)
+	return true
+}
+
+func (m *searchManager) tagValues(indexName, alias string) ([]string, bool, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if target, ok := m.aliases[indexName]; ok {
+		indexName = target
+	}
+	idx, ok := m.indexes[indexName]
+	if !ok {
+		return nil, false, false
+	}
+	field, ok := idx.tags[alias]
+	if !ok {
+		for _, defField := range idx.def.Fields {
+			if defField.Alias == alias && defField.Kind == SearchFieldTag {
+				return []string{}, true, true
+			}
+		}
+		return nil, true, false
+	}
+	values := make([]string, 0, len(field))
+	for value := range field {
+		values = append(values, value)
+	}
+	sort.Strings(values)
+	return values, true, true
+}
 
 func (m *searchManager) definitions() []SearchDefinition {
 	m.mu.RLock()
@@ -1867,6 +1939,73 @@ func (s *Store) CreateSearchIndex(def SearchDefinition) error {
 	return nil
 }
 
+
+func (s *Store) AlterSearchIndex(name string, field SearchField, skipInitialScan bool) error {
+	manager := s.getSearchManager()
+	if manager == nil {
+		return errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + name)
+	}
+
+	manager.mu.RLock()
+	if target, ok := manager.aliases[name]; ok {
+		name = target
+	}
+	current, ok := manager.indexes[name]
+	if !ok {
+		manager.mu.RUnlock()
+		return errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + name)
+	}
+	def := cloneSearchDefinition(current.def)
+	manager.mu.RUnlock()
+
+	for _, existing := range def.Fields {
+		if existing.Alias == field.Alias {
+			return errors.New("SEARCH_QUERY_BAD Duplicate field in schema - " + field.Alias)
+		}
+	}
+	def.Fields = append(def.Fields, field)
+	if err := validateSearchDefinition(def); err != nil {
+		return err
+	}
+
+	if skipInitialScan {
+		manager.mu.Lock()
+		defer manager.mu.Unlock()
+		idx, ok := manager.indexes[name]
+		if !ok {
+			return errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + name)
+		}
+		idx.def = cloneSearchDefinition(def)
+		return nil
+	}
+
+	next := newSearchIndex(def)
+	now := s.now()
+	for i := range s.shards {
+		sh := &s.shards[i]
+		sh.mu.RLock()
+		for key, entry := range sh.all() {
+			if sh.expired(key, entry, now) || entry.valueType != TypeJSON {
+				continue
+			}
+			raw := append([]byte(nil), s.decode(sh, entry)...)
+			if err := next.replaceJSON(key, raw); err != nil {
+				sh.mu.RUnlock()
+				return err
+			}
+		}
+		sh.mu.RUnlock()
+	}
+
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	if _, ok := manager.indexes[name]; !ok {
+		return errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + name)
+	}
+	manager.indexes[name] = next
+	return nil
+}
+
 func (s *Store) SearchDefinitions() []SearchDefinition {
 	manager := s.getSearchManager()
 	if manager == nil {
@@ -1885,6 +2024,9 @@ func (s *Store) SearchDefinition(name string) (SearchDefinition, bool) {
 	manager.mu.RLock()
 	defer manager.mu.RUnlock()
 
+	if target, exists := manager.aliases[name]; exists {
+		name = target
+	}
 	idx, ok := manager.indexes[name]
 	if !ok {
 		return SearchDefinition{}, false
@@ -1959,6 +2101,35 @@ func (s *Store) SearchIndexNames() []string {
 }
 
 
+
+
+func (s *Store) ResolveSearchIndexName(name string) (string, bool) {
+	manager := s.getSearchManager()
+	if manager == nil {
+		return "", false
+	}
+	return manager.resolve(name)
+}
+
+func (s *Store) SearchAliasAdd(alias, index string, update bool) error {
+	return s.ensureSearchManager().aliasAdd(alias, index, update)
+}
+
+func (s *Store) SearchAliasDelete(alias string) bool {
+	manager := s.getSearchManager()
+	if manager == nil {
+		return false
+	}
+	return manager.aliasDelete(alias)
+}
+
+func (s *Store) SearchTagValues(indexName, alias string) ([]string, bool, bool) {
+	manager := s.getSearchManager()
+	if manager == nil {
+		return nil, false, false
+	}
+	return manager.tagValues(indexName, alias)
+}
 
 func (s *Store) SearchAllKeys(indexName string) ([]string, bool) {
 	manager := s.getSearchManager()

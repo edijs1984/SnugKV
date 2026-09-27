@@ -17,7 +17,12 @@ var searchCommands = map[string]commandInfo{
 	"FT._LIST":     {1, 1, 0, 0, 0, false},
 	"FT.INFO":      {2, 2, 0, 0, 0, false},
 	"FT.SEARCH":    {3, 0, 0, 0, 0, false},
-	"FT.AGGREGATE": {3, 0, 0, 0, 0, false},
+	"FT.AGGREGATE":   {3, 0, 0, 0, 0, false},
+	"FT.ALIASADD":    {3, 3, 0, 0, 0, true},
+	"FT.ALIASUPDATE": {3, 3, 0, 0, 0, true},
+	"FT.ALIASDEL":    {2, 2, 0, 0, 0, true},
+	"FT.TAGVALS":     {3, 3, 0, 0, 0, false},
+	"FT.ALTER":       {6, 0, 0, 0, 0, true},
 }
 
 func init() {
@@ -2251,6 +2256,148 @@ func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 	return array(items...), nil
 }
 
+func parseFTAlterField(args [][]byte, start int) (engine.SearchField, error) {
+	var field engine.SearchField
+	if start >= len(args) {
+		return field, errors.New("ERR syntax error")
+	}
+	field.Path = string(args[start])
+	start++
+	if start+1 >= len(args) || !strings.EqualFold(string(args[start]), "AS") {
+		return field, errors.New("ERR FT.ALTER requires AS for indexed JSON fields")
+	}
+	field.Alias = string(args[start+1])
+	start += 2
+	if start >= len(args) {
+		return field, errors.New("ERR syntax error")
+	}
+	switch strings.ToUpper(string(args[start])) {
+	case "TAG":
+		field.Kind = engine.SearchFieldTag
+	case "NUMERIC":
+		field.Kind = engine.SearchFieldNumeric
+	case "TEXT":
+		field.Kind = engine.SearchFieldText
+		field.Weight = 1
+	case "GEO":
+		field.Kind = engine.SearchFieldGeo
+	default:
+		return field, errors.New("ERR unsupported search field type")
+	}
+	start++
+
+	for start < len(args) {
+		switch strings.ToUpper(string(args[start])) {
+		case "SORTABLE":
+			field.Sortable = true
+			start++
+			if start < len(args) && strings.EqualFold(string(args[start]), "UNF") {
+				start++
+			}
+		case "NOINDEX":
+			field.NoIndex = true
+			start++
+		case "NOSTEM":
+			if field.Kind != engine.SearchFieldText {
+				return field, errors.New("ERR syntax error")
+			}
+			field.NoStem = true
+			start++
+		case "WEIGHT":
+			if field.Kind != engine.SearchFieldText || start+1 >= len(args) {
+				return field, errors.New("ERR syntax error")
+			}
+			weight, err := strconv.ParseFloat(string(args[start+1]), 64)
+			if err != nil {
+				return field, errors.New("SEARCH_PARSE_ARGS Bad arguments for weight: Could not convert argument to expected type")
+			}
+			field.Weight = weight
+			field.WeightSet = true
+			start += 2
+		default:
+			return field, errors.New("ERR syntax error")
+		}
+	}
+	return field, nil
+}
+
+func executeFTAlter(store *engine.Store, args [][]byte) ([]byte, error) {
+	if len(args) < 6 {
+		return nil, errors.New("ERR wrong number of arguments for 'ft.alter' command")
+	}
+	name := string(args[1])
+	pos := 2
+	skipInitialScan := false
+	if pos < len(args) && strings.EqualFold(string(args[pos]), "SKIPINITIALSCAN") {
+		skipInitialScan = true
+		pos++
+	}
+	if pos+2 >= len(args) || !strings.EqualFold(string(args[pos]), "SCHEMA") || !strings.EqualFold(string(args[pos+1]), "ADD") {
+		return nil, errors.New("ERR syntax error")
+	}
+	field, err := parseFTAlterField(args, pos+2)
+	if err != nil {
+		return nil, err
+	}
+	if err := store.AlterSearchIndex(name, field, skipInitialScan); err != nil {
+		return nil, err
+	}
+	return []byte("+OK\r\n"), nil
+}
+func executeFTAliasAdd(store *engine.Store, args [][]byte, update bool) ([]byte, error) {
+	if len(args) != 3 {
+		return nil, errors.New("ERR wrong number of arguments")
+	}
+	if err := store.SearchAliasAdd(string(args[1]), string(args[2]), update); err != nil {
+		return nil, err
+	}
+	return []byte("+OK\r\n"), nil
+}
+
+func executeFTAliasDel(store *engine.Store, args [][]byte) ([]byte, error) {
+	if len(args) != 2 {
+		return nil, errors.New("ERR wrong number of arguments")
+	}
+	if !store.SearchAliasDelete(string(args[1])) {
+		return nil, errors.New("ERR alias does not exist")
+	}
+	return []byte("+OK\r\n"), nil
+}
+
+func executeFTTagVals(store *engine.Store, args [][]byte) ([]byte, error) {
+	if len(args) != 3 {
+		return nil, errors.New("ERR wrong number of arguments for 'ft.tagvals' command")
+	}
+	values, indexFound, fieldFound := store.SearchTagValues(string(args[1]), string(args[2]))
+	if !indexFound {
+		return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + string(args[1]))
+	}
+	if !fieldFound {
+		return nil, errors.New("SEARCH_SCHEMA_FIELD_TYPE Field is not a TAG field: " + string(args[2]))
+	}
+	items := make([][]byte, 0, len(values))
+	for _, value := range values {
+		items = append(items, formatBulkString([]byte(value)))
+	}
+	return array(items...), nil
+}
+
+func resolveSearchReadIndex(store *engine.Store, args [][]byte) ([][]byte, error) {
+	if len(args) < 2 {
+		return args, nil
+	}
+	name := string(args[1])
+	target, ok := store.ResolveSearchIndexName(name)
+	if !ok {
+		return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + name)
+	}
+	if target == name {
+		return args, nil
+	}
+	resolved := append([][]byte(nil), args...)
+	resolved[1] = []byte(target)
+	return resolved, nil
+}
 func (s *Server) executeSearchCommand(args [][]byte) ([]byte, error) {
 	switch strings.ToUpper(string(args[0])) {
 	case "FT.CREATE":
@@ -2263,12 +2410,31 @@ func (s *Server) executeSearchCommand(args [][]byte) ([]byte, error) {
 		})
 	case "FT._LIST":
 		return executeFTList(s.store, args)
-	case "FT.INFO":
-		return executeFTInfo(s.store, args)
-	case "FT.SEARCH":
-		return executeFTSearch(s.store, args)
-	case "FT.AGGREGATE":
-		return executeFTAggregate(s.store, args)
+	case "FT.ALTER":
+		return s.executeSearchDefinitionMutation(args, func() ([]byte, error) {
+			return executeFTAlter(s.store, args)
+		})
+	case "FT.ALIASADD":
+		return executeFTAliasAdd(s.store, args, false)
+	case "FT.ALIASUPDATE":
+		return executeFTAliasAdd(s.store, args, true)
+	case "FT.ALIASDEL":
+		return executeFTAliasDel(s.store, args)
+	case "FT.TAGVALS":
+		return executeFTTagVals(s.store, args)
+	case "FT.INFO", "FT.SEARCH", "FT.AGGREGATE":
+		resolved, err := resolveSearchReadIndex(s.store, args)
+		if err != nil {
+			return nil, err
+		}
+		switch strings.ToUpper(string(args[0])) {
+		case "FT.INFO":
+			return executeFTInfo(s.store, resolved)
+		case "FT.SEARCH":
+			return executeFTSearch(s.store, resolved)
+		default:
+			return executeFTAggregate(s.store, resolved)
+		}
 	default:
 		return nil, errors.New("ERR command unavailable")
 	}
