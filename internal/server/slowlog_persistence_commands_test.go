@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"snugkv/internal/engine"
+	"snugkv/internal/persistence"
 )
 
 func TestSlowlogGetLenResetAndConfig(t *testing.T) {
@@ -237,5 +239,66 @@ func TestPersistenceRedis810ArgumentErrors(t *testing.T) {
 				t.Fatalf("error=%v, want %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestBGRewriteAOFWithoutJournaling(t *testing.T) {
+	s := New(engine.New())
+	s.aofRewritePath = filepath.Join(t.TempDir(), "export.aof")
+	execute(t, s, "SET", "before", "value")
+	if got := execute(t, s, "BGREWRITEAOF"); got != "+Background append only file rewriting started\r\n" {
+		t.Fatalf("BGREWRITEAOF=%q", got)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		s.persistenceJobMu.Lock()
+		running := s.aofRewriteRunning
+		s.persistenceJobMu.Unlock()
+		if !running {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("rewrite did not finish")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	found, reset := false, false
+	if err := persistence.Replay(s.aofRewritePath, func(records []persistence.Record) error {
+		for _, record := range records {
+			reset = reset || record.Reset
+			if string(record.Key) == "before" && string(record.Value) == "value" {
+				found = true
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !found || !reset {
+		t.Fatalf("rewrite replay: found=%v reset=%v", found, reset)
+	}
+	before, err := os.ReadFile(s.aofRewritePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	execute(t, s, "SET", "after", "not-journaled")
+	after, err := os.ReadFile(s.aofRewritePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.journal != nil || s.configAppendOnly || !bytes.Equal(before, after) {
+		t.Fatal("one-off rewrite enabled journaling or changed after a later SET")
+	}
+}
+
+func TestBGRewriteAOFInvalidDestination(t *testing.T) {
+	s := New(engine.New())
+	s.aofRewritePath = filepath.Join(t.TempDir(), "missing", "export.aof")
+	_, err := s.Execute(clientArgs("BGREWRITEAOF"))
+	if err == nil || err.Error() != "ERR cannot open AOF rewrite destination" {
+		t.Fatalf("error=%v", err)
+	}
+	if s.aofRewriteRunning || s.journal != nil {
+		t.Fatal("failed rewrite left active state")
 	}
 }
