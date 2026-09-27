@@ -387,3 +387,130 @@ func (s *Store) VectorSetInfo(key string) (VectorSetInfo, bool, error) {
 	}
 	return VectorSetInfo{Dim:int64(vs.dim), Size:int64(len(vs.members))}, true, nil
 }
+
+
+type VectorSetSearchItem struct {
+	Name  string
+	Score float64
+	Attrs []byte
+}
+
+func cosineSimilarity32(a, b []float32) float64 {
+	if len(a) == 0 || len(a) != len(b) {
+		return 0
+	}
+	var dot, an, bn float64
+	for i := range a {
+		av := float64(a[i])
+		bv := float64(b[i])
+		dot += av * bv
+		an += av * av
+		bn += bv * bv
+	}
+	if an == 0 || bn == 0 {
+		return 0
+	}
+	score := dot / (math.Sqrt(an) * math.Sqrt(bn))
+	if score > 1 {
+		score = 1
+	} else if score < -1 {
+		score = -1
+	}
+	return score
+}
+
+func (s *Store) VectorSetSearch(
+	key string,
+	query []float64,
+	filter func([]byte) bool,
+) ([]VectorSetSearchItem, bool, error) {
+	converted, err := vectorToFloat32(query)
+	if err != nil {
+		return nil, false, err
+	}
+
+	sh := s.shardFor(key)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
+
+	e, ok := sh.get(key)
+	if !ok || sh.expired(key, e, s.now()) {
+		return nil, false, nil
+	}
+	if e.valueType != TypeVectorSet {
+		return nil, false, vectorSetWrongType()
+	}
+	vs, err := decodeVectorSet(s.decode(sh, e))
+	if err != nil {
+		return nil, false, err
+	}
+	if len(converted) != vs.dim {
+		return nil, false, errors.New("ERR vector dimension mismatch")
+	}
+
+	out := make([]VectorSetSearchItem, 0, len(vs.members))
+	for name, member := range vs.members {
+		if filter != nil && !filter(member.attrs) {
+			continue
+		}
+		out = append(out, VectorSetSearchItem{
+			Name:  name,
+			Score: cosineSimilarity32(converted, member.vector),
+			Attrs: append([]byte(nil), member.attrs...),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Score == out[j].Score {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].Score > out[j].Score
+	})
+	return out, true, nil
+}
+
+func (s *Store) VectorSetLinks(
+	key, element string,
+	limit int,
+) ([]VectorSetSearchItem, bool, error) {
+	sh := s.shardFor(key)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
+
+	e, ok := sh.get(key)
+	if !ok || sh.expired(key, e, s.now()) {
+		return nil, false, nil
+	}
+	if e.valueType != TypeVectorSet {
+		return nil, false, vectorSetWrongType()
+	}
+	vs, err := decodeVectorSet(s.decode(sh, e))
+	if err != nil {
+		return nil, false, err
+	}
+	source, found := vs.members[element]
+	if !found {
+		return nil, false, nil
+	}
+
+	out := make([]VectorSetSearchItem, 0, len(vs.members)-1)
+	for name, member := range vs.members {
+		if name == element {
+			continue
+		}
+		out = append(out, VectorSetSearchItem{
+			Name:  name,
+			Score: cosineSimilarity32(source.vector, member.vector),
+			Attrs: append([]byte(nil), member.attrs...),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Score == out[j].Score {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].Score > out[j].Score
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, true, nil
+}
