@@ -176,7 +176,7 @@ func clusterNodeEndpointReply(addr string) ([]byte, error) {
 	return array(
 		formatBulkString([]byte(host)),
 		integer(int64(port)),
-		formatBulkString([]byte(addr)),
+		formatBulkString([]byte(clusterNodeID(addr))),
 	), nil
 }
 
@@ -211,7 +211,7 @@ func (s *Server) clusterShardsReply() ([]byte, error) {
 		}
 		node := array(
 			formatBulkString([]byte("id")),
-			formatBulkString([]byte(r.Owner)),
+			formatBulkString([]byte(clusterNodeID(r.Owner))),
 			formatBulkString([]byte("endpoint")),
 			formatBulkString([]byte(host)),
 			formatBulkString([]byte("ip")),
