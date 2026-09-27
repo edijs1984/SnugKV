@@ -21,12 +21,16 @@ type slowlogEntry struct {
 }
 
 func (s *Server) recordSlowlog(args [][]byte, elapsed time.Duration) {
+	s.recordSlowlogForClient(s.executionClient, args, elapsed)
+}
+
+func (s *Server) recordSlowlogForClient(client *clientSession, args [][]byte, elapsed time.Duration) {
 	if len(args) == 0 {
 		return
 	}
 	duration := elapsed.Microseconds()
 	var peer, name string
-	if client := s.executionClient; client != nil {
+	if client != nil {
 		client.mu.RLock()
 		peer, name = client.remoteAddr, client.name
 		client.mu.RUnlock()
