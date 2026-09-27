@@ -159,7 +159,7 @@ func TestDynamicMembershipDerivesPeersFromCanonicalMembers(t *testing.T) {
 }
 
 
-func TestCoordinateFailoverMembershipChangeRejectsRemoval(t *testing.T) {
+func TestCoordinateFailoverMembershipChangeRetiresRemovedMember(t *testing.T) {
 	const group = "cluster-remove"
 
 	coordinator, err := Listen("127.0.0.1:0", engine.New())
@@ -185,12 +185,26 @@ func TestCoordinateFailoverMembershipChangeRejectsRemoval(t *testing.T) {
 	configureDynamicMembershipNode(t, oldA, group, 1, []string{coordAddr, oldBAddr}, 2)
 	configureDynamicMembershipNode(t, oldB, group, 1, []string{coordAddr, oldAAddr}, 2)
 
-	if _, err := coordinator.server.coordinateFailoverMembershipChange(
+	result, err := coordinator.server.coordinateFailoverMembershipChange(
 		2,
 		[]string{coordAddr, oldAAddr},
 		2,
-	); err == nil {
-		t.Fatal("expected member removal to require retirement protocol")
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Prepared || !result.Committed {
+		t.Fatalf("removal result=%+v", result)
+	}
+	state := oldB.server.failoverMembershipSnapshot()
+	if !state.Retired || state.RetiredAtEpoch != 2 {
+		t.Fatalf("removed member was not retired: %+v", state)
+	}
+	if got := coordinator.server.failoverMembershipSnapshot(); got.ConfigEpoch != 2 || got.JointActive {
+		t.Fatalf("coordinator membership=%+v", got)
+	}
+	if got := oldA.server.failoverMembershipSnapshot(); got.ConfigEpoch != 2 || got.JointActive {
+		t.Fatalf("retained member membership=%+v", got)
 	}
 }
 
@@ -232,7 +246,7 @@ func TestFailoverMembershipCommitRecoveryAfterRestart(t *testing.T) {
 	// Simulate the new node being offline during PREPARE: it remains on epoch 1.
 
 	if err := coordinator.server.armFailoverMembershipCommitRecovery(
-		1, 2, newMembers, 2, newMembers,
+		1, 2, newMembers, 2, newMembers, nil,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -260,5 +274,126 @@ func TestFailoverMembershipCommitRecoveryAfterRestart(t *testing.T) {
 	}
 	if recovered.failoverMembershipSnapshot().CommitPending {
 		t.Fatal("commit recovery record was not cleared")
+	}
+}
+
+
+func TestFailoverRetirementSurvivesRestartAndBlocksPromotion(t *testing.T) {
+	const group = "cluster-retired"
+
+	node, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer node.Close()
+
+	path := configureDynamicMembershipNode(
+		t,
+		node,
+		group,
+		3,
+		[]string{"127.0.0.1:7002", "127.0.0.1:7003"},
+		2,
+	)
+	node.server.autoFailoverTimeout = 100 * time.Millisecond
+	node.server.replication.setReplica("127.0.0.1", 6390)
+	node.server.replication.mu.Lock()
+	node.server.replication.masterRunID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	node.server.replication.masterDownSince = time.Now().Add(-time.Second)
+	node.server.replication.mu.Unlock()
+
+	if reply, err := node.server.prepareFailoverRetirement(group, 3, 4); err != nil || !reply.Accepted {
+		t.Fatalf("retire prepare reply=%+v err=%v", reply, err)
+	}
+	if reply, err := node.server.retireFailoverMember(group, 3, 4); err != nil || !reply.Accepted {
+		t.Fatalf("retire reply=%+v err=%v", reply, err)
+	}
+
+	recovered := New(engine.New())
+	recovered.autoFailoverTimeout = 100 * time.Millisecond
+	recovered.replication.setReplica("127.0.0.1", 6390)
+	recovered.replication.mu.Lock()
+	recovered.replication.masterRunID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	recovered.replication.masterDownSince = time.Now().Add(-time.Second)
+	recovered.replication.mu.Unlock()
+	replicationPersistencePaths.Store(recovered, path)
+	defer replicationPersistencePaths.Delete(recovered)
+	if err := recovered.loadFailoverMembershipState(path); err != nil {
+		t.Fatal(err)
+	}
+	if state := recovered.failoverMembershipSnapshot(); !state.Retired || state.RetiredAtEpoch != 4 {
+		t.Fatalf("recovered retirement=%+v", state)
+	}
+	if err := recovered.maintainAutoFailover(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if got := recovered.replication.snapshot().role; got != replicationReplica {
+		t.Fatalf("retired node promoted: role=%v", got)
+	}
+}
+
+func TestMembershipCommitRecoveryFinalizesRetirementBeforeCommit(t *testing.T) {
+	const group = "cluster-retire-recovery"
+
+	coordinator, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer coordinator.Close()
+	retained, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer retained.Close()
+	removed, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer removed.Close()
+
+	coordAddr := coordinator.listener.Addr().String()
+	retainedAddr := retained.listener.Addr().String()
+	removedAddr := removed.listener.Addr().String()
+
+	path := configureDynamicMembershipNode(t, coordinator, group, 7, []string{retainedAddr, removedAddr}, 2)
+	configureDynamicMembershipNode(t, retained, group, 7, []string{coordAddr, removedAddr}, 2)
+	configureDynamicMembershipNode(t, removed, group, 7, []string{coordAddr, retainedAddr}, 2)
+
+	newMembers := []string{coordAddr, retainedAddr}
+	if _, err := coordinator.server.prepareFailoverMembershipMembers(group, 7, 8, newMembers, 2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := retained.server.prepareFailoverMembershipMembers(group, 7, 8, newMembers, 2); err != nil {
+		t.Fatal(err)
+	}
+	if reply, err := removed.server.prepareFailoverRetirement(group, 7, 8); err != nil || !reply.Accepted {
+		t.Fatalf("retirement prepare reply=%+v err=%v", reply, err)
+	}
+	if err := coordinator.server.armFailoverMembershipCommitRecovery(
+		7, 8, newMembers, 2, newMembers, []string{removedAddr},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	recovered := New(engine.New())
+	recovered.failoverAdvertiseAddr = coordAddr
+	replicationPersistencePaths.Store(recovered, path)
+	defer replicationPersistencePaths.Delete(recovered)
+	if err := recovered.loadFailoverMembershipState(path); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := recovered.retryFailoverMembershipCommit(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	if state := removed.server.failoverMembershipSnapshot(); !state.Retired || state.RetiredAtEpoch != 8 {
+		t.Fatalf("removed member not retired before recovery commit: %+v", state)
+	}
+	if state := recovered.failoverMembershipSnapshot(); state.ConfigEpoch != 8 || state.JointActive {
+		t.Fatalf("recovered coordinator not committed: %+v", state)
+	}
+	if state := retained.server.failoverMembershipSnapshot(); state.ConfigEpoch != 8 || state.JointActive {
+		t.Fatalf("retained peer not committed: %+v", state)
 	}
 }
