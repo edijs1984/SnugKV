@@ -40,6 +40,8 @@ type Config struct {
 	FailoverGroupID        string   `json:"failover_group_id"`
 	FailoverConfigEpoch    uint64   `json:"failover_config_epoch"`
 	FailoverAdvertiseAddr  string   `json:"failover_advertise_addr"`
+	FailoverDiscoverySeeds []string `json:"failover_discovery_seeds"`
+	FailoverDiscoveryIntervalMS int64 `json:"failover_discovery_interval_ms"`
 	ACLFile             string `json:"acl_file"`
 	Fsync               string `json:"fsync"`
 	MaxMemory           uint64 `json:"max_memory"`
@@ -57,7 +59,7 @@ type Config struct {
 }
 
 func Default() Config {
-	return Config{AdminAddr: "127.0.0.1:6381", EvictionPolicy: "noeviction", Fsync: "everysec", OptimizerMode: "dedicated", ListenAddr: "127.0.0.1:6380", Shards: 256, MaxConnections: 10000, ReadTimeoutMS: 30000, WriteTimeoutMS: 30000, MaxRequestBytes: 64 << 20, MaxBulkBytes: 32 << 20, MaxArguments: 1024, CleanupIntervalMS: 100, FailoverPriority: 100}
+	return Config{AdminAddr: "127.0.0.1:6381", FailoverDiscoveryIntervalMS: 5000, EvictionPolicy: "noeviction", Fsync: "everysec", OptimizerMode: "dedicated", ListenAddr: "127.0.0.1:6380", Shards: 256, MaxConnections: 10000, ReadTimeoutMS: 30000, WriteTimeoutMS: 30000, MaxRequestBytes: 64 << 20, MaxBulkBytes: 32 << 20, MaxArguments: 1024, CleanupIntervalMS: 100, FailoverPriority: 100}
 }
 func (c Config) Limits() resp.Limits {
 	return resp.Limits{MaxRequestBytes: c.MaxRequestBytes, MaxBulkBytes: c.MaxBulkBytes, MaxArguments: c.MaxArguments}
@@ -102,6 +104,22 @@ func (c Config) Validate() error {
 	}
 	if c.FailoverQuorum < 0 {
 		return errors.New("failover_quorum must not be negative")
+	}
+	for _, seed := range c.FailoverDiscoverySeeds {
+		host, port, err := net.SplitHostPort(seed)
+		if err != nil || host == "" || port == "" {
+			return errors.New("failover_discovery_seeds entries must be host:port")
+		}
+		p, err := strconv.Atoi(port)
+		if err != nil || p <= 0 || p > 65535 {
+			return errors.New("failover_discovery_seeds entries must use a valid port")
+		}
+	}
+	if len(c.FailoverDiscoverySeeds) > 0 && c.MasterAuth == "" {
+		return errors.New("failover_discovery_seeds requires masterauth for authenticated peer RPC")
+	}
+	if c.FailoverDiscoveryIntervalMS < 100 || c.FailoverDiscoveryIntervalMS > int64((24*time.Hour)/time.Millisecond) {
+		return errors.New("failover_discovery_interval_ms must be between 100ms and 24h")
 	}
 	for _, peer := range c.FailoverPeers {
 		host, port, err := net.SplitHostPort(peer)
@@ -252,6 +270,15 @@ func Load(path string) (Config, error) {
 	return c, nil
 }
 func (c *Config) ApplyEnv() error {
+	if v, ok := os.LookupEnv("SNUGKV_FAILOVER_DISCOVERY_SEEDS"); ok {
+		c.FailoverDiscoverySeeds = nil
+		for _, seed := range strings.Split(v, ",") {
+			seed = strings.TrimSpace(seed)
+			if seed != "" {
+				c.FailoverDiscoverySeeds = append(c.FailoverDiscoverySeeds, seed)
+			}
+		}
+	}
 	if v, ok := os.LookupEnv("SNUGKV_FAILOVER_PEERS"); ok {
 		c.FailoverPeers = nil
 		for _, peer := range strings.Split(v, ",") {
@@ -327,7 +354,7 @@ func (c *Config) ApplyEnv() error {
 			*dst = n
 		}
 	}
-	for name, dst := range map[string]*int64{"READ_TIMEOUT_MS": &c.ReadTimeoutMS, "WRITE_TIMEOUT_MS": &c.WriteTimeoutMS, "CLEANUP_INTERVAL_MS": &c.CleanupIntervalMS, "SNAPSHOT_INTERVAL_MS": &c.SnapshotIntervalMS, "AUTO_FAILOVER_TIMEOUT_MS": &c.AutoFailoverTimeoutMS} {
+	for name, dst := range map[string]*int64{"READ_TIMEOUT_MS": &c.ReadTimeoutMS, "WRITE_TIMEOUT_MS": &c.WriteTimeoutMS, "CLEANUP_INTERVAL_MS": &c.CleanupIntervalMS, "SNAPSHOT_INTERVAL_MS": &c.SnapshotIntervalMS, "AUTO_FAILOVER_TIMEOUT_MS": &c.AutoFailoverTimeoutMS, "FAILOVER_DISCOVERY_INTERVAL_MS": &c.FailoverDiscoveryIntervalMS} {
 		if v, ok := os.LookupEnv("SNUGKV_" + name); ok {
 			n, err := strconv.ParseInt(v, 10, 64)
 			if err != nil {
