@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -210,5 +211,62 @@ func TestBlockingListValidation(t *testing.T) {
 		if _, err := s.Execute(args); err == nil {
 			t.Fatalf("expected error for %v", command)
 		}
+	}
+}
+
+
+func TestBLMPOPImmediateTimeoutAndWake(t *testing.T) {
+	s := New(engine.New())
+	execute(t, s, "RPUSH", "ready", "a", "b", "c")
+
+	if got := execute(t, s, "BLMPOP", "1", "2", "missing", "ready", "RIGHT", "COUNT", "2"); got != "*2\r\n$5\r\nready\r\n*2\r\n$1\r\nc\r\n$1\r\nb\r\n" {
+		t.Fatalf("BLMPOP immediate = %q", got)
+	}
+
+	started := time.Now()
+	if got := execute(t, s, "BLMPOP", "0.02", "1", "missing", "LEFT"); got != "*-1\r\n" {
+		t.Fatalf("BLMPOP timeout = %q", got)
+	}
+	if time.Since(started) < 10*time.Millisecond {
+		t.Fatalf("BLMPOP timeout returned too early: %s", time.Since(started))
+	}
+
+	blocked := executeAsync(s, "BLMPOP", "1", "2", "first", "second", "LEFT", "COUNT", "2")
+	waitForListWaiter(t, s, "second")
+	execute(t, s, "RPUSH", "second", "x", "y", "z")
+
+	select {
+	case result := <-blocked:
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		want := "*2\r\n$6\r\nsecond\r\n*2\r\n$1\r\nx\r\n$1\r\ny\r\n"
+		if got := string(result.response); got != want {
+			t.Fatalf("BLMPOP wake=%q want=%q", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("BLMPOP did not wake")
+	}
+}
+
+func TestBLMPOPValidationAndWrongType(t *testing.T) {
+	s := New(engine.New())
+	execute(t, s, "SET", "plain", "value")
+
+	for _, command := range [][][]byte{
+		{[]byte("BLMPOP"), []byte("-1"), []byte("1"), []byte("key"), []byte("LEFT")},
+		{[]byte("BLMPOP"), []byte("1"), []byte("0"), []byte("LEFT")},
+		{[]byte("BLMPOP"), []byte("1"), []byte("1"), []byte("key"), []byte("UP")},
+		{[]byte("BLMPOP"), []byte("1"), []byte("1"), []byte("key"), []byte("LEFT"), []byte("COUNT"), []byte("0")},
+	} {
+		if _, err := s.Execute(command); err == nil {
+			t.Fatalf("expected BLMPOP validation error for %q", command)
+		}
+	}
+
+	if _, err := s.Execute([][]byte{
+		[]byte("BLMPOP"), []byte("1"), []byte("1"), []byte("plain"), []byte("LEFT"),
+	}); err == nil || !strings.HasPrefix(err.Error(), "WRONGTYPE") {
+		t.Fatalf("expected BLMPOP WRONGTYPE, err=%v", err)
 	}
 }

@@ -118,7 +118,7 @@ var commandTable = map[string]commandInfo{
 	"MSETNX": {3, 0, 1, -1, 2, true},
 	"INCR":   {2, 2, 1, 1, 1, true}, "DECR": {2, 2, 1, 1, 1, true}, "INCRBY": {3, 3, 1, 1, 1, true}, "DECRBY": {3, 3, 1, 1, 1, true},
 	"INCRBYFLOAT": {3, 3, 1, 1, 1, true},
-	"STRLEN":      {2, 2, 1, 1, 1, false}, "EXPIRE": {3, 4, 1, 1, 1, true}, "PEXPIRE": {3, 4, 1, 1, 1, true},
+	"STRLEN":      {2, 2, 1, 1, 1, false}, "LCS": {3, 0, 1, 2, 1, false}, "EXPIRE": {3, 4, 1, 1, 1, true}, "PEXPIRE": {3, 4, 1, 1, 1, true},
 	"TTL": {2, 2, 1, 1, 1, false}, "PTTL": {2, 2, 1, 1, 1, false}, "PERSIST": {2, 2, 1, 1, 1, true},
 	"TYPE":           {2, 2, 1, 1, 1, false},
 	"FLUSHDB":        {1, 2, 0, 0, 0, true},
@@ -176,6 +176,9 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		key = string(args[1])
 	}
 	switch cmd {
+	case "LCS":
+		return s.executeLCS(args)
+
 	case "FT.CREATE", "FT.DROPINDEX", "FT._LIST", "FT.INFO", "FT.SEARCH", "FT.AGGREGATE":
 		return s.executeSearchCommand(args)
 
