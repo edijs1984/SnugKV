@@ -45,6 +45,7 @@ type Server struct {
 	replicationMasterTLSCert string
 	replicationMasterTLSKey  string
 	replicationMasterTLSSNI  string
+	autoFailoverTimeout      time.Duration
 
 	// executionACLUsername / executionACLArgs are valid only while durableMu is
 	// held. TCP and transaction execution populate them so dynamic command
