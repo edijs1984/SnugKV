@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -138,12 +139,20 @@ func (s *Server) executeSlowlog(args [][]byte) ([]byte, error) {
 	}
 }
 
-func (s *Server) snapshotNow() error {
+func (s *Server) snapshotNow() (resultErr error) {
+	defer func() {
+		s.persistenceJobMu.Lock()
+		s.rdbLastSaveFailed = resultErr != nil
+		s.persistenceJobMu.Unlock()
+		if resultErr != nil {
+			log.Printf("event=snapshot_save_failed error=%q", resultErr)
+		}
+	}()
 	if s.snapshotPath == "" {
 		return errors.New("ERR snapshot persistence is disabled")
 	}
 	if err := persistence.Snapshot(s.snapshotPath, s.store.Export(nil)); err != nil {
-		return errors.New("ERR snapshot save failed")
+		return fmt.Errorf("ERR snapshot save failed: %w", err)
 	}
 	s.lastSaveUnix.Store(time.Now().Unix())
 	return nil
@@ -232,17 +241,46 @@ func (s *Server) executeBGRewriteAOF() ([]byte, error) {
 			s.durableMu.Lock()
 			records = s.store.Export(nil)
 		}
-		_ = writer.Rewrite(records)
+		rewriteErr := writer.Rewrite(records)
 		if temporary == nil {
 			s.durableMu.Unlock()
 		}
 		if temporary != nil {
-			_ = temporary.Close()
+			rewriteErr = errors.Join(rewriteErr, temporary.Close())
 		}
 		s.persistenceJobMu.Lock()
+		s.aofLastRewriteFailed = rewriteErr != nil
 		s.aofRewriteRunning = false
 		s.persistenceJobMu.Unlock()
+		if rewriteErr != nil {
+			log.Printf("event=aof_rewrite_failed error=%q", rewriteErr)
+		}
 	}()
 
 	return []byte("+Background append only file rewriting started\r\n"), nil
+}
+
+func (s *Server) persistenceInfo() string {
+	s.persistenceJobMu.Lock()
+	saving, rewriting := 0, 0
+	if s.bgsaveRunning {
+		saving = 1
+	}
+	if s.aofRewriteRunning {
+		rewriting = 1
+	}
+	rdbStatus, aofStatus := "ok", "ok"
+	if s.rdbLastSaveFailed {
+		rdbStatus = "err"
+	}
+	if s.aofLastRewriteFailed {
+		aofStatus = "err"
+	}
+	s.persistenceJobMu.Unlock()
+	enabled := 0
+	if s.journal != nil {
+		enabled = 1
+	}
+	return fmt.Sprintf("# Persistence\r\nrdb_bgsave_in_progress:%d\r\nrdb_last_save_time:%d\r\nrdb_last_bgsave_status:%s\r\naof_enabled:%d\r\naof_rewrite_in_progress:%d\r\naof_last_bgrewrite_status:%s\r\n",
+		saving, s.lastSaveUnix.Load(), rdbStatus, enabled, rewriting, aofStatus)
 }
