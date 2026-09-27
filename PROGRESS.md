@@ -867,3 +867,28 @@ SnugKV replicas periodically emit `REPLCONF ACK` while following an upstream pri
 Focused unit and race-enabled replication tests passed. The Redis 8.2 ACK oracle and SnugKV oracle matched exactly for replica visibility, online state, integer offset/lag, explicit ACK advancement, fresh lag, and stale-ACK monotonicity. The final Redis-vs-SnugKV diff was empty.
 
 Still deferred: Redis RDB full-sync interoperability, additional diskless-transfer hardening, topology authentication/TLS, and failover orchestration.
+
+
+## MONITOR compatibility — 2026-09-27
+
+SnugKV now implements Redis-style `MONITOR` on the normal TCP listener with
+timestamped command events, RESP-safe binary argument escaping, ACL authorization,
+and connection lifecycle handling through `RESET` and `QUIT`.
+
+The audited command stream includes ordinary commands and `MULTI`/`EXEC`
+ordering. Commands queued inside a transaction are emitted at execution time in
+the same logical sequence used by Redis-compatible transaction handling.
+
+Nested Lua and Function calls are observable with source `lua`. The outer
+`EVAL`, `EVALSHA`, `EVAL_RO`, `FCALL`, and `FCALL_RO` invocation is
+emitted before nested `redis.call` / `redis.pcall` commands. Writable and
+read-only Function execution paths are both covered.
+
+Credential-bearing and administrative commands are intentionally suppressed from
+the MONITOR stream, including `AUTH`, `HELLO`, `ACL`, `CONFIG`,
+`MIGRATE`, `MONITOR`, and commands in the Redis `@admin` ACL category.
+
+Focused race-enabled MONITOR tests pass for command/event ordering, binary
+escaping, ACL rejection, RESET resubscription, QUIT EOF, direct and transactional
+Lua ordering, and the scripting/Function command families. See
+`docs/MONITOR-AUDIT.md`.
