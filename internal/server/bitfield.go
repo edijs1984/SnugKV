@@ -261,6 +261,14 @@ func (s *Server) executeBitField(args [][]byte) ([]byte, error) {
 		return nil, err
 	}
 	key := string(args[1])
+
+	// BITFIELD operates on Redis string values. Missing keys are treated as an
+	// infinite zero-filled string, but an existing non-string key must fail
+	// before any operation is evaluated.
+	if _, _, wrongType := s.store.GetString(key); wrongType {
+		return nil, errors.New("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+
 	replies := make([][]byte, 0, len(ops))
 	for _, op := range ops {
 		old, err := s.readBitField(key, op.encoding, op.offset)
