@@ -94,7 +94,7 @@ func monitorVisible(args [][]byte) bool {
 	if !ok || len(args) < info.min || (info.max > 0 && len(args) > info.max) { return false }
 	// Credentials can be embedded in these commands. Never publish them.
 	switch name {
-	case "AUTH", "HELLO", "ACL", "CONFIG", "MIGRATE", "MONITOR", "QUIT":
+	case "AUTH", "HELLO", "ACL", "CONFIG", "MIGRATE", "MONITOR":
 		return false
 	}
 	canonical := strings.ToLower(name)
@@ -106,7 +106,12 @@ func monitorVisible(args [][]byte) bool {
 }
 
 func (s *Server) feedMonitor(client *clientSession, args [][]byte, response []byte) {
-	if s.monitorCount.Load() == 0 || client == nil ||
+	if client == nil { return }
+	s.feedMonitorSource(client.remoteAddr, args, response)
+}
+
+func (s *Server) feedMonitorSource(source string, args [][]byte, response []byte) {
+	if s.monitorCount.Load() == 0 ||
 		bytes.Equal(response, []byte("+QUEUED\r\n")) || !monitorVisible(args) { return }
 	// Bound individual event allocation as well as queued event count.
 	size := 0
@@ -119,7 +124,7 @@ func (s *Server) feedMonitor(client *clientSession, args [][]byte, response []by
 	}
 	now := time.Now()
 	var b strings.Builder
-	fmt.Fprintf(&b, "+%d.%06d [0 %s]", now.Unix(), now.Nanosecond()/1000, client.remoteAddr)
+	fmt.Fprintf(&b, "+%d.%06d [0 %s]", now.Unix(), now.Nanosecond()/1000, source)
 	for _, arg := range args { b.WriteByte(' '); b.WriteString(monitorQuote(arg)) }
 	b.WriteString("\r\n")
 	line := []byte(b.String())
@@ -132,4 +137,13 @@ func (s *Server) feedMonitor(client *clientSession, args [][]byte, response []by
 			_ = m.conn.Close()
 		}
 	}
+}
+
+func monitorScriptCommand(args [][]byte) bool {
+	if len(args) == 0 { return false }
+	switch strings.ToUpper(string(args[0])) {
+	case "EVAL", "EVALSHA", "EVAL_RO", "EVALSHA_RO", "FCALL", "FCALL_RO":
+		return true
+	}
+	return false
 }
