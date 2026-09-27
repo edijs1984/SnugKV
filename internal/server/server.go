@@ -49,6 +49,7 @@ type Server struct {
 	// ACL rule set. Direct in-process Execute calls leave the context empty.
 	executionACLUsername string
 	executionACLArgs     [][]byte
+	executionClient      *clientSession // Protected by durableMu, like the ACL context.
 
 	configAppendFsync    string
 	configACLFile        string
