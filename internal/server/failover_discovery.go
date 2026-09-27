@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"sort"
 	"time"
 )
@@ -92,4 +93,77 @@ func (s *Server) refreshFailoverDiscovery(now time.Time) {
 			}
 		}
 	}
+}
+
+
+type failoverDiscoveryAdoptionPlan struct {
+	CurrentEpoch uint64   `json:"current_epoch"`
+	NextEpoch    uint64   `json:"next_epoch"`
+	Members      []string `json:"members"`
+	Added        []string `json:"added"`
+	Quorum       int      `json:"quorum"`
+}
+
+func (s *Server) buildFailoverDiscoveryAdoptionPlan(now time.Time, quorum int) (failoverDiscoveryAdoptionPlan, error) {
+	membership := s.failoverMembershipSnapshot()
+	if membership.GroupID == "" || membership.ConfigEpoch == 0 {
+		return failoverDiscoveryAdoptionPlan{}, errors.New("dynamic failover membership requires group id and nonzero epoch")
+	}
+	current, err := s.failoverCurrentMembers()
+	if err != nil {
+		return failoverDiscoveryAdoptionPlan{}, err
+	}
+	if quorum <= 0 {
+		return failoverDiscoveryAdoptionPlan{}, errors.New("failover membership quorum must be positive")
+	}
+
+	freshFor := 2 * s.failoverDiscoveryInterval
+	if freshFor <= 0 {
+		freshFor = 10 * time.Second
+	}
+	cutoff := now.Add(-freshFor).Unix()
+
+	members := append([]string(nil), current...)
+	added := make([]string, 0)
+	for _, peer := range s.discoveredFailoverPeers() {
+		if peer.LastSeenUnix < cutoff ||
+			peer.State.GroupID != membership.GroupID ||
+			peer.State.ConfigEpoch != membership.ConfigEpoch ||
+			peer.State.Retired ||
+			peer.Address == "" ||
+			containsString(members, peer.Address) {
+			continue
+		}
+		members = append(members, peer.Address)
+		added = append(added, peer.Address)
+	}
+	sort.Strings(members)
+	sort.Strings(added)
+
+	if len(added) == 0 {
+		return failoverDiscoveryAdoptionPlan{}, errors.New("no fresh discovered peers are eligible for adoption")
+	}
+	peers, err := deriveFailoverPeersForMember(members, s.failoverAdvertiseAddr)
+	if err != nil {
+		return failoverDiscoveryAdoptionPlan{}, err
+	}
+	if err := validateFailoverPeerSet(peers, quorum); err != nil {
+		return failoverDiscoveryAdoptionPlan{}, err
+	}
+	return failoverDiscoveryAdoptionPlan{
+		CurrentEpoch: membership.ConfigEpoch,
+		NextEpoch:    membership.ConfigEpoch + 1,
+		Members:      members,
+		Added:        added,
+		Quorum:       quorum,
+	}, nil
+}
+
+func (s *Server) adoptDiscoveredFailoverPeers(now time.Time, quorum int) (failoverMembershipChangeResult, failoverDiscoveryAdoptionPlan, error) {
+	plan, err := s.buildFailoverDiscoveryAdoptionPlan(now, quorum)
+	if err != nil {
+		return failoverMembershipChangeResult{}, failoverDiscoveryAdoptionPlan{}, err
+	}
+	result, err := s.coordinateFailoverMembershipChange(plan.NextEpoch, plan.Members, plan.Quorum)
+	return result, plan, err
 }
