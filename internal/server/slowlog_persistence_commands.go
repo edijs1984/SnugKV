@@ -169,6 +169,9 @@ func (s *Server) executeSave(background bool, schedule bool) ([]byte, error) {
 }
 
 func (s *Server) executeBGSAVE(args [][]byte) ([]byte, error) {
+	if len(args) > 2 {
+		return nil, errors.New("ERR syntax error")
+	}
 	schedule := false
 	if len(args) == 2 {
 		if !strings.EqualFold(string(args[1]), "SCHEDULE") {
