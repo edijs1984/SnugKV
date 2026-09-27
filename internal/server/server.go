@@ -57,14 +57,27 @@ type Server struct {
 	configMu             sync.RWMutex
 	configSetAppendFsync func(string) error
 	configRewrite        func() error
+
+	searchCursorMu     sync.Mutex
+	searchCursors      map[uint64]*searchCursor
+	searchNextCursorID uint64
+	searchConfigMu     sync.RWMutex
+	searchConfig       map[string]string
 }
 
 func New(store *engine.Store) *Server {
 	s := &Server{
-		store:   store,
-		metrics: stats.New(),
-		acl:     NewACL(),
-		aclLog:  NewACLLog(),
+		store:         store,
+		metrics:       stats.New(),
+		acl:           NewACL(),
+		aclLog:        NewACLLog(),
+		searchCursors: make(map[uint64]*searchCursor),
+		searchConfig: map[string]string{
+			"DEFAULT_DIALECT": "1",
+			"MAXSEARCHRESULTS": "1000000",
+			"MAXAGGREGATERESULTS": "1000000",
+			"CURSOR_MAX_IDLE": "300000",
+		},
 	}
 	s.replication.init()
 	return s
