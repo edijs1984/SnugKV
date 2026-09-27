@@ -587,6 +587,7 @@ func (s *Server) maintainFailoverLeaderLease(now time.Time) error {
 	}
 	if lease.QuorumReached && !lease.ExpiresAt.IsZero() {
 		s.updateFailoverLeaderLease(lease.ExpiresAt, false)
+		s.convergeFailoverReplicas(now)
 		return nil
 	}
 	if expiresAt.IsZero() || !now.Before(expiresAt) {
