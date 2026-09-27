@@ -32,7 +32,7 @@ Targeted race suites and the live checks above also passed. GitHub CI is a separ
 - SnugKV retains Redis 8.2's six-field SLOWLOG entry. Redis 8.10.2 returns an additional original-argument-count field.
 - With no active AOF, SnugKV requires an explicit export destination; Redis retains a default destination even with appendonly=no.
 - Active rewrites block commands participating in durableMu, including INFO and scheduling requests arriving during that interval. Scheduling tests exercise the state machine directly; fully responsive Redis-style concurrent rewrites need buffering.
-- Transaction-time persistence scheduling and automatic periodic snapshots need further lifecycle review. SAVE/BGSAVE mutual exclusion and shutdown while background persistence work is running or handed off to a queued successor are now covered by lifecycle tests.
+- Automatic periodic snapshots need further lifecycle review. Transaction-time persistence scheduling, SAVE/BGSAVE mutual exclusion, and shutdown while background persistence work is running or handed off to a queued successor are now covered by lifecycle tests.
 - Fast TCP GET/SET paths, MULTI/EXEC executed-command visibility, outer EVAL/EVALSHA/EVAL_RO/EVALSHA_RO, and FCALL/FCALL_RO are now covered by focused race-enabled regressions. Argument truncation/redaction remains a separate hardening area.
 - Persistence INFO is a subset; native SnugKV snapshot/AOF files are not Redis RDB/AOF file-format exports.
 
@@ -105,3 +105,24 @@ Operator-reported passing gates:
 - `go test ./internal/resp -run=^$ -fuzz=FuzzReadCommand -fuzztime=20s`
 
 Remaining persistence lifecycle work: transaction-time persistence scheduling and automatic periodic snapshot scheduling.
+
+
+## Transaction-time persistence scheduling hardening — 2026-09-27
+
+This follow-up closes the audited MULTI/EXEC persistence scheduling gap.
+
+Changes:
+
+- Background save record capture now happens synchronously at the BGSAVE command's execution point, while snapshot file writing remains asynchronous.
+- A transaction such as `SET before; BGSAVE; SET after; EXEC` produces a snapshot containing the pre-BGSAVE state and excluding writes that occur later in the same transaction.
+- Scheduled BGSAVE handoff after BGREWRITEAOF also captures the record set before launching the asynchronous save worker.
+- Active-AOF BGREWRITEAOF inside EXEC is regression-tested for deadlock freedom and preservation of transaction writes that occur later in the same EXEC. The rewrite worker runs after EXEC releases `durableMu`, so the rewritten active AOF reflects the final transaction state.
+
+Operator-reported passing gates:
+
+- `go test -race ./internal/server -run '^(TestPersistence|TestSave|TestBGSave|TestBGRewriteAOF|TestTransactionBGSAVE|TestTransactionBGRewriteAOF)' -count=1 -v`
+- `go test -race ./...`
+- `go vet ./...`
+- `go test ./internal/resp -run=^$ -fuzz=FuzzReadCommand -fuzztime=20s`
+
+Remaining persistence lifecycle work: automatic periodic snapshot scheduling.
