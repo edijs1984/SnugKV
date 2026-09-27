@@ -537,3 +537,44 @@ func (s *Server) failoverWritesFenced(now time.Time) bool {
 		s.failoverLeaderLeaseUntil.IsZero() ||
 		!now.Before(s.failoverLeaderLeaseUntil)
 }
+
+
+func (s *Server) deactivateFailoverLeader() {
+	s.failoverLeaderMu.Lock()
+	s.failoverLeaderActive = false
+	s.failoverLeaderTerm = 0
+	s.failoverLeaderLineage = ""
+	s.failoverLeaderID = ""
+	s.failoverLeaderLeaseUntil = time.Time{}
+	s.failoverLeaderFenced = false
+	s.failoverLeaderMu.Unlock()
+}
+
+func (s *Server) maintainFailoverLeaderLease(now time.Time) error {
+	active, term, lineage, leaderID, expiresAt, _ := s.failoverLeaderState()
+	if !active {
+		return nil
+	}
+
+	// Renew only in the final third of the current lease to avoid turning every
+	// cleanup tick into a peer RPC burst.
+	if !expiresAt.IsZero() && now.Before(expiresAt.Add(-time.Second)) {
+		return nil
+	}
+
+	lease, err := s.acquireFailoverLeaseRound(now, lineage, term, leaderID)
+	if err != nil {
+		if expiresAt.IsZero() || !now.Before(expiresAt) {
+			s.updateFailoverLeaderLease(expiresAt, true)
+		}
+		return err
+	}
+	if lease.QuorumReached && !lease.ExpiresAt.IsZero() {
+		s.updateFailoverLeaderLease(lease.ExpiresAt, false)
+		return nil
+	}
+	if expiresAt.IsZero() || !now.Before(expiresAt) {
+		s.updateFailoverLeaderLease(expiresAt, true)
+	}
+	return nil
+}
