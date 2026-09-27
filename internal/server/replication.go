@@ -1147,6 +1147,10 @@ func (s *Server) maintainAutoFailover(now time.Time) error {
 	if !s.replication.autoFailoverDue(now, s.autoFailoverTimeout) {
 		return nil
 	}
+	if len(s.failoverPeers) > 0 {
+		_, err := s.evaluatePeerFailover(now)
+		return err
+	}
 	s.stopReplicaFollow()
 	s.durableMu.Lock()
 	defer s.durableMu.Unlock()
