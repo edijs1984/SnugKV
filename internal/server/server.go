@@ -130,7 +130,7 @@ var commandTable = map[string]commandInfo{
 "OBJECT": {2, 3, 0, 0, 0, false},
 	"SLOWLOG": {2, 0, 0, 0, 0, false},
 	"SAVE": {1, 1, 0, 0, 0, false},
-	"BGSAVE": {1, 2, 0, 0, 0, false},
+	"BGSAVE": {1, 0, 0, 0, 0, false},
 	"BGREWRITEAOF": {1, 1, 0, 0, 0, false},
 	"ROLE":        {1, 1, 0, 0, 0, false},
 	"REPLICAOF":   {3, 3, 0, 0, 0, false},
