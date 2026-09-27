@@ -2,6 +2,7 @@ package engine
 
 import (
 	"bytes"
+	"encoding/json"
 	"encoding/binary"
 	"errors"
 	"math"
@@ -272,4 +273,246 @@ func (s *Store) VectorSetRemove(key, element string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+
+func (s *Store) VectorSetGetAttr(key, element string) ([]byte, bool, error) {
+	sh := s.shardFor(key)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
+
+	e, ok := sh.get(key)
+	if !ok || sh.expired(key, e, s.now()) {
+		return nil, false, nil
+	}
+	if e.valueType != TypeVectorSet {
+		return nil, false, vectorSetWrongType()
+	}
+	vs, err := decodeVectorSet(s.decode(sh, e))
+	if err != nil {
+		return nil, false, err
+	}
+	member, found := vs.members[element]
+	if !found || len(member.attrs) == 0 {
+		return nil, false, nil
+	}
+	return append([]byte(nil), member.attrs...), true, nil
+}
+
+func (s *Store) VectorSetSetAttr(key, element string, attrs []byte) (bool, error) {
+	if len(attrs) > 0 {
+		var value any
+		if err := json.Unmarshal(attrs, &value); err != nil {
+			return false, errors.New("ERR invalid JSON attributes")
+		}
+		if _, ok := value.(map[string]any); !ok {
+			return false, errors.New("ERR attributes must be a JSON object")
+		}
+	}
+
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	e, ok := sh.get(key)
+	if !ok || sh.expired(key, e, s.now()) {
+		return false, nil
+	}
+	if e.valueType != TypeVectorSet {
+		return false, vectorSetWrongType()
+	}
+	vs, err := decodeVectorSet(s.decode(sh, e))
+	if err != nil {
+		return false, err
+	}
+	member, found := vs.members[element]
+	if !found {
+		return false, nil
+	}
+	member.attrs = append([]byte(nil), attrs...)
+	vs.members[element] = member
+
+	p := vectorSetPreparedEntry(encodeVectorSet(vs))
+	p.expiresAt = sh.expirationAt(key, e)
+	if err := s.publish(sh, key, p); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *Store) VectorSetMembers(key string) ([]string, bool, error) {
+	sh := s.shardFor(key)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
+
+	e, ok := sh.get(key)
+	if !ok || sh.expired(key, e, s.now()) {
+		return nil, false, nil
+	}
+	if e.valueType != TypeVectorSet {
+		return nil, false, vectorSetWrongType()
+	}
+	vs, err := decodeVectorSet(s.decode(sh, e))
+	if err != nil {
+		return nil, false, err
+	}
+	names := make([]string, 0, len(vs.members))
+	for name := range vs.members {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names, true, nil
+}
+
+type VectorSetInfo struct {
+	Dim  int64
+	Size int64
+}
+
+func (s *Store) VectorSetInfo(key string) (VectorSetInfo, bool, error) {
+	sh := s.shardFor(key)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
+
+	e, ok := sh.get(key)
+	if !ok || sh.expired(key, e, s.now()) {
+		return VectorSetInfo{}, false, nil
+	}
+	if e.valueType != TypeVectorSet {
+		return VectorSetInfo{}, false, vectorSetWrongType()
+	}
+	vs, err := decodeVectorSet(s.decode(sh, e))
+	if err != nil {
+		return VectorSetInfo{}, false, err
+	}
+	return VectorSetInfo{Dim:int64(vs.dim), Size:int64(len(vs.members))}, true, nil
+}
+
+
+type VectorSetSearchItem struct {
+	Name  string
+	Score float64
+	Attrs []byte
+}
+
+func cosineSimilarity32(a, b []float32) float64 {
+	if len(a) == 0 || len(a) != len(b) {
+		return 0
+	}
+	var dot, an, bn float64
+	for i := range a {
+		av := float64(a[i])
+		bv := float64(b[i])
+		dot += av * bv
+		an += av * av
+		bn += bv * bv
+	}
+	if an == 0 || bn == 0 {
+		return 0
+	}
+	cosine := dot / (math.Sqrt(an) * math.Sqrt(bn))
+	if cosine > 1 {
+		cosine = 1
+	} else if cosine < -1 {
+		cosine = -1
+	}
+	// Redis Vector Set similarity is normalized to [0,1]:
+	// identical=1, orthogonal=0.5, opposite=0.
+	return (cosine + 1) / 2
+}
+
+func (s *Store) VectorSetSearch(
+	key string,
+	query []float64,
+	filter func([]byte) bool,
+) ([]VectorSetSearchItem, bool, error) {
+	converted, err := vectorToFloat32(query)
+	if err != nil {
+		return nil, false, err
+	}
+
+	sh := s.shardFor(key)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
+
+	e, ok := sh.get(key)
+	if !ok || sh.expired(key, e, s.now()) {
+		return nil, false, nil
+	}
+	if e.valueType != TypeVectorSet {
+		return nil, false, vectorSetWrongType()
+	}
+	vs, err := decodeVectorSet(s.decode(sh, e))
+	if err != nil {
+		return nil, false, err
+	}
+	if len(converted) != vs.dim {
+		return nil, false, errors.New("ERR vector dimension mismatch")
+	}
+
+	out := make([]VectorSetSearchItem, 0, len(vs.members))
+	for name, member := range vs.members {
+		if filter != nil && !filter(member.attrs) {
+			continue
+		}
+		out = append(out, VectorSetSearchItem{
+			Name:  name,
+			Score: cosineSimilarity32(converted, member.vector),
+			Attrs: append([]byte(nil), member.attrs...),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Score == out[j].Score {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].Score > out[j].Score
+	})
+	return out, true, nil
+}
+
+func (s *Store) VectorSetLinks(
+	key, element string,
+	limit int,
+) ([]VectorSetSearchItem, bool, error) {
+	sh := s.shardFor(key)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
+
+	e, ok := sh.get(key)
+	if !ok || sh.expired(key, e, s.now()) {
+		return nil, false, nil
+	}
+	if e.valueType != TypeVectorSet {
+		return nil, false, vectorSetWrongType()
+	}
+	vs, err := decodeVectorSet(s.decode(sh, e))
+	if err != nil {
+		return nil, false, err
+	}
+	source, found := vs.members[element]
+	if !found {
+		return nil, false, nil
+	}
+
+	out := make([]VectorSetSearchItem, 0, len(vs.members)-1)
+	for name, member := range vs.members {
+		if name == element {
+			continue
+		}
+		out = append(out, VectorSetSearchItem{
+			Name:  name,
+			Score: cosineSimilarity32(source.vector, member.vector),
+			Attrs: append([]byte(nil), member.attrs...),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Score == out[j].Score {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].Score > out[j].Score
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, true, nil
 }
