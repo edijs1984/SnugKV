@@ -23,6 +23,8 @@ type failoverPeerState struct {
 	RetiredAtEpoch uint64 `json:"retired_at_epoch,omitempty"`
 	RetirePending bool `json:"retire_pending,omitempty"`
 	RetirePendingEpoch uint64 `json:"retire_pending_epoch,omitempty"`
+	Members     []string `json:"members,omitempty"`
+	Quorum      int      `json:"quorum,omitempty"`
 	Role        string `json:"role"`
 	MasterDown  bool   `json:"master_down"`
 	Offset      int64  `json:"offset"`
@@ -108,6 +110,11 @@ func (s *Server) localFailoverState(now time.Time) failoverPeerState {
 		roleName = "replica"
 	}
 	membership := s.failoverMembershipSnapshot()
+	members := make([]string, 0, len(membership.Peers)+1)
+	if s.failoverAdvertiseAddr != "" {
+		members = append(members, s.failoverAdvertiseAddr)
+	}
+	members = append(members, membership.Peers...)
 	s.failoverVoteMu.Lock()
 	term := s.failoverTerm
 	s.failoverVoteMu.Unlock()
@@ -122,6 +129,8 @@ func (s *Server) localFailoverState(now time.Time) failoverPeerState {
 		RetiredAtEpoch: membership.RetiredAtEpoch,
 		RetirePending: membership.RetirePending,
 		RetirePendingEpoch: membership.RetirePendingEpoch,
+		Members:     members,
+		Quorum:      membership.Quorum,
 		Role:        roleName,
 		MasterDown:  masterDown,
 		Offset:      offset,
