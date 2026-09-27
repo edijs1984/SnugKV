@@ -14,6 +14,7 @@ import (
 
 type failoverPeerState struct {
 	NodeID      string `json:"node_id"`
+	AdvertiseAddr string `json:"advertise_addr,omitempty"`
 	GroupID     string `json:"group_id,omitempty"`
 	ConfigEpoch uint64 `json:"config_epoch,omitempty"`
 	JointActive bool   `json:"joint_active,omitempty"`
@@ -86,6 +87,7 @@ func (s *Server) localFailoverState(now time.Time) failoverPeerState {
 	s.failoverVoteMu.Unlock()
 	return failoverPeerState{
 		NodeID:      nodeID,
+		AdvertiseAddr: s.failoverAdvertiseAddr,
 		GroupID:     membership.GroupID,
 		ConfigEpoch: membership.ConfigEpoch,
 		JointActive: membership.JointActive,
