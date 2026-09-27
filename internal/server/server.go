@@ -122,6 +122,7 @@ type commandInfo struct {
 
 var commandTable = map[string]commandInfo{
 	"MONITOR": {1, 1, 0, 0, 0, false},
+	"RESET": {1, 1, 0, 0, 0, false},
 	"SNUG.AOFREWRITE": {1, 1, 0, 0, 0, false},
 	"SNUG.COMPACT":    {1, 2, 0, 0, 0, false},
 	"SNUG.ENCODING":   {2, 2, 1, 1, 1, false},
