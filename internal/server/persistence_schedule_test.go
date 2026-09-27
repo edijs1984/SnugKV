@@ -2,6 +2,7 @@ package server
 
 import (
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -320,5 +321,56 @@ func TestBGSaveRejectsActiveSave(t *testing.T) {
 	}
 	if s.bgsaveScheduled {
 		t.Fatal("BGSAVE SCHEDULE must not queue behind synchronous SAVE")
+	}
+}
+
+
+func TestTransactionBGSAVECapturesStateAtCommandPosition(t *testing.T) {
+	s := New(engine.New())
+	s.snapshotPath = filepath.Join(t.TempDir(), "dump.snap")
+
+	tx := newTransactionSession(s)
+	if handled, got, err := tx.handleCommand(clientArgs("MULTI")); !handled || err != nil || string(got) != "+OK\r\n" {
+		t.Fatalf("MULTI handled=%v got=%q err=%v", handled, got, err)
+	}
+	for _, args := range [][][]byte{
+		clientArgs("SET", "before", "one"),
+		clientArgs("BGSAVE"),
+		clientArgs("SET", "after", "two"),
+	} {
+		if handled, got, err := tx.handleCommand(args); !handled || err != nil || string(got) != "+QUEUED\r\n" {
+			t.Fatalf("queue %q handled=%v got=%q err=%v", args[0], handled, got, err)
+		}
+	}
+
+	got, err := tx.exec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "+Background saving started\r\n") {
+		t.Fatalf("EXEC response=%q", got)
+	}
+	s.waitPersistenceJobs()
+
+	values := map[string]string{}
+	if err := persistence.ReplaySnapshot(s.snapshotPath, func(records []persistence.Record) error {
+		for _, record := range records {
+			if record.Deleted || record.Reset {
+				continue
+			}
+			values[string(record.Key)] = string(record.Value)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if values["before"] != "one" {
+		t.Fatalf("snapshot missing pre-BGSAVE write: %v", values)
+	}
+	if _, ok := values["after"]; ok {
+		t.Fatalf("snapshot included post-BGSAVE transaction write: %v", values)
+	}
+	if got := execute(t, s, "GET", "after"); got != "$3\r\ntwo\r\n" {
+		t.Fatalf("live state missing post-BGSAVE write: %q", got)
 	}
 }
