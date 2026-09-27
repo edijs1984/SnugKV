@@ -442,6 +442,7 @@ func (session *transactionSession) exec() ([]byte, error) {
 			s.signalZSetAvailability(command, result)
 			s.signalStreamAvailability(command, result)
 		}
+		if session.auth != nil { s.feedMonitor(session.auth.client, command, result) }
 		results = append(results, result)
 		// Preserve Redis WATCH semantics for other clients even if a later
 		// command in this same transaction restores the previous value.
