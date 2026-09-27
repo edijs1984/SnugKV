@@ -2260,6 +2260,35 @@ func (s *Store) SearchNumericRangeKeys(indexName, alias string, min, max float64
 	return manager.numericRangeKeys(indexName, alias, min, max)
 }
 
+
+func (s *Store) SearchSpellTerms(indexName string) (map[string]int, int, bool) {
+	manager := s.getSearchManager()
+	if manager == nil {
+		return nil, 0, false
+	}
+
+	manager.mu.RLock()
+	defer manager.mu.RUnlock()
+
+	if target, ok := manager.aliases[indexName]; ok {
+		indexName = target
+	}
+	idx, ok := manager.indexes[indexName]
+	if !ok {
+		return nil, 0, false
+	}
+
+	terms := make(map[string]int)
+	for _, field := range idx.texts {
+		for term, postings := range field {
+			if len(postings) > terms[term] {
+				terms[term] = len(postings)
+			}
+		}
+	}
+	return terms, len(idx.docs), true
+}
+
 func (s *Store) SearchMemoryBytes() uint64 {
 	manager := s.getSearchManager()
 	if manager == nil {
