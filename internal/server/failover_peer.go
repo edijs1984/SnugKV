@@ -362,7 +362,15 @@ func (s *Server) requestFailoverLease(now time.Time, lineage string, term uint64
 	if term < currentTerm || ttl <= 0 || ttl > 30*time.Second {
 		return reply
 	}
-	if local.MasterRunID == "" || local.MasterRunID != lineage {
+	localLineage := local.MasterRunID
+	if localLineage == "" && local.Role == "master" {
+		s.failoverLeaderMu.RLock()
+		if s.failoverLeaderActive {
+			localLineage = s.failoverLeaderLineage
+		}
+		s.failoverLeaderMu.RUnlock()
+	}
+	if localLineage == "" || localLineage != lineage {
 		return reply
 	}
 	if leaderID == "" {
@@ -432,6 +440,7 @@ type failoverLeaseRoundResult struct {
 	LeaderID      string
 	Leases        int
 	QuorumReached bool
+	ExpiresAt     time.Time
 }
 
 func (s *Server) acquireFailoverLeaseRound(now time.Time, lineage string, term uint64, leaderID string) (failoverLeaseRoundResult, error) {
@@ -452,6 +461,7 @@ func (s *Server) acquireFailoverLeaseRound(now time.Time, lineage string, term u
 	}
 	if local.Granted {
 		result.Leases++
+		result.ExpiresAt = time.UnixMilli(local.ExpiresMS)
 	}
 
 	for _, addr := range s.failoverPeers {
@@ -472,6 +482,10 @@ func (s *Server) acquireFailoverLeaseRound(now time.Time, lineage string, term u
 		}
 		if reply.Granted {
 			result.Leases++
+			expires := time.UnixMilli(reply.ExpiresMS)
+			if result.ExpiresAt.IsZero() || expires.Before(result.ExpiresAt) {
+				result.ExpiresAt = expires
+			}
 		}
 		if result.Leases >= s.failoverQuorum {
 			result.QuorumReached = true
@@ -479,4 +493,47 @@ func (s *Server) acquireFailoverLeaseRound(now time.Time, lineage string, term u
 		}
 	}
 	return result, nil
+}
+
+
+func (s *Server) activateFailoverLeader(term uint64, lineage string, leaderID string, expiresAt time.Time) {
+	s.failoverLeaderMu.Lock()
+	s.failoverLeaderActive = true
+	s.failoverLeaderTerm = term
+	s.failoverLeaderLineage = lineage
+	s.failoverLeaderID = leaderID
+	s.failoverLeaderLeaseUntil = expiresAt
+	s.failoverLeaderFenced = expiresAt.IsZero() || !time.Now().Before(expiresAt)
+	s.failoverLeaderMu.Unlock()
+}
+
+func (s *Server) failoverLeaderState() (active bool, term uint64, lineage, leaderID string, expiresAt time.Time, fenced bool) {
+	s.failoverLeaderMu.RLock()
+	defer s.failoverLeaderMu.RUnlock()
+	return s.failoverLeaderActive,
+		s.failoverLeaderTerm,
+		s.failoverLeaderLineage,
+		s.failoverLeaderID,
+		s.failoverLeaderLeaseUntil,
+		s.failoverLeaderFenced
+}
+
+func (s *Server) updateFailoverLeaderLease(expiresAt time.Time, fenced bool) {
+	s.failoverLeaderMu.Lock()
+	if s.failoverLeaderActive {
+		s.failoverLeaderLeaseUntil = expiresAt
+		s.failoverLeaderFenced = fenced
+	}
+	s.failoverLeaderMu.Unlock()
+}
+
+func (s *Server) failoverWritesFenced(now time.Time) bool {
+	s.failoverLeaderMu.RLock()
+	defer s.failoverLeaderMu.RUnlock()
+	if !s.failoverLeaderActive {
+		return false
+	}
+	return s.failoverLeaderFenced ||
+		s.failoverLeaderLeaseUntil.IsZero() ||
+		!now.Before(s.failoverLeaderLeaseUntil)
 }
