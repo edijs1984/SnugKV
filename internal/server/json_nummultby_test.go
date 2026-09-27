@@ -10,7 +10,7 @@ import (
 func TestJSONNumMultByBasic(t *testing.T) {
 	s := New(engine.New())
 
-	if got := execute(t, s, "JSON.SET", "doc", "$", "{"price":12.5,"qty":4,"name":"x"}"); got != "+OK\r\n" {
+	if got := execute(t, s, "JSON.SET", "doc", "$", "{\"price\":12.5,\"qty\":4,\"name\":\"x\"}"); got != "+OK\r\n" {
 		t.Fatalf("JSON.SET=%q", got)
 	}
 
@@ -28,7 +28,7 @@ func TestJSONNumMultByBasic(t *testing.T) {
 
 func TestJSONNumMultByMissingAndNonNumeric(t *testing.T) {
 	s := New(engine.New())
-	execute(t, s, "JSON.SET", "doc", "$", "{"name":"x"}")
+	execute(t, s, "JSON.SET", "doc", "$", "{\"name\":\"x\"}")
 
 	if got := execute(t, s, "JSON.NUMMULTBY", "missing", "$.n", "2"); got != "$-1\r\n" {
 		t.Fatalf("missing key=%q", got)
@@ -43,7 +43,7 @@ func TestJSONNumMultByMissingAndNonNumeric(t *testing.T) {
 
 func TestJSONNumMultByErrorsAndTTL(t *testing.T) {
 	s := New(engine.New())
-	execute(t, s, "JSON.SET", "doc", "$", "{"n":2}")
+	execute(t, s, "JSON.SET", "doc", "$", "{\"n\":2}")
 	execute(t, s, "PEXPIRE", "doc", "60000")
 
 	before := execute(t, s, "PTTL", "doc")
