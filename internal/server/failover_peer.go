@@ -206,7 +206,7 @@ func (s *Server) evaluatePeerFailover(now time.Time) (failoverElectionResult, er
 	observations := []failoverObservation{{
 		NodeID:     local.NodeID,
 		MasterDown: local.MasterDown,
-		Eligible:   local.Priority > 0,
+		Eligible:   local.Priority > 0 && !local.Retired,
 		Offset:     local.Offset,
 		Priority:   local.Priority,
 	}}
@@ -216,7 +216,7 @@ func (s *Server) evaluatePeerFailover(now time.Time) (failoverElectionResult, er
 		if err != nil {
 			continue
 		}
-		if !s.failoverPeerMembershipMatches(peer) || peer.Role != "replica" || peer.MasterRunID == "" || peer.MasterRunID != local.MasterRunID {
+		if !s.failoverPeerMembershipMatches(peer) || peer.Retired || peer.Role != "replica" || peer.MasterRunID == "" || peer.MasterRunID != local.MasterRunID {
 			continue
 		}
 		observations = append(observations, failoverObservation{
@@ -247,7 +247,8 @@ func (s *Server) requestFailoverVote(now time.Time, lineage string, term uint64,
 		changed = true
 	}
 	reply := failoverVoteReply{Term: s.failoverTerm}
-	eligible := local.Role == "replica" &&
+	eligible := !local.Retired &&
+		local.Role == "replica" &&
 		local.MasterDown &&
 		local.MasterRunID != "" &&
 		local.MasterRunID == lineage &&
@@ -331,6 +332,7 @@ func (s *Server) collectFailoverPeers(now time.Time) (failoverPeerState, []obser
 			continue
 		}
 		if !s.failoverPeerMembershipMatches(peer) ||
+			peer.Retired ||
 			peer.Role != "replica" ||
 			peer.MasterRunID == "" ||
 			peer.MasterRunID != local.MasterRunID {
@@ -434,6 +436,9 @@ func (s *Server) runFailoverElectionRound(now time.Time) (failoverRoundResult, e
 
 func (s *Server) requestFailoverLease(now time.Time, lineage string, term uint64, leaderID string, ttl time.Duration) failoverLeaseReply {
 	local := s.localFailoverState(now)
+	if local.Retired {
+		return failoverLeaseReply{}
+	}
 
 	s.failoverVoteMu.Lock()
 	currentTerm := s.failoverTerm
@@ -689,7 +694,7 @@ func (s *Server) resolveFailoverLeaderAddr(leaderID string) (string, error) {
 		if err != nil {
 			continue
 		}
-		if s.failoverPeerMembershipMatches(state) && state.NodeID == leaderID && state.Role == "master" {
+		if s.failoverPeerMembershipMatches(state) && !state.Retired && state.NodeID == leaderID && state.Role == "master" {
 			return addr, nil
 		}
 	}
@@ -697,6 +702,9 @@ func (s *Server) resolveFailoverLeaderAddr(leaderID string) (string, error) {
 }
 
 func (s *Server) requestFailoverReparent(now time.Time, lineage string, term uint64, leaderID string) (failoverReparentReply, error) {
+	if s.failoverMembershipSnapshot().Retired {
+		return failoverReparentReply{}, nil
+	}
 	s.failoverVoteMu.Lock()
 	currentTerm := s.failoverTerm
 	s.failoverVoteMu.Unlock()
@@ -795,7 +803,7 @@ func (s *Server) convergeFailoverReplicas(now time.Time) {
 			s.replicationMasterUser,
 			s.replicationMasterAuth,
 		)
-		if err != nil || !s.failoverPeerMembershipMatches(state) || state.NodeID == leaderID {
+		if err != nil || !s.failoverPeerMembershipMatches(state) || state.Retired || state.NodeID == leaderID {
 			continue
 		}
 
@@ -833,6 +841,9 @@ type failoverDemoteReply struct {
 }
 
 func (s *Server) requestFailoverDemote(now time.Time, lineage string, term uint64, leaderID string) (failoverDemoteReply, error) {
+	if s.failoverMembershipSnapshot().Retired {
+		return failoverDemoteReply{}, nil
+	}
 	s.failoverVoteMu.Lock()
 	currentTerm := s.failoverTerm
 	s.failoverVoteMu.Unlock()
