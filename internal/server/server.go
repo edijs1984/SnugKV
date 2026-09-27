@@ -182,7 +182,7 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 	}
 	switch cmd {
 	case "VADD", "VCARD", "VDIM", "VEMB", "VISMEMBER", "VREM",
-		"VGETATTR", "VSETATTR", "VRANDMEMBER", "VINFO":
+		"VGETATTR", "VSETATTR", "VRANDMEMBER", "VINFO", "VLINKS", "VSIM":
 		return s.executeVectorSet(args)
 
 	case "LCS":
