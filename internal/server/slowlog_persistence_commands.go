@@ -155,7 +155,7 @@ func (s *Server) waitPersistenceJobs() {
 	s.persistenceJobs.Wait()
 }
 
-func (s *Server) snapshotNow() (resultErr error) {
+func (s *Server) snapshotRecords(records []persistence.Record) (resultErr error) {
 	defer func() {
 		s.persistenceJobMu.Lock()
 		s.rdbLastSaveFailed = resultErr != nil
@@ -167,11 +167,15 @@ func (s *Server) snapshotNow() (resultErr error) {
 	if s.snapshotPath == "" {
 		return errors.New("ERR snapshot persistence is disabled")
 	}
-	if err := persistence.Snapshot(s.snapshotPath, s.store.Export(nil)); err != nil {
+	if err := persistence.Snapshot(s.snapshotPath, records); err != nil {
 		return fmt.Errorf("ERR snapshot save failed: %w", err)
 	}
 	s.lastSaveUnix.Store(time.Now().Unix())
 	return nil
+}
+
+func (s *Server) snapshotNow() error {
+	return s.snapshotRecords(s.store.Export(nil))
 }
 
 func (s *Server) executeSave(background bool, schedule bool) ([]byte, error) {
@@ -217,7 +221,10 @@ func (s *Server) executeSave(background bool, schedule bool) ([]byte, error) {
 	s.bgsaveRunning = true
 	s.persistenceJobMu.Unlock()
 
-	s.startPersistenceJob(s.runBackgroundSave)
+	records := s.store.Export(nil)
+	s.startPersistenceJob(func() {
+		s.runBackgroundSaveRecords(records)
+	})
 
 	return []byte("+Background saving started\r\n"), nil
 }
@@ -300,7 +307,10 @@ func (s *Server) executeBGRewriteAOF() ([]byte, error) {
 		}
 		s.persistenceJobMu.Unlock()
 		if startSave {
-			s.startPersistenceJob(s.runBackgroundSave)
+			saveRecords := s.store.Export(nil)
+			s.startPersistenceJob(func() {
+				s.runBackgroundSaveRecords(saveRecords)
+			})
 		}
 		if rewriteErr != nil {
 			log.Printf("event=aof_rewrite_failed error=%q", rewriteErr)
@@ -339,7 +349,11 @@ func (s *Server) persistenceInfo() string {
 }
 
 func (s *Server) runBackgroundSave() {
-	_ = s.snapshotNow() // snapshotNow records and logs failures.
+	s.runBackgroundSaveRecords(s.store.Export(nil))
+}
+
+func (s *Server) runBackgroundSaveRecords(records []persistence.Record) {
+	_ = s.snapshotRecords(records) // snapshotRecords records and logs failures.
 	// Serialize the handoff with commands so another job cannot start
 	// between clearing the save flag and starting its queued rewrite.
 	s.durableMu.Lock()
