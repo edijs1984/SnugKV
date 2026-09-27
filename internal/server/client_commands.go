@@ -12,6 +12,14 @@ import (
 	"time"
 )
 
+type clientReplyMode uint8
+
+const (
+	clientReplyOn clientReplyMode = iota
+	clientReplyOff
+	clientReplySkip
+)
+
 type clientUnblockMode uint8
 
 const (
@@ -45,6 +53,10 @@ type clientSession struct {
 	unblockCh   chan struct{}
 	unblockMode clientUnblockMode
 
+	noEvict bool
+	noTouch bool
+	reply   clientReplyMode
+
 	tracking     clientTrackingState
 	trackingPush func([]byte) error
 
@@ -73,6 +85,7 @@ func newClientSession(
 		createdAt:  now,
 	}
 	client.protocol.Store(2)
+	client.reply = clientReplyOn
 	client.lastSeen.Store(now.UnixNano())
 	return client
 }
@@ -148,6 +161,39 @@ func (c *clientSession) setLibVer(value string) {
 	c.mu.Unlock()
 }
 
+func (c *clientSession) setNoEvict(value bool) {
+	c.mu.Lock()
+	c.noEvict = value
+	c.mu.Unlock()
+}
+
+func (c *clientSession) setNoTouch(value bool) {
+	c.mu.Lock()
+	c.noTouch = value
+	c.mu.Unlock()
+}
+
+func (c *clientSession) setReplyMode(mode clientReplyMode) {
+	c.mu.Lock()
+	c.reply = mode
+	c.mu.Unlock()
+}
+
+func (c *clientSession) consumeReplyPermission() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	switch c.reply {
+	case clientReplyOff:
+		return false
+	case clientReplySkip:
+		c.reply = clientReplyOn
+		return false
+	default:
+		return true
+	}
+}
+
 func (c *clientSession) beginBlocking() <-chan struct{} {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -204,6 +250,8 @@ type clientSnapshot struct {
 	lastCmd   string
 
 	blocked bool
+	noEvict bool
+	noTouch bool
 }
 
 func (c *clientSession) snapshot() clientSnapshot {
@@ -228,6 +276,8 @@ func (c *clientSession) snapshot() clientSnapshot {
 		lastSeen:   lastSeen,
 		lastCmd:    lastCmd,
 		blocked:    c.blocked,
+		noEvict:    c.noEvict,
+		noTouch:    c.noTouch,
 	}
 }
 
@@ -430,6 +480,48 @@ func (s *TCPServer) executeClientConnectionCommand(
 
 		return true, nil, errors.New("ERR syntax error")
 
+	case "NO-EVICT", "NO-TOUCH":
+		if len(args) != 3 {
+			return true, nil, errors.New(
+				"ERR wrong number of arguments for 'client|" + strings.ToLower(subcommand) + "' command",
+			)
+		}
+		var value bool
+		switch strings.ToUpper(string(args[2])) {
+		case "ON":
+			value = true
+		case "OFF":
+			value = false
+		default:
+			return true, nil, errors.New("ERR syntax error")
+		}
+		if subcommand == "NO-EVICT" {
+			session.setNoEvict(value)
+		} else {
+			session.setNoTouch(value)
+		}
+		return true, []byte("+OK\r\n"), nil
+
+	case "REPLY":
+		if len(args) != 3 {
+			return true, nil, errors.New(
+				"ERR wrong number of arguments for 'client|reply' command",
+			)
+		}
+		switch strings.ToUpper(string(args[2])) {
+		case "ON":
+			session.setReplyMode(clientReplyOn)
+			return true, []byte("+OK\r\n"), nil
+		case "OFF":
+			session.setReplyMode(clientReplyOff)
+			return true, nil, nil
+		case "SKIP":
+			session.setReplyMode(clientReplySkip)
+			return true, nil, nil
+		default:
+			return true, nil, errors.New("ERR syntax error")
+		}
+
 	case "KILL":
 		return s.executeClientKill(session, args)
 
@@ -604,6 +696,12 @@ func formatClientInfo(
 	if client.blocked {
 		flags = "b"
 	}
+	if client.noEvict {
+		flags += "e"
+	}
+	if client.noTouch {
+		flags += "t"
+	}
 
 	name := escapeClientListToken(client.name)
 	libName := escapeClientListToken(client.libName)
@@ -668,6 +766,12 @@ func clientHelpRESP() []byte {
 		"    Return the ID of the current connection.",
 		"INFO",
 		"    Return information about the current client connection.",
+		"NO-EVICT <ON|OFF>",
+		"    Toggle client eviction protection.",
+		"NO-TOUCH <ON|OFF>",
+		"    Toggle key touch suppression for this client.",
+		"REPLY <ON|OFF|SKIP>",
+		"    Control replies for this connection.",
 		"KILL ID <client-id> [SKIPME YES|NO]",
 		"    Kill a client connection by ID.",
 		"LIST",
