@@ -348,6 +348,8 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 		s.server.acl,
 	)
 
+	authSession.client = clientSession
+
 	txSession := newTransactionSession(
 		s.server,
 	)
