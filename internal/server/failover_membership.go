@@ -422,6 +422,151 @@ func unionStrings(a, b []string) []string {
 	return out
 }
 
+
+func (s *Server) armFailoverMembershipCommitRecovery(oldEpoch, newEpoch uint64, members []string, quorum int, targets []string) error {
+	s.failoverMembershipMu.Lock()
+	oldPending := s.failoverCommitPending
+	oldOldEpoch := s.failoverCommitOldEpoch
+	oldCommitEpoch := s.failoverCommitEpoch
+	oldMembers := append([]string(nil), s.failoverCommitMembers...)
+	oldQuorum := s.failoverCommitQuorum
+	oldTargets := append([]string(nil), s.failoverCommitTargets...)
+	s.failoverCommitPending = true
+	s.failoverCommitOldEpoch = oldEpoch
+	s.failoverCommitEpoch = newEpoch
+	s.failoverCommitMembers = append([]string(nil), members...)
+	s.failoverCommitQuorum = quorum
+	s.failoverCommitTargets = append([]string(nil), targets...)
+	s.failoverMembershipMu.Unlock()
+
+	if err := s.persistFailoverMembershipState(); err != nil {
+		s.failoverMembershipMu.Lock()
+		s.failoverCommitPending = oldPending
+		s.failoverCommitOldEpoch = oldOldEpoch
+		s.failoverCommitEpoch = oldCommitEpoch
+		s.failoverCommitMembers = oldMembers
+		s.failoverCommitQuorum = oldQuorum
+		s.failoverCommitTargets = oldTargets
+		s.failoverMembershipMu.Unlock()
+		return err
+	}
+	return nil
+}
+
+func (s *Server) clearFailoverMembershipCommitRecovery() error {
+	s.failoverMembershipMu.Lock()
+	oldPending := s.failoverCommitPending
+	oldOldEpoch := s.failoverCommitOldEpoch
+	oldCommitEpoch := s.failoverCommitEpoch
+	oldMembers := append([]string(nil), s.failoverCommitMembers...)
+	oldQuorum := s.failoverCommitQuorum
+	oldTargets := append([]string(nil), s.failoverCommitTargets...)
+	s.failoverCommitPending = false
+	s.failoverCommitOldEpoch = 0
+	s.failoverCommitEpoch = 0
+	s.failoverCommitMembers = nil
+	s.failoverCommitQuorum = 0
+	s.failoverCommitTargets = nil
+	s.failoverMembershipMu.Unlock()
+
+	if err := s.persistFailoverMembershipState(); err != nil {
+		s.failoverMembershipMu.Lock()
+		s.failoverCommitPending = oldPending
+		s.failoverCommitOldEpoch = oldOldEpoch
+		s.failoverCommitEpoch = oldCommitEpoch
+		s.failoverCommitMembers = oldMembers
+		s.failoverCommitQuorum = oldQuorum
+		s.failoverCommitTargets = oldTargets
+		s.failoverMembershipMu.Unlock()
+		return err
+	}
+	return nil
+}
+
+func (s *Server) retryFailoverMembershipCommit(now time.Time) error {
+	membership := s.failoverMembershipSnapshot()
+	if !membership.CommitPending {
+		return nil
+	}
+
+	s.failoverMembershipMu.Lock()
+	if !s.failoverCommitLastRetry.IsZero() && now.Sub(s.failoverCommitLastRetry) < time.Second {
+		s.failoverMembershipMu.Unlock()
+		return nil
+	}
+	s.failoverCommitLastRetry = now
+	s.failoverMembershipMu.Unlock()
+
+	// If the coordinator crashed after recording commit intent but before its
+	// own local COMMIT, recover by committing forward. Dual-majority PREPARE
+	// already completed before this recovery record was armed.
+	if membership.JointActive &&
+		membership.ConfigEpoch == membership.CommitOldEpoch &&
+		membership.PendingEpoch == membership.CommitEpoch {
+		if _, err := s.commitFailoverMembership(membership.GroupID, membership.CommitEpoch); err != nil {
+			return err
+		}
+		membership = s.failoverMembershipSnapshot()
+	}
+	if membership.ConfigEpoch != membership.CommitEpoch || membership.JointActive {
+		return nil
+	}
+
+	allConverged := true
+	for _, addr := range membership.CommitTargets {
+		if addr == s.failoverAdvertiseAddr {
+			continue
+		}
+		state, err := queryFailoverPeer(
+			addr,
+			300*time.Millisecond,
+			s.replicationMasterUser,
+			s.replicationMasterAuth,
+		)
+		if err == nil &&
+			state.GroupID == membership.GroupID &&
+			state.ConfigEpoch >= membership.CommitEpoch &&
+			!state.JointActive {
+			continue
+		}
+
+		allConverged = false
+		if err == nil &&
+			state.GroupID == membership.GroupID &&
+			state.ConfigEpoch == membership.CommitOldEpoch &&
+			!state.JointActive {
+			reply, prepErr := queryFailoverMembershipPrepare(
+				addr,
+				300*time.Millisecond,
+				s.replicationMasterUser,
+				s.replicationMasterAuth,
+				membership.GroupID,
+				membership.CommitOldEpoch,
+				membership.CommitEpoch,
+				membership.CommitMembers,
+				membership.CommitQuorum,
+			)
+			if prepErr != nil || !reply.Accepted {
+				continue
+			}
+		}
+
+		_, _ = queryFailoverMembershipCommit(
+			addr,
+			300*time.Millisecond,
+			s.replicationMasterUser,
+			s.replicationMasterAuth,
+			membership.GroupID,
+			membership.CommitEpoch,
+		)
+	}
+
+	if allConverged {
+		return s.clearFailoverMembershipCommitRecovery()
+	}
+	return nil
+}
+
 func (s *Server) coordinateFailoverMembershipChange(newEpoch uint64, newMembers []string, newQuorum int) (failoverMembershipChangeResult, error) {
 	membership := s.failoverMembershipSnapshot()
 	result := failoverMembershipChangeResult{
@@ -465,6 +610,11 @@ func (s *Server) coordinateFailoverMembershipChange(newEpoch uint64, newMembers 
 	}
 	if !containsString(newMembers, s.failoverAdvertiseAddr) {
 		return result, errors.New("coordinator must remain in proposed failover membership")
+	}
+	for _, member := range oldMembers {
+		if !containsString(newMembers, member) {
+			return result, errors.New("member removal requires the retirement protocol")
+		}
 	}
 
 	localReply, err := s.prepareFailoverMembershipMembers(
@@ -536,6 +686,16 @@ func (s *Server) coordinateFailoverMembershipChange(newEpoch uint64, newMembers 
 	}
 
 	result.Prepared = true
+	commitTargets := unionStrings(oldMembers, newMembers)
+	if err := s.armFailoverMembershipCommitRecovery(
+		membership.ConfigEpoch,
+		newEpoch,
+		newMembers,
+		newQuorum,
+		commitTargets,
+	); err != nil {
+		return result, err
+	}
 	if _, err := s.commitFailoverMembership(membership.GroupID, newEpoch); err != nil {
 		return result, err
 	}
@@ -554,5 +714,6 @@ func (s *Server) coordinateFailoverMembershipChange(newEpoch uint64, newMembers 
 			newEpoch,
 		)
 	}
+	_ = s.retryFailoverMembershipCommit(time.Now())
 	return result, nil
 }
