@@ -1149,6 +1149,9 @@ func (s *Server) maintainAutoFailover(now time.Time) error {
 		return err
 	}
 	membership := s.failoverMembershipSnapshot()
+	if membership.Retired {
+		return nil
+	}
 	if active, _, _, _, _, _ := s.failoverLeaderState(); active {
 		return s.maintainFailoverLeaderLease(now)
 	}
