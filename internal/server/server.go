@@ -128,7 +128,7 @@ var commandTable = map[string]commandInfo{
 	"DBSIZE": {1, 1, 0, 0, 0, false}, "COMMAND": {1, 0, 0, 0, 0, false},
 	"TIME": {1, 1, 0, 0, 0, false}, "LASTSAVE": {1, 1, 0, 0, 0, false},
 "OBJECT": {2, 3, 0, 0, 0, false},
-	"SLOWLOG": {2, 3, 0, 0, 0, false},
+	"SLOWLOG": {2, 0, 0, 0, 0, false},
 	"SAVE": {1, 1, 0, 0, 0, false},
 	"BGSAVE": {1, 2, 0, 0, 0, false},
 	"BGREWRITEAOF": {1, 1, 0, 0, 0, false},
