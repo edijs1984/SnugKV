@@ -827,7 +827,9 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 		}
 
 		if len(msg) > 0 && strings.EqualFold(string(msg[0]), "ACL") {
+			aclStarted := time.Now()
 			response, aclErr := s.server.executeACL(authSession, msg)
+			s.server.recordSlowlogForClient(clientSession, msg, time.Since(aclStarted))
 
 			if aclErr != nil {
 				response = errorResponse(aclErr)

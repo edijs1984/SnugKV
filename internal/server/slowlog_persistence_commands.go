@@ -11,6 +11,80 @@ import (
 	"snugkv/internal/persistence"
 )
 
+const (
+	slowlogEntryMaxArgc      = 32
+	slowlogEntryMaxStringLen = 128
+)
+
+func slowlogSanitizeArgs(args [][]byte) [][]byte {
+	if len(args) == 0 {
+		return nil
+	}
+
+	limit := len(args)
+	if limit > slowlogEntryMaxArgc {
+		limit = slowlogEntryMaxArgc
+	}
+	out := make([][]byte, limit)
+	for i := 0; i < limit; i++ {
+		if len(args) > slowlogEntryMaxArgc && i == limit-1 {
+			out[i] = []byte(fmt.Sprintf("... (%d more arguments)", len(args)-slowlogEntryMaxArgc+1))
+			continue
+		}
+		arg := args[i]
+		if len(arg) > slowlogEntryMaxStringLen {
+			trimmed := make([]byte, 0, slowlogEntryMaxStringLen+32)
+			trimmed = append(trimmed, arg[:slowlogEntryMaxStringLen]...)
+			trimmed = append(trimmed, []byte(fmt.Sprintf("... (%d more bytes)", len(arg)-slowlogEntryMaxStringLen))...)
+			out[i] = trimmed
+			continue
+		}
+		out[i] = append([]byte(nil), arg...)
+	}
+
+	slowlogRedactSensitiveArgs(out)
+	return out
+}
+
+func slowlogRedactSensitiveArgs(args [][]byte) {
+	if len(args) == 0 {
+		return
+	}
+	redacted := []byte("(redacted)")
+	cmd := strings.ToUpper(string(args[0]))
+	switch cmd {
+	case "ACL":
+		if len(args) < 2 {
+			return
+		}
+		sub := strings.ToUpper(string(args[1]))
+		switch sub {
+		case "SETUSER", "GETUSER", "DELUSER":
+			for i := 2; i < len(args); i++ {
+				args[i] = append([]byte(nil), redacted...)
+			}
+		}
+	case "MIGRATE":
+		for i := 1; i < len(args); i++ {
+			switch strings.ToUpper(string(args[i])) {
+			case "AUTH":
+				if i+1 < len(args) {
+					args[i+1] = append([]byte(nil), redacted...)
+					i++
+				}
+			case "AUTH2":
+				if i+1 < len(args) {
+					args[i+1] = append([]byte(nil), redacted...)
+				}
+				if i+2 < len(args) {
+					args[i+2] = append([]byte(nil), redacted...)
+					i += 2
+				}
+			}
+		}
+	}
+}
+
 type slowlogEntry struct {
 	id        int64
 	timestamp int64
@@ -46,7 +120,7 @@ func (s *Server) recordSlowlogForClient(client *clientSession, args [][]byte, el
 		id:        s.slowlogNextID,
 		timestamp: time.Now().Unix(),
 		duration:  duration,
-		args:      cloneCommandArgs(args),
+		args:      slowlogSanitizeArgs(args),
 		peer:      peer,
 		name:      name,
 	}
