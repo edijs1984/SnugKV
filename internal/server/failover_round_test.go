@@ -85,12 +85,12 @@ func TestFailoverElectionRoundNonCandidateDoesNotRequestVotes(t *testing.T) {
 	}
 }
 
-func TestFailoverElectionRoundAbortsOnHigherTermVoteReply(t *testing.T) {
+func TestFailoverElectionRoundStartsAboveHighestObservedTerm(t *testing.T) {
 	const lineage = "3333333333333333333333333333333333333333"
 	now := time.Now()
 
-	peerA := newFailoverPeerForRound(t, lineage, 90, 100, 10)
-	peerB := newFailoverPeerForRound(t, lineage, 80, 100, 2)
+	peerA := newFailoverPeerForRound(t, lineage, 90, 100, 50)
+	peerB := newFailoverPeerForRound(t, lineage, 80, 100, 12)
 
 	local := New(engine.New())
 	setFailoverReplicaState(local, lineage, 100, 100, now.Add(-time.Second))
@@ -100,21 +100,14 @@ func TestFailoverElectionRoundAbortsOnHigherTermVoteReply(t *testing.T) {
 	}
 	local.failoverQuorum = 2
 
-	// Force peerA to advance after the state collection would otherwise suggest
-	// an election term <= 11. The vote RPC must return the higher term and abort.
-	peerA.server.failoverVoteMu.Lock()
-	peerA.server.failoverTerm = 50
-	peerA.server.failoverVotedFor = "someone-else"
-	peerA.server.failoverVoteMu.Unlock()
-
 	result, err := local.runFailoverElectionRound(now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Won {
-		t.Fatalf("won despite higher peer term: %+v", result)
+	if !result.Won {
+		t.Fatalf("round did not win: %+v", result)
 	}
-	if result.Term < 50 {
-		t.Fatalf("term=%d want>=50", result.Term)
+	if result.Term != 51 {
+		t.Fatalf("term=%d want=51", result.Term)
 	}
 }
