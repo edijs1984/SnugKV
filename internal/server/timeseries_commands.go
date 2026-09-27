@@ -162,7 +162,11 @@ func parseTimeSeriesMultiOptions(args [][]byte, start int) (timeSeriesMultiOptio
 			filterIndex = i
 			i = len(args)
 		default:
-			return out, errors.New("ERR TSDB: unknown argument")
+			// For multi-series commands Redis requires a FILTER section.
+			// A bare token encountered while parsing pre-FILTER options is
+			// therefore reported as a missing FILTER rather than as a generic
+			// unknown option.
+			return out, errors.New("ERR TSDB: missing FILTER argument")
 		}
 	}
 
