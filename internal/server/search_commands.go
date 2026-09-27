@@ -22,6 +22,7 @@ var searchCommands = map[string]commandInfo{
 	"FT.ALIASUPDATE": {3, 3, 0, 0, 0, true},
 	"FT.ALIASDEL":    {2, 2, 0, 0, 0, true},
 	"FT.TAGVALS":     {3, 3, 0, 0, 0, false},
+	"FT.ALTER":       {6, 0, 0, 0, 0, true},
 }
 
 func init() {
@@ -2255,6 +2256,94 @@ func executeFTSearch(store *engine.Store, args [][]byte) ([]byte, error) {
 	return array(items...), nil
 }
 
+func parseFTAlterField(args [][]byte, start int) (engine.SearchField, error) {
+	var field engine.SearchField
+	if start >= len(args) {
+		return field, errors.New("ERR syntax error")
+	}
+	field.Path = string(args[start])
+	start++
+	if start+1 >= len(args) || !strings.EqualFold(string(args[start]), "AS") {
+		return field, errors.New("ERR FT.ALTER requires AS for indexed JSON fields")
+	}
+	field.Alias = string(args[start+1])
+	start += 2
+	if start >= len(args) {
+		return field, errors.New("ERR syntax error")
+	}
+	switch strings.ToUpper(string(args[start])) {
+	case "TAG":
+		field.Kind = engine.SearchFieldTag
+	case "NUMERIC":
+		field.Kind = engine.SearchFieldNumeric
+	case "TEXT":
+		field.Kind = engine.SearchFieldText
+		field.Weight = 1
+	case "GEO":
+		field.Kind = engine.SearchFieldGeo
+	default:
+		return field, errors.New("ERR unsupported search field type")
+	}
+	start++
+
+	for start < len(args) {
+		switch strings.ToUpper(string(args[start])) {
+		case "SORTABLE":
+			field.Sortable = true
+			start++
+			if start < len(args) && strings.EqualFold(string(args[start]), "UNF") {
+				start++
+			}
+		case "NOINDEX":
+			field.NoIndex = true
+			start++
+		case "NOSTEM":
+			if field.Kind != engine.SearchFieldText {
+				return field, errors.New("ERR syntax error")
+			}
+			field.NoStem = true
+			start++
+		case "WEIGHT":
+			if field.Kind != engine.SearchFieldText || start+1 >= len(args) {
+				return field, errors.New("ERR syntax error")
+			}
+			weight, err := strconv.ParseFloat(string(args[start+1]), 64)
+			if err != nil {
+				return field, errors.New("SEARCH_PARSE_ARGS Bad arguments for weight: Could not convert argument to expected type")
+			}
+			field.Weight = weight
+			field.WeightSet = true
+			start += 2
+		default:
+			return field, errors.New("ERR syntax error")
+		}
+	}
+	return field, nil
+}
+
+func executeFTAlter(store *engine.Store, args [][]byte) ([]byte, error) {
+	if len(args) < 6 {
+		return nil, errors.New("ERR wrong number of arguments for 'ft.alter' command")
+	}
+	name := string(args[1])
+	pos := 2
+	skipInitialScan := false
+	if pos < len(args) && strings.EqualFold(string(args[pos]), "SKIPINITIALSCAN") {
+		skipInitialScan = true
+		pos++
+	}
+	if pos+2 >= len(args) || !strings.EqualFold(string(args[pos]), "SCHEMA") || !strings.EqualFold(string(args[pos+1]), "ADD") {
+		return nil, errors.New("ERR syntax error")
+	}
+	field, err := parseFTAlterField(args, pos+2)
+	if err != nil {
+		return nil, err
+	}
+	if err := store.AlterSearchIndex(name, field, skipInitialScan); err != nil {
+		return nil, err
+	}
+	return []byte("+OK\r\n"), nil
+}
 func executeFTAliasAdd(store *engine.Store, args [][]byte, update bool) ([]byte, error) {
 	if len(args) != 3 {
 		return nil, errors.New("ERR wrong number of arguments")
@@ -2321,6 +2410,10 @@ func (s *Server) executeSearchCommand(args [][]byte) ([]byte, error) {
 		})
 	case "FT._LIST":
 		return executeFTList(s.store, args)
+	case "FT.ALTER":
+		return s.executeSearchDefinitionMutation(args, func() ([]byte, error) {
+			return executeFTAlter(s.store, args)
+		})
 	case "FT.ALIASADD":
 		return executeFTAliasAdd(s.store, args, false)
 	case "FT.ALIASUPDATE":
