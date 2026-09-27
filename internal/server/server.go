@@ -46,6 +46,9 @@ type Server struct {
 	replicationMasterTLSKey  string
 	replicationMasterTLSSNI  string
 	autoFailoverTimeout      time.Duration
+	failoverPeers            []string
+	failoverQuorum           int
+	failoverPriority         int
 
 	// executionACLUsername / executionACLArgs are valid only while durableMu is
 	// held. TCP and transaction execution populate them so dynamic command
@@ -134,6 +137,7 @@ var commandTable = map[string]commandInfo{
 	"SNUG.MEMORY":     {2, 2, 1, 1, 1, false},
 	"SNUG.SHAPES":     {1, 2, 0, 0, 0, false},
 	"SNUG.STATS":      {1, 1, 0, 0, 0, false},
+	"SNUG.FAILOVER":   {2, 2, 0, 0, 0, false},
 	"SNUG.POLICY":     {2, 2, 1, 1, 1, false},
 	"AUTH":            {1, 3, 0, 0, 0, false},
 	"ACL":             {1, 0, 0, 0, 0, false},
@@ -1147,6 +1151,16 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		}
 
 		return formatBulkString([]byte(b.String())), nil
+
+	case "SNUG.FAILOVER":
+		if !strings.EqualFold(string(args[1]), "STATE") {
+			return nil, errors.New("ERR unknown SNUG.FAILOVER subcommand")
+		}
+		payload, err := s.failoverStateJSON(time.Now())
+		if err != nil {
+			return nil, err
+		}
+		return formatBulkString(payload), nil
 
 	case "SNUG.STATS":
 		m := s.store.Memory()
