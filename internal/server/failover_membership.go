@@ -1,10 +1,13 @@
 package server
 
 import (
+	"bufio"
+	"encoding/json"
 	"errors"
 	"net"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type failoverMembershipReply struct {
@@ -298,4 +301,258 @@ func containsString(values []string, target string) bool {
 		}
 	}
 	return false
+}
+
+
+type failoverMembershipChangeResult struct {
+	OldAcks       int
+	NewAcks       int
+	OldQuorum     int
+	NewQuorum     int
+	Prepared      bool
+	Committed     bool
+	PreparedPeers []string
+}
+
+func queryFailoverMembershipPrepare(addr string, timeout time.Duration, username, password, groupID string, currentEpoch, newEpoch uint64, members []string, quorum int) (failoverMembershipReply, error) {
+	conn, err := net.DialTimeout("tcp", addr, timeout)
+	if err != nil {
+		return failoverMembershipReply{}, err
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+	reader := bufio.NewReader(conn)
+	if err := authenticateReplicationUpstream(conn, reader, username, password); err != nil {
+		return failoverMembershipReply{}, err
+	}
+	if err := writeReplicationRESPCommand(
+		conn,
+		"SNUG.FAILOVER", "MEMBERSHIPPREPARE",
+		groupID,
+		strconv.FormatUint(currentEpoch, 10),
+		strconv.FormatUint(newEpoch, 10),
+		strconv.Itoa(quorum),
+		strings.Join(members, ","),
+	); err != nil {
+		return failoverMembershipReply{}, err
+	}
+	payload, err := readRESPBulk(reader)
+	if err != nil {
+		return failoverMembershipReply{}, err
+	}
+	var reply failoverMembershipReply
+	if err := json.Unmarshal(payload, &reply); err != nil {
+		return failoverMembershipReply{}, err
+	}
+	return reply, nil
+}
+
+func queryFailoverMembershipCommit(addr string, timeout time.Duration, username, password, groupID string, epoch uint64) (failoverMembershipReply, error) {
+	conn, err := net.DialTimeout("tcp", addr, timeout)
+	if err != nil {
+		return failoverMembershipReply{}, err
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+	reader := bufio.NewReader(conn)
+	if err := authenticateReplicationUpstream(conn, reader, username, password); err != nil {
+		return failoverMembershipReply{}, err
+	}
+	if err := writeReplicationRESPCommand(
+		conn,
+		"SNUG.FAILOVER", "MEMBERSHIPCOMMIT",
+		groupID,
+		strconv.FormatUint(epoch, 10),
+	); err != nil {
+		return failoverMembershipReply{}, err
+	}
+	payload, err := readRESPBulk(reader)
+	if err != nil {
+		return failoverMembershipReply{}, err
+	}
+	var reply failoverMembershipReply
+	if err := json.Unmarshal(payload, &reply); err != nil {
+		return failoverMembershipReply{}, err
+	}
+	return reply, nil
+}
+
+func queryFailoverMembershipAbort(addr string, timeout time.Duration, username, password, groupID string, epoch uint64) (failoverMembershipReply, error) {
+	conn, err := net.DialTimeout("tcp", addr, timeout)
+	if err != nil {
+		return failoverMembershipReply{}, err
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+	reader := bufio.NewReader(conn)
+	if err := authenticateReplicationUpstream(conn, reader, username, password); err != nil {
+		return failoverMembershipReply{}, err
+	}
+	if err := writeReplicationRESPCommand(
+		conn,
+		"SNUG.FAILOVER", "MEMBERSHIPABORT",
+		groupID,
+		strconv.FormatUint(epoch, 10),
+	); err != nil {
+		return failoverMembershipReply{}, err
+	}
+	payload, err := readRESPBulk(reader)
+	if err != nil {
+		return failoverMembershipReply{}, err
+	}
+	var reply failoverMembershipReply
+	if err := json.Unmarshal(payload, &reply); err != nil {
+		return failoverMembershipReply{}, err
+	}
+	return reply, nil
+}
+
+func unionStrings(a, b []string) []string {
+	seen := make(map[string]struct{}, len(a)+len(b))
+	out := make([]string, 0, len(a)+len(b))
+	for _, values := range [][]string{a, b} {
+		for _, value := range values {
+			if _, ok := seen[value]; ok {
+				continue
+			}
+			seen[value] = struct{}{}
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func (s *Server) coordinateFailoverMembershipChange(newEpoch uint64, newMembers []string, newQuorum int) (failoverMembershipChangeResult, error) {
+	membership := s.failoverMembershipSnapshot()
+	result := failoverMembershipChangeResult{
+		OldQuorum: membership.Quorum,
+		NewQuorum: newQuorum,
+	}
+	if membership.JointActive {
+		return result, errors.New("failover membership transition already active")
+	}
+	if membership.GroupID == "" || membership.ConfigEpoch == 0 {
+		return result, errors.New("dynamic failover membership requires group id and nonzero epoch")
+	}
+	if newEpoch != membership.ConfigEpoch+1 {
+		return result, errors.New("new failover membership epoch must increase by exactly one")
+	}
+	if s.failoverAdvertiseAddr == "" {
+		return result, errors.New("failover_advertise_addr is required for dynamic membership")
+	}
+	s.replication.mu.RLock()
+	role := s.replication.role
+	s.replication.mu.RUnlock()
+	if role != replicationMaster {
+		return result, errors.New("only the current primary may coordinate failover membership")
+	}
+	if _, err := deriveFailoverPeersForMember(newMembers, s.failoverAdvertiseAddr); err != nil {
+		return result, err
+	}
+	if err := validateFailoverPeerSet(
+		func() []string {
+			peers, _ := deriveFailoverPeersForMember(newMembers, s.failoverAdvertiseAddr)
+			return peers
+		}(),
+		newQuorum,
+	); err != nil {
+		return result, err
+	}
+
+	oldMembers, err := s.failoverCurrentMembers()
+	if err != nil {
+		return result, err
+	}
+	if !containsString(newMembers, s.failoverAdvertiseAddr) {
+		return result, errors.New("coordinator must remain in proposed failover membership")
+	}
+
+	localReply, err := s.prepareFailoverMembershipMembers(
+		membership.GroupID,
+		membership.ConfigEpoch,
+		newEpoch,
+		newMembers,
+		newQuorum,
+	)
+	if err != nil {
+		return result, err
+	}
+	if !localReply.Accepted {
+		return result, errors.New("local failover membership prepare rejected")
+	}
+
+	if containsString(oldMembers, s.failoverAdvertiseAddr) {
+		result.OldAcks++
+	}
+	if containsString(newMembers, s.failoverAdvertiseAddr) {
+		result.NewAcks++
+	}
+
+	prepared := map[string]struct{}{s.failoverAdvertiseAddr: {}}
+	for _, addr := range unionStrings(oldMembers, newMembers) {
+		if addr == s.failoverAdvertiseAddr {
+			continue
+		}
+		reply, err := queryFailoverMembershipPrepare(
+			addr,
+			300*time.Millisecond,
+			s.replicationMasterUser,
+			s.replicationMasterAuth,
+			membership.GroupID,
+			membership.ConfigEpoch,
+			newEpoch,
+			newMembers,
+			newQuorum,
+		)
+		if err != nil || !reply.Accepted || !reply.Joint || reply.PendingEpoch != newEpoch {
+			continue
+		}
+		prepared[addr] = struct{}{}
+		result.PreparedPeers = append(result.PreparedPeers, addr)
+		if containsString(oldMembers, addr) {
+			result.OldAcks++
+		}
+		if containsString(newMembers, addr) {
+			result.NewAcks++
+		}
+	}
+
+	if result.OldAcks < membership.Quorum || result.NewAcks < newQuorum {
+		for addr := range prepared {
+			if addr == s.failoverAdvertiseAddr {
+				continue
+			}
+			_, _ = queryFailoverMembershipAbort(
+				addr,
+				300*time.Millisecond,
+				s.replicationMasterUser,
+				s.replicationMasterAuth,
+				membership.GroupID,
+				newEpoch,
+			)
+		}
+		_, _ = s.abortFailoverMembership(membership.GroupID, newEpoch)
+		return result, nil
+	}
+
+	result.Prepared = true
+	if _, err := s.commitFailoverMembership(membership.GroupID, newEpoch); err != nil {
+		return result, err
+	}
+	result.Committed = true
+
+	for addr := range prepared {
+		if addr == s.failoverAdvertiseAddr {
+			continue
+		}
+		_, _ = queryFailoverMembershipCommit(
+			addr,
+			300*time.Millisecond,
+			s.replicationMasterUser,
+			s.replicationMasterAuth,
+			membership.GroupID,
+			newEpoch,
+		)
+	}
+	return result, nil
 }
