@@ -201,7 +201,7 @@ func (s *Store) VectorSetDim(key string) (int64, error) {
 
 	e, ok := sh.get(key)
 	if !ok || sh.expired(key, e, s.now()) {
-		return 0, nil
+		return 0, errors.New("ERR vector set not found")
 	}
 	if e.valueType != TypeVectorSet {
 		return 0, vectorSetWrongType()
