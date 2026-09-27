@@ -107,3 +107,61 @@ func TestListRenamePreservesTypeTTLAndOrder(t *testing.T) {
 		t.Fatalf("renamed LIST lost TTL: %q", pttl)
 	}
 }
+
+
+func TestLMPOPRedisSemantics(t *testing.T) {
+	s := New(engine.New())
+
+	execute(t, s, "RPUSH", "second", "a", "b", "c")
+	got := execute(t, s, "LMPOP", "2", "first", "second", "LEFT", "COUNT", "2")
+	want := "*2\r\n$6\r\nsecond\r\n*2\r\n$1\r\na\r\n$1\r\nb\r\n"
+	if got != want {
+		t.Fatalf("LMPOP LEFT = %q want %q", got, want)
+	}
+
+	execute(t, s, "RPUSH", "first", "x", "y", "z")
+	got = execute(t, s, "LMPOP", "2", "first", "second", "RIGHT", "COUNT", "2")
+	want = "*2\r\n$5\r\nfirst\r\n*2\r\n$1\r\nz\r\n$1\r\ny\r\n"
+	if got != want {
+		t.Fatalf("LMPOP RIGHT = %q want %q", got, want)
+	}
+
+	if got := execute(t, s, "LMPOP", "2", "missing-a", "missing-b", "LEFT"); got != "*-1\r\n" {
+		t.Fatalf("LMPOP missing = %q", got)
+	}
+}
+
+func TestLMPOPWrongTypeAndValidation(t *testing.T) {
+	s := New(engine.New())
+	execute(t, s, "SET", "plain", "value")
+	execute(t, s, "RPUSH", "list", "a")
+
+	args := [][]byte{
+		[]byte("LMPOP"), []byte("2"), []byte("plain"), []byte("list"), []byte("LEFT"),
+	}
+	if _, err := s.Execute(args); err == nil || !strings.HasPrefix(err.Error(), "WRONGTYPE") {
+		t.Fatalf("expected WRONGTYPE before later ready list, err=%v", err)
+	}
+
+	for _, command := range [][][]byte{
+		{[]byte("LMPOP"), []byte("0"), []byte("LEFT")},
+		{[]byte("LMPOP"), []byte("1"), []byte("list"), []byte("UP")},
+		{[]byte("LMPOP"), []byte("1"), []byte("list"), []byte("LEFT"), []byte("COUNT"), []byte("0")},
+	} {
+		if _, err := s.Execute(command); err == nil {
+			t.Fatalf("expected LMPOP validation error for %q", command)
+		}
+	}
+}
+
+func TestLMPOPCommandKeys(t *testing.T) {
+	refs, err := commandKeys([][]byte{
+		[]byte("LMPOP"), []byte("2"), []byte("a"), []byte("b"), []byte("LEFT"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != 2 || string(refs[0].value) != "a" || string(refs[1].value) != "b" {
+		t.Fatalf("LMPOP key refs=%v", refs)
+	}
+}

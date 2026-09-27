@@ -125,7 +125,7 @@ func isBlockingListCommand(args [][]byte) bool {
 		return false
 	}
 	switch strings.ToUpper(string(args[0])) {
-	case "BLPOP", "BRPOP", "BLMOVE", "BRPOPLPUSH":
+	case "BLPOP", "BRPOP", "BLMOVE", "BRPOPLPUSH", "BLMPOP":
 		return true
 	default:
 		return false
@@ -177,6 +177,17 @@ func (s *Server) executeBlockingList(args [][]byte, cancel <-chan struct{}) ([]b
 			return nil, errors.New("ERR syntax error")
 		}
 		return s.blockingMove(string(args[1]), string(args[2]), sourceSide, destinationSide, timeout, false, cancel)
+
+	case "BLMPOP":
+		timeout, err := parseBlockingTimeout(args[1])
+		if err != nil {
+			return nil, err
+		}
+		request, err := parseListMPop(args, 2)
+		if err != nil {
+			return nil, err
+		}
+		return s.blockingLMPop(request, timeout, cancel)
 
 	case "BRPOPLPUSH":
 		timeout, err := parseBlockingTimeout(args[3])
@@ -294,6 +305,75 @@ func (s *Server) blockingMove(source, destination, sourceSide, destinationSide s
 		case <-timeoutC:
 			s.unregisterListWaiter(waiter)
 			return nullBulk(), nil
+		case <-cancel:
+			s.unregisterListWaiter(waiter)
+			return nil, errBlockingClientGone
+		}
+	}
+}
+
+
+func (s *Server) blockingLMPop(request listMPopRequest, timeout time.Duration, cancel <-chan struct{}) ([]byte, error) {
+	timer, timeoutC := blockingTimer(timeout)
+	if timer != nil {
+		defer timer.Stop()
+	}
+
+	command := make([][]byte, 0, 4+len(request.keys))
+	command = append(command, []byte("LMPOP"))
+	command = append(command, []byte(strconv.Itoa(len(request.keys))))
+	for _, key := range request.keys {
+		command = append(command, []byte(key))
+	}
+	if request.left {
+		command = append(command, []byte("LEFT"))
+	} else {
+		command = append(command, []byte("RIGHT"))
+	}
+	if request.count != 1 {
+		command = append(command, []byte("COUNT"), []byte(strconv.Itoa(request.count)))
+	}
+
+	for {
+		waiter, ok := s.registerListWaiter(request.keys)
+		if !ok {
+			return nil, errBlockingCanceled
+		}
+
+		ready := false
+		for _, key := range request.keys {
+			length, err := s.store.ListLen(key)
+			if err != nil {
+				s.unregisterListWaiter(waiter)
+				return nil, err
+			}
+			if length > 0 {
+				ready = true
+				break
+			}
+		}
+
+		if ready {
+			response, err := s.executeDurable(command)
+			if err != nil {
+				s.unregisterListWaiter(waiter)
+				return nil, err
+			}
+			if string(response) != "*-1\r\n" {
+				s.unregisterListWaiter(waiter)
+				return response, nil
+			}
+		}
+
+		select {
+		case <-waiter.ch:
+			s.unregisterListWaiter(waiter)
+			if s.blockingStopped() {
+				return nil, errBlockingCanceled
+			}
+		case <-timeoutC:
+			s.unregisterListWaiter(waiter)
+			return []byte("*-1\r\n"), nil
 		case <-cancel:
 			s.unregisterListWaiter(waiter)
 			return nil, errBlockingClientGone

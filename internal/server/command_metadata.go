@@ -52,6 +52,12 @@ func commandKeys(args [][]byte) ([]commandKeyRef, error) {
 	case "ZMPOP":
 		return commandZMPopKeys(args)
 
+	case "LMPOP":
+		return commandLMPopKeys(args)
+
+	case "BLMPOP":
+		return commandBLMPopKeys(args)
+
 	case "BZMPOP":
 		return commandBZMPopKeys(args)
 
@@ -230,6 +236,42 @@ func commandZSetAlgebraKeys(
 		)
 	}
 
+	return refs, nil
+}
+
+func commandLMPopKeys(args [][]byte) ([]commandKeyRef, error) {
+	if len(args) < 4 {
+		return nil, errors.New("ERR Invalid number of arguments specified for command")
+	}
+	request, err := parseListMPop(args, 1)
+	if err != nil {
+		return nil, err
+	}
+	refs := make([]commandKeyRef, 0, len(request.keys))
+	for _, key := range request.keys {
+		refs = append(refs, commandKeyRef{
+			value: []byte(key),
+			flags: []string{"RW", "access", "delete"},
+		})
+	}
+	return refs, nil
+}
+
+func commandBLMPopKeys(args [][]byte) ([]commandKeyRef, error) {
+	if len(args) < 5 {
+		return nil, errors.New("ERR Invalid number of arguments specified for command")
+	}
+	request, err := parseListMPop(args, 2)
+	if err != nil {
+		return nil, err
+	}
+	refs := make([]commandKeyRef, 0, len(request.keys))
+	for _, key := range request.keys {
+		refs = append(refs, commandKeyRef{
+			value: []byte(key),
+			flags: []string{"RW", "access", "delete"},
+		})
+	}
 	return refs, nil
 }
 
@@ -616,6 +658,12 @@ func commandInfoFlags(
 	case "ZMPOP":
 		return []string{"write", "movablekeys"}
 
+	case "LMPOP":
+		return []string{"write", "movablekeys"}
+
+	case "BLMPOP":
+		return []string{"write", "blocking", "movablekeys"}
+
 	case "BZMPOP":
 		return []string{"write", "blocking", "movablekeys"}
 
@@ -759,6 +807,21 @@ func commandInfoACL(
 			"@write",
 			"@bitmap",
 			"@slow",
+		}
+
+	case "LMPOP":
+		return []string{
+			"@write",
+			"@list",
+			"@slow",
+		}
+
+	case "BLMPOP":
+		return []string{
+			"@write",
+			"@list",
+			"@slow",
+			"@blocking",
 		}
 
 	case "EVAL", "EVALSHA",
