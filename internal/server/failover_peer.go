@@ -13,11 +13,12 @@ import (
 )
 
 type failoverPeerState struct {
-	NodeID     string `json:"node_id"`
-	Role       string `json:"role"`
-	MasterDown bool   `json:"master_down"`
-	Offset     int64  `json:"offset"`
-	Priority   int    `json:"priority"`
+	NodeID      string `json:"node_id"`
+	Role        string `json:"role"`
+	MasterDown  bool   `json:"master_down"`
+	Offset      int64  `json:"offset"`
+	Priority    int    `json:"priority"`
+	MasterRunID string `json:"master_run_id,omitempty"`
 }
 
 func (s *Server) localFailoverState(now time.Time) failoverPeerState {
@@ -25,6 +26,7 @@ func (s *Server) localFailoverState(now time.Time) failoverPeerState {
 	role := s.replication.role
 	nodeID := s.replication.runID
 	offset := s.replication.offset
+	masterRunID := s.replication.masterRunID
 	masterDown := role == replicationReplica &&
 		s.replication.masterLinkStatus == "down" &&
 		!s.replication.masterDownSince.IsZero() &&
@@ -41,7 +43,8 @@ func (s *Server) localFailoverState(now time.Time) failoverPeerState {
 		Role:       roleName,
 		MasterDown: masterDown,
 		Offset:     offset,
-		Priority:   s.failoverPriority,
+		Priority:    s.failoverPriority,
+		MasterRunID: masterRunID,
 	}
 }
 
