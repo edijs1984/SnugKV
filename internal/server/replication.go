@@ -1148,8 +1148,31 @@ func (s *Server) maintainAutoFailover(now time.Time) error {
 		return nil
 	}
 	if len(s.failoverPeers) > 0 {
-		_, err := s.evaluatePeerFailover(now)
-		return err
+		election, err := s.runFailoverElectionRound(now)
+		if err != nil {
+			return err
+		}
+		if !election.Won {
+			return nil
+		}
+		s.replication.mu.RLock()
+		lineage := s.replication.masterRunID
+		localID := s.replication.runID
+		s.replication.mu.RUnlock()
+		lease, err := s.acquireFailoverLeaseRound(now, lineage, election.Term, localID)
+		if err != nil {
+			return err
+		}
+		if !lease.QuorumReached {
+			return nil
+		}
+		s.stopReplicaFollow()
+		s.durableMu.Lock()
+		defer s.durableMu.Unlock()
+		if !s.replication.autoFailoverDue(now, s.autoFailoverTimeout) {
+			return nil
+		}
+		return s.promoteReplicaLocked()
 	}
 	s.stopReplicaFollow()
 	s.durableMu.Lock()
