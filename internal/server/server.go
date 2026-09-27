@@ -305,6 +305,16 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 				return nil, errors.New("ERR wrong number of arguments for 'cluster|keyslot' command")
 			}
 			return integer(int64(clusterKeySlot(args[2]))), nil
+		case "SLOTS":
+			if len(args) != 2 {
+				return nil, errors.New("ERR wrong number of arguments for 'cluster|slots' command")
+			}
+			return s.clusterSlotsReply()
+		case "SHARDS":
+			if len(args) != 2 {
+				return nil, errors.New("ERR wrong number of arguments for 'cluster|shards' command")
+			}
+			return s.clusterShardsReply()
 		default:
 			return nil, errors.New("ERR unknown subcommand")
 		}
