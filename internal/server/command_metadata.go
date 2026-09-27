@@ -577,7 +577,7 @@ func commandInfoArity(info commandInfo) int {
 
 func commandDenyOOM(name string) bool {
 	switch strings.ToUpper(name) {
-	case "SET", "SETNX", "SETEX", "PSETEX",
+	case "SET", "SETNX", "SETEX", "PSETEX", "HSETEX",
 		"GETSET", "APPEND",
 		"INCR", "INCRBY", "DECR", "DECRBY", "INCRBYFLOAT",
 		"MSET", "MSETNX",
@@ -623,6 +623,19 @@ func commandInfoFlags(
 
 	case "HSET", "SADD", "LPUSH", "ZADD":
 		return []string{"write", "denyoom", "fast"}
+
+	case "HSETEX":
+		return []string{"write", "denyoom", "fast"}
+
+	case "LCS":
+		return []string{
+			"@read",
+			"@string",
+			"@slow",
+		}
+
+	case "HGETEX", "HGETDEL":
+		return []string{"write", "fast"}
 
 	case "SET", "COPY":
 		return []string{"write", "denyoom"}
@@ -738,6 +751,20 @@ func commandInfoACL(
 		return []string{
 			"@read",
 			"@string",
+			"@fast",
+		}
+
+	case "HGETEX", "HGETDEL":
+		return []string{
+			"@write",
+			"@hash",
+			"@fast",
+		}
+
+	case "HSETEX":
+		return []string{
+			"@write",
+			"@hash",
 			"@fast",
 		}
 

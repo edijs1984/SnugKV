@@ -17,6 +17,9 @@ var hashCommands = map[string]commandInfo{
 	"HSET":         {4, 0, 1, 1, 1, true},
 	"HMSET":        {4, 0, 1, 1, 1, true},
 	"HGET":         {3, 3, 1, 1, 1, false},
+	"HGETDEL":      {5, 0, 1, 1, 1, true},
+	"HGETEX":       {5, 0, 1, 1, 1, true},
+	"HSETEX":       {6, 0, 1, 1, 1, true},
 	"HDEL":         {3, 0, 1, 1, 1, true},
 	"HLEN":         {2, 2, 1, 1, 1, false},
 	"HEXISTS":      {3, 3, 1, 1, 1, false},
@@ -123,6 +126,58 @@ func (s *Server) executeHash(args [][]byte) ([]byte, error) {
 			return nil, err
 		}
 		return optionalBulk(value, found), nil
+
+	case "HGETDEL":
+		fields, err := parseHashFieldListArgs(args, 2)
+		if err != nil {
+			return nil, err
+		}
+		values, found, err := s.store.HashGetDel(key, fields)
+		if err != nil {
+			return nil, err
+		}
+		items := make([][]byte, len(values))
+		for i := range values {
+			items[i] = optionalBulk(values[i], found[i])
+		}
+		return array(items...), nil
+
+	case "HGETEX":
+		options, fieldsPos, err := parseHGetExOptions(args)
+		if err != nil {
+			return nil, err
+		}
+		fields, err := parseHashFieldListArgs(args, fieldsPos)
+		if err != nil {
+			return nil, err
+		}
+		values, found, err := s.store.HashGetEx(key, fields, options)
+		if err != nil {
+			return nil, err
+		}
+		items := make([][]byte, len(values))
+		for i := range values {
+			items[i] = optionalBulk(values[i], found[i])
+		}
+		return array(items...), nil
+
+	case "HSETEX":
+		options, fieldsPos, err := parseHSetExOptions(args)
+		if err != nil {
+			return nil, err
+		}
+		fields, values, err := parseHashFieldValueListArgs(args, fieldsPos)
+		if err != nil {
+			return nil, err
+		}
+		applied, err := s.store.HashSetEx(key, fields, values, options)
+		if err != nil {
+			return nil, err
+		}
+		if applied {
+			return integer(1), nil
+		}
+		return integer(0), nil
 
 	case "HDEL":
 		deleted, err := s.store.HashDel(key, args[2:])
@@ -453,4 +508,145 @@ func parseHashFieldExpireArgs(cmd string, args [][]byte) (int64, string, [][]byt
 	default:
 		return 0, "", nil, errors.New("ERR unsupported hash field expiry command")
 	}
+}
+
+
+func parseHashFieldValueListArgs(args [][]byte, fieldsPos int) ([][]byte, [][]byte, error) {
+	if len(args) <= fieldsPos+1 || !strings.EqualFold(string(args[fieldsPos]), "FIELDS") {
+		return nil, nil, errors.New("ERR Mandatory argument FIELDS is missing or not at the right position")
+	}
+
+	count, err := strconv.Atoi(string(args[fieldsPos+1]))
+	if err != nil || count <= 0 {
+		return nil, nil, errors.New("ERR invalid number of fields")
+	}
+
+	remaining := len(args) - (fieldsPos + 2)
+	if remaining%2 != 0 || count != remaining/2 {
+		return nil, nil, fmt.Errorf("ERR wrong number of arguments for '%s' command", strings.ToLower(string(args[0])))
+	}
+
+	fields := make([][]byte, 0, count)
+	values := make([][]byte, 0, count)
+	for i := fieldsPos + 2; i < len(args); i += 2 {
+		fields = append(fields, args[i])
+		values = append(values, args[i+1])
+	}
+	return fields, values, nil
+}
+
+func parseHashExpireAtMS(option string, raw []byte) (int64, error) {
+	value, err := strconv.ParseInt(string(raw), 10, 64)
+	if err != nil {
+		return 0, errors.New("ERR value is not an integer or out of range")
+	}
+
+	switch option {
+	case "EX":
+		delta, ok := checkedMul1000(value)
+		if !ok {
+			return 0, errors.New("ERR invalid expire time")
+		}
+		when, ok := checkedAddInt64(time.Now().UnixMilli(), delta)
+		if !ok {
+			return 0, errors.New("ERR invalid expire time")
+		}
+		return when, nil
+	case "PX":
+		when, ok := checkedAddInt64(time.Now().UnixMilli(), value)
+		if !ok {
+			return 0, errors.New("ERR invalid expire time")
+		}
+		return when, nil
+	case "EXAT":
+		when, ok := checkedMul1000(value)
+		if !ok {
+			return 0, errors.New("ERR invalid expire time")
+		}
+		return when, nil
+	case "PXAT":
+		return value, nil
+	default:
+		return 0, errors.New("ERR invalid expire option")
+	}
+}
+
+func parseHGetExOptions(args [][]byte) (engine.HashGetExOptions, int, error) {
+	var options engine.HashGetExOptions
+	if len(args) < 3 {
+		return options, 0, fmt.Errorf("ERR wrong number of arguments for '%s' command", strings.ToLower(string(args[0])))
+	}
+
+	switch strings.ToUpper(string(args[2])) {
+	case "FIELDS":
+		return options, 2, nil
+
+	case "PERSIST":
+		options.Persist = true
+		return options, 3, nil
+
+	case "EX", "PX", "EXAT", "PXAT":
+		if len(args) <= 3 {
+			return options, 0, fmt.Errorf("ERR wrong number of arguments for '%s' command", strings.ToLower(string(args[0])))
+		}
+		when, err := parseHashExpireAtMS(strings.ToUpper(string(args[2])), args[3])
+		if err != nil {
+			return options, 0, err
+		}
+		options.ExpireAtMS = &when
+		return options, 4, nil
+
+	default:
+		return options, 2, nil
+	}
+}
+
+func parseHSetExOptions(args [][]byte) (engine.HashSetExOptions, int, error) {
+	var options engine.HashSetExOptions
+	expirationSeen := false
+	conditionSeen := false
+
+	for i := 2; i < len(args); {
+		token := strings.ToUpper(string(args[i]))
+		switch token {
+		case "FIELDS":
+			return options, i, nil
+
+		case "FNX", "FXX":
+			if conditionSeen {
+				return options, 0, errors.New("ERR Only one of FXX or FNX arguments can be specified")
+			}
+			conditionSeen = true
+			options.Condition = token
+			i++
+
+		case "KEEPTTL":
+			if expirationSeen {
+				return options, 0, errors.New("ERR Only one of EX, PX, EXAT, PXAT or KEEPTTL arguments can be specified")
+			}
+			expirationSeen = true
+			options.KeepTTL = true
+			i++
+
+		case "EX", "PX", "EXAT", "PXAT":
+			if expirationSeen {
+				return options, 0, errors.New("ERR Only one of EX, PX, EXAT, PXAT or KEEPTTL arguments can be specified")
+			}
+			if i+1 >= len(args) {
+				return options, 0, errors.New("ERR missing expire time")
+			}
+			expirationSeen = true
+			when, err := parseHashExpireAtMS(token, args[i+1])
+			if err != nil {
+				return options, 0, err
+			}
+			options.ExpireAtMS = &when
+			i += 2
+
+		default:
+			return options, 0, fmt.Errorf("ERR unknown argument: %s", string(args[i]))
+		}
+	}
+
+	return options, 0, fmt.Errorf("ERR wrong number of arguments for '%s' command", strings.ToLower(string(args[0])))
 }
