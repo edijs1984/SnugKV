@@ -224,3 +224,122 @@ func queryFailoverVote(addr string, timeout time.Duration, lineage string, term 
 	}
 	return reply, nil
 }
+
+
+type failoverRoundResult struct {
+	Term          uint64
+	CandidateID   string
+	Votes         int
+	QuorumReached bool
+	Won           bool
+}
+
+type observedFailoverPeer struct {
+	addr  string
+	state failoverPeerState
+}
+
+func (s *Server) collectFailoverPeers(now time.Time) (failoverPeerState, []observedFailoverPeer) {
+	local := s.localFailoverState(now)
+	peers := make([]observedFailoverPeer, 0, len(s.failoverPeers))
+	for _, addr := range s.failoverPeers {
+		peer, err := queryFailoverPeer(addr, 200*time.Millisecond)
+		if err != nil {
+			continue
+		}
+		if peer.Role != "replica" ||
+			peer.MasterRunID == "" ||
+			peer.MasterRunID != local.MasterRunID {
+			continue
+		}
+		peers = append(peers, observedFailoverPeer{addr: addr, state: peer})
+	}
+	return local, peers
+}
+
+func (s *Server) runFailoverElectionRound(now time.Time) (failoverRoundResult, error) {
+	local, peers := s.collectFailoverPeers(now)
+	if local.Role != "replica" || !local.MasterDown || local.MasterRunID == "" {
+		return failoverRoundResult{}, nil
+	}
+
+	observations := make([]failoverObservation, 0, len(peers)+1)
+	observations = append(observations, failoverObservation{
+		NodeID:     local.NodeID,
+		MasterDown: local.MasterDown,
+		Eligible:   local.Priority > 0,
+		Offset:     local.Offset,
+		Priority:   local.Priority,
+	})
+	maxTerm := local.Term
+	for _, peer := range peers {
+		observations = append(observations, failoverObservation{
+			NodeID:     peer.state.NodeID,
+			MasterDown: peer.state.MasterDown,
+			Eligible:   peer.state.Priority > 0,
+			Offset:     peer.state.Offset,
+			Priority:   peer.state.Priority,
+		})
+		if peer.state.Term > maxTerm {
+			maxTerm = peer.state.Term
+		}
+	}
+
+	election := evaluateFailoverElection(observations, s.failoverQuorum)
+	result := failoverRoundResult{
+		CandidateID:   election.CandidateID,
+		QuorumReached: election.QuorumReached,
+	}
+	if !election.QuorumReached || election.CandidateID == "" || election.CandidateID != local.NodeID {
+		return result, nil
+	}
+
+	term := maxTerm + 1
+	result.Term = term
+
+	selfVote, err := s.requestFailoverVote(
+		now,
+		local.MasterRunID,
+		term,
+		local.NodeID,
+		local.Offset,
+		local.Priority,
+	)
+	if err != nil {
+		return result, err
+	}
+	if selfVote.Term > term {
+		result.Term = selfVote.Term
+		return result, nil
+	}
+	if selfVote.Granted {
+		result.Votes++
+	}
+
+	for _, peer := range peers {
+		vote, err := queryFailoverVote(
+			peer.addr,
+			200*time.Millisecond,
+			local.MasterRunID,
+			term,
+			local.NodeID,
+			local.Offset,
+			local.Priority,
+		)
+		if err != nil {
+			continue
+		}
+		if vote.Term > term {
+			result.Term = vote.Term
+			return result, nil
+		}
+		if vote.Granted {
+			result.Votes++
+		}
+		if result.Votes >= s.failoverQuorum {
+			result.Won = true
+			return result, nil
+		}
+	}
+	return result, nil
+}
