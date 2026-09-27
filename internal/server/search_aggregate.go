@@ -327,32 +327,29 @@ func parseAggregateOptions(args [][]byte) (aggregateOptions, error) {
 			options.cursorCount = 1000
 			pos++
 			for pos < len(args) {
-				switch strings.ToUpper(string(args[pos])) {
+				token := strings.ToUpper(string(args[pos]))
+				if token != "COUNT" && token != "MAXIDLE" {
+					break
+				}
+				if pos+1 >= len(args) {
+					return aggregateOptions{}, errors.New("ERR syntax error")
+				}
+				switch token {
 				case "COUNT":
-					if pos+1 >= len(args) {
-						return aggregateOptions{}, errors.New("ERR syntax error")
-					}
 					count, err := strconv.Atoi(string(args[pos+1]))
 					if err != nil || count <= 0 {
 						return aggregateOptions{}, errors.New("ERR value is not an integer or out of range")
 					}
 					options.cursorCount = count
-					pos += 2
 				case "MAXIDLE":
-					if pos+1 >= len(args) {
-						return aggregateOptions{}, errors.New("ERR syntax error")
-					}
 					maxIdle, err := strconv.ParseInt(string(args[pos+1]), 10, 64)
 					if err != nil || maxIdle <= 0 {
 						return aggregateOptions{}, errors.New("ERR value is not an integer or out of range")
 					}
 					options.cursorMaxIdle = maxIdle
-					pos += 2
-				default:
-					goto cursorOptionsDone
 				}
+				pos += 2
 			}
-		cursorOptionsDone:
 
 		default:
 			return aggregateOptions{}, fmt.Errorf("SEARCH_ARG_UNRECOGNIZED Unknown argument `%s`", string(args[pos]))
