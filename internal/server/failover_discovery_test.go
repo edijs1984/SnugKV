@@ -235,3 +235,59 @@ func TestFailoverDiscoveryPlanRejectsNoEligiblePeers(t *testing.T) {
 		t.Fatal("expected no eligible discovered peers error")
 	}
 }
+
+
+func TestFailoverDiscoveryReportsStaleBeforeEviction(t *testing.T) {
+	now := time.Now()
+	s := New(engine.New())
+	configureDiscoveryNode(s, "cluster-a", 1, "127.0.0.1:7001", nil, 0)
+	s.failoverDiscoveryInterval = time.Second
+
+	s.failoverDiscoveryMu.Lock()
+	s.failoverDiscovered["127.0.0.1:7002"] = failoverDiscoveredPeer{
+		Address:      "127.0.0.1:7002",
+		LastSeenUnix: now.Add(-3 * time.Second).Unix(),
+		State: failoverPeerState{
+			AdvertiseAddr: "127.0.0.1:7002",
+			GroupID:       "cluster-a",
+			ConfigEpoch:   1,
+		},
+	}
+	s.failoverDiscoveryMu.Unlock()
+
+	peers := s.discoveredFailoverPeersAt(now)
+	if len(peers) != 1 {
+		t.Fatalf("peers=%+v", peers)
+	}
+	if peers[0].Fresh {
+		t.Fatalf("expected stale peer: %+v", peers[0])
+	}
+	if peers[0].AgeMS < 2000 {
+		t.Fatalf("unexpected age: %+v", peers[0])
+	}
+}
+
+func TestFailoverDiscoveryEvictsVeryOldPeers(t *testing.T) {
+	now := time.Now()
+	s := New(engine.New())
+	configureDiscoveryNode(s, "cluster-a", 1, "127.0.0.1:7001", nil, 0)
+	s.failoverDiscoveryInterval = time.Second
+
+	s.failoverDiscoveryMu.Lock()
+	s.failoverDiscovered["127.0.0.1:7002"] = failoverDiscoveredPeer{
+		Address:      "127.0.0.1:7002",
+		LastSeenUnix: now.Add(-10 * time.Second).Unix(),
+		State: failoverPeerState{
+			AdvertiseAddr: "127.0.0.1:7002",
+			GroupID:       "cluster-a",
+			ConfigEpoch:   1,
+		},
+	}
+	s.failoverDiscoveryLastRun = now.Add(-2 * time.Second)
+	s.failoverDiscoveryMu.Unlock()
+
+	s.refreshFailoverDiscovery(now)
+	if got := s.discoveredFailoverPeersAt(now); len(got) != 0 {
+		t.Fatalf("expected old peer eviction, got=%+v", got)
+	}
+}
