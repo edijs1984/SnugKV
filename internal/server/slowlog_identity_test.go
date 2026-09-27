@@ -189,14 +189,8 @@ func TestSlowlogTCPTransactionAndScriptingPaths(t *testing.T) {
 
 
 func TestSlowlogTCPFunctionPaths(t *testing.T) {
-	srv := connectTestServerInstance(t)
-	conn := connectTCPServer(t, srv)
+	conn := connectTestServer(t)
 	reader := bufio.NewReader(conn)
-
-	code := "#!lua name=slowlogfn\nredis.register_function('reader', function(keys,args) return redis.call('GET',keys[1]) end)\nredis.register_function{function_name='reader_ro',callback=function(keys,args) return redis.call('GET',keys[1]) end,flags={'no-writes'}}"
-	if got := loadFunctionLibrary(t, srv.server, code); !strings.HasPrefix(got, "$") {
-		t.Fatalf("FUNCTION LOAD=%q", got)
-	}
 
 	send := func(args ...string) {
 		t.Helper()
@@ -228,6 +222,15 @@ func TestSlowlogTCPFunctionPaths(t *testing.T) {
 			}
 		}
 		return out.String()
+	}
+
+	code := "#!lua name=slowlogfn\nredis.register_function('reader', function(keys,args) return redis.call('GET',keys[1]) end)\nredis.register_function{function_name='reader_ro',callback=function(keys,args) return redis.call('GET',keys[1]) end,flags={'no-writes'}}"
+	send("FUNCTION", "LOAD", code)
+	if got := readLine(); !strings.HasPrefix(got, "$") {
+		t.Fatalf("FUNCTION LOAD header=%q", got)
+	}
+	if got := readLine(); got != "slowlogfn\r\n" {
+		t.Fatalf("FUNCTION LOAD body=%q", got)
 	}
 
 	send("CONFIG", "SET", "slowlog-log-slower-than", "0")
