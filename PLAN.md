@@ -1,5 +1,13 @@
 # SnugKV Delivery Plan
 
+## Phase F — SLOWLOG and persistence controls (2026-09-27)
+
+- [x] Implement the audited SLOWLOG and persistence command slice, client identity, one-off AOF export, rewrite serialization, INFO job results, and bidirectional background-job scheduling.
+- [x] Operator-reported full race/vet/RESP-fuzz gates and scoped live Redis 8.10.2 comparisons. Evidence: `docs/SLOWLOG-PERSISTENCE-AUDIT.md`.
+- [ ] PR review and GitHub CI for this batch; implementation is not yet merged.
+- [ ] Review remaining lifecycle/transaction and SLOWLOG fast-path gaps listed in the audit before claiming full parity.
+- [ ] MONITOR: next Phase F implementation target after this batch's review/merge.
+
 ## Replication hardening update — Redis RDB full sync
 
 - [x] Redis 8.2 primary -> SnugKV replica length-prefixed RDB full-sync import for the audited core object encodings and TTLs.
