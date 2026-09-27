@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"testing"
 
 	"snugkv/internal/engine"
@@ -90,5 +91,113 @@ func TestConfigureClusterSlotsBuildsOwnershipMap(t *testing.T) {
 		s.clusterSlotOwners[8192] != "127.0.0.1:7001" ||
 		s.clusterSlotOwners[16383] != "127.0.0.1:7001" {
 		t.Fatalf("unexpected ownership map")
+	}
+}
+
+
+func TestClusterRoutingAllowsLocalSlot(t *testing.T) {
+	s := New(engine.New())
+	local := "127.0.0.1:7000"
+	key := []byte("foo")
+	slot := clusterKeySlot(key)
+	if err := s.configureClusterSlots(true, local, map[string]string{
+		fmt.Sprintf("%d", slot): local,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.execute([][]byte{[]byte("SET"), key, []byte("bar")}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClusterRoutingReturnsMoved(t *testing.T) {
+	s := New(engine.New())
+	key := []byte("foo")
+	slot := clusterKeySlot(key)
+	if err := s.configureClusterSlots(true, "127.0.0.1:7000", map[string]string{
+		fmt.Sprintf("%d", slot): "127.0.0.1:7001",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := s.execute([][]byte{[]byte("GET"), key})
+	if err == nil || err.Error() != fmt.Sprintf("MOVED %d 127.0.0.1:7001", slot) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestClusterRoutingReturnsCrossSlot(t *testing.T) {
+	s := New(engine.New())
+	if err := s.configureClusterSlots(true, "127.0.0.1:7000", map[string]string{
+		"0-16383": "127.0.0.1:7000",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := s.execute([][]byte{[]byte("MGET"), []byte("foo"), []byte("bar")})
+	if err == nil || err.Error() != "CROSSSLOT Keys in request don't hash to the same slot" {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestClusterRoutingAllowsHashTaggedMultiKey(t *testing.T) {
+	s := New(engine.New())
+	if err := s.configureClusterSlots(true, "127.0.0.1:7000", map[string]string{
+		"0-16383": "127.0.0.1:7000",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := s.execute([][]byte{
+		[]byte("MGET"),
+		[]byte("user:{42}:a"),
+		[]byte("user:{42}:b"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClusterRoutingReturnsClusterDownForUnservedSlot(t *testing.T) {
+	s := New(engine.New())
+	if err := s.configureClusterSlots(true, "127.0.0.1:7000", map[string]string{
+		"0": "127.0.0.1:7000",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	key := []byte("foo")
+	if clusterKeySlot(key) == 0 {
+		t.Fatal("fixture unexpectedly hashes to slot 0")
+	}
+	_, err := s.execute([][]byte{[]byte("GET"), key})
+	if err == nil || err.Error() != "CLUSTERDOWN Hash slot not served" {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestClusterRoutingChecksEvalKeys(t *testing.T) {
+	s := New(engine.New())
+	if err := s.configureClusterSlots(true, "127.0.0.1:7000", map[string]string{
+		"0-16383": "127.0.0.1:7000",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := s.execute([][]byte{
+		[]byte("EVAL"),
+		[]byte("return 1"),
+		[]byte("2"),
+		[]byte("foo"),
+		[]byte("bar"),
+	})
+	if err == nil || err.Error() != "CROSSSLOT Keys in request don't hash to the same slot" {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestClusterRoutingDisabledPreservesStandaloneBehavior(t *testing.T) {
+	s := New(engine.New())
+	if _, err := s.execute([][]byte{
+		[]byte("MGET"),
+		[]byte("foo"),
+		[]byte("bar"),
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
