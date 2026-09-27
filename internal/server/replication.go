@@ -54,6 +54,7 @@ type replicationState struct {
 	masterPort           int
 	masterLinkStatus     string
 	masterSyncInProgress bool
+	masterDownSince       time.Time
 
 	connectedReplicas int
 	runID             string
@@ -125,6 +126,7 @@ func (r *replicationState) setReplica(host string, port int) {
 	r.masterPort = port
 	r.masterLinkStatus = "down"
 	r.masterSyncInProgress = true
+	r.masterDownSince = time.Now()
 	r.mu.Unlock()
 }
 
@@ -133,6 +135,7 @@ func (r *replicationState) setReplicaConnected() {
 	if r.role == replicationReplica {
 		r.masterLinkStatus = "up"
 		r.masterSyncInProgress = false
+		r.masterDownSince = time.Time{}
 	}
 	r.mu.Unlock()
 }
@@ -142,6 +145,9 @@ func (r *replicationState) setReplicaDisconnected() {
 	if r.role == replicationReplica {
 		r.masterLinkStatus = "down"
 		r.masterSyncInProgress = false
+		if r.masterDownSince.IsZero() {
+			r.masterDownSince = time.Now()
+		}
 	}
 	r.mu.Unlock()
 }
@@ -155,6 +161,7 @@ func (r *replicationState) promote() {
 	r.masterSyncInProgress = false
 	r.masterRunID = ""
 	r.masterRedisStream = false
+	r.masterDownSince = time.Time{}
 	r.mu.Unlock()
 }
 
@@ -226,6 +233,18 @@ func (r *replicationState) requestReplicaACKs() {
 			r.unregisterReplica(id)
 		}
 	}
+}
+
+func (r *replicationState) autoFailoverDue(now time.Time, timeout time.Duration) bool {
+	if timeout <= 0 {
+		return false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.role == replicationReplica &&
+		r.masterLinkStatus == "down" &&
+		!r.masterDownSince.IsZero() &&
+		now.Sub(r.masterDownSince) >= timeout
 }
 
 func (r *replicationState) isReadOnlyReplica() bool {
