@@ -58,3 +58,59 @@ func TestSlowlogTCPClientIdentity(t *testing.T) {
 		}
 	}
 }
+
+
+func TestSlowlogTCPFastGetSetPaths(t *testing.T) {
+	conn := connectTestServer(t)
+	reader := bufio.NewReader(conn)
+
+	send := func(args ...string) {
+		t.Helper()
+		var wire strings.Builder
+		fmt.Fprintf(&wire, "*%d\r\n", len(args))
+		for _, arg := range args {
+			fmt.Fprintf(&wire, "$%d\r\n%s\r\n", len(arg), arg)
+		}
+		if _, err := fmt.Fprint(conn, wire.String()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	readLine := func() string {
+		t.Helper()
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		return line
+	}
+
+	send("CONFIG", "SET", "slowlog-log-slower-than", "0")
+	if got := readLine(); got != "+OK\r\n" { t.Fatalf("CONFIG SET=%q", got) }
+	send("CONFIG", "SET", "slowlog-max-len", "32")
+	if got := readLine(); got != "+OK\r\n" { t.Fatalf("CONFIG SET maxlen=%q", got) }
+	send("SLOWLOG", "RESET")
+	if got := readLine(); got != "+OK\r\n" { t.Fatalf("SLOWLOG RESET=%q", got) }
+
+	send("SET", "slowlog:fast", "hello")
+	if got := readLine(); got != "+OK\r\n" { t.Fatalf("SET=%q", got) }
+	send("GET", "slowlog:fast")
+	if got := readLine(); got != "$5\r\n" { t.Fatalf("GET header=%q", got) }
+	if got := readLine(); got != "hello\r\n" { t.Fatalf("GET body=%q", got) }
+
+	send("SLOWLOG", "GET", "10")
+	var dump strings.Builder
+	for {
+		line := readLine()
+		dump.WriteString(line)
+		if reader.Buffered() == 0 {
+			break
+		}
+	}
+	got := dump.String()
+	if !strings.Contains(got, "$3\r\nSET\r\n") {
+		t.Fatalf("SLOWLOG missing fast-path SET: %q", got)
+	}
+	if !strings.Contains(got, "$3\r\nGET\r\n") {
+		t.Fatalf("SLOWLOG missing fast-path GET: %q", got)
+	}
+}
