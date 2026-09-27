@@ -178,3 +178,114 @@ func TestPersistenceJobsWaitForActiveRewrite(t *testing.T) {
 		t.Fatal("persistence wait did not return after rewrite completed")
 	}
 }
+
+
+func TestPersistenceJobsWaitThroughRewriteToScheduledSave(t *testing.T) {
+	dir := t.TempDir()
+	log, err := persistence.Open(filepath.Join(dir, "active.aof"), "always")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+
+	j := &pausedSlowlogRewriteJournal{
+		log: log,
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	s := New(engine.New())
+	s.snapshotPath = filepath.Join(dir, "dump.snap")
+	s.SetJournal(j)
+	execute(t, s, "SET", "queued", "value")
+	execute(t, s, "BGREWRITEAOF")
+
+	select {
+	case <-j.entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("rewrite did not start")
+	}
+
+	got, err := s.executeSave(true, true)
+	if err != nil || string(got) != "+Background saving scheduled\r\n" {
+		t.Fatalf("BGSAVE SCHEDULE=%q err=%v", got, err)
+	}
+
+	waited := make(chan struct{})
+	go func() {
+		s.waitPersistenceJobs()
+		close(waited)
+	}()
+
+	close(j.release)
+
+	select {
+	case <-waited:
+	case <-time.After(3 * time.Second):
+		t.Fatal("persistence wait did not include scheduled save handoff")
+	}
+
+	found := false
+	if err := persistence.ReplaySnapshot(s.snapshotPath, func(records []persistence.Record) error {
+		for _, record := range records {
+			if string(record.Key) == "queued" && string(record.Value) == "value" {
+				found = true
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("scheduled save had not completed when persistence wait returned")
+	}
+}
+
+func TestPersistenceJobsWaitThroughSaveToScheduledRewrite(t *testing.T) {
+	s := New(engine.New())
+	dir := t.TempDir()
+	s.snapshotPath = filepath.Join(dir, "dump.snap")
+	s.aofRewritePath = filepath.Join(dir, "export.aof")
+	execute(t, s, "SET", "queued", "value")
+
+	s.persistenceJobMu.Lock()
+	s.bgsaveRunning = true
+	s.persistenceJobMu.Unlock()
+
+	got := execute(t, s, "BGREWRITEAOF")
+	if got != "+Background append only file rewriting scheduled\r\n" {
+		t.Fatalf("BGREWRITEAOF=%q", got)
+	}
+
+	s.persistenceJobs.Add(1)
+	go func() {
+		defer s.persistenceJobs.Done()
+		s.runBackgroundSave()
+	}()
+
+	waited := make(chan struct{})
+	go func() {
+		s.waitPersistenceJobs()
+		close(waited)
+	}()
+
+	select {
+	case <-waited:
+	case <-time.After(3 * time.Second):
+		t.Fatal("persistence wait did not include scheduled rewrite handoff")
+	}
+
+	found := false
+	if err := persistence.Replay(s.aofRewritePath, func(records []persistence.Record) error {
+		for _, record := range records {
+			if string(record.Key) == "queued" && string(record.Value) == "value" {
+				found = true
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("scheduled rewrite had not completed when persistence wait returned")
+	}
+}
