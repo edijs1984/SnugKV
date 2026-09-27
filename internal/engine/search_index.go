@@ -1939,6 +1939,73 @@ func (s *Store) CreateSearchIndex(def SearchDefinition) error {
 	return nil
 }
 
+
+func (s *Store) AlterSearchIndex(name string, field SearchField, skipInitialScan bool) error {
+	manager := s.getSearchManager()
+	if manager == nil {
+		return errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + name)
+	}
+
+	manager.mu.RLock()
+	if target, ok := manager.aliases[name]; ok {
+		name = target
+	}
+	current, ok := manager.indexes[name]
+	if !ok {
+		manager.mu.RUnlock()
+		return errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + name)
+	}
+	def := cloneSearchDefinition(current.def)
+	manager.mu.RUnlock()
+
+	for _, existing := range def.Fields {
+		if existing.Alias == field.Alias {
+			return errors.New("SEARCH_QUERY_BAD Duplicate field in schema - " + field.Alias)
+		}
+	}
+	def.Fields = append(def.Fields, field)
+	if err := validateSearchDefinition(def); err != nil {
+		return err
+	}
+
+	if skipInitialScan {
+		manager.mu.Lock()
+		defer manager.mu.Unlock()
+		idx, ok := manager.indexes[name]
+		if !ok {
+			return errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + name)
+		}
+		idx.def = cloneSearchDefinition(def)
+		return nil
+	}
+
+	next := newSearchIndex(def)
+	now := s.now()
+	for i := range s.shards {
+		sh := &s.shards[i]
+		sh.mu.RLock()
+		for key, entry := range sh.all() {
+			if sh.expired(key, entry, now) || entry.valueType != TypeJSON {
+				continue
+			}
+			raw := append([]byte(nil), s.decode(sh, entry)...)
+			if err := next.replaceJSON(key, raw); err != nil {
+				sh.mu.RUnlock()
+				return err
+			}
+		}
+		sh.mu.RUnlock()
+	}
+
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	if _, ok := manager.indexes[name]; !ok {
+		return errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + name)
+	}
+	manager.indexes[name] = next
+	return nil
+}
+
 func (s *Store) SearchDefinitions() []SearchDefinition {
 	manager := s.getSearchManager()
 	if manager == nil {
