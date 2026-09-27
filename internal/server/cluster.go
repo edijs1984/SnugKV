@@ -1,9 +1,12 @@
 package server
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -229,4 +232,117 @@ func (s *Server) clusterShardsReply() ([]byte, error) {
 		items = append(items, shard)
 	}
 	return array(items...), nil
+}
+
+
+func clusterNodeID(addr string) string {
+	sum := sha1.Sum([]byte(addr))
+	return hex.EncodeToString(sum[:])
+}
+
+func (s *Server) clusterOwners() []string {
+	seen := make(map[string]struct{})
+	for _, owner := range s.clusterSlotOwners {
+		if owner != "" {
+			seen[owner] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for owner := range seen {
+		out = append(out, owner)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (s *Server) clusterNodeSlotRanges(owner string) []clusterSlotRange {
+	ranges := make([]clusterSlotRange, 0)
+	start := -1
+	for slot := 0; slot < clusterSlotCount; slot++ {
+		match := s.clusterSlotOwners[slot] == owner
+		if match && start < 0 {
+			start = slot
+			continue
+		}
+		if !match && start >= 0 {
+			ranges = append(ranges, clusterSlotRange{Start: start, End: slot - 1, Owner: owner})
+			start = -1
+		}
+	}
+	if start >= 0 {
+		ranges = append(ranges, clusterSlotRange{Start: start, End: clusterSlotCount - 1, Owner: owner})
+	}
+	return ranges
+}
+
+func clusterSlotRangeText(r clusterSlotRange) string {
+	if r.Start == r.End {
+		return strconv.Itoa(r.Start)
+	}
+	return fmt.Sprintf("%d-%d", r.Start, r.End)
+}
+
+func (s *Server) clusterNodesReply() []byte {
+	owners := s.clusterOwners()
+	lines := make([]string, 0, len(owners))
+	for _, owner := range owners {
+		flags := "master"
+		if owner == s.clusterNodeAddr {
+			flags = "myself,master"
+		}
+		parts := []string{
+			clusterNodeID(owner),
+			owner + "@0",
+			flags,
+			"-",
+			"0",
+			"0",
+			"0",
+			"connected",
+		}
+		for _, r := range s.clusterNodeSlotRanges(owner) {
+			parts = append(parts, clusterSlotRangeText(r))
+		}
+		lines = append(lines, strings.Join(parts, " "))
+	}
+	if len(lines) == 0 {
+		return formatBulkString(nil)
+	}
+	return formatBulkString([]byte(strings.Join(lines, "
+") + "
+"))
+}
+
+func (s *Server) clusterInfoReply() []byte {
+	assigned := 0
+	for _, owner := range s.clusterSlotOwners {
+		if owner != "" {
+			assigned++
+		}
+	}
+	state := "fail"
+	if assigned == clusterSlotCount {
+		state = "ok"
+	}
+	owners := s.clusterOwners()
+	body := fmt.Sprintf(
+		"cluster_state:%s\r\n"+
+			"cluster_slots_assigned:%d\r\n"+
+			"cluster_slots_ok:%d\r\n"+
+			"cluster_slots_pfail:0\r\n"+
+			"cluster_slots_fail:0\r\n"+
+			"cluster_known_nodes:%d\r\n"+
+			"cluster_size:%d\r\n"+
+			"cluster_current_epoch:0\r\n"+
+			"cluster_my_epoch:0\r\n"+
+			"cluster_stats_messages_sent:0\r\n"+
+			"cluster_stats_messages_received:0\r\n"+
+			"total_cluster_links_buffer_limit_exceeded:0\r\n",
+		state,
+		assigned,
+		assigned,
+		len(owners),
+		len(owners),
+	)
+	return formatBulkString([]byte(body))
 }
