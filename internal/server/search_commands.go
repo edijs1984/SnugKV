@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"snugkv/internal/engine"
 )
@@ -23,6 +24,8 @@ var searchCommands = map[string]commandInfo{
 	"FT.ALIASDEL":    {2, 2, 0, 0, 0, true},
 	"FT.TAGVALS":     {3, 3, 0, 0, 0, false},
 	"FT.ALTER":       {6, 0, 0, 0, 0, true},
+	"FT.CURSOR":      {4, 6, 0, 0, 0, false},
+	"FT.CONFIG":      {3, 4, 0, 0, 0, false},
 }
 
 func init() {
@@ -2398,6 +2401,105 @@ func resolveSearchReadIndex(store *engine.Store, args [][]byte) ([][]byte, error
 	resolved[1] = []byte(target)
 	return resolved, nil
 }
+func (s *Server) executeFTCursor(args [][]byte) ([]byte, error) {
+	if len(args) < 4 {
+		return nil, errors.New("ERR wrong number of arguments for 'ft.cursor' command")
+	}
+	sub := strings.ToUpper(string(args[1]))
+	indexName := string(args[2])
+	cursorID, err := strconv.ParseUint(string(args[3]), 10, 64)
+	if err != nil || cursorID == 0 {
+		return nil, errors.New("ERR invalid cursor")
+	}
+	s.searchCursorMu.Lock()
+	defer s.searchCursorMu.Unlock()
+	cursor, ok := s.searchCursors[cursorID]
+	if !ok || time.Now().After(cursor.expiresAt) {
+		delete(s.searchCursors, cursorID)
+		return nil, errors.New("ERR Cursor not found")
+	}
+	resolved, ok := s.store.ResolveSearchIndexName(indexName)
+	if !ok {
+		return nil, errors.New("SEARCH_INDEX_NOT_FOUND Index not found: " + indexName)
+	}
+	if resolved != cursor.indexName {
+		return nil, errors.New("ERR Cursor does not belong to index")
+	}
+	switch sub {
+	case "DEL":
+		delete(s.searchCursors, cursorID)
+		return []byte("+OK\r\n"), nil
+	case "READ":
+		count := cursor.count
+		if len(args) == 6 {
+			if !strings.EqualFold(string(args[4]), "COUNT") {
+				return nil, errors.New("ERR syntax error")
+			}
+			n, parseErr := strconv.Atoi(string(args[5]))
+			if parseErr != nil || n <= 0 {
+				return nil, errors.New("ERR value is not an integer or out of range")
+			}
+			count = n
+		}
+		end := cursor.position + count
+		if end > len(cursor.rows) {
+			end = len(cursor.rows)
+		}
+		page := make([][]byte, 0, end-cursor.position+1)
+		page = append(page, integer(int64(end-cursor.position)))
+		page = append(page, cursor.rows[cursor.position:end]...)
+		cursor.position = end
+		if end == len(cursor.rows) {
+			delete(s.searchCursors, cursorID)
+			return array(array(page...), integer(0)), nil
+		}
+		cursor.expiresAt = time.Now().Add(5 * time.Minute)
+		return array(array(page...), integer(int64(cursorID))), nil
+	default:
+		return nil, errors.New("ERR unknown subcommand")
+	}
+}
+
+func (s *Server) executeFTConfig(args [][]byte) ([]byte, error) {
+	if len(args) < 3 {
+		return nil, errors.New("ERR wrong number of arguments for 'ft.config' command")
+	}
+	sub := strings.ToUpper(string(args[1]))
+	name := strings.ToUpper(string(args[2]))
+	switch sub {
+	case "GET":
+		s.searchConfigMu.RLock()
+		defer s.searchConfigMu.RUnlock()
+		items := make([][]byte, 0)
+		if name == "*" {
+			names := make([]string, 0, len(s.searchConfig))
+			for key := range s.searchConfig { names = append(names, key) }
+			sort.Strings(names)
+			for _, key := range names {
+				items = append(items, array(formatBulkString([]byte(key)), formatBulkString([]byte(s.searchConfig[key]))))
+			}
+			return array(items...), nil
+		}
+		value, ok := s.searchConfig[name]
+		if !ok { return array(), nil }
+		return array(array(formatBulkString([]byte(name)), formatBulkString([]byte(value)))), nil
+	case "SET":
+		if len(args) != 4 { return nil, errors.New("ERR wrong number of arguments for 'ft.config' command") }
+		value := string(args[3])
+		switch name {
+		case "DEFAULT_DIALECT":
+			if value != "1" && value != "2" { return nil, errors.New("ERR invalid config value") }
+		case "MAXSEARCHRESULTS", "MAXAGGREGATERESULTS", "CURSOR_MAX_IDLE":
+			n, err := strconv.ParseInt(value,10,64); if err != nil || n < 0 { return nil, errors.New("ERR invalid config value") }
+		default:
+			return nil, errors.New("ERR Unsupported CONFIG parameter")
+		}
+		s.searchConfigMu.Lock(); s.searchConfig[name]=value; s.searchConfigMu.Unlock()
+		return []byte("+OK\r\n"), nil
+	default:
+		return nil, errors.New("ERR unknown subcommand")
+	}
+}
 func (s *Server) executeSearchCommand(args [][]byte) ([]byte, error) {
 	switch strings.ToUpper(string(args[0])) {
 	case "FT.CREATE":
@@ -2422,6 +2524,10 @@ func (s *Server) executeSearchCommand(args [][]byte) ([]byte, error) {
 		return executeFTAliasDel(s.store, args)
 	case "FT.TAGVALS":
 		return executeFTTagVals(s.store, args)
+	case "FT.CURSOR":
+		return s.executeFTCursor(args)
+	case "FT.CONFIG":
+		return s.executeFTConfig(args)
 	case "FT.INFO", "FT.SEARCH", "FT.AGGREGATE":
 		resolved, err := resolveSearchReadIndex(s.store, args)
 		if err != nil {
@@ -2433,7 +2539,7 @@ func (s *Server) executeSearchCommand(args [][]byte) ([]byte, error) {
 		case "FT.SEARCH":
 			return executeFTSearch(s.store, resolved)
 		default:
-			return executeFTAggregate(s.store, resolved)
+			return executeFTAggregate(s, resolved)
 		}
 	default:
 		return nil, errors.New("ERR command unavailable")
