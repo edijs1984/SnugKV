@@ -2,6 +2,7 @@ package engine
 
 import (
 	"bytes"
+	"encoding/json"
 	"encoding/binary"
 	"errors"
 	"math"
@@ -272,4 +273,117 @@ func (s *Store) VectorSetRemove(key, element string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+
+func (s *Store) VectorSetGetAttr(key, element string) ([]byte, bool, error) {
+	sh := s.shardFor(key)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
+
+	e, ok := sh.get(key)
+	if !ok || sh.expired(key, e, s.now()) {
+		return nil, false, nil
+	}
+	if e.valueType != TypeVectorSet {
+		return nil, false, vectorSetWrongType()
+	}
+	vs, err := decodeVectorSet(s.decode(sh, e))
+	if err != nil {
+		return nil, false, err
+	}
+	member, found := vs.members[element]
+	if !found || len(member.attrs) == 0 {
+		return nil, false, nil
+	}
+	return append([]byte(nil), member.attrs...), true, nil
+}
+
+func (s *Store) VectorSetSetAttr(key, element string, attrs []byte) (bool, error) {
+	if len(attrs) > 0 {
+		var value any
+		if err := json.Unmarshal(attrs, &value); err != nil {
+			return false, errors.New("ERR invalid JSON attributes")
+		}
+		if _, ok := value.(map[string]any); !ok {
+			return false, errors.New("ERR attributes must be a JSON object")
+		}
+	}
+
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	e, ok := sh.get(key)
+	if !ok || sh.expired(key, e, s.now()) {
+		return false, nil
+	}
+	if e.valueType != TypeVectorSet {
+		return false, vectorSetWrongType()
+	}
+	vs, err := decodeVectorSet(s.decode(sh, e))
+	if err != nil {
+		return false, err
+	}
+	member, found := vs.members[element]
+	if !found {
+		return false, nil
+	}
+	member.attrs = append([]byte(nil), attrs...)
+	vs.members[element] = member
+
+	p := vectorSetPreparedEntry(encodeVectorSet(vs))
+	p.expiresAt = sh.expirationAt(key, e)
+	if err := s.publish(sh, key, p); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *Store) VectorSetMembers(key string) ([]string, bool, error) {
+	sh := s.shardFor(key)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
+
+	e, ok := sh.get(key)
+	if !ok || sh.expired(key, e, s.now()) {
+		return nil, false, nil
+	}
+	if e.valueType != TypeVectorSet {
+		return nil, false, vectorSetWrongType()
+	}
+	vs, err := decodeVectorSet(s.decode(sh, e))
+	if err != nil {
+		return nil, false, err
+	}
+	names := make([]string, 0, len(vs.members))
+	for name := range vs.members {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names, true, nil
+}
+
+type VectorSetInfo struct {
+	Dim  int64
+	Size int64
+}
+
+func (s *Store) VectorSetInfo(key string) (VectorSetInfo, bool, error) {
+	sh := s.shardFor(key)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
+
+	e, ok := sh.get(key)
+	if !ok || sh.expired(key, e, s.now()) {
+		return VectorSetInfo{}, false, nil
+	}
+	if e.valueType != TypeVectorSet {
+		return VectorSetInfo{}, false, vectorSetWrongType()
+	}
+	vs, err := decodeVectorSet(s.decode(sh, e))
+	if err != nil {
+		return VectorSetInfo{}, false, err
+	}
+	return VectorSetInfo{Dim:int64(vs.dim), Size:int64(len(vs.members))}, true, nil
 }
