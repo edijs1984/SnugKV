@@ -88,3 +88,14 @@ func TestMonitorSensitiveCommandsExcluded(t *testing.T) {
 		if monitorVisible(clientArgs(name, "secret")) { t.Fatalf("%s must not be emitted", name) }
 	}
 }
+
+func TestMonitorACLRejected(t *testing.T) {
+	conn := connectTestServer(t)
+	r := bufio.NewReader(conn)
+	monitorTestSend(t, conn, "ACL", "SETUSER", "monitor-denied", "on", ">test-password", "+@all", "-monitor", "~*")
+	if got := monitorTestReply(t, r); got != "+OK\r\n" { t.Fatalf("SETUSER=%q", got) }
+	monitorTestSend(t, conn, "AUTH", "monitor-denied", "test-password")
+	if got := monitorTestReply(t, r); got != "+OK\r\n" { t.Fatalf("AUTH=%q", got) }
+	monitorTestSend(t, conn, "MONITOR")
+	if got := monitorTestReply(t, r); !strings.HasPrefix(got, "-NOPERM") { t.Fatalf("MONITOR=%q", got) }
+}
