@@ -414,9 +414,7 @@ func (s *Server) luaRedisCallWithLegacyOOM(
 				return s.executePressureMode(args, false)
 			},
 		)
-		fmt.Printf("MONITOR LUA before feed: cmd=%q result=%q monitors=%d visible=%v\\n", args, result, s.monitorCount.Load(), monitorVisible(args))
 		s.feedMonitorSource("lua", args, result)
-		fmt.Println("MONITOR LUA after feed")
 		if err != nil {
 			return luaPushCommandError(L, protected, err)
 		}
