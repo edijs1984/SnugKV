@@ -405,14 +405,15 @@ func TestSlowlogRecordedOutputUsesTrimmingAndRedaction(t *testing.T) {
 		t.Fatalf("ACL SETUSER reply=%q", reply)
 	}
 
-	long := strings.Repeat("A", 129)
-	execute(t, s, "SADD", "slowlog:set", "foo", long)
+	long := bytes.Repeat([]byte("A"), 129)
+	s.recordSlowlogForClient(nil, [][]byte{[]byte("SADD"), []byte("slowlog:set"), []byte("foo"), long}, 0)
 
-	args := []string{"SADD", "slowlog:set"}
+	many := make([][]byte, 0, 34)
+	many = append(many, []byte("SADD"), []byte("slowlog:set"))
 	for i := 3; i <= 34; i++ {
-		args = append(args, strconv.Itoa(i))
+		many = append(many, []byte(strconv.Itoa(i)))
 	}
-	execute(t, s, args...)
+	s.recordSlowlogForClient(nil, many, 0)
 
 	got := execute(t, s, "SLOWLOG", "GET", "-1")
 	for _, want := range []string{
