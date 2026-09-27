@@ -290,3 +290,97 @@ func TestClusterTopologyCommandsArity(t *testing.T) {
 		t.Fatal("expected CLUSTER SHARDS arity error")
 	}
 }
+
+
+func TestClusterNodeIDStable(t *testing.T) {
+	a := clusterNodeID("127.0.0.1:7000")
+	b := clusterNodeID("127.0.0.1:7000")
+	if a != b || len(a) != 40 {
+		t.Fatalf("a=%q b=%q", a, b)
+	}
+	if a == clusterNodeID("127.0.0.1:7001") {
+		t.Fatal("different endpoints must have different node IDs")
+	}
+}
+
+func TestClusterNodesReply(t *testing.T) {
+	s := New(engine.New())
+	if err := s.configureClusterSlots(true, "127.0.0.1:7000", map[string]string{
+		"0-8191":     "127.0.0.1:7000",
+		"8192-16383": "127.0.0.1:7001",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reply, err := s.execute([][]byte{[]byte("CLUSTER"), []byte("NODES")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(reply)
+	for _, want := range []string{
+		clusterNodeID("127.0.0.1:7000"),
+		clusterNodeID("127.0.0.1:7001"),
+		"127.0.0.1:7000@0 myself,master",
+		"127.0.0.1:7001@0 master",
+		"0-8191",
+		"8192-16383",
+		"connected",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("CLUSTER NODES reply missing %q: %q", want, text)
+		}
+	}
+}
+
+func TestClusterInfoReportsOKForFullCoverage(t *testing.T) {
+	s := New(engine.New())
+	if err := s.configureClusterSlots(true, "127.0.0.1:7000", map[string]string{
+		"0-8191":     "127.0.0.1:7000",
+		"8192-16383": "127.0.0.1:7001",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reply, err := s.execute([][]byte{[]byte("CLUSTER"), []byte("INFO")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(reply)
+	for _, want := range []string{
+		"cluster_state:ok",
+		"cluster_slots_assigned:16384",
+		"cluster_slots_ok:16384",
+		"cluster_known_nodes:2",
+		"cluster_size:2",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("CLUSTER INFO reply missing %q: %q", want, text)
+		}
+	}
+}
+
+func TestClusterInfoReportsFailForPartialCoverage(t *testing.T) {
+	s := New(engine.New())
+	if err := s.configureClusterSlots(true, "127.0.0.1:7000", map[string]string{
+		"0-100": "127.0.0.1:7000",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reply, err := s.execute([][]byte{[]byte("CLUSTER"), []byte("INFO")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(reply)
+	if !strings.Contains(text, "cluster_state:fail") ||
+		!strings.Contains(text, "cluster_slots_assigned:101") {
+		t.Fatalf("reply=%q", text)
+	}
+}
+
+func TestClusterNodesAndInfoArity(t *testing.T) {
+	s := New(engine.New())
+	if _, err := s.execute([][]byte{[]byte("CLUSTER"), []byte("NODES"), []byte("extra")}); err == nil {
+		t.Fatal("expected CLUSTER NODES arity error")
+	}
+	if _, err := s.execute([][]byte{[]byte("CLUSTER"), []byte("INFO"), []byte("extra")}); err == nil {
+		t.Fatal("expected CLUSTER INFO arity error")
+	}
+}
