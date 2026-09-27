@@ -181,15 +181,27 @@ func (s *Server) executeSave(background bool, schedule bool) ([]byte, error) {
 			s.persistenceJobMu.Unlock()
 			return nil, errors.New("ERR Background save already in progress")
 		}
+		if s.saveRunning {
+			s.persistenceJobMu.Unlock()
+			return nil, errors.New("ERR Background save already in progress")
+		}
+		s.saveRunning = true
 		s.persistenceJobMu.Unlock()
-		if err := s.snapshotNow(); err != nil {
+
+		err := s.snapshotNow()
+
+		s.persistenceJobMu.Lock()
+		s.saveRunning = false
+		s.persistenceJobMu.Unlock()
+
+		if err != nil {
 			return nil, err
 		}
 		return []byte("+OK\r\n"), nil
 	}
 
 	s.persistenceJobMu.Lock()
-	if s.bgsaveRunning {
+	if s.saveRunning || s.bgsaveRunning {
 		s.persistenceJobMu.Unlock()
 		return nil, errors.New("ERR Background save already in progress")
 	}
