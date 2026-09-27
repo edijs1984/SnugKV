@@ -1330,6 +1330,28 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 				return nil, err
 			}
 			return formatBulkString(payload), nil
+		case "TRANSITION":
+			if len(args) != 2 {
+				return nil, errors.New("ERR wrong number of arguments for 'snug.failover|transition' command")
+			}
+			payload, err := s.failoverTransitionDiagnosisJSON(time.Now())
+			if err != nil {
+				return nil, err
+			}
+			return formatBulkString(payload), nil
+		case "RETRYTRANSITION":
+			if len(args) != 2 {
+				return nil, errors.New("ERR wrong number of arguments for 'snug.failover|retrytransition' command")
+			}
+			diagnosis, err := s.retryFailoverTransitionNow(time.Now())
+			if err != nil {
+				return nil, fmt.Errorf("ERR %s", err.Error())
+			}
+			payload, err := json.Marshal(diagnosis)
+			if err != nil {
+				return nil, err
+			}
+			return formatBulkString(payload), nil
 		case "TOPOLOGY":
 			if len(args) != 2 {
 				return nil, errors.New("ERR wrong number of arguments for 'snug.failover|topology' command")
