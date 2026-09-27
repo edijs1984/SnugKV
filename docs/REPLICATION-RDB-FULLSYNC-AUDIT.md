@@ -14,17 +14,17 @@ Redis 8.2.9 produced a length-prefixed FULLRESYNC snapshot with REDIS magic, RDB
 
 ## Supported imported object encodings
 
-The audited importer supports STRING, HASH listpack, SET intset/listpack, LIST quicklist2, ZSET listpack, and STREAM listpacks3.
+The importer now covers the native Redis 8.2 object encodings relevant to SnugKV's supported single-node architecture, including legacy and modern LIST/SET/HASH/ZSET encodings, STREAM listpacks types 15/19/21, HFE hash encodings, and the audited hash-template extensions.
 
-Handled metadata: AUX, SELECTDB (DB 0 only), RESIZEDB, EXPIRETIME, EXPIRETIME_MS, IDLE, FREQ, EOF, and Redis CRC64.
+Handled metadata/opcodes include AUX, SELECTDB (DB 0 only), RESIZEDB, EXPIRETIME, EXPIRETIME_MS, IDLE, FREQ, SLOT_INFO validation/ignore, FUNCTION2 import, EOF, Redis CRC64, and the audited hash-template opcode.
 
-Unsupported object types/opcodes fail closed. Nonzero logical databases are rejected because SnugKV is intentionally single-database.
+Redis Module payloads and pre-GA Function payloads remain explicit unsupported boundaries. Nonzero logical databases are rejected because SnugKV is intentionally single-database.
 
 ## Transport behavior
 
 For Redis length-prefixed replication snapshots, SnugKV consumes exactly the advertised RDB byte count. It does not expect the SnugKV logical-frame trailing CRLF because Redis's replication command stream can begin immediately after the RDB payload.
 
-EOF-marker/diskless snapshot framing remains hardening work.
+EOF-marker/diskless snapshot framing is implemented and audited separately.
 
 ## Live validation
 
@@ -48,4 +48,6 @@ Focused replication/RDB tests also passed under the race detector.
 
 ## Boundaries / remaining work
 
-This audit does not claim complete Redis RDB compatibility. Remaining replication hardening includes EOF-marker/diskless full-sync framing, additional RDB encodings as required by real datasets, topology authentication, TLS replication topology, broader failover/Sentinel work, and exact Redis wire-offset semantics beyond the audited path.
+For the supported single-node architecture, native Redis 8.2 RDB full-sync object/opcode compatibility is now complete for the audited surface. Explicit boundaries remain Redis Module-defined payloads, pre-GA Function payloads, and nonzero logical databases.
+
+Replication transport hardening for diskless EOF framing, authentication, TLS, PSYNC continuation, ACK/offset semantics, and restart recovery is covered by the dedicated replication audits. The next major distributed-systems capability beyond this hardening is automatic failover / Sentinel-like behavior.
