@@ -1330,6 +1330,43 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 				return nil, err
 			}
 			return formatBulkString(payload), nil
+		case "DISCOVERYPLAN":
+			if len(args) != 3 {
+				return nil, errors.New("ERR wrong number of arguments for 'snug.failover|discoveryplan' command")
+			}
+			quorum, err := strconv.Atoi(string(args[2]))
+			if err != nil {
+				return nil, errors.New("ERR invalid failover membership quorum")
+			}
+			plan, err := s.buildFailoverDiscoveryAdoptionPlan(time.Now(), quorum)
+			if err != nil {
+				return nil, fmt.Errorf("ERR %s", err.Error())
+			}
+			payload, err := json.Marshal(plan)
+			if err != nil {
+				return nil, err
+			}
+			return formatBulkString(payload), nil
+		case "ADOPTDISCOVERED":
+			if len(args) != 3 {
+				return nil, errors.New("ERR wrong number of arguments for 'snug.failover|adoptdiscovered' command")
+			}
+			quorum, err := strconv.Atoi(string(args[2]))
+			if err != nil {
+				return nil, errors.New("ERR invalid failover membership quorum")
+			}
+			result, plan, err := s.adoptDiscoveredFailoverPeers(time.Now(), quorum)
+			if err != nil {
+				return nil, fmt.Errorf("ERR %s", err.Error())
+			}
+			payload, err := json.Marshal(struct {
+				Plan failoverDiscoveryAdoptionPlan `json:"plan"`
+				Result failoverMembershipChangeResult `json:"result"`
+			}{Plan: plan, Result: result})
+			if err != nil {
+				return nil, err
+			}
+			return formatBulkString(payload), nil
 		case "DISCOVERED":
 			if len(args) != 2 {
 				return nil, errors.New("ERR wrong number of arguments for 'snug.failover|discovered' command")
