@@ -2,7 +2,6 @@ package server
 
 import (
 	"errors"
-	"math"
 	"strconv"
 	"strings"
 )
@@ -62,11 +61,12 @@ func buildLCSTable(a, b []byte) ([]uint32, int, error) {
 	rows := len(a) + 1
 	cols := len(b) + 1
 
-	if rows <= 0 || cols <= 0 || rows > math.MaxInt/cols {
+	maxInt := int(^uint(0) >> 1)
+	if rows <= 0 || cols <= 0 || rows > maxInt/cols {
 		return nil, 0, errors.New("ERR String too long for LCS")
 	}
 	cells := rows * cols
-	if cells > math.MaxInt/4 {
+	if cells > maxInt/4 {
 		return nil, 0, errors.New("ERR Insufficient memory, failed allocating transient memory for LCS")
 	}
 
