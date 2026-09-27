@@ -1144,6 +1144,9 @@ func (s *Server) promoteReplicaLocked() error {
 }
 
 func (s *Server) maintainAutoFailover(now time.Time) error {
+	if active, _, _, _, _, _ := s.failoverLeaderState(); active {
+		return s.maintainFailoverLeaderLease(now)
+	}
 	if !s.replication.autoFailoverDue(now, s.autoFailoverTimeout) {
 		return nil
 	}
@@ -1172,7 +1175,11 @@ func (s *Server) maintainAutoFailover(now time.Time) error {
 		if !s.replication.autoFailoverDue(now, s.autoFailoverTimeout) {
 			return nil
 		}
-		return s.promoteReplicaLocked()
+		if err := s.promoteReplicaLocked(); err != nil {
+			return err
+		}
+		s.activateFailoverLeader(election.Term, lineage, localID, lease.ExpiresAt)
+		return nil
 	}
 	s.stopReplicaFollow()
 	s.durableMu.Lock()
@@ -1184,6 +1191,7 @@ func (s *Server) maintainAutoFailover(now time.Time) error {
 }
 
 func (s *Server) startReplicaFollow(host string, port int) {
+	s.deactivateFailoverLeader()
 	s.stopReplicaFollow()
 	s.resetReplicaAOFTracking()
 	s.replication.setReplica(host, port)
