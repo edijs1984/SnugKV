@@ -37,19 +37,17 @@ func failoverPersistencePath(replicationPath string) string {
 	return replicationPath + ".failover"
 }
 
-func (s *Server) persistFailoverVoteStateLocked() error {
+func (s *Server) persistFailoverVoteState(term uint64, votedFor string) error {
 	value, ok := replicationPersistencePaths.Load(s)
 	if !ok {
 		return nil
 	}
 	path := failoverPersistencePath(value.(string))
-	s.failoverVoteMu.Lock()
 	state := failoverPersistenceState{
 		Version:  failoverPersistenceVersion,
-		Term:     s.failoverTerm,
-		VotedFor: s.failoverVotedFor,
+		Term:     term,
+		VotedFor: votedFor,
 	}
-	s.failoverVoteMu.Unlock()
 	payload, err := json.Marshal(state)
 	if err != nil {
 		return err
