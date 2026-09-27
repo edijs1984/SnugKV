@@ -145,7 +145,7 @@ var commandTable = map[string]commandInfo{
 	"SNUG.MEMORY":     {2, 2, 1, 1, 1, false},
 	"SNUG.SHAPES":     {1, 2, 0, 0, 0, false},
 	"SNUG.STATS":      {1, 1, 0, 0, 0, false},
-	"SNUG.FAILOVER":   {2, 6, 0, 0, 0, false},
+	"SNUG.FAILOVER":   {2, 7, 0, 0, 0, false},
 	"SNUG.POLICY":     {2, 2, 1, 1, 1, false},
 	"AUTH":            {1, 3, 0, 0, 0, false},
 	"ACL":             {1, 0, 0, 0, 0, false},
