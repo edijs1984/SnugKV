@@ -530,7 +530,6 @@ func (s *Server) retryFailoverMembershipCommit(now time.Time) error {
 			continue
 		}
 
-		allConverged = false
 		if err == nil &&
 			state.GroupID == membership.GroupID &&
 			state.ConfigEpoch == membership.CommitOldEpoch &&
@@ -547,11 +546,12 @@ func (s *Server) retryFailoverMembershipCommit(now time.Time) error {
 				membership.CommitQuorum,
 			)
 			if prepErr != nil || !reply.Accepted {
+				allConverged = false
 				continue
 			}
 		}
 
-		_, _ = queryFailoverMembershipCommit(
+		commitReply, commitErr := queryFailoverMembershipCommit(
 			addr,
 			300*time.Millisecond,
 			s.replicationMasterUser,
@@ -559,6 +559,11 @@ func (s *Server) retryFailoverMembershipCommit(now time.Time) error {
 			membership.GroupID,
 			membership.CommitEpoch,
 		)
+		if commitErr != nil ||
+			commitReply.ConfigEpoch < membership.CommitEpoch ||
+			commitReply.Joint {
+			allConverged = false
+		}
 	}
 
 	if allConverged {
