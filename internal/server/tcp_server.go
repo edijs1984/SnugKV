@@ -685,8 +685,14 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				continue
 			}
 			if monitor == nil {
-				if writer.write([]byte("+OK\r\n")) != nil { return }
-				monitor = s.server.addMonitor(peer, writer.write)
+				ready := make(chan struct{})
+				monitor = s.server.addMonitor(peer, func(line []byte) error {
+					<-ready
+					return writer.write(line)
+				})
+				ackErr := writer.write([]byte("+OK\r\n"))
+				close(ready)
+				if ackErr != nil { return }
 			}
 			continue
 		}
