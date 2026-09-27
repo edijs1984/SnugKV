@@ -246,6 +246,8 @@ func TestClusterSlotsReply(t *testing.T) {
 		"127.0.0.1",
 		":7000\r\n",
 		":7001\r\n",
+		clusterNodeID("127.0.0.1:7000"),
+		clusterNodeID("127.0.0.1:7001"),
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("CLUSTER SLOTS reply missing %q: %q", want, text)
@@ -274,6 +276,7 @@ func TestClusterShardsReply(t *testing.T) {
 		"master",
 		"health",
 		"online",
+		clusterNodeID("127.0.0.1:7000"),
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("CLUSTER SHARDS reply missing %q: %q", want, text)
