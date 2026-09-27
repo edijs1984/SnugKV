@@ -414,6 +414,7 @@ func (s *Server) luaRedisCallWithLegacyOOM(
 				return s.executePressureMode(args, false)
 			},
 		)
+		s.feedMonitorSource("lua", args, result)
 		if err != nil {
 			return luaPushCommandError(L, protected, err)
 		}

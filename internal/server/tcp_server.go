@@ -325,6 +325,8 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 		}
 		s.unregisterClient(clientSession.id)
 	}()
+	var monitor *monitorSubscription
+	defer func() { s.server.removeMonitor(monitor) }()
 	defer writer.flush()
 	defer clientSession.closeScriptDebugRuntime()
 
@@ -343,7 +345,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			return err
 		},
 	)
-	defer pubSession.close()
+	defer func() { pubSession.close() }()
 
 	authSession := newAuthSession(
 		s.server.acl,
@@ -357,10 +359,16 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 	txSession.auth = authSession
 	defer txSession.close()
 
+	var monitorAuthorized bool
+	var monitorCommand [][]byte
+
 	writeProtocol := func(
 		command [][]byte,
 		response []byte,
 	) error {
+		if monitorAuthorized {
+			defer s.server.feedMonitor(clientSession, command, response)
+		}
 		isReplyControl := len(command) >= 2 &&
 			strings.EqualFold(string(command[0]), "CLIENT") &&
 			strings.EqualFold(string(command[1]), "REPLY")
@@ -382,6 +390,9 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 	}
 
 	writeBulkProtocol := func(value []byte) error {
+		if monitorAuthorized {
+			defer s.server.feedMonitor(clientSession, monitorCommand, nil)
+		}
 		if !clientSession.consumeReplyPermission() {
 			return nil
 		}
@@ -400,7 +411,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			}
 		}
 		if reader.Buffered() == 0 {
-			if pubSession.active() {
+			if pubSession.active() || monitor != nil {
 				// Pub/Sub subscriptions are long-lived. Message delivery is outbound,
 				// so an ordinary request read timeout must not kill an idle subscriber.
 				if err := conn.SetReadDeadline(time.Time{}); err != nil {
@@ -477,6 +488,8 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			_ = writer.write([]byte("-ERR invalid RESP\r\n"))
 			return
 		}
+		monitorAuthorized = false
+		monitorCommand = msg
 		requestNow := clientSession.touch(msg)
 		s.waitClientPause(msg)
 
@@ -528,6 +541,39 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 					continue
 				}
 			}
+		}
+
+		if len(msg) > 0 && strings.EqualFold(string(msg[0]), "RESET") {
+			if len(msg) != 1 {
+				if writer.write([]byte("-ERR wrong number of arguments for 'reset' command\r\n")) != nil { return }
+				continue
+			}
+			s.server.removeMonitor(monitor)
+			monitor = nil
+			txSession.close()
+			pubSession.close()
+			pubSession = newPubSubSession(s.server, func(response []byte) error {
+				if clientSession.protocolVersion() == 3 { response = resp3PubSubPush(response) }
+				err := writer.write(response)
+				if err != nil { _ = peer.Close() }
+				return err
+			})
+			clientSession.closeScriptDebugRuntime()
+			if clientSession.trackingIsEnabled() {
+				atomic.AddUint64(&s.trackingClients, ^uint64(0))
+			}
+			clientSession.mu.Lock()
+			clientSession.name, clientSession.libName, clientSession.libVer = "", "", ""
+			clientSession.noEvict, clientSession.noTouch = false, false
+			clientSession.reply = clientReplyOn
+			clientSession.tracking = clientTrackingState{}
+			clientSession.mu.Unlock()
+			clientSession.setProtocol(2)
+			*authSession = *newAuthSession(s.server.acl)
+			authSession.client = clientSession
+			if writer.write([]byte("+RESET\r\n")) != nil { return }
+			s.server.feedMonitor(clientSession, msg, nil)
+			continue
 		}
 
 		if !borrowed && len(msg) > 0 &&
@@ -661,6 +707,34 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				return
 			}
 
+			continue
+		}
+
+		monitorAuthorized = true
+		if !txSession.multi && monitorScriptCommand(msg) {
+			s.server.feedMonitor(clientSession, msg, nil)
+			monitorAuthorized = false // Outer invocation precedes its Lua calls.
+		}
+		if len(msg) > 0 && strings.EqualFold(string(msg[0]), "MONITOR") {
+			if len(msg) != 1 {
+				if writer.write([]byte("-ERR wrong number of arguments for 'monitor' command\r\n")) != nil { return }
+				continue
+			}
+			if txSession.multi {
+				txSession.markACLFailure()
+				if writer.write([]byte("-ERR MONITOR is not allowed in MULTI\r\n")) != nil { return }
+				continue
+			}
+			if monitor == nil {
+				ready := make(chan struct{})
+				monitor = s.server.addMonitor(peer, func(line []byte) error {
+					<-ready
+					return writer.write(line)
+				})
+				ackErr := writer.write([]byte("+OK\r\n"))
+				close(ready)
+				if ackErr != nil { return }
+			}
 			continue
 		}
 
@@ -1060,6 +1134,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 							clientSession.replicationOffset.Store(replicationOffset)
 						}
 						for i := range keys {
+							s.server.feedMonitor(clientSession, [][]byte{[]byte("SET"), keys[i], values[i]}, nil)
 							s.invalidateTrackingKeys(clientSession, [][]byte{[]byte("SET"), keys[i], values[i]})
 						}
 					}
