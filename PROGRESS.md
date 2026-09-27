@@ -1,3 +1,7 @@
+## Phase F SLOWLOG / Persistence Controls — 2026-09-27
+
+Implemented and operator-validated through 88f5907: SLOWLOG syntax/count/help, self-recording and stable IDs, TCP identity, persistence commands, disabled-journal export/recovery, active-rewrite serialization, INFO results, and bidirectional save/rewrite scheduling. The operator reported full race tests, vet, and RESP fuzz passing. Live Redis reference was 8.10.2; Redis 8.2 source informed six-field replies and scheduling rules. PR/CI review remains separate. Detailed evidence and outstanding lifecycle/fast-path limitations: `docs/SLOWLOG-PERSISTENCE-AUDIT.md`.
+
 ## Graceful-Restart Redis PSYNC Continuation — 2026-09-24
 
 Persisted upstream host/port, replid, applied offset, and Redis-stream mode in an atomic sidecar tied to configured AOF/snapshot durability. On graceful shutdown, SnugKV first checkpoints the exact replica dataset, then writes the PSYNC continuation state. Live Redis -> SnugKV validation confirmed a real process restart resumed with partial resynchronization from the next-byte offset instead of FULLRESYNC; previously replicated keys were recovered and a post-restart write replicated successfully with the link remaining up. Crash-resume PSYNC continuity remains intentionally out of scope because offsets are not yet committed atomically with every replicated mutation. See `docs/REPLICATION-RESTART-PSYNC-AUDIT.md`.

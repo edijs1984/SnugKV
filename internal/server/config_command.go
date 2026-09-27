@@ -77,6 +77,22 @@ var runtimeConfigEntries = []runtimeConfigEntry{
 			return "1"
 		},
 	},
+	{
+		name: "slowlog-log-slower-than",
+		value: func(s *Server) string {
+			s.slowlogMu.Lock()
+			defer s.slowlogMu.Unlock()
+			return strconv.FormatInt(s.slowlogThresholdMicros, 10)
+		},
+	},
+	{
+		name: "slowlog-max-len",
+		value: func(s *Server) string {
+			s.slowlogMu.Lock()
+			defer s.slowlogMu.Unlock()
+			return strconv.Itoa(s.slowlogMaxLen)
+		},
+	},
 }
 
 func (s *Server) executeConfig(
@@ -358,6 +374,38 @@ func (s *Server) prepareConfigSet(
 
 		return func() error {
 			s.configSetMaxClients(max)
+			return nil
+		}, nil
+
+	case "slowlog-log-slower-than":
+		threshold, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return nil, errors.New(
+				"ERR CONFIG SET failed (possibly related to argument 'slowlog-log-slower-than') - argument must be an integer",
+			)
+		}
+		return func() error {
+			s.slowlogMu.Lock()
+			s.slowlogThresholdMicros = threshold
+			s.slowlogMu.Unlock()
+			return nil
+		}, nil
+
+	case "slowlog-max-len":
+		maxLen64, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || maxLen64 < 0 || maxLen64 > int64(^uint(0)>>1) {
+			return nil, errors.New(
+				"ERR CONFIG SET failed (possibly related to argument 'slowlog-max-len') - argument must be a non-negative integer",
+			)
+		}
+		maxLen := int(maxLen64)
+		return func() error {
+			s.slowlogMu.Lock()
+			s.slowlogMaxLen = maxLen
+			if len(s.slowlogEntries) > maxLen {
+				s.slowlogEntries = s.slowlogEntries[:maxLen]
+			}
+			s.slowlogMu.Unlock()
 			return nil
 		}, nil
 

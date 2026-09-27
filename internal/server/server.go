@@ -49,6 +49,7 @@ type Server struct {
 	// ACL rule set. Direct in-process Execute calls leave the context empty.
 	executionACLUsername string
 	executionACLArgs     [][]byte
+	executionClient      *clientSession // Protected by durableMu, like the ACL context.
 
 	configAppendFsync    string
 	configACLFile        string
@@ -69,6 +70,22 @@ type Server struct {
 	searchDictionaries map[string]map[string]struct{}
 	searchSuggestions  map[string]map[string]searchSuggestion
 	searchSynonyms     map[string]map[string][]string
+
+	slowlogMu              sync.Mutex
+	slowlogEntries         []slowlogEntry
+	slowlogNextID          int64
+	slowlogThresholdMicros int64
+	slowlogMaxLen          int
+
+	aofRewritePath    string
+	snapshotPath      string
+	persistenceJobMu  sync.Mutex
+	bgsaveRunning     bool
+	bgsaveScheduled   bool
+	aofRewriteRunning bool
+	aofRewriteScheduled bool
+	rdbLastSaveFailed bool
+	aofLastRewriteFailed bool
 }
 
 func New(store *engine.Store) *Server {
@@ -87,6 +104,8 @@ func New(store *engine.Store) *Server {
 		searchDictionaries: make(map[string]map[string]struct{}),
 		searchSuggestions:  make(map[string]map[string]searchSuggestion),
 		searchSynonyms:     make(map[string]map[string][]string),
+		slowlogThresholdMicros: 10000,
+		slowlogMaxLen:          128,
 	}
 	s.lastSaveUnix.Store(time.Now().Unix())
 	s.replication.init()
@@ -114,7 +133,11 @@ var commandTable = map[string]commandInfo{
 	"SELECT": {2, 2, 0, 0, 0, false}, "HELLO": {1, 0, 0, 0, 0, false}, "INFO": {1, 2, 0, 0, 0, false},
 	"DBSIZE": {1, 1, 0, 0, 0, false}, "COMMAND": {1, 0, 0, 0, 0, false},
 	"TIME": {1, 1, 0, 0, 0, false}, "LASTSAVE": {1, 1, 0, 0, 0, false},
-	"OBJECT": {2, 3, 0, 0, 0, false},
+"OBJECT": {2, 3, 0, 0, 0, false},
+	"SLOWLOG": {2, 0, 0, 0, 0, false},
+	"SAVE": {1, 1, 0, 0, 0, false},
+	"BGSAVE": {1, 0, 0, 0, 0, false},
+	"BGREWRITEAOF": {1, 1, 0, 0, 0, false},
 	"ROLE":        {1, 1, 0, 0, 0, false},
 	"REPLICAOF":   {3, 3, 0, 0, 0, false},
 	"PSYNC":       {3, 3, 0, 0, 0, false},
@@ -187,6 +210,10 @@ var commandTable = map[string]commandInfo{
 }
 
 func (s *Server) execute(args [][]byte) ([]byte, error) {
+	started := time.Now()
+	defer func() {
+		s.recordSlowlog(args, time.Since(started))
+	}()
 	if len(args) == 0 {
 		return nil, errors.New("ERR empty command")
 	}
@@ -1511,6 +1538,18 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 	case "OBJECT":
 		return s.executeObject(args)
 
+	case "SLOWLOG":
+		return s.executeSlowlog(args)
+
+	case "SAVE":
+		return s.executeSave(false, false)
+
+	case "BGSAVE":
+		return s.executeBGSAVE(args)
+
+	case "BGREWRITEAOF":
+		return s.executeBGRewriteAOF()
+
 	case "ROLE":
 		return s.replicationRoleReply(), nil
 
@@ -1553,11 +1592,14 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 
 	case "INFO":
 		section := strings.ToLower(key)
-		if section != "" && section != "all" && section != "default" && section != "server" && section != "memory" && section != "stats" && section != "keyspace" && section != "replication" {
+		if section != "" && section != "all" && section != "default" && section != "server" && section != "memory" && section != "stats" && section != "keyspace" && section != "replication" && section != "persistence" {
 			return formatBulkString(nil), nil
 		}
 		st := s.store.Stats()
 		out := ""
+		if section == "" || section == "all" || section == "default" || section == "persistence" {
+			out += s.persistenceInfo()
+		}
 		if section == "" || section == "all" || section == "default" || section == "server" {
 			out += "# Server\r\nsnugkv_version:0.1.0\r\n"
 		}

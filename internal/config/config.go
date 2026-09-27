@@ -29,6 +29,7 @@ type Config struct {
 	JSONShape           bool   `json:"json_shape"`
 	OptimizerMode       string `json:"optimizer_mode"`
 	AOFPath             string `json:"aof_path"`
+	AOFRewritePath      string `json:"aof_rewrite_path"`
 	SnapshotPath        string `json:"snapshot_path"`
 	ACLFile             string `json:"acl_file"`
 	Fsync               string `json:"fsync"`
@@ -53,6 +54,24 @@ func (c Config) Limits() resp.Limits {
 	return resp.Limits{MaxRequestBytes: c.MaxRequestBytes, MaxBulkBytes: c.MaxBulkBytes, MaxArguments: c.MaxArguments}
 }
 func (c Config) Validate() error {
+	if c.AOFRewritePath != "" {
+		rewrite, err := filepath.Abs(c.AOFRewritePath)
+		if err != nil {
+			return err
+		}
+		for _, other := range []string{c.AOFPath, c.SnapshotPath} {
+			if other == "" {
+				continue
+			}
+			path, err := filepath.Abs(other)
+			if err != nil {
+				return err
+			}
+			if rewrite == path {
+				return errors.New("aof_rewrite_path must differ from AOF and snapshot paths")
+			}
+		}
+	}
 	if c.GoMemoryLimit < 0 {
 		return errors.New("go_memory_limit must not be negative")
 	}
@@ -188,7 +207,7 @@ func (c *Config) ApplyEnv() error {
 		}
 		c.JSONShape = b
 	}
-	for name, dst := range map[string]*string{"AOF_PATH": &c.AOFPath, "SNAPSHOT_PATH": &c.SnapshotPath, "ACL_FILE": &c.ACLFile, "FSYNC": &c.Fsync, "EVICTION_POLICY": &c.EvictionPolicy, "METRICS_LISTEN": &c.MetricsAddr, "ADMIN_LISTEN": &c.AdminAddr, "OPTIMIZER_MODE": &c.OptimizerMode, "MASTERUSER": &c.MasterUser, "MASTERAUTH": &c.MasterAuth, "MASTERTLS_CA_CERT": &c.MasterTLSCACert, "MASTERTLS_CERT": &c.MasterTLSCert, "MASTERTLS_KEY": &c.MasterTLSKey, "MASTERTLS_SERVER_NAME": &c.MasterTLSServerName} {
+	for name, dst := range map[string]*string{"AOF_PATH": &c.AOFPath, "AOF_REWRITE_PATH": &c.AOFRewritePath, "SNAPSHOT_PATH": &c.SnapshotPath, "ACL_FILE": &c.ACLFile, "FSYNC": &c.Fsync, "EVICTION_POLICY": &c.EvictionPolicy, "METRICS_LISTEN": &c.MetricsAddr, "ADMIN_LISTEN": &c.AdminAddr, "OPTIMIZER_MODE": &c.OptimizerMode, "MASTERUSER": &c.MasterUser, "MASTERAUTH": &c.MasterAuth, "MASTERTLS_CA_CERT": &c.MasterTLSCACert, "MASTERTLS_CERT": &c.MasterTLSCert, "MASTERTLS_KEY": &c.MasterTLSKey, "MASTERTLS_SERVER_NAME": &c.MasterTLSServerName} {
 		if v, ok := os.LookupEnv("SNUGKV_" + name); ok {
 			*dst = v
 		}
