@@ -1536,10 +1536,10 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		return s.executeSlowlog(args)
 
 	case "SAVE":
-		return s.executeSave(false)
+		return s.executeSave(false, false)
 
 	case "BGSAVE":
-		return s.executeSave(true)
+		return s.executeBGSAVE(args)
 
 	case "BGREWRITEAOF":
 		return s.executeBGRewriteAOF()
