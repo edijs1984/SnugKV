@@ -83,6 +83,7 @@ type Server struct {
 	bgsaveRunning     bool
 	bgsaveScheduled   bool
 	aofRewriteRunning bool
+	aofRewriteScheduled bool
 	rdbLastSaveFailed bool
 	aofLastRewriteFailed bool
 }
