@@ -220,9 +220,22 @@ func (s *Server) executeBGRewriteAOF() ([]byte, error) {
 	s.aofRewriteRunning = true
 	s.persistenceJobMu.Unlock()
 
-	records := s.store.Export(nil)
+	// An active journal must not accept writes between export and replacement.
+	// Start after this command releases durableMu, then hold it across both.
+	// One-off exports have no active journal and can capture immediately.
+	var records []persistence.Record
+	if temporary != nil {
+		records = s.store.Export(nil)
+	}
 	go func() {
+		if temporary == nil {
+			s.durableMu.Lock()
+			records = s.store.Export(nil)
+		}
 		_ = writer.Rewrite(records)
+		if temporary == nil {
+			s.durableMu.Unlock()
+		}
 		if temporary != nil {
 			_ = temporary.Close()
 		}
