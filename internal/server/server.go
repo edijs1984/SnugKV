@@ -63,6 +63,11 @@ type Server struct {
 	searchNextCursorID uint64
 	searchConfigMu     sync.RWMutex
 	searchConfig       map[string]string
+
+	searchAuxMu        sync.RWMutex
+	searchDictionaries map[string]map[string]struct{}
+	searchSuggestions  map[string]map[string]searchSuggestion
+	searchSynonyms     map[string]map[string][]string
 }
 
 func New(store *engine.Store) *Server {
@@ -78,6 +83,9 @@ func New(store *engine.Store) *Server {
 			"MAXAGGREGATERESULTS": "1000000",
 			"CURSOR_MAX_IDLE": "300000",
 		},
+		searchDictionaries: make(map[string]map[string]struct{}),
+		searchSuggestions:  make(map[string]map[string]searchSuggestion),
+		searchSynonyms:     make(map[string]map[string][]string),
 	}
 	s.replication.init()
 	return s
