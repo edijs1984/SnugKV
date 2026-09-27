@@ -211,7 +211,9 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 
 	case "FT.CREATE", "FT.DROPINDEX", "FT._LIST", "FT.INFO", "FT.SEARCH", "FT.AGGREGATE",
 		"FT.ALIASADD", "FT.ALIASUPDATE", "FT.ALIASDEL", "FT.TAGVALS", "FT.ALTER", "FT.CURSOR", "FT.CONFIG",
-		"FT.EXPLAIN", "FT.EXPLAINCLI", "FT.PROFILE":
+		"FT.EXPLAIN", "FT.EXPLAINCLI", "FT.PROFILE",
+		"FT.DICTADD", "FT.DICTDEL", "FT.DICTDUMP", "FT.SPELLCHECK",
+		"FT.SYNUPDATE", "FT.SYNDUMP", "FT.SUGADD", "FT.SUGDEL", "FT.SUGGET", "FT.SUGLEN":
 		return s.executeSearchCommand(args)
 
 	case "CONFIG":
