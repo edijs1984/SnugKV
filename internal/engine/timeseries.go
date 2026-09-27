@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math"
 	"sort"
+	"strings"
 )
 
 const (
@@ -339,32 +340,51 @@ func (s *Store) TimeSeriesCreate(key string, retention int64, policy TimeSeriesD
 func (s *Store) TimeSeriesAdd(key string, timestamp int64, value float64, create *timeSeries) error {
 	sh := s.shardFor(key)
 	sh.mu.Lock()
-	defer sh.mu.Unlock()
 	e, ok := sh.get(key)
 	if !ok || sh.expired(key, e, s.now()) {
 		if create == nil {
+			sh.mu.Unlock()
 			return errors.New("ERR TSDB: the key does not exist")
 		}
 		ts := create
 		if err := ts.add(timestamp, value); err != nil {
+			sh.mu.Unlock()
 			return err
 		}
-		return s.publish(sh, key, timeSeriesPreparedEntry(encodeTimeSeries(ts)))
+		err := s.publish(sh, key, timeSeriesPreparedEntry(encodeTimeSeries(ts)))
+		sh.mu.Unlock()
+		return err
 	}
 	if e.valueType != TypeTimeSeries {
+		sh.mu.Unlock()
 		return errors.New("ERR TSDB: the key is not a TSDB key")
 	}
 	ts, err := decodeTimeSeries(s.decode(sh, e))
 	if err != nil {
+		sh.mu.Unlock()
 		return err
 	}
 	exp := sh.expirationAt(key, e)
 	if err := ts.add(timestamp, value); err != nil {
+		sh.mu.Unlock()
 		return err
 	}
 	p := timeSeriesPreparedEntry(encodeTimeSeries(ts))
 	p.expiresAt = exp
-	return s.publish(sh, key, p)
+	if err := s.publish(sh, key, p); err != nil {
+		sh.mu.Unlock()
+		return err
+	}
+	rules := append([]timeSeriesRule(nil), ts.rules...)
+	samples := append([]TimeSeriesSample(nil), ts.samples...)
+	sh.mu.Unlock()
+
+	if len(rules) > 0 {
+		if err := s.applyTimeSeriesRules(key, samples, rules); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) TimeSeriesGet(key string) (TimeSeriesSample, bool, error) {
@@ -672,4 +692,222 @@ func (s *Store) TimeSeriesQueryIndex(filters map[string]string) ([]string, error
 
 	sort.Strings(out)
 	return out, nil
+}
+
+
+func normalizeTimeSeriesAggregator(raw string) (string, error) {
+	switch strings.ToUpper(raw) {
+	case "AVG", "FIRST", "LAST", "MIN", "MAX", "SUM", "RANGE", "COUNT", "STD.P", "STD.S", "VAR.P", "VAR.S":
+		return strings.ToUpper(raw), nil
+	default:
+		return "", errors.New("ERR TSDB: Unknown aggregation type")
+	}
+}
+
+func timeSeriesBucketStart(timestamp, bucketDuration, alignment int64) int64 {
+	delta := timestamp - alignment
+	q := delta / bucketDuration
+	if delta < 0 && delta%bucketDuration != 0 {
+		q--
+	}
+	return alignment + q*bucketDuration
+}
+
+func aggregateTimeSeriesSamples(samples []TimeSeriesSample, aggregator string) (float64, error) {
+	if len(samples) == 0 {
+		return 0, errors.New("ERR TSDB: empty aggregation bucket")
+	}
+	switch aggregator {
+	case "FIRST":
+		return samples[0].Value, nil
+	case "LAST":
+		return samples[len(samples)-1].Value, nil
+	case "MIN":
+		v := samples[0].Value
+		for _, sample := range samples[1:] {
+			if sample.Value < v { v = sample.Value }
+		}
+		return v, nil
+	case "MAX":
+		v := samples[0].Value
+		for _, sample := range samples[1:] {
+			if sample.Value > v { v = sample.Value }
+		}
+		return v, nil
+	case "SUM", "AVG":
+		var sum float64
+		for _, sample := range samples { sum += sample.Value }
+		if aggregator == "AVG" { return sum/float64(len(samples)), nil }
+		return sum,nil
+	case "RANGE":
+		minv,maxv := samples[0].Value,samples[0].Value
+		for _, sample := range samples[1:] {
+			if sample.Value < minv { minv = sample.Value }
+			if sample.Value > maxv { maxv = sample.Value }
+		}
+		return maxv-minv,nil
+	case "COUNT":
+		return float64(len(samples)),nil
+	case "VAR.P", "VAR.S", "STD.P", "STD.S":
+		var mean float64
+		for _, sample := range samples { mean += sample.Value }
+		mean /= float64(len(samples))
+		var variance float64
+		for _, sample := range samples {
+			d := sample.Value-mean
+			variance += d*d
+		}
+		if aggregator == "VAR.S" || aggregator == "STD.S" {
+			if len(samples) < 2 { return 0,nil }
+			variance /= float64(len(samples)-1)
+		} else {
+			variance /= float64(len(samples))
+		}
+		if aggregator == "STD.P" || aggregator == "STD.S" { return math.Sqrt(variance),nil }
+		return variance,nil
+	default:
+		return 0, errors.New("ERR TSDB: Unknown aggregation type")
+	}
+}
+
+func (s *Store) timeSeriesSetCompacted(key string, timestamp int64, value float64) error {
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+	e, ok := sh.get(key)
+	if !ok || sh.expired(key, e, s.now()) {
+		return errors.New("ERR TSDB: the key does not exist")
+	}
+	if e.valueType != TypeTimeSeries { return timeSeriesWrongType() }
+	ts, err := decodeTimeSeries(s.decode(sh,e))
+	if err != nil { return err }
+	exp := sh.expirationAt(key,e)
+	oldPolicy := ts.policy
+	ts.policy = TimeSeriesLast
+	err = ts.add(timestamp,value)
+	ts.policy = oldPolicy
+	if err != nil { return err }
+	p:=timeSeriesPreparedEntry(encodeTimeSeries(ts))
+	p.expiresAt=exp
+	return s.publish(sh,key,p)
+}
+
+func (s *Store) markTimeSeriesRuleBucket(sourceKey, destKey string, bucket int64) error {
+	sh:=s.shardFor(sourceKey)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+	e,ok:=sh.get(sourceKey)
+	if !ok || sh.expired(sourceKey,e,s.now()) { return errors.New("ERR TSDB: the key does not exist") }
+	if e.valueType!=TypeTimeSeries { return timeSeriesWrongType() }
+	ts,err:=decodeTimeSeries(s.decode(sh,e)); if err!=nil{return err}
+	for i:=range ts.rules {
+		if ts.rules[i].destKey==destKey {
+			ts.rules[i].lastBucket=bucket
+			p:=timeSeriesPreparedEntry(encodeTimeSeries(ts))
+			p.expiresAt=sh.expirationAt(sourceKey,e)
+			return s.publish(sh,sourceKey,p)
+		}
+	}
+	return nil
+}
+
+func (s *Store) applyTimeSeriesRules(sourceKey string, samples []TimeSeriesSample, rules []timeSeriesRule) error {
+	if len(samples)==0 { return nil }
+	latest:=samples[len(samples)-1].Timestamp
+	for _,rule:=range rules {
+		currentBucket:=timeSeriesBucketStart(latest,rule.bucketDuration,rule.alignment)
+		buckets:=make(map[int64][]TimeSeriesSample)
+		order:=make([]int64,0)
+		seen:=make(map[int64]struct{})
+		for _,sample:=range samples {
+			if sample.Timestamp<=rule.startAfter { continue }
+			b:=timeSeriesBucketStart(sample.Timestamp,rule.bucketDuration,rule.alignment)
+			if b>=currentBucket || b<=rule.lastBucket { continue }
+			buckets[b]=append(buckets[b],sample)
+			if _,ok:=seen[b];!ok { seen[b]=struct{}{}; order=append(order,b) }
+		}
+		sort.Slice(order,func(i,j int)bool{return order[i]<order[j]})
+		for _,bucket:=range order {
+			value,err:=aggregateTimeSeriesSamples(buckets[bucket],rule.aggregator)
+			if err!=nil{return err}
+			if err:=s.timeSeriesSetCompacted(rule.destKey,bucket,value);err!=nil{return err}
+			if err:=s.markTimeSeriesRuleBucket(sourceKey,rule.destKey,bucket);err!=nil{return err}
+		}
+	}
+	return nil
+}
+
+func (s *Store) TimeSeriesCreateRule(sourceKey, destKey, aggregator string, bucketDuration, alignment int64) error {
+	if sourceKey==destKey { return errors.New("ERR TSDB: sourceKey and destKey must be different") }
+	if bucketDuration<=0 { return errors.New("ERR TSDB: bucketDuration must be greater than 0") }
+	agg,err:=normalizeTimeSeriesAggregator(aggregator); if err!=nil{return err}
+
+	// Validate both keys first.
+	for _,key:=range []string{sourceKey,destKey} {
+		sh:=s.shardFor(key); sh.mu.RLock()
+		e,ok:=sh.get(key)
+		if !ok || sh.expired(key,e,s.now()) { sh.mu.RUnlock(); return errors.New("ERR TSDB: the key does not exist") }
+		if e.valueType!=TypeTimeSeries { sh.mu.RUnlock(); return timeSeriesWrongType() }
+		sh.mu.RUnlock()
+	}
+
+	sourceShard:=s.shardFor(sourceKey)
+	sourceShard.mu.Lock()
+	sourceEntry,_:=sourceShard.get(sourceKey)
+	source,err:=decodeTimeSeries(s.decode(sourceShard,sourceEntry))
+	if err!=nil { sourceShard.mu.Unlock(); return err }
+	for _,rule:=range source.rules {
+		if rule.destKey==destKey { sourceShard.mu.Unlock(); return errors.New("ERR TSDB: compaction rule already exists") }
+	}
+	startAfter:=int64(-1<<63)
+	if len(source.samples)>0 { startAfter=source.samples[len(source.samples)-1].Timestamp }
+	source.rules=append(source.rules,timeSeriesRule{
+		destKey:destKey,bucketDuration:bucketDuration,aggregator:agg,
+		alignment:alignment,startAfter:startAfter,lastBucket:-1<<63,
+	})
+	p:=timeSeriesPreparedEntry(encodeTimeSeries(source))
+	p.expiresAt=sourceShard.expirationAt(sourceKey,sourceEntry)
+	if err:=s.publish(sourceShard,sourceKey,p);err!=nil{sourceShard.mu.Unlock();return err}
+	sourceShard.mu.Unlock()
+
+	destShard:=s.shardFor(destKey)
+	destShard.mu.Lock()
+	defer destShard.mu.Unlock()
+	destEntry,_:=destShard.get(destKey)
+	dest,err:=decodeTimeSeries(s.decode(destShard,destEntry));if err!=nil{return err}
+	if dest.sourceKey!="" && dest.sourceKey!=sourceKey { return errors.New("ERR TSDB: destination already has a source") }
+	dest.sourceKey=sourceKey
+	dp:=timeSeriesPreparedEntry(encodeTimeSeries(dest))
+	dp.expiresAt=destShard.expirationAt(destKey,destEntry)
+	return s.publish(destShard,destKey,dp)
+}
+
+func (s *Store) TimeSeriesDeleteRule(sourceKey, destKey string) error {
+	sourceShard:=s.shardFor(sourceKey)
+	sourceShard.mu.Lock()
+	sourceEntry,ok:=sourceShard.get(sourceKey)
+	if !ok || sourceShard.expired(sourceKey,sourceEntry,s.now()) { sourceShard.mu.Unlock(); return errors.New("ERR TSDB: the key does not exist") }
+	if sourceEntry.valueType!=TypeTimeSeries { sourceShard.mu.Unlock(); return timeSeriesWrongType() }
+	source,err:=decodeTimeSeries(s.decode(sourceShard,sourceEntry));if err!=nil{sourceShard.mu.Unlock();return err}
+	idx:=-1
+	for i,rule:=range source.rules { if rule.destKey==destKey { idx=i; break } }
+	if idx<0 { sourceShard.mu.Unlock(); return errors.New("ERR TSDB: compaction rule does not exist") }
+	source.rules=append(source.rules[:idx],source.rules[idx+1:]...)
+	p:=timeSeriesPreparedEntry(encodeTimeSeries(source));p.expiresAt=sourceShard.expirationAt(sourceKey,sourceEntry)
+	if err:=s.publish(sourceShard,sourceKey,p);err!=nil{sourceShard.mu.Unlock();return err}
+	sourceShard.mu.Unlock()
+
+	destShard:=s.shardFor(destKey)
+	destShard.mu.Lock()
+	defer destShard.mu.Unlock()
+	destEntry,ok:=destShard.get(destKey)
+	if !ok || destShard.expired(destKey,destEntry,s.now()) { return nil }
+	if destEntry.valueType!=TypeTimeSeries { return nil }
+	dest,err:=decodeTimeSeries(s.decode(destShard,destEntry));if err!=nil{return err}
+	if dest.sourceKey==sourceKey {
+		dest.sourceKey=""
+		dp:=timeSeriesPreparedEntry(encodeTimeSeries(dest));dp.expiresAt=destShard.expirationAt(destKey,destEntry)
+		return s.publish(destShard,destKey,dp)
+	}
+	return nil
 }
