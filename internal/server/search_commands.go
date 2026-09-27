@@ -26,6 +26,9 @@ var searchCommands = map[string]commandInfo{
 	"FT.ALTER":       {6, 0, 0, 0, 0, true},
 	"FT.CURSOR":      {4, 6, 0, 0, 0, false},
 	"FT.CONFIG":      {3, 4, 0, 0, 0, false},
+	"FT.EXPLAIN":     {3, 5, 0, 0, 0, false},
+	"FT.EXPLAINCLI":  {3, 5, 0, 0, 0, false},
+	"FT.PROFILE":     {5, 0, 0, 0, 0, false},
 }
 
 func init() {
@@ -2528,6 +2531,14 @@ func (s *Server) executeSearchCommand(args [][]byte) ([]byte, error) {
 		return s.executeFTCursor(args)
 	case "FT.CONFIG":
 		return s.executeFTConfig(args)
+	case "FT.EXPLAIN", "FT.EXPLAINCLI":
+		resolved, err := resolveSearchReadIndex(s.store, args)
+		if err != nil {
+			return nil, err
+		}
+		return executeFTExplain(s.store, resolved, strings.EqualFold(string(args[0]), "FT.EXPLAINCLI"))
+	case "FT.PROFILE":
+		return s.executeFTProfile(args)
 	case "FT.INFO", "FT.SEARCH", "FT.AGGREGATE":
 		resolved, err := resolveSearchReadIndex(s.store, args)
 		if err != nil {
