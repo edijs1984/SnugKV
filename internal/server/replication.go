@@ -1171,14 +1171,17 @@ func (s *Server) maintainAutoFailover(now time.Time) error {
 		}
 		s.stopReplicaFollow()
 		s.durableMu.Lock()
-		defer s.durableMu.Unlock()
 		if !s.replication.autoFailoverDue(now, s.autoFailoverTimeout) {
+			s.durableMu.Unlock()
 			return nil
 		}
 		if err := s.promoteReplicaLocked(); err != nil {
+			s.durableMu.Unlock()
 			return err
 		}
 		s.activateFailoverLeader(election.Term, lineage, localID, lease.ExpiresAt)
+		s.durableMu.Unlock()
+		s.convergeFailoverReplicas(now)
 		return nil
 	}
 	s.stopReplicaFollow()
