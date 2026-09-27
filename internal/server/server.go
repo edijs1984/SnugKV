@@ -1579,7 +1579,9 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		}
 		if detach {
 			s.stopReplicaFollow()
-			s.replication.promote()
+			if err := s.promoteReplicaLocked(); err != nil {
+				return nil, err
+			}
 			return []byte("+OK\r\n"), nil
 		}
 		s.startReplicaFollow(host, port)
