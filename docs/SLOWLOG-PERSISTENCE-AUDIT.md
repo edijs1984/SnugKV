@@ -33,7 +33,7 @@ Targeted race suites and the live checks above also passed. GitHub CI is a separ
 - With no active AOF, SnugKV requires an explicit export destination; Redis retains a default destination even with appendonly=no.
 - Active rewrites block commands participating in durableMu, including INFO and scheduling requests arriving during that interval. Scheduling tests exercise the state machine directly; fully responsive Redis-style concurrent rewrites need buffering.
 - Automatic periodic snapshots are now implemented as an opt-in lifecycle feature. Transaction-time persistence scheduling, SAVE/BGSAVE mutual exclusion, shutdown/handoff safety, and periodic background snapshots are covered by lifecycle tests.
-- Fast TCP GET/SET paths, MULTI/EXEC executed-command visibility, outer EVAL/EVALSHA/EVAL_RO/EVALSHA_RO, and FCALL/FCALL_RO are now covered by focused race-enabled regressions. Argument truncation/redaction remains a separate hardening area.
+- Fast TCP GET/SET paths, MULTI/EXEC executed-command visibility, outer EVAL/EVALSHA/EVAL_RO/EVALSHA_RO, FCALL/FCALL_RO, and Redis-style SLOWLOG truncation/redaction are now covered by focused race-enabled regressions.
 - Persistence INFO is a subset; native SnugKV snapshot/AOF files are not Redis RDB/AOF file-format exports.
 
 MONITOR is complete on main. This follow-up SLOWLOG hardening slice closes the previously documented fast-path / transaction / scripting / Function visibility gap. See aof-one-off-rewrite.md for the export option and locking trade-off.
@@ -59,7 +59,7 @@ Operator-reported passing gates on the hardened branch:
 - `go vet ./...`
 - `go test ./internal/resp -run=^$ -fuzz=FuzzReadCommand -fuzztime=20s`
 
-Remaining SLOWLOG hardening is primarily exact Redis argument truncation/redaction behavior and any future command-specific edge cases.
+Exact Redis argument truncation/redaction behavior is now covered for the audited supported command surface. Remaining SLOWLOG work is limited to future command-specific edge cases as new sensitive command/config surfaces are added.
 
 
 ## Persistence shutdown lifecycle hardening — 2026-09-27
@@ -149,3 +149,34 @@ Operator-reported passing gates:
 - `go test ./internal/resp -run=^$ -fuzz=FuzzReadCommand -fuzztime=20s`
 
 With this slice complete, the persistence lifecycle items identified by this audit are closed. Remaining Section F work, if any, is compatibility hardening outside this lifecycle list, such as exact SLOWLOG argument truncation/redaction and the larger architectural question of fully concurrent Redis-style AOF rewrite buffering.
+
+
+## SLOWLOG argument truncation and redaction — 2026-09-27
+
+This follow-up closes the audited SLOWLOG argv retention/privacy gap against Redis 8.2 behavior.
+
+Changes:
+
+- SLOWLOG entries retain at most 32 arguments.
+- When the original command exceeds that limit, the final retained slot is replaced with `... (N more arguments)`.
+- Individual arguments are capped at 128 bytes and append `... (N more bytes)` when truncated.
+- Supported ACL-sensitive commands redact user/rule payloads in SLOWLOG:
+  - `ACL SETUSER`
+  - `ACL GETUSER`
+  - `ACL DELUSER`
+- Supported MIGRATE authentication options redact credentials:
+  - `AUTH`
+  - `AUTH2`
+- TCP ACL commands are now recorded in SLOWLOG, closing a connection-layer visibility gap discovered by the end-to-end regression.
+- End-to-end `SLOWLOG GET` coverage verifies that sensitive values do not leak and truncation markers survive serialization.
+
+Redis 8.2 reference constants and behavior were taken from upstream `src/slowlog.c`, `src/slowlog.h`, and `tests/unit/slowlog.tcl`.
+
+Operator-reported passing gates:
+
+- `go test -race ./internal/server -run '^TestSlowlog' -count=1 -v`
+- `go test -race ./...`
+- `go vet ./...`
+- `go test ./internal/resp -run=^$ -fuzz=FuzzReadCommand -fuzztime=20s`
+
+With this slice complete, the audited SLOWLOG coverage gaps identified in this document are closed for SnugKV's currently supported command surface.
