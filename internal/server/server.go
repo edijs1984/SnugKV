@@ -1196,7 +1196,7 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			if err != nil {
 				return nil, errors.New("ERR invalid failover membership quorum")
 			}
-			reply, err := s.prepareFailoverMembership(
+			reply, err := s.prepareFailoverMembershipMembers(
 				string(args[2]),
 				currentEpoch,
 				newEpoch,
