@@ -551,7 +551,7 @@ func (s *TCPServer) executeClientConnectionCommand(
 			return true, nil, nil
 		case "SKIP":
 			session.setReplyMode(clientReplySkip)
-			return true, nil, nil
+			return true, []byte("+OK\r\n"), nil
 		default:
 			return true, nil, errors.New("ERR syntax error")
 		}
