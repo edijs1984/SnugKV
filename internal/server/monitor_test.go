@@ -184,3 +184,99 @@ func TestMonitorLuaOrdering(t *testing.T) {
 		})
 	}
 }
+
+
+func TestMonitorScriptFamilies(t *testing.T) {
+	tests := []struct {
+		name       string
+		setup      func(t *testing.T, actor net.Conn, ar *bufio.Reader)
+		command    []string
+		wantNested string
+	}{
+		{
+			name: "evalsha",
+			setup: func(t *testing.T, actor net.Conn, ar *bufio.Reader) {
+				script := "return redis.call('GET',KEYS[1])"
+				monitorTestSend(t, actor, "SET", "monitor:script", "hello")
+				monitorTestReply(t, ar)
+				monitorTestSend(t, actor, "SCRIPT", "LOAD", script)
+				monitorTestReply(t, ar)
+			},
+			command: []string{"EVALSHA", scriptSHA("return redis.call('GET',KEYS[1])"), "1", "monitor:script"},
+			wantNested: " [0 lua] \"GET\" \"monitor:script\"\r\n",
+		},
+		{
+			name: "eval_ro",
+			setup: func(t *testing.T, actor net.Conn, ar *bufio.Reader) {
+				monitorTestSend(t, actor, "SET", "monitor:script", "hello")
+				monitorTestReply(t, ar)
+			},
+			command: []string{"EVAL_RO", "return redis.call('GET',KEYS[1])", "1", "monitor:script"},
+			wantNested: " [0 lua] \"GET\" \"monitor:script\"\r\n",
+		},
+		{
+			name: "fcall",
+			setup: func(t *testing.T, actor net.Conn, ar *bufio.Reader) {
+				code := "#!lua name=monitorlib\\nredis.register_function('reader', function(keys,args) return redis.call('GET',keys[1]) end)"
+				monitorTestSend(t, actor, "SET", "monitor:script", "hello")
+				monitorTestReply(t, ar)
+				monitorTestSend(t, actor, "FUNCTION", "LOAD", code)
+				monitorTestReply(t, ar)
+			},
+			command: []string{"FCALL", "reader", "1", "monitor:script"},
+			wantNested: " [0 lua] \"GET\" \"monitor:script\"\r\n",
+		},
+		{
+			name: "fcall_ro",
+			setup: func(t *testing.T, actor net.Conn, ar *bufio.Reader) {
+				code := "#!lua name=monitorlibro\\nredis.register_function{function_name='reader_ro',callback=function(keys,args) return redis.call('GET',keys[1]) end,flags={'no-writes'}}"
+				monitorTestSend(t, actor, "SET", "monitor:script", "hello")
+				monitorTestReply(t, ar)
+				monitorTestSend(t, actor, "FUNCTION", "LOAD", code)
+				monitorTestReply(t, ar)
+			},
+			command: []string{"FCALL_RO", "reader_ro", "1", "monitor:script"},
+			wantNested: " [0 lua] \"GET\" \"monitor:script\"\r\n",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s, err := Listen("127.0.0.1:0", engine.New())
+			if err != nil { t.Fatal(err) }
+			defer s.Close()
+
+			dial := func() net.Conn {
+				conn, err := net.DialTimeout("tcp", s.listener.Addr().String(), time.Second)
+				if err != nil { t.Fatal(err) }
+				t.Cleanup(func() { conn.Close() })
+				conn.SetDeadline(time.Now().Add(5*time.Second))
+				return conn
+			}
+
+			monitor, actor := dial(), dial()
+			mr, ar := bufio.NewReader(monitor), bufio.NewReader(actor)
+			tc.setup(t, actor, ar)
+
+			monitorTestSend(t, monitor, "MONITOR")
+			if got := monitorTestReply(t, mr); got != "+OK\r\n" { t.Fatalf("MONITOR=%q", got) }
+
+			monitorTestSend(t, actor, tc.command...)
+			if got := monitorTestReply(t, ar); strings.HasPrefix(got, "-") { t.Fatalf("%s=%q", tc.command[0], got) }
+
+			line, err := mr.ReadString('\n')
+			if err != nil { t.Fatal(err) }
+			space := strings.IndexByte(line, ' ')
+			if space < 2 { t.Fatalf("invalid outer event %q", line) }
+			outer := " [0 "+actor.LocalAddr().String()+"]"
+			for _, arg := range tc.command { outer += " "+monitorQuote([]byte(arg)) }
+			outer += "\r\n"
+			if line[space:] != outer { t.Fatalf("outer event=%q want suffix=%q", line, outer) }
+
+			line, err = mr.ReadString('\n')
+			if err != nil || !strings.HasSuffix(line, tc.wantNested) {
+				t.Fatalf("nested event=%q want suffix=%q err=%v", line, tc.wantNested, err)
+			}
+		})
+	}
+}
