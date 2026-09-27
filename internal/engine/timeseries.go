@@ -467,3 +467,118 @@ func (s *Store) TimeSeriesInfo(key string) (TimeSeriesInfo, error) {
 func NewTimeSeriesConfig(retention int64, policy TimeSeriesDuplicatePolicy, labels []TimeSeriesLabel) (*timeSeries, error) {
 	return newTimeSeries(retention, policy, labels)
 }
+
+
+func (s *Store) TimeSeriesAlter(
+	key string,
+	retention *int64,
+	policy *TimeSeriesDuplicatePolicy,
+	labels *[]TimeSeriesLabel,
+) error {
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	e, ok := sh.get(key)
+	if !ok || sh.expired(key, e, s.now()) {
+		return errors.New("ERR TSDB: the key does not exist")
+	}
+	if e.valueType != TypeTimeSeries {
+		return timeSeriesWrongType()
+	}
+	ts, err := decodeTimeSeries(s.decode(sh, e))
+	if err != nil {
+		return err
+	}
+	if retention != nil {
+		if *retention < 0 {
+			return errors.New("TSDB: Couldn't parse RETENTION")
+		}
+		ts.retention = *retention
+		ts.trimRetention()
+	}
+	if policy != nil {
+		if *policy > TimeSeriesSum {
+			return errors.New("ERR TSDB: Unknown DUPLICATE_POLICY")
+		}
+		ts.policy = *policy
+	}
+	if labels != nil {
+		ts.labels = append([]TimeSeriesLabel(nil), (*labels)...)
+	}
+
+	p := timeSeriesPreparedEntry(encodeTimeSeries(ts))
+	p.expiresAt = sh.expirationAt(key, e)
+	return s.publish(sh, key, p)
+}
+
+func (s *Store) TimeSeriesMAdd(
+	items []struct {
+		Key       string
+		Timestamp int64
+		Value     float64
+	},
+) error {
+	// Correctness-first implementation: validate all target keys before
+	// applying any mutation so MADD is all-or-nothing for missing/wrong types.
+	for _, item := range items {
+		sh := s.shardFor(item.Key)
+		sh.mu.RLock()
+		e, ok := sh.get(item.Key)
+		if !ok || sh.expired(item.Key, e, s.now()) {
+			sh.mu.RUnlock()
+			return errors.New("ERR TSDB: the key does not exist")
+		}
+		if e.valueType != TypeTimeSeries {
+			sh.mu.RUnlock()
+			return timeSeriesWrongType()
+		}
+		sh.mu.RUnlock()
+	}
+
+	for _, item := range items {
+		if err := s.TimeSeriesAdd(item.Key, item.Timestamp, item.Value, nil); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) TimeSeriesQueryIndex(filters map[string]string) ([]string, error) {
+	keys := s.Keys("*")
+	out := make([]string, 0)
+
+	for _, key := range keys {
+		sh := s.shardFor(key)
+		sh.mu.RLock()
+		e, ok := sh.get(key)
+		if !ok || sh.expired(key, e, s.now()) || e.valueType != TypeTimeSeries {
+			sh.mu.RUnlock()
+			continue
+		}
+		ts, err := decodeTimeSeries(s.decode(sh, e))
+		sh.mu.RUnlock()
+		if err != nil {
+			return nil, err
+		}
+
+		labels := make(map[string]string, len(ts.labels))
+		for _, label := range ts.labels {
+			labels[label.Key] = label.Value
+		}
+
+		match := true
+		for name, value := range filters {
+			if labels[name] != value {
+				match = false
+				break
+			}
+		}
+		if match {
+			out = append(out, key)
+		}
+	}
+
+	sort.Strings(out)
+	return out, nil
+}

@@ -19,7 +19,10 @@ var timeSeriesCommands = map[string]commandInfo{
 	"TS.INCRBY":   {3, 0, 1, 1, 1, true},
 	"TS.DECRBY":   {3, 0, 1, 1, 1, true},
 	"TS.DEL":      {4, 4, 1, 1, 1, true},
-	"TS.INFO":     {2, 2, 1, 1, 1, false},
+	"TS.INFO":       {2, 2, 1, 1, 1, false},
+	"TS.ALTER":      {2, 0, 1, 1, 1, true},
+	"TS.MADD":       {4, 0, 1, -1, 3, true},
+	"TS.QUERYINDEX": {2, 0, 0, 0, 0, false},
 }
 
 func init() {
@@ -194,6 +197,113 @@ func (s *Server) executeTimeSeries(args [][]byte)([]byte,error){
 		if exists{create=nil}
 		if err:=s.store.TimeSeriesIncrBy(key,delta,timestamp,cmd=="TS.DECRBY",create);err!=nil{return nil,err}
 		return integer(timestamp),nil
+
+	case "TS.ALTER":
+		var (
+			retention *int64
+			policy    *engine.TimeSeriesDuplicatePolicy
+			labels    *[]engine.TimeSeriesLabel
+		)
+		for i := 2; i < len(args); {
+			switch strings.ToUpper(string(args[i])) {
+			case "RETENTION":
+				if i+1 >= len(args) {
+					return nil, errors.New("ERR wrong number of arguments")
+				}
+				v, err := strconv.ParseInt(string(args[i+1]), 10, 64)
+				if err != nil || v < 0 {
+					return nil, errors.New("TSDB: Couldn't parse RETENTION")
+				}
+				retention = &v
+				i += 2
+			case "DUPLICATE_POLICY":
+				if i+1 >= len(args) {
+					return nil, errors.New("ERR wrong number of arguments")
+				}
+				v, err := parseTimeSeriesPolicy(args[i+1])
+				if err != nil {
+					return nil, err
+				}
+				policy = &v
+				i += 2
+			case "LABELS":
+				i++
+				if (len(args)-i)%2 != 0 {
+					return nil, errors.New("ERR wrong number of arguments")
+				}
+				next := make([]engine.TimeSeriesLabel, 0, (len(args)-i)/2)
+				for i < len(args) {
+					next = append(next, engine.TimeSeriesLabel{
+						Key: string(args[i]), Value: string(args[i+1]),
+					})
+					i += 2
+				}
+				labels = &next
+			default:
+				return nil, errors.New("ERR TSDB: unknown argument")
+			}
+		}
+		if err := s.store.TimeSeriesAlter(key, retention, policy, labels); err != nil {
+			return nil, err
+		}
+		return []byte("+OK\r\n"), nil
+
+	case "TS.MADD":
+		if (len(args)-1)%3 != 0 {
+			return nil, errors.New("ERR wrong number of arguments for 'ts.madd' command")
+		}
+		items := make([]struct {
+			Key       string
+			Timestamp int64
+			Value     float64
+		}, 0, (len(args)-1)/3)
+		replies := make([][]byte, 0, (len(args)-1)/3)
+
+		for i := 1; i < len(args); i += 3 {
+			ts, err := parseTimeSeriesTimestamp(args[i+1])
+			if err != nil {
+				return nil, err
+			}
+			value, err := strconv.ParseFloat(string(args[i+2]), 64)
+			if err != nil {
+				return nil, errors.New("ERR TSDB: invalid value")
+			}
+			items = append(items, struct {
+				Key       string
+				Timestamp int64
+				Value     float64
+			}{
+				Key: string(args[i]), Timestamp: ts, Value: value,
+			})
+			replies = append(replies, integer(ts))
+		}
+		if err := s.store.TimeSeriesMAdd(items); err != nil {
+			return nil, err
+		}
+		return array(replies...), nil
+
+	case "TS.QUERYINDEX":
+		if len(args) < 2 {
+			return nil, errors.New("ERR wrong number of arguments for 'ts.queryindex' command")
+		}
+		filters := make(map[string]string, len(args)-1)
+		for _, raw := range args[1:] {
+			filter := string(raw)
+			eq := strings.IndexByte(filter, '=')
+			if eq <= 0 || eq == len(filter)-1 {
+				return nil, errors.New("ERR TSDB: invalid filter")
+			}
+			filters[filter[:eq]] = filter[eq+1:]
+		}
+		keys, err := s.store.TimeSeriesQueryIndex(filters)
+		if err != nil {
+			return nil, err
+		}
+		items := make([][]byte, len(keys))
+		for i, key := range keys {
+			items[i] = formatBulkString([]byte(key))
+		}
+		return array(items...), nil
 
 	case "TS.INFO":
 		v,err:=s.store.TimeSeriesInfo(key)
