@@ -82,6 +82,8 @@ type Server struct {
 	persistenceJobMu  sync.Mutex
 	bgsaveRunning     bool
 	aofRewriteRunning bool
+	rdbLastSaveFailed bool
+	aofLastRewriteFailed bool
 }
 
 func New(store *engine.Store) *Server {
@@ -1588,11 +1590,14 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 
 	case "INFO":
 		section := strings.ToLower(key)
-		if section != "" && section != "all" && section != "default" && section != "server" && section != "memory" && section != "stats" && section != "keyspace" && section != "replication" {
+		if section != "" && section != "all" && section != "default" && section != "server" && section != "memory" && section != "stats" && section != "keyspace" && section != "replication" && section != "persistence" {
 			return formatBulkString(nil), nil
 		}
 		st := s.store.Stats()
 		out := ""
+		if section == "" || section == "all" || section == "default" || section == "persistence" {
+			out += s.persistenceInfo()
+		}
 		if section == "" || section == "all" || section == "default" || section == "server" {
 			out += "# Server\r\nsnugkv_version:0.1.0\r\n"
 		}
