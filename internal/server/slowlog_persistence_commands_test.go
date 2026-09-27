@@ -365,3 +365,35 @@ func TestSlowlogRedis82RedactsSupportedSensitiveArgs(t *testing.T) {
 		}
 	}
 }
+
+
+func TestSlowlogRecordedOutputUsesTrimmingAndRedaction(t *testing.T) {
+	s := New(engine.New())
+	execute(t, s, "CONFIG", "SET", "slowlog-log-slower-than", "0")
+	execute(t, s, "SLOWLOG", "RESET")
+
+	execute(t, s, "ACL", "SETUSER", "slowlog-user", ">supersecret", "+get")
+
+	long := strings.Repeat("A", 129)
+	execute(t, s, "SADD", "slowlog:set", "foo", long)
+
+	args := []string{"SADD", "slowlog:set"}
+	for i := 3; i <= 34; i++ {
+		args = append(args, strconv.Itoa(i))
+	}
+	execute(t, s, args...)
+
+	got := execute(t, s, "SLOWLOG", "GET", "-1")
+	for _, want := range []string{
+		"(redacted)",
+		strings.Repeat("A", 128) + "... (1 more bytes)",
+		"... (3 more arguments)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("SLOWLOG GET missing %q: %q", want, got)
+		}
+	}
+	if strings.Contains(got, "supersecret") {
+		t.Fatalf("SLOWLOG leaked sensitive ACL payload: %q", got)
+	}
+}
