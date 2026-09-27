@@ -87,6 +87,8 @@ func TestFailoverLeaseRPC(t *testing.T) {
 	reply, err := queryFailoverLease(
 		peer.listener.Addr().String(),
 		time.Second,
+		"",
+		"",
 		lineage,
 		3,
 		"leader-a",
