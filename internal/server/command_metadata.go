@@ -693,6 +693,13 @@ func commandInfoACL(
 			"@fast",
 		}
 
+	case "LCS":
+		return []string{
+			"@read",
+			"@string",
+			"@slow",
+		}
+
 	case "WAIT", "WAITAOF":
 		return []string{
 			"@slow",
