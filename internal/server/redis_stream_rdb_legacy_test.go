@@ -336,7 +336,10 @@ func TestDecodeRedisFullSyncLegacyStreamTypes(t *testing.T) {
 			if err := store.Restore(records, true); err != nil {
 				t.Fatal(err)
 			}
-			snapshot, ok := store.StreamSnapshot("legacy:stream")
+			snapshot, ok, err := store.StreamSnapshot("legacy:stream")
+			if err != nil {
+				t.Fatal(err)
+			}
 			if !ok {
 				t.Fatal("restored stream missing")
 			}
