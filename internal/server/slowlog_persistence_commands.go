@@ -196,7 +196,7 @@ func (s *Server) executeBGRewriteAOF() ([]byte, error) {
 	writer, ok := s.journal.(interface {
 		Rewrite([]persistence.Record) error
 	})
-	if !ok {
+	if !ok && s.aofRewritePath == "" {
 		return nil, errors.New("ERR AOF is disabled")
 	}
 
@@ -205,12 +205,27 @@ func (s *Server) executeBGRewriteAOF() ([]byte, error) {
 		s.persistenceJobMu.Unlock()
 		return nil, errors.New("ERR Background append only file rewriting already in progress")
 	}
+	// Open only a temporary writer: never install it as the active journal.
+	// Open holds the persistence file lock until Close, including during Rewrite.
+	var temporary *persistence.Log
+	if !ok {
+		var err error
+		temporary, err = persistence.Open(s.aofRewritePath, "no")
+		if err != nil {
+			s.persistenceJobMu.Unlock()
+			return nil, errors.New("ERR cannot open AOF rewrite destination")
+		}
+		writer = temporary
+	}
 	s.aofRewriteRunning = true
 	s.persistenceJobMu.Unlock()
 
 	records := s.store.Export(nil)
 	go func() {
 		_ = writer.Rewrite(records)
+		if temporary != nil {
+			_ = temporary.Close()
+		}
 		s.persistenceJobMu.Lock()
 		s.aofRewriteRunning = false
 		s.persistenceJobMu.Unlock()
