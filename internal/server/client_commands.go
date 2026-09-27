@@ -78,10 +78,7 @@ func newClientSession(
 }
 
 func (c *clientSession) touch(args [][]byte) time.Time {
-	return c.touchAt(args, time.Now())
-}
-
-func (c *clientSession) touchAt(args [][]byte, now time.Time) time.Time {
+	now := time.Now()
 	if c == nil {
 		return now
 	}
