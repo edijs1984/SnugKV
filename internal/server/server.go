@@ -139,6 +139,7 @@ var commandTable = map[string]commandInfo{
 	"JSON.TYPE":      {2, 3, 1, 1, 1, false},
 	"JSON.DEL":       {2, 3, 1, 1, 1, true},
 	"JSON.NUMINCRBY": {4, 4, 1, 1, 1, true},
+	"JSON.NUMMULTBY": {4, 4, 1, 1, 1, true},
 	"JSON.STRLEN":    {2, 3, 1, 1, 1, false},
 	"JSON.ARRLEN":    {2, 3, 1, 1, 1, false},
 	"JSON.OBJLEN":    {2, 3, 1, 1, 1, false},
@@ -243,6 +244,18 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		}
 
 		value, found, err := s.store.JSONNumIncrBy(key, string(args[2]), increment)
+		if err != nil {
+			return nil, err
+		}
+		return optionalBulk(value, found), nil
+
+	case "JSON.NUMMULTBY":
+		multiplier, err := strconv.ParseFloat(string(args[3]), 64)
+		if err != nil || math.IsNaN(multiplier) || math.IsInf(multiplier, 0) {
+			return nil, errors.New("ERR value is not a valid number")
+		}
+
+		value, found, err := s.store.JSONNumMultBy(key, string(args[2]), multiplier)
 		if err != nil {
 			return nil, err
 		}
