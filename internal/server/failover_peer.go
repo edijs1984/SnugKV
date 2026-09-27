@@ -27,6 +27,12 @@ type failoverVoteReply struct {
 	Granted bool   `json:"granted"`
 }
 
+type failoverLeaseReply struct {
+	Term      uint64 `json:"term"`
+	Granted   bool   `json:"granted"`
+	ExpiresMS int64  `json:"expires_ms"`
+}
+
 func (s *Server) localFailoverState(now time.Time) failoverPeerState {
 	s.replication.mu.RLock()
 	role := s.replication.role
@@ -342,4 +348,80 @@ func (s *Server) runFailoverElectionRound(now time.Time) (failoverRoundResult, e
 		}
 	}
 	return result, nil
+}
+
+
+func (s *Server) requestFailoverLease(now time.Time, lineage string, term uint64, leaderID string, ttl time.Duration) failoverLeaseReply {
+	local := s.localFailoverState(now)
+
+	s.failoverVoteMu.Lock()
+	currentTerm := s.failoverTerm
+	s.failoverVoteMu.Unlock()
+
+	reply := failoverLeaseReply{Term: currentTerm}
+	if term < currentTerm || ttl <= 0 || ttl > 30*time.Second {
+		return reply
+	}
+	if local.MasterRunID == "" || local.MasterRunID != lineage {
+		return reply
+	}
+	if leaderID == "" {
+		return reply
+	}
+
+	s.failoverLeaseMu.Lock()
+	defer s.failoverLeaseMu.Unlock()
+
+	if term < s.failoverLeaseTerm {
+		reply.Term = s.failoverLeaseTerm
+		return reply
+	}
+	if term > s.failoverLeaseTerm {
+		s.failoverLeaseTerm = term
+		s.failoverLeaseHolder = ""
+		s.failoverLeaseUntil = time.Time{}
+	}
+	if !s.failoverLeaseUntil.IsZero() &&
+		now.Before(s.failoverLeaseUntil) &&
+		s.failoverLeaseHolder != "" &&
+		s.failoverLeaseHolder != leaderID {
+		reply.Term = s.failoverLeaseTerm
+		reply.ExpiresMS = s.failoverLeaseUntil.UnixMilli()
+		return reply
+	}
+
+	s.failoverLeaseHolder = leaderID
+	s.failoverLeaseUntil = now.Add(ttl)
+	reply.Term = s.failoverLeaseTerm
+	reply.Granted = true
+	reply.ExpiresMS = s.failoverLeaseUntil.UnixMilli()
+	return reply
+}
+
+func queryFailoverLease(addr string, timeout time.Duration, lineage string, term uint64, leaderID string, ttl time.Duration) (failoverLeaseReply, error) {
+	conn, err := net.DialTimeout("tcp", addr, timeout)
+	if err != nil {
+		return failoverLeaseReply{}, err
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+	if err := writeReplicationRESPCommand(
+		conn,
+		"SNUG.FAILOVER", "LEASE",
+		lineage,
+		strconv.FormatUint(term, 10),
+		leaderID,
+		strconv.FormatInt(ttl.Milliseconds(), 10),
+	); err != nil {
+		return failoverLeaseReply{}, err
+	}
+	payload, err := readRESPBulk(bufio.NewReader(conn))
+	if err != nil {
+		return failoverLeaseReply{}, err
+	}
+	var reply failoverLeaseReply
+	if err := json.Unmarshal(payload, &reply); err != nil {
+		return failoverLeaseReply{}, err
+	}
+	return reply, nil
 }
