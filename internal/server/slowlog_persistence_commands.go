@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -53,10 +54,18 @@ func (s *Server) executeSlowlog(args [][]byte) ([]byte, error) {
 			return nil, errors.New("ERR wrong number of arguments for 'slowlog|help' command")
 		}
 		return array(
-			formatBulkString([]byte("GET [count] -- Return top entries from the slowlog.")),
-			formatBulkString([]byte("LEN -- Return the length of the slowlog.")),
-			formatBulkString([]byte("RESET -- Reset the slowlog.")),
-			formatBulkString([]byte("HELP -- Print this help.")),
+			formatBulkString([]byte("SLOWLOG <subcommand> [<arg> [value] [opt] ...]. Subcommands are:")),
+			formatBulkString([]byte("GET [<count>]")),
+			formatBulkString([]byte("    Return top <count> entries from the slowlog (default: 10, -1 mean all).")),
+			formatBulkString([]byte("    Entries are made of:")),
+			formatBulkString([]byte("    id, timestamp, time in microseconds, arguments array, client IP and port,")),
+			formatBulkString([]byte("    client name")),
+			formatBulkString([]byte("LEN")),
+			formatBulkString([]byte("    Return the length of the slowlog.")),
+			formatBulkString([]byte("RESET")),
+			formatBulkString([]byte("    Reset the slowlog.")),
+			formatBulkString([]byte("HELP")),
+			formatBulkString([]byte("    Print this help.")),
 		), nil
 
 	case "LEN":
@@ -79,24 +88,20 @@ func (s *Server) executeSlowlog(args [][]byte) ([]byte, error) {
 
 	case "GET":
 		if len(args) > 3 {
-			return nil, errors.New("ERR wrong number of arguments for 'slowlog|get' command")
+			return nil, fmt.Errorf("ERR unknown subcommand or wrong number of arguments for '%s'. Try SLOWLOG HELP.", args[1])
 		}
-		count := 10
+		count := int64(10)
 		if len(args) == 3 {
-			n, err := strconv.Atoi(string(args[2]))
-			if err != nil {
-				return nil, errors.New("ERR value is not an integer or out of range")
+			n, err := strconv.ParseInt(string(args[2]), 10, 64)
+			if err != nil || n < -1 || strconv.FormatInt(n, 10) != string(args[2]) {
+				return nil, errors.New("ERR count should be greater than or equal to -1")
 			}
-			if n < 0 {
-				count = int(^uint(0) >> 1)
-			} else {
-				count = n
-			}
+			count = n
 		}
 
 		s.slowlogMu.Lock()
-		if count > len(s.slowlogEntries) {
-			count = len(s.slowlogEntries)
+		if count == -1 || count > int64(len(s.slowlogEntries)) {
+			count = int64(len(s.slowlogEntries))
 		}
 		entries := append([]slowlogEntry(nil), s.slowlogEntries[:count]...)
 		s.slowlogMu.Unlock()
@@ -119,7 +124,7 @@ func (s *Server) executeSlowlog(args [][]byte) ([]byte, error) {
 		return array(items...), nil
 
 	default:
-		return nil, errors.New("ERR unknown subcommand")
+		return nil, fmt.Errorf("ERR unknown subcommand '%s'. Try SLOWLOG HELP.", args[1])
 	}
 }
 
