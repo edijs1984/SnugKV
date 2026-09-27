@@ -1180,6 +1180,31 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 
 	case "SNUG.FAILOVER":
 		switch strings.ToUpper(string(args[1])) {
+		case "MEMBERSHIPCHANGE":
+			if len(args) != 5 {
+				return nil, errors.New("ERR wrong number of arguments for 'snug.failover|membershipchange' command")
+			}
+			newEpoch, err := strconv.ParseUint(string(args[2]), 10, 64)
+			if err != nil {
+				return nil, errors.New("ERR invalid new failover membership epoch")
+			}
+			quorum, err := strconv.Atoi(string(args[3]))
+			if err != nil {
+				return nil, errors.New("ERR invalid failover membership quorum")
+			}
+			result, err := s.coordinateFailoverMembershipChange(
+				newEpoch,
+				parseFailoverPeerCSV(string(args[4])),
+				quorum,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("ERR %s", err.Error())
+			}
+			payload, err := json.Marshal(result)
+			if err != nil {
+				return nil, err
+			}
+			return formatBulkString(payload), nil
 		case "MEMBERSHIPPREPARE":
 			if len(args) != 7 {
 				return nil, errors.New("ERR wrong number of arguments for 'snug.failover|membershipprepare' command")
