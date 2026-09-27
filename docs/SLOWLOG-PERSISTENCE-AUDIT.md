@@ -32,7 +32,7 @@ Targeted race suites and the live checks above also passed. GitHub CI is a separ
 - SnugKV retains Redis 8.2's six-field SLOWLOG entry. Redis 8.10.2 returns an additional original-argument-count field.
 - With no active AOF, SnugKV requires an explicit export destination; Redis retains a default destination even with appendonly=no.
 - Active rewrites block commands participating in durableMu, including INFO and scheduling requests arriving during that interval. Scheduling tests exercise the state machine directly; fully responsive Redis-style concurrent rewrites need buffering.
-- Transaction-time persistence scheduling, simultaneous synchronous SAVE and BGSAVE, and automatic periodic snapshots need further lifecycle review. Shutdown while background persistence work is running or handed off to a queued successor is now covered by tracked-job lifecycle tests.
+- Transaction-time persistence scheduling and automatic periodic snapshots need further lifecycle review. SAVE/BGSAVE mutual exclusion and shutdown while background persistence work is running or handed off to a queued successor are now covered by lifecycle tests.
 - Fast TCP GET/SET paths, MULTI/EXEC executed-command visibility, outer EVAL/EVALSHA/EVAL_RO/EVALSHA_RO, and FCALL/FCALL_RO are now covered by focused race-enabled regressions. Argument truncation/redaction remains a separate hardening area.
 - Persistence INFO is a subset; native SnugKV snapshot/AOF files are not Redis RDB/AOF file-format exports.
 
@@ -84,3 +84,24 @@ Operator-reported passing gates:
 - `go test ./internal/resp -run=^$ -fuzz=FuzzReadCommand -fuzztime=20s`
 
 Remaining persistence lifecycle work: transaction-time scheduling, SAVE/BGSAVE interaction parity, and automatic periodic snapshot scheduling.
+
+
+## SAVE/BGSAVE lifecycle hardening — 2026-09-27
+
+This follow-up closes the audited synchronous SAVE versus BGSAVE interaction gap.
+
+Changes:
+
+- Synchronous `SAVE` rejects while a background save is active with `ERR Background save already in progress`.
+- `BGSAVE` and `BGSAVE SCHEDULE` reject while synchronous `SAVE` is active.
+- Synchronous SAVE state is tracked under the persistence job mutex so the two save modes cannot overlap.
+- `BGSAVE SCHEDULE` does not queue behind synchronous SAVE; it follows the same active-save rejection semantics.
+
+Operator-reported passing gates:
+
+- `go test -race ./internal/server -run '^(TestPersistence|TestSave|TestBGSave|TestBGRewriteAOF)' -count=1 -v`
+- `go test -race ./...`
+- `go vet ./...`
+- `go test ./internal/resp -run=^$ -fuzz=FuzzReadCommand -fuzztime=20s`
+
+Remaining persistence lifecycle work: transaction-time persistence scheduling and automatic periodic snapshot scheduling.
