@@ -67,3 +67,18 @@ func TestFailoverElectionDeduplicatesVotes(t *testing.T) {
 		t.Fatalf("down votes=%d want=1", result.DownVotes)
 	}
 }
+
+
+func TestFailoverElectionDuplicateCannotUpgradeEligibility(t *testing.T) {
+	result := evaluateFailoverElection([]failoverObservation{
+		{NodeID: "a", MasterDown: true, Eligible: false, Offset: 100, Priority: 0},
+		{NodeID: "a", MasterDown: true, Eligible: true, Offset: 999, Priority: 1},
+		{NodeID: "b", MasterDown: true, Eligible: true, Offset: 90, Priority: 100},
+	}, 2)
+	if !result.QuorumReached {
+		t.Fatalf("quorum not reached: %+v", result)
+	}
+	if result.CandidateID != "b" {
+		t.Fatalf("candidate=%q want=b", result.CandidateID)
+	}
+}
