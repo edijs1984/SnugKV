@@ -88,13 +88,95 @@ echo "MOVED reply: $moved"
 grep -Fq "MOVED $s2 127.0.0.1:7001" <<<"$moved"
 
 echo "[2/4] redis-cli -c redirect routing"
-redis-cli --raw -c -p 7000 SET "$k1" one | grep -qx OK
-redis-cli --raw -c -p 7000 SET "$k2" two | grep -qx OK
-redis-cli --raw -c -p 7000 SET "$k3" three | grep -qx OK
+set1="$(redis-cli --raw -c -p 7000 SET "$k1" one 2>&1)"
+set2="$(redis-cli --raw -c -p 7000 SET "$k2" two 2>&1)"
+set3="$(redis-cli --raw -c -p 7000 SET "$k3" three 2>&1)"
+printf 'SET1: %s\n' "$set1"
+printf 'SET2: %s\n' "$set2"
+printf 'SET3: %s\n' "$set3"
+grep -qx OK <<<"$set1"
+grep -q '^OK
+echo "[3/4] hash-tag and CROSSSLOT"
+redis-cli --raw -c -p 7000 MSET "acct:{42}:a" A "acct:{42}:b" B | grep -qx OK
+cross="$(redis-cli --raw -p 7000 MGET "$k1" "$k2" 2>&1 || true)"
+echo "CROSSSLOT reply: $cross"
+grep -Fq "CROSSSLOT Keys in request don't hash to the same slot" <<<"$cross"
 
-[[ "$(redis-cli -c -p 7000 GET "$k1")" == "one" ]]
-[[ "$(redis-cli -c -p 7000 GET "$k2")" == "two" ]]
-[[ "$(redis-cli -c -p 7000 GET "$k3")" == "three" ]]
+echo "[4/4] topology discovery"
+redis-cli --raw -p 7000 CLUSTER INFO | grep -q "cluster_state:ok"
+[[ "$(redis-cli -p 7000 CLUSTER NODES | wc -l)" -eq 3 ]]
+redis-cli -p 7000 CLUSTER SLOTS >/dev/null
+redis-cli -p 7000 CLUSTER SHARDS >/dev/null
+
+echo "cluster static smoke: PASS"
+ <<<"$set2"
+grep -q '^OK
+echo "[3/4] hash-tag and CROSSSLOT"
+redis-cli --raw -c -p 7000 MSET "acct:{42}:a" A "acct:{42}:b" B | grep -qx OK
+cross="$(redis-cli --raw -p 7000 MGET "$k1" "$k2" 2>&1 || true)"
+echo "CROSSSLOT reply: $cross"
+grep -Fq "CROSSSLOT Keys in request don't hash to the same slot" <<<"$cross"
+
+echo "[4/4] topology discovery"
+redis-cli --raw -p 7000 CLUSTER INFO | grep -q "cluster_state:ok"
+[[ "$(redis-cli -p 7000 CLUSTER NODES | wc -l)" -eq 3 ]]
+redis-cli -p 7000 CLUSTER SLOTS >/dev/null
+redis-cli -p 7000 CLUSTER SHARDS >/dev/null
+
+echo "cluster static smoke: PASS"
+ <<<"$set3"
+
+get1="$(redis-cli --raw -c -p 7000 GET "$k1" 2>&1)"
+get2="$(redis-cli --raw -c -p 7000 GET "$k2" 2>&1)"
+get3="$(redis-cli --raw -c -p 7000 GET "$k3" 2>&1)"
+printf 'GET1: %s\n' "$get1"
+printf 'GET2: %s\n' "$get2"
+printf 'GET3: %s\n' "$get3"
+grep -q '^one
+echo "[3/4] hash-tag and CROSSSLOT"
+redis-cli --raw -c -p 7000 MSET "acct:{42}:a" A "acct:{42}:b" B | grep -qx OK
+cross="$(redis-cli --raw -p 7000 MGET "$k1" "$k2" 2>&1 || true)"
+echo "CROSSSLOT reply: $cross"
+grep -Fq "CROSSSLOT Keys in request don't hash to the same slot" <<<"$cross"
+
+echo "[4/4] topology discovery"
+redis-cli --raw -p 7000 CLUSTER INFO | grep -q "cluster_state:ok"
+[[ "$(redis-cli -p 7000 CLUSTER NODES | wc -l)" -eq 3 ]]
+redis-cli -p 7000 CLUSTER SLOTS >/dev/null
+redis-cli -p 7000 CLUSTER SHARDS >/dev/null
+
+echo "cluster static smoke: PASS"
+ <<<"$get1"
+grep -q '^two
+echo "[3/4] hash-tag and CROSSSLOT"
+redis-cli --raw -c -p 7000 MSET "acct:{42}:a" A "acct:{42}:b" B | grep -qx OK
+cross="$(redis-cli --raw -p 7000 MGET "$k1" "$k2" 2>&1 || true)"
+echo "CROSSSLOT reply: $cross"
+grep -Fq "CROSSSLOT Keys in request don't hash to the same slot" <<<"$cross"
+
+echo "[4/4] topology discovery"
+redis-cli --raw -p 7000 CLUSTER INFO | grep -q "cluster_state:ok"
+[[ "$(redis-cli -p 7000 CLUSTER NODES | wc -l)" -eq 3 ]]
+redis-cli -p 7000 CLUSTER SLOTS >/dev/null
+redis-cli -p 7000 CLUSTER SHARDS >/dev/null
+
+echo "cluster static smoke: PASS"
+ <<<"$get2"
+grep -q '^three
+echo "[3/4] hash-tag and CROSSSLOT"
+redis-cli --raw -c -p 7000 MSET "acct:{42}:a" A "acct:{42}:b" B | grep -qx OK
+cross="$(redis-cli --raw -p 7000 MGET "$k1" "$k2" 2>&1 || true)"
+echo "CROSSSLOT reply: $cross"
+grep -Fq "CROSSSLOT Keys in request don't hash to the same slot" <<<"$cross"
+
+echo "[4/4] topology discovery"
+redis-cli --raw -p 7000 CLUSTER INFO | grep -q "cluster_state:ok"
+[[ "$(redis-cli -p 7000 CLUSTER NODES | wc -l)" -eq 3 ]]
+redis-cli -p 7000 CLUSTER SLOTS >/dev/null
+redis-cli -p 7000 CLUSTER SHARDS >/dev/null
+
+echo "cluster static smoke: PASS"
+ <<<"$get3"
 
 echo "[3/4] hash-tag and CROSSSLOT"
 redis-cli --raw -c -p 7000 MSET "acct:{42}:a" A "acct:{42}:b" B | grep -qx OK
