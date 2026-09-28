@@ -1181,11 +1181,33 @@ func TestClusterRebalancePlanWireShape(t *testing.T) {
 	wantB := clusterNodeID(b)
 	wantC := clusterNodeID(c)
 	text := string(got)
-	if !strings.Contains(text, wantA) {
-		t.Fatalf("plan missing source node id %s: %q", wantA, text)
+	for _, token := range []string{
+		"moves",
+		"projected",
+		"start",
+		"end",
+		"source_id",
+		"source_addr",
+		"target_id",
+		"target_addr",
+		"node_id",
+		"addr",
+		"slots",
+		wantA,
+		wantB,
+		wantC,
+		a,
+		b,
+		c,
+	} {
+		if !strings.Contains(text, token) {
+			t.Fatalf("plan missing %q: %q", token, text)
+		}
 	}
-	if !strings.Contains(text, wantB) && !strings.Contains(text, wantC) {
-		t.Fatalf("plan missing target node ids: %q", text)
+	for _, projectedCount := range []string{":5462\r\n", ":5461\r\n"} {
+		if !strings.Contains(text, projectedCount) {
+			t.Fatalf("plan missing projected count %q: %q", projectedCount, text)
+		}
 	}
 
 	before := s.clusterStateSnapshot()
