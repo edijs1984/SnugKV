@@ -1282,12 +1282,52 @@ func (s *Server) resumeRebalanceSlot(state clusterStateSnapshot, slot int) (int,
 	return moved, nil
 }
 
+func (s *Server) executeRemoteRebalanceSlot(slot int, targetID string) error {
+	state := s.clusterStateSnapshot()
+	if !state.enabled {
+		return errors.New("ERR This instance has cluster support disabled")
+	}
+	if slot < 0 || slot >= clusterSlotCount {
+		return errors.New("ERR Invalid or out of range slot")
+	}
+	if state.owners[slot] != state.nodeAddr {
+		return errors.New("ERR rebalance execute slot is not owned by this node")
+	}
+	if state.migrating[slot] != "" || state.importing[slot] != "" {
+		return errors.New("ERR rebalance execute slot already has an active transition")
+	}
+	target, ok := clusterNodeAddressByIDFromState(state, targetID)
+	if !ok || target == state.nodeAddr {
+		return errors.New("ERR rebalance execute target is invalid")
+	}
+	_, err := s.rebalanceMoveOneSlot(state, clusterRebalanceMove{
+		Start: slot,
+		End: slot,
+		Source: state.nodeAddr,
+		Target: target,
+	})
+	return err
+}
+
 func (s *Server) executeClusterRebalance(args [][]byte) ([]byte, error) {
 	if len(args) < 3 {
 		return nil, errors.New("ERR syntax error")
 	}
 
 	mode := strings.ToUpper(string(args[2]))
+	if mode == "EXECUTE" {
+		if len(args) != 5 {
+			return nil, errors.New("ERR syntax error")
+		}
+		slot, err := strconv.Atoi(string(args[3]))
+		if err != nil || slot < 0 || slot >= clusterSlotCount {
+			return nil, errors.New("ERR Invalid or out of range slot")
+		}
+		if err := s.executeRemoteRebalanceSlot(slot, string(args[4])); err != nil {
+			return nil, err
+		}
+		return []byte("+OK\r\n"), nil
+	}
 	if mode == "RECOVER" {
 		if len(args) == 4 && strings.EqualFold(string(args[3]), "PLAN") {
 			return clusterRebalanceRecoveryPlanReply(s.clusterStateSnapshot()), nil
@@ -1331,10 +1371,10 @@ func (s *Server) executeClusterRebalance(args [][]byte) ([]byte, error) {
 			return nil, errors.New("ERR syntax error")
 		}
 		applyMode := strings.ToUpper(string(args[4]))
-		if applyMode != "DRYRUN" && applyMode != "ONCE" && applyMode != "BATCH" {
+		if applyMode != "DRYRUN" && applyMode != "ONCE" && applyMode != "BATCH" && applyMode != "ALL" {
 			return nil, errors.New("ERR syntax error")
 		}
-		if (applyMode == "DRYRUN" || applyMode == "ONCE") && len(args) != 5 {
+		if (applyMode == "DRYRUN" || applyMode == "ONCE" || applyMode == "ALL") && len(args) != 5 {
 			return nil, errors.New("ERR syntax error")
 		}
 		if applyMode == "BATCH" && len(args) != 6 {
@@ -1363,6 +1403,84 @@ func (s *Server) executeClusterRebalance(args [][]byte) ([]byte, error) {
 				formatBulkString([]byte("ready")),
 				formatBulkString([]byte("moves")),
 				integer(int64(len(moves))),
+			), nil
+		}
+
+		if applyMode == "ALL" {
+			if len(moves) == 0 {
+				return array(
+					formatBulkString([]byte("plan_id")),
+					formatBulkString([]byte(currentPlanID)),
+					formatBulkString([]byte("status")),
+					formatBulkString([]byte("balanced")),
+					formatBulkString([]byte("slots_moved")),
+					integer(0),
+				), nil
+			}
+
+			slotsMoved := 0
+			for _, move := range moves {
+				for slot := move.Start; slot <= move.End; slot++ {
+					current := s.clusterStateSnapshot()
+					if clusterRebalanceHasActiveTransition(current) {
+						return array(
+							formatBulkString([]byte("plan_id")),
+							formatBulkString([]byte(currentPlanID)),
+							formatBulkString([]byte("status")),
+							formatBulkString([]byte("partial")),
+							formatBulkString([]byte("slots_moved")),
+							integer(int64(slotsMoved)),
+							formatBulkString([]byte("failed_slot")),
+							integer(int64(slot)),
+							formatBulkString([]byte("error")),
+							formatBulkString([]byte("ERR active transition detected during full-plan execution")),
+						), nil
+					}
+
+					var moveErr error
+					if move.Source == current.nodeAddr {
+						_, moveErr = s.rebalanceMoveOneSlot(current, clusterRebalanceMove{
+							Start: slot,
+							End: slot,
+							Source: move.Source,
+							Target: move.Target,
+						})
+					} else {
+						moveErr = s.sendClusterControlCommand(
+							move.Source,
+							"CLUSTER", "REBALANCE", "EXECUTE",
+							strconv.Itoa(slot),
+							clusterNodeID(move.Target),
+						)
+					}
+					if moveErr != nil {
+						if slotsMoved == 0 {
+							return nil, moveErr
+						}
+						return array(
+							formatBulkString([]byte("plan_id")),
+							formatBulkString([]byte(currentPlanID)),
+							formatBulkString([]byte("status")),
+							formatBulkString([]byte("partial")),
+							formatBulkString([]byte("slots_moved")),
+							integer(int64(slotsMoved)),
+							formatBulkString([]byte("failed_slot")),
+							integer(int64(slot)),
+							formatBulkString([]byte("error")),
+							formatBulkString([]byte(moveErr.Error())),
+						), nil
+					}
+					slotsMoved++
+				}
+			}
+
+			return array(
+				formatBulkString([]byte("plan_id")),
+				formatBulkString([]byte(currentPlanID)),
+				formatBulkString([]byte("status")),
+				formatBulkString([]byte("complete")),
+				formatBulkString([]byte("slots_moved")),
+				integer(int64(slotsMoved)),
 			), nil
 		}
 
