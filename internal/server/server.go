@@ -93,6 +93,7 @@ type Server struct {
 	clusterMu             sync.RWMutex
 	clusterEnabled        bool
 	clusterNodeAddr       string
+	clusterTopologyEpoch  uint64
 	clusterSlotOwners     [clusterSlotCount]string
 	clusterSlotMigrating  [clusterSlotCount]string
 	clusterSlotImporting  [clusterSlotCount]string
