@@ -988,9 +988,7 @@ func TestClusterFlushSlotsRequiresEmptyDB(t *testing.T) {
 	if err == nil || err.Error() != "ERR DB must be empty to perform CLUSTER FLUSHSLOTS." {
 		t.Fatalf("FLUSHSLOTS with data err=%v", err)
 	}
-	if _, err := s.execute([][]byte{[]byte("DEL"), []byte("local-data")}); err != nil {
-		t.Fatal(err)
-	}
+	s.store.DeleteMany([]string{"local-data"})
 
 	response, err := s.execute([][]byte{[]byte("CLUSTER"), []byte("FLUSHSLOTS")})
 	if err != nil || string(response) != "+OK\r\n" {
