@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"fmt"
 	"net"
 	"snugkv/internal/engine"
 	"snugkv/internal/persistence"
@@ -217,5 +218,88 @@ func TestTransactionAOFUsesSingleFrame(t *testing.T) {
 	}
 	if len(journal.frames[0]) != 2 {
 		t.Fatalf("transaction frame records = %d, want 2", len(journal.frames[0]))
+	}
+}
+
+
+func TestClusterTransactionRejectsCrossSlotQueue(t *testing.T) {
+	s := New(engine.New())
+	if err := s.configureClusterSlots(true, "127.0.0.1:7000", map[string]string{
+		"0-16383": "127.0.0.1:7000",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	session := newTransactionSession(s)
+	defer session.close()
+
+	if _, _, err := session.handleCommand(pubSubArgs("MULTI")); err != nil {
+		t.Fatal(err)
+	}
+	if _, response, err := session.handleCommand(pubSubArgs("SET", "hello", "1")); err != nil || string(response) != "+QUEUED\r\n" {
+		t.Fatalf("first queue response=%q err=%v", response, err)
+	}
+	if _, _, err := session.handleCommand(pubSubArgs("SET", "foo", "2")); err == nil || err.Error() != "CROSSSLOT Keys in request don't hash to the same slot" {
+		t.Fatalf("second queue err=%v", err)
+	}
+	if _, _, err := session.handleCommand(pubSubArgs("EXEC")); err == nil || err.Error() != "EXECABORT Transaction discarded because of previous errors." {
+		t.Fatalf("EXEC err=%v", err)
+	}
+}
+
+func TestClusterTransactionAllowsSameHashTag(t *testing.T) {
+	s := New(engine.New())
+	if err := s.configureClusterSlots(true, "127.0.0.1:7000", map[string]string{
+		"0-16383": "127.0.0.1:7000",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	session := newTransactionSession(s)
+	defer session.close()
+
+	_, _, _ = session.handleCommand(pubSubArgs("MULTI"))
+	if _, response, err := session.handleCommand(pubSubArgs("SET", "acct:{42}:a", "A")); err != nil || string(response) != "+QUEUED\r\n" {
+		t.Fatalf("first queue response=%q err=%v", response, err)
+	}
+	if _, response, err := session.handleCommand(pubSubArgs("SET", "acct:{42}:b", "B")); err != nil || string(response) != "+QUEUED\r\n" {
+		t.Fatalf("second queue response=%q err=%v", response, err)
+	}
+	if _, response, err := session.handleCommand(pubSubArgs("EXEC")); err != nil || string(response) != "*2\r\n+OK\r\n+OK\r\n" {
+		t.Fatalf("EXEC response=%q err=%v", response, err)
+	}
+}
+
+func TestClusterWatchRejectsCrossSlot(t *testing.T) {
+	s := New(engine.New())
+	if err := s.configureClusterSlots(true, "127.0.0.1:7000", map[string]string{
+		"0-16383": "127.0.0.1:7000",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	session := newTransactionSession(s)
+	defer session.close()
+
+	if _, _, err := session.handleCommand(pubSubArgs("WATCH", "hello", "foo")); err == nil || err.Error() != "CROSSSLOT Keys in request don't hash to the same slot" {
+		t.Fatalf("WATCH err=%v", err)
+	}
+}
+
+func TestClusterWatchReturnsMoved(t *testing.T) {
+	s := New(engine.New())
+	if err := s.configureClusterSlots(true, "127.0.0.1:7000", map[string]string{
+		"0-8191":     "127.0.0.1:7000",
+		"8192-16383": "127.0.0.1:7001",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	session := newTransactionSession(s)
+	defer session.close()
+
+	slot := clusterKeySlot([]byte("foo"))
+	if slot < 8192 {
+		t.Fatalf("fixture foo slot=%d, expected remote range", slot)
+	}
+	want := fmt.Sprintf("MOVED %d 127.0.0.1:7001", slot)
+	if _, _, err := session.handleCommand(pubSubArgs("WATCH", "foo")); err == nil || err.Error() != want {
+		t.Fatalf("WATCH err=%v want=%q", err, want)
 	}
 }
