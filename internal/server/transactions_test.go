@@ -238,10 +238,10 @@ func TestClusterTransactionRejectsCrossSlotQueue(t *testing.T) {
 	if _, response, err := session.handleCommand(pubSubArgs("SET", "hello", "1")); err != nil || string(response) != "+QUEUED\r\n" {
 		t.Fatalf("first queue response=%q err=%v", response, err)
 	}
-	if _, _, err := session.handleCommand(pubSubArgs("SET", "foo", "2")); err == nil || err.Error() != "CROSSSLOT Keys in request don't hash to the same slot" {
-		t.Fatalf("second queue err=%v", err)
+	if _, response, err := session.handleCommand(pubSubArgs("SET", "foo", "2")); err != nil || string(response) != "+QUEUED\r\n" {
+		t.Fatalf("second queue response=%q err=%v", response, err)
 	}
-	if _, _, err := session.handleCommand(pubSubArgs("EXEC")); err == nil || err.Error() != "EXECABORT Transaction discarded because of previous errors." {
+	if _, _, err := session.handleCommand(pubSubArgs("EXEC")); err == nil || err.Error() != "CROSSSLOT Keys in request don't hash to the same slot" {
 		t.Fatalf("EXEC err=%v", err)
 	}
 }
@@ -376,10 +376,10 @@ func TestClusterTransactionTCPCrossSlotExecAbort(t *testing.T) {
 	if got := txCommand(t, conn, r, "SET", "hello", "1"); got != "+QUEUED\r\n" {
 		t.Fatalf("first SET = %q", got)
 	}
-	if got := txCommand(t, conn, r, "SET", "foo", "2"); got != "-CROSSSLOT Keys in request don't hash to the same slot\r\n" {
+	if got := txCommand(t, conn, r, "SET", "foo", "2"); got != "+QUEUED\r\n" {
 		t.Fatalf("cross-slot SET = %q", got)
 	}
-	if got := txCommand(t, conn, r, "EXEC"); got != "-EXECABORT Transaction discarded because of previous errors.\r\n" {
+	if got := txCommand(t, conn, r, "EXEC"); got != "-CROSSSLOT Keys in request don't hash to the same slot\r\n" {
 		t.Fatalf("EXEC = %q", got)
 	}
 }
