@@ -496,19 +496,17 @@ func (s *Server) executeClusterRemove(args [][]byte) ([]byte, error) {
 	}
 
 	if finalState.nodeAddr != removeAddr {
-		if err := s.removeClusterKnownNode(removeAddr, digest); err != nil {
-			return nil, err
-		}
 		if err := s.sendClusterControlCommand(
 			removeAddr,
 			"CLUSTER", "MEMBERSHIP", "REMOVE", removeAddr, digest,
 		); err != nil {
 			return nil, fmt.Errorf("ERR cluster remove retiring node update failed: %w", err)
 		}
-	} else {
-		if err := s.removeClusterKnownNode(removeAddr, digest); err != nil {
-			return nil, err
-		}
+	}
+	// Commit on the coordinator last. A failed remote propagation therefore
+	// leaves the coordinator's membership unchanged and the operation retryable.
+	if err := s.removeClusterKnownNode(removeAddr, digest); err != nil {
+		return nil, err
 	}
 
 	return array(
