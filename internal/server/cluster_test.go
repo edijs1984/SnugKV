@@ -473,3 +473,30 @@ func TestClusterRoutingPublicExecuteLocalReadWrite(t *testing.T) {
 		t.Fatalf("reply=%q", reply)
 	}
 }
+
+
+func TestClusterRoutingAppliesToCapturedStatePath(t *testing.T) {
+	s := New(engine.New())
+	if err := s.configureClusterSlots(true, "127.0.0.1:7000", map[string]string{
+		"0-5460": "127.0.0.1:7000",
+		"5461-16383": "127.0.0.1:7001",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	k1 := []byte("n1:0")
+	k2 := []byte("n2:1")
+	if clusterKeySlot(k1) == clusterKeySlot(k2) {
+		t.Fatal("test keys unexpectedly share a slot")
+	}
+
+	_, err := s.executeForSessionCaptureState(
+		[][]byte{[]byte("MGET"), k1, k2},
+		nil,
+		nil,
+		nil,
+	)
+	if err == nil || err.Error() != "CROSSSLOT Keys in request don't hash to the same slot" {
+		t.Fatalf("err=%v", err)
+	}
+}
