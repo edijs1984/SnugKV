@@ -555,6 +555,10 @@ func TestClusterSetSlotMigrationRouting(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if _, err := s.execute([][]byte{[]byte("SET"), key, []byte("value")}); err != nil {
+		t.Fatalf("SET migration key seed: %v", err)
+	}
+
 	targetID := clusterNodeID(target)
 	if _, err := s.execute([][]byte{
 		[]byte("CLUSTER"), []byte("SETSLOT"),
@@ -563,16 +567,21 @@ func TestClusterSetSlotMigrationRouting(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if got, err := s.execute([][]byte{[]byte("GET"), key}); err != nil || string(got) != "$5\r\nvalue\r\n" {
+		t.Fatalf("local migrating GET=%q err=%v", got, err)
+	}
+
+	if _, err := s.execute([][]byte{[]byte("DEL"), key}); err != nil {
+		t.Fatalf("DEL migrating key: %v", err)
+	}
 	_, err := s.execute([][]byte{[]byte("GET"), key})
 	if err == nil || err.Error() != fmt.Sprintf("ASK %d %s", slot, target) {
 		t.Fatalf("missing migrating key err=%v", err)
 	}
 
-	if _, err := s.execute([][]byte{[]byte("SET"), key, []byte("value")}); err != nil {
-		t.Fatalf("SET existing migration key seed: %v", err)
+	if got, err := s.execute([][]byte{[]byte("GET"), key}); err == nil || got != nil {
+		t.Fatalf("expected ASK for missing key, got=%q err=%v", got, err)
 	}
-	if got, err := s.execute([][]byte{[]byte("GET"), key}); err != nil || string(got) != "$5\r\nvalue\r\n" {
-		t.Fatalf("local migrating GET=%q err=%v", got, err)
 	}
 }
 
