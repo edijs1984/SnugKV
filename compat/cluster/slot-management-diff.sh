@@ -49,6 +49,7 @@ appendonly no
 cluster-enabled yes
 cluster-config-file nodes.conf
 cluster-node-timeout 5000
+cluster-require-full-coverage no
 dir $redis_dir
 logfile ""
 EOF
