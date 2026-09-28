@@ -185,12 +185,16 @@ func TestClusterRebalanceApplyOnceConvergesThirdNodeTopology(t *testing.T) {
 		"9000-13999":  targetAddr,
 		"14000-16383": observerAddr,
 	}
-	for _, srv := range []*Server{
-		sourceTCP.server,
-		targetTCP.server,
-		observerTCP.server,
-	} {
-		if err := srv.configureClusterSlots(true, srv.clusterStateSnapshot().nodeAddr, ranges); err != nil {
+	nodes := []struct {
+		server *Server
+		addr   string
+	}{
+		{sourceTCP.server, sourceAddr},
+		{targetTCP.server, targetAddr},
+		{observerTCP.server, observerAddr},
+	}
+	for _, node := range nodes {
+		if err := node.server.configureClusterSlots(true, node.addr, ranges); err != nil {
 			t.Fatal(err)
 		}
 	}
