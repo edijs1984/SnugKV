@@ -24,8 +24,9 @@ const (
 )
 
 var keyDumpRestoreCommands = map[string]commandInfo{
-	"DUMP":    {2, 2, 1, 1, 1, false},
-	"RESTORE": {4, 0, 1, 1, 1, true},
+	"DUMP":           {2, 2, 1, 1, 1, false},
+	"RESTORE":        {4, 0, 1, 1, 1, true},
+	"RESTORE-ASKING": {4, 0, 1, 1, 1, true},
 }
 
 func init() {
@@ -528,9 +529,18 @@ func (s *Server) executeKeyDumpRestore(args [][]byte) ([]byte, error) {
 		}
 		return formatBulkString(payload), nil
 
-	case "RESTORE":
+	case "RESTORE", "RESTORE-ASKING":
 		if len(args) < 4 {
 			return nil, errors.New("ERR wrong number of arguments for 'restore' command")
+		}
+		if cmd == "RESTORE-ASKING" {
+			if !s.clusterEnabled {
+				return nil, errors.New("ERR This instance has cluster support disabled")
+			}
+			slot := clusterKeySlot(args[1])
+			if s.clusterSlotImporting[slot] == "" {
+				return nil, errors.New("ERR RESTORE-ASKING is only allowed for importing slots")
+			}
 		}
 
 		options, err := parseRestoreOptions(args[4:])

@@ -300,3 +300,60 @@ func TestMigrateMoveInvalidatesWatch(t *testing.T) {
 	}
 	<-got
 }
+
+
+func TestClusterMigrateUsesRestoreAskingForConfiguredTarget(t *testing.T) {
+	got := make(chan [][][]byte, 1)
+	host, port := startMigrateTarget(t,
+		[]string{"+OK\r\n", "+OK\r\n"},
+		got,
+	)
+	targetAddr := net.JoinHostPort(host, port)
+
+	s := New(engine.New())
+	local := "127.0.0.1:7000"
+	if err := s.configureClusterSlots(true, local, map[string]string{
+		"0-8191":     targetAddr,
+		"8192-16383": local,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	key := []byte("foo")
+	slot := clusterKeySlot(key)
+	if _, err := s.Execute([][]byte{[]byte("SET"), key, []byte("value")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Execute([][]byte{
+		[]byte("CLUSTER"), []byte("SETSLOT"), []byte(strconv.Itoa(slot)),
+		[]byte("MIGRATING"), []byte(clusterNodeID(targetAddr)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	response, err := s.Execute([][]byte{
+		[]byte("MIGRATE"), []byte(host), []byte(port), key,
+		[]byte("0"), []byte("5000"),
+	})
+	if err != nil || string(response) != "+OK\r\n" {
+		t.Fatalf("MIGRATE response=%q err=%v", response, err)
+	}
+	if _, found := s.store.Get("foo"); found {
+		t.Fatal("migrated source key was not deleted")
+	}
+
+	select {
+	case commands := <-got:
+		if len(commands) != 2 {
+			t.Fatalf("commands=%d want=2", len(commands))
+		}
+		if string(commands[1][0]) != "RESTORE-ASKING" {
+			t.Fatalf("restore command=%q want RESTORE-ASKING", commands[1][0])
+		}
+		if string(commands[1][1]) != "foo" {
+			t.Fatalf("restore key=%q", commands[1][1])
+		}
+	case <-time.After(time.Second):
+		t.Fatal("target did not receive MIGRATE pipeline")
+	}
+}

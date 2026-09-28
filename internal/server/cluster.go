@@ -123,7 +123,8 @@ func (s *Server) enforceClusterRoutingForClientMode(args [][]byte, client *clien
 	}
 	if len(args) == 0 ||
 		strings.EqualFold(string(args[0]), "CLUSTER") ||
-		strings.EqualFold(string(args[0]), "ASKING") {
+		strings.EqualFold(string(args[0]), "ASKING") ||
+		strings.EqualFold(string(args[0]), "RESTORE-ASKING") {
 		return nil
 	}
 
@@ -351,6 +352,16 @@ func (s *Server) clusterNodesReply() []byte {
 		for _, r := range s.clusterNodeSlotRanges(owner) {
 			parts = append(parts, clusterSlotRangeText(r))
 		}
+		if owner == s.clusterNodeAddr {
+			for slot := 0; slot < clusterSlotCount; slot++ {
+				if target := s.clusterSlotMigrating[slot]; target != "" {
+					parts = append(parts, fmt.Sprintf("[%d->-%s]", slot, clusterNodeID(target)))
+				}
+				if source := s.clusterSlotImporting[slot]; source != "" {
+					parts = append(parts, fmt.Sprintf("[%d-<-%s]", slot, clusterNodeID(source)))
+				}
+			}
+		}
 		lines = append(lines, strings.Join(parts, " "))
 	}
 	if len(lines) == 0 {
@@ -413,6 +424,66 @@ func (s *Server) clusterSlotHasKeys(slot int) bool {
 		}
 	}
 	return false
+}
+
+func (s *Server) clusterLocalKeysInSlot(slot, limit int) []string {
+	if !s.clusterEnabled || slot < 0 || slot >= clusterSlotCount || limit == 0 {
+		return nil
+	}
+	if s.clusterSlotOwners[slot] != s.clusterNodeAddr {
+		return nil
+	}
+
+	keys := s.store.Keys("*")
+	out := make([]string, 0)
+	for _, key := range keys {
+		if clusterKeySlot([]byte(key)) != slot {
+			continue
+		}
+		out = append(out, key)
+		if limit >= 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func (s *Server) clusterCountKeysInSlot(args [][]byte) ([]byte, error) {
+	if !s.clusterEnabled {
+		return nil, errors.New("ERR This instance has cluster support disabled")
+	}
+	if len(args) != 3 {
+		return nil, errors.New("ERR wrong number of arguments for 'cluster|countkeysinslot' command")
+	}
+	slot, err := strconv.Atoi(string(args[2]))
+	if err != nil || slot < 0 || slot >= clusterSlotCount {
+		return nil, errors.New("ERR Invalid or out of range slot")
+	}
+	return integer(int64(len(s.clusterLocalKeysInSlot(slot, -1)))), nil
+}
+
+func (s *Server) clusterGetKeysInSlot(args [][]byte) ([]byte, error) {
+	if !s.clusterEnabled {
+		return nil, errors.New("ERR This instance has cluster support disabled")
+	}
+	if len(args) != 4 {
+		return nil, errors.New("ERR wrong number of arguments for 'cluster|getkeysinslot' command")
+	}
+	slot, err := strconv.Atoi(string(args[2]))
+	if err != nil || slot < 0 || slot >= clusterSlotCount {
+		return nil, errors.New("ERR Invalid or out of range slot")
+	}
+	count, err := strconv.Atoi(string(args[3]))
+	if err != nil || count < 0 {
+		return nil, errors.New("ERR value is not an integer or out of range")
+	}
+
+	keys := s.clusterLocalKeysInSlot(slot, count)
+	items := make([][]byte, 0, len(keys))
+	for _, key := range keys {
+		items = append(items, formatBulkString([]byte(key)))
+	}
+	return array(items...), nil
 }
 
 func (s *Server) executeClusterSetSlot(args [][]byte) ([]byte, error) {

@@ -517,3 +517,49 @@ func TestKeyRestoreRedis82StreamGroupPendingFixture(t *testing.T) {
 		t.Fatalf("XPENDING restored stream = %q", got)
 	}
 }
+
+
+func TestClusterRestoreAskingRequiresImportingSlot(t *testing.T) {
+	source := New(engine.New())
+	if _, err := source.Execute([][]byte{[]byte("SET"), []byte("foo"), []byte("value")}); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := source.dumpKey("foo", engine.TypeString)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	local := "127.0.0.1:7001"
+	remote := "127.0.0.1:7000"
+	target := New(engine.New())
+	if err := target.configureClusterSlots(true, local, map[string]string{
+		"0-8191":     local,
+		"8192-16383": remote,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	args := [][]byte{
+		[]byte("RESTORE-ASKING"), []byte("foo"), []byte("0"), payload,
+	}
+	if _, err := target.Execute(args); err == nil || err.Error() != "ERR RESTORE-ASKING is only allowed for importing slots" {
+		t.Fatalf("RESTORE-ASKING outside import err=%v", err)
+	}
+
+	slot := clusterKeySlot([]byte("foo"))
+	if _, err := target.Execute([][]byte{
+		[]byte("CLUSTER"), []byte("SETSLOT"), []byte(strconv.Itoa(slot)),
+		[]byte("IMPORTING"), []byte(clusterNodeID(remote)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	response, err := target.Execute(args)
+	if err != nil || string(response) != "+OK\r\n" {
+		t.Fatalf("RESTORE-ASKING response=%q err=%v", response, err)
+	}
+	value, found := target.store.Get("foo")
+	if !found || string(value) != "value" {
+		t.Fatalf("restored value=%q found=%v", value, found)
+	}
+}
