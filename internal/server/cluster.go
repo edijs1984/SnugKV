@@ -807,10 +807,6 @@ func planClusterRebalance(state clusterStateSnapshot) ([]clusterRebalanceMove, e
 	}
 
 	owners := clusterOwnersFromOwners(state.owners)
-	if len(owners) < 2 {
-		return []clusterRebalanceMove{}, nil
-	}
-
 	counts := make(map[string]int, len(owners))
 	assigned := 0
 	for _, owner := range state.owners {
@@ -822,6 +818,9 @@ func planClusterRebalance(state clusterStateSnapshot) ([]clusterRebalanceMove, e
 	}
 	if assigned != clusterSlotCount {
 		return nil, errors.New("ERR REBALANCE PLAN requires all hash slots to be assigned")
+	}
+	if len(owners) < 2 {
+		return []clusterRebalanceMove{}, nil
 	}
 
 	targets := make(map[string]int, len(owners))
@@ -1309,6 +1308,13 @@ func (s *Server) executeRemoteRebalanceSlot(slot int, targetID string) error {
 	return err
 }
 
+func (s *Server) beginClusterRebalanceOperation() (func(), error) {
+	if !s.clusterRebalanceMu.TryLock() {
+		return nil, errors.New("ERR another cluster rebalance operation is already in progress")
+	}
+	return s.clusterRebalanceMu.Unlock, nil
+}
+
 func (s *Server) executeClusterRebalance(args [][]byte) ([]byte, error) {
 	if len(args) < 3 {
 		return nil, errors.New("ERR syntax error")
@@ -1319,6 +1325,11 @@ func (s *Server) executeClusterRebalance(args [][]byte) ([]byte, error) {
 		if len(args) != 5 {
 			return nil, errors.New("ERR syntax error")
 		}
+		release, err := s.beginClusterRebalanceOperation()
+		if err != nil {
+			return nil, err
+		}
+		defer release()
 		slot, err := strconv.Atoi(string(args[3]))
 		if err != nil || slot < 0 || slot >= clusterSlotCount {
 			return nil, errors.New("ERR Invalid or out of range slot")
@@ -1333,6 +1344,11 @@ func (s *Server) executeClusterRebalance(args [][]byte) ([]byte, error) {
 			return clusterRebalanceRecoveryPlanReply(s.clusterStateSnapshot()), nil
 		}
 		if len(args) == 5 && strings.EqualFold(string(args[3]), "RESUME") {
+			release, err := s.beginClusterRebalanceOperation()
+			if err != nil {
+				return nil, err
+			}
+			defer release()
 			slot, err := strconv.Atoi(string(args[4]))
 			if err != nil || slot < 0 || slot >= clusterSlotCount {
 				return nil, errors.New("ERR Invalid or out of range slot")
@@ -1379,6 +1395,14 @@ func (s *Server) executeClusterRebalance(args [][]byte) ([]byte, error) {
 		}
 		if applyMode == "BATCH" && len(args) != 6 {
 			return nil, errors.New("ERR syntax error")
+		}
+
+		if applyMode != "DRYRUN" {
+			release, err := s.beginClusterRebalanceOperation()
+			if err != nil {
+				return nil, err
+			}
+			defer release()
 		}
 
 		state := s.clusterStateSnapshot()
