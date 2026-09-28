@@ -89,26 +89,45 @@ EOF
 for i in 0 1 2; do start_snug_node "$((SNUG_BASE+i))"; done
 for i in 0 1 2; do wait_for_pong "$((SNUG_BASE+i))"; done
 
-KEY="foo"
-SLOT="$(redis-cli -p "$REDIS_BASE" CLUSTER KEYSLOT "$KEY")"
-TAG="{$KEY}"
-K1="a$TAG"
-K2="b$TAG"
+TAG=""
+for i in $(seq 1 30000); do
+  candidate="slot$i"
+  slot="$(redis-cli -p "$REDIS_BASE" CLUSTER KEYSLOT "{$candidate}")"
+  if (( slot >= 0 && slot <= 5460 )); then
+    TAG="$candidate"
+    SLOT="$slot"
+    break
+  fi
+done
+[[ -n "$TAG" ]]
 
-redis-cli --raw -p "$REDIS_BASE" SET "$K1" one >/dev/null
-redis-cli --raw -p "$REDIS_BASE" SET "$K2" two >/dev/null
-redis-cli --raw -p "$SNUG_BASE" SET "$K1" one >/dev/null
-redis-cli --raw -p "$SNUG_BASE" SET "$K2" two >/dev/null
+K1="a{$TAG}"
+K2="b{$TAG}"
+
+expect_ok() {
+  local output
+  output="$("$@" 2>&1)"
+  if [[ "$output" != "OK" ]]; then
+    echo "command failed: $*" >&2
+    echo "$output" >&2
+    exit 1
+  fi
+}
+
+expect_ok redis-cli --raw -p "$REDIS_BASE" SET "$K1" one
+expect_ok redis-cli --raw -p "$REDIS_BASE" SET "$K2" two
+expect_ok redis-cli --raw -p "$SNUG_BASE" SET "$K1" one
+expect_ok redis-cli --raw -p "$SNUG_BASE" SET "$K2" two
 
 redis_dst_id="$(redis-cli -p "$REDIS_BASE" CLUSTER NODES | awk -v p="127.0.0.1:$((REDIS_BASE+1))@" '$2 ~ p {print $1; exit}')"
 redis_src_id="$(redis-cli -p "$REDIS_BASE" CLUSTER NODES | awk -v p="127.0.0.1:$REDIS_BASE@" '$2 ~ p {print $1; exit}')"
 snug_dst_id="$(redis-cli -p "$SNUG_BASE" CLUSTER NODES | awk -v p="127.0.0.1:$((SNUG_BASE+1))@" '$2 ~ p {print $1; exit}')"
 snug_src_id="$(redis-cli -p "$SNUG_BASE" CLUSTER NODES | awk -v p="127.0.0.1:$SNUG_BASE@" '$2 ~ p {print $1; exit}')"
 
-redis-cli --raw -p "$REDIS_BASE" CLUSTER SETSLOT "$SLOT" MIGRATING "$redis_dst_id" >/dev/null
-redis-cli --raw -p "$((REDIS_BASE+1))" CLUSTER SETSLOT "$SLOT" IMPORTING "$redis_src_id" >/dev/null
-redis-cli --raw -p "$SNUG_BASE" CLUSTER SETSLOT "$SLOT" MIGRATING "$snug_dst_id" >/dev/null
-redis-cli --raw -p "$((SNUG_BASE+1))" CLUSTER SETSLOT "$SLOT" IMPORTING "$snug_src_id" >/dev/null
+expect_ok redis-cli --raw -p "$REDIS_BASE" CLUSTER SETSLOT "$SLOT" MIGRATING "$redis_dst_id"
+expect_ok redis-cli --raw -p "$((REDIS_BASE+1))" CLUSTER SETSLOT "$SLOT" IMPORTING "$redis_src_id"
+expect_ok redis-cli --raw -p "$SNUG_BASE" CLUSTER SETSLOT "$SLOT" MIGRATING "$snug_dst_id"
+expect_ok redis-cli --raw -p "$((SNUG_BASE+1))" CLUSTER SETSLOT "$SLOT" IMPORTING "$snug_src_id"
 
 run_cases() {
   local src="$1"
@@ -142,7 +161,18 @@ run_cases "$REDIS_BASE" "$((REDIS_BASE+1))" "$TMP/redis.out"
 run_cases "$SNUG_BASE" "$((SNUG_BASE+1))" "$TMP/snug.out"
 
 normalize() {
-  sed -E     -e "s/127\.0\.0\.1:$REDIS_BASE/NODE0/g"     -e "s/127\.0\.0\.1:$((REDIS_BASE+1))/NODE1/g"     -e "s/127\.0\.0\.1:$((REDIS_BASE+2))/NODE2/g"     -e "s/127\.0\.0\.1:$SNUG_BASE/NODE0/g"     -e "s/127\.0\.0\.1:$((SNUG_BASE+1))/NODE1/g"     -e "s/127\.0\.0\.1:$((SNUG_BASE+2))/NODE2/g"     -e "s/$redis_src_id/SRCID/g"     -e "s/$redis_dst_id/DSTID/g"     -e "s/$snug_src_id/SRCID/g"     -e "s/$snug_dst_id/DSTID/g"
+  sed -E \
+    -e "s/127\\.0\\.0\\.1:$REDIS_BASE@[0-9]+/NODE0@BUS/g" \
+    -e "s/127\\.0\\.0\\.1:$((REDIS_BASE+1))@[0-9]+/NODE1@BUS/g" \
+    -e "s/127\\.0\\.0\\.1:$((REDIS_BASE+2))@[0-9]+/NODE2@BUS/g" \
+    -e "s/127\\.0\\.0\\.1:$SNUG_BASE@0/NODE0@BUS/g" \
+    -e "s/127\\.0\\.0\\.1:$((SNUG_BASE+1))@0/NODE1@BUS/g" \
+    -e "s/127\\.0\\.0\\.1:$((SNUG_BASE+2))@0/NODE2@BUS/g" \
+    -e "s/$redis_src_id/SRCID/g" \
+    -e "s/$redis_dst_id/DSTID/g" \
+    -e "s/$snug_src_id/SRCID/g" \
+    -e "s/$snug_dst_id/DSTID/g" \
+    -e 's/(myself,master -) [0-9]+ [0-9]+ [0-9]+ (connected)/\\1 EPOCH EPOCH EPOCH \\2/'
 }
 
 normalize <"$TMP/redis.out" >"$TMP/redis.normalized"
