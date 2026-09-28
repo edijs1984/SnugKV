@@ -337,6 +337,8 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			return s.executeClusterRebalance(args)
 		case "JOIN":
 			return s.executeClusterJoin(args)
+		case "REMOVE":
+			return s.executeClusterRemove(args)
 		case "MEMBERSHIP":
 			return s.executeClusterMembership(args)
 		case "FAILOVER-OWNER":
