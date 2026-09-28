@@ -279,7 +279,8 @@ func (s *Server) runLuaScriptScoped(source, sha string, keys, argv [][]byte, leg
 
 	L.SetGlobal("KEYS", luaBytesTable(L, keys))
 	L.SetGlobal("ARGV", luaBytesTable(L, argv))
-	s.prepareLuaClusterScope(L, allowCrossSlot)
+	clearClusterScope := s.prepareLuaClusterScope(L, allowCrossSlot)
+	defer clearClusterScope()
 	var legacyState *legacyScriptOOMState
 	if legacyOOM {
 		legacyState = newLegacyScriptOOMState(s)
