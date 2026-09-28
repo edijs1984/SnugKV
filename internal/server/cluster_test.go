@@ -628,6 +628,52 @@ func TestClusterImportingRequiresOneShotAsking(t *testing.T) {
 	}
 }
 
+func TestClusterSetSlotNodeRejectsSourceWithRemainingKeys(t *testing.T) {
+	s := New(engine.New())
+	local := "127.0.0.1:7000"
+	other := "127.0.0.1:7001"
+	key := []byte("foo")
+	slot := clusterKeySlot(key)
+
+	if err := s.configureClusterSlots(true, local, map[string]string{
+		"0-8191":     other,
+		"8192-16383": local,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.execute([][]byte{[]byte("SET"), key, []byte("value")}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := s.execute([][]byte{
+		[]byte("CLUSTER"), []byte("SETSLOT"),
+		[]byte(strconv.Itoa(slot)), []byte("NODE"), []byte(clusterNodeID(other)),
+	})
+	want := fmt.Sprintf(
+		"ERR Can't assign hashslot %d to a different node while I still hold keys for this hash slot.",
+		slot,
+	)
+	if err == nil || err.Error() != want {
+		t.Fatalf("err=%v want=%q", err, want)
+	}
+	if s.clusterSlotOwners[slot] != local {
+		t.Fatalf("slot owner changed after rejected reassignment: %q", s.clusterSlotOwners[slot])
+	}
+
+	if _, err := s.execute([][]byte{[]byte("DEL"), key}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.execute([][]byte{
+		[]byte("CLUSTER"), []byte("SETSLOT"),
+		[]byte(strconv.Itoa(slot)), []byte("NODE"), []byte(clusterNodeID(other)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if s.clusterSlotOwners[slot] != other {
+		t.Fatalf("slot owner=%q want=%q", s.clusterSlotOwners[slot], other)
+	}
+}
+
 func TestClusterSetSlotNodeAndStable(t *testing.T) {
 	s := New(engine.New())
 	local := "127.0.0.1:7000"
