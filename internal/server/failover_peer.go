@@ -683,6 +683,9 @@ func (s *Server) maintainFailoverLeaderLease(now time.Time) error {
 	}
 	if lease.QuorumReached && !lease.ExpiresAt.IsZero() {
 		s.updateFailoverLeaderLease(lease.ExpiresAt, false)
+		if err := s.convergeClusterFailoverOwnership(); err != nil {
+			return err
+		}
 		s.convergeFailoverReplicas(now)
 		return nil
 	}
@@ -772,6 +775,9 @@ func (s *Server) requestFailoverReparent(now time.Time, lineage string, term uin
 	}
 	if err := s.clearReplicationPersistence(); err != nil {
 		return reply, errors.New("failover reparent persistence update failed")
+	}
+	if err := s.repairClusterFailoverMemberOwnership(addr); err != nil {
+		return reply, fmt.Errorf("failover reparent cluster ownership update failed: %w", err)
 	}
 	s.startReplicaFollow(host, port)
 	reply.Accepted = true
@@ -920,6 +926,9 @@ func (s *Server) requestFailoverDemote(now time.Time, lineage string, term uint6
 	}
 	if err := s.clearReplicationPersistence(); err != nil {
 		return reply, errors.New("failover demote persistence update failed")
+	}
+	if err := s.repairClusterFailoverMemberOwnership(addr); err != nil {
+		return reply, fmt.Errorf("failover demote cluster ownership update failed: %w", err)
 	}
 	s.startReplicaFollow(host, port)
 	reply.Accepted = true
