@@ -1043,8 +1043,15 @@ func TestClusterRebalancePlanBalancedIsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != "*0\r\n" {
-		t.Fatalf("REBALANCE PLAN=%q", got)
+	text := string(got)
+	if !strings.Contains(text, "$5\r\nmoves\r\n*0\r\n") {
+		t.Fatalf("balanced plan must contain empty moves: %q", text)
+	}
+	if !strings.Contains(text, "$9\r\nprojected\r\n") {
+		t.Fatalf("balanced plan missing projected section: %q", text)
+	}
+	if strings.Count(text, ":8192\r\n") != 2 {
+		t.Fatalf("balanced plan projected counts=%q", text)
 	}
 }
 
