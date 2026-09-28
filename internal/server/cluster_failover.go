@@ -77,14 +77,20 @@ func (s *Server) replaceClusterOwner(oldOwner, newOwner string) error {
 		}
 	}
 
-	found := false
+	foundOld := false
+	foundNew := false
 	for _, owner := range s.clusterSlotOwners {
 		if owner == oldOwner {
-			found = true
-			break
+			foundOld = true
+		}
+		if owner == newOwner {
+			foundNew = true
 		}
 	}
-	if !found {
+	if !foundOld {
+		if foundNew {
+			return nil
+		}
 		return errors.New("ERR cluster failover old owner does not own any slots")
 	}
 
@@ -96,6 +102,21 @@ func (s *Server) replaceClusterOwner(oldOwner, newOwner string) error {
 		}
 		return nil
 	})
+}
+
+func (s *Server) repairClusterFailoverMemberOwnership(newOwner string) error {
+	state := s.clusterStateSnapshot()
+	if !state.enabled {
+		return nil
+	}
+	oldOwner, err := s.clusterFailoverCurrentOwner(state)
+	if err != nil {
+		return err
+	}
+	if oldOwner == "" || oldOwner == newOwner {
+		return nil
+	}
+	return s.replaceClusterOwner(oldOwner, newOwner)
 }
 
 func (s *Server) convergeClusterFailoverOwnership() error {
