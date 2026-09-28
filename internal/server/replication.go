@@ -1203,6 +1203,9 @@ func (s *Server) maintainAutoFailover(now time.Time) error {
 		}
 		s.activateFailoverLeader(election.Term, lineage, localID, lease.ExpiresAt)
 		s.durableMu.Unlock()
+		if err := s.convergeClusterFailoverOwnership(); err != nil {
+			return err
+		}
 		s.convergeFailoverReplicas(now)
 		return nil
 	}
