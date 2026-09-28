@@ -566,7 +566,8 @@ func (s *Server) runRegisteredFunction(fn *registeredFunction, keys, argv [][]by
 	ctx, cancel := context.WithTimeout(context.Background(), scriptExecutionLimit)
 	defer cancel()
 	L.SetContext(ctx)
-	s.prepareLuaClusterScope(L, fn.allowCrossSlotKeys)
+	clearClusterScope := s.prepareLuaClusterScope(L, fn.allowCrossSlotKeys)
+	defer clearClusterScope()
 	if err := L.CallByParam(lua.P{Fn: fn.callback, NRet: 1, Protect: true}, luaBytesTable(L, keys), luaBytesTable(L, argv)); err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return nil, errors.New("ERR Function timed out")
