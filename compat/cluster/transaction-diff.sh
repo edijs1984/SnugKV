@@ -81,14 +81,16 @@ for i in 0 1 2; do
     redis-cli -p "$port" PING >/dev/null 2>&1 && break
     sleep 0.05
   done
-  redis-cli -p "$port" PING | grep -qx PONG
+  [[ "$(redis-cli -p "$port" PING 2>/dev/null | tr -d '\r\n')" == "PONG" ]]
 done
 
 yes yes | redis-cli --cluster create   "127.0.0.1:$REDIS_BASE"   "127.0.0.1:$((REDIS_BASE+1))"   "127.0.0.1:$((REDIS_BASE+2))"   --cluster-replicas 0 >/dev/null
 
 for _ in $(seq 1 100); do
-  state="$(redis-cli -p "$REDIS_BASE" CLUSTER INFO 2>/dev/null | tr -d '\r' | grep '^cluster_state:' || true)"
-  [[ "$state" == "cluster_state:ok" ]] && break
+  state="$(redis-cli -p "$REDIS_BASE" CLUSTER INFO 2>/dev/null || true)"
+  if [[ "$state" == *"cluster_state:ok"* ]]; then
+    break
+  fi
   sleep 0.05
 done
 
@@ -125,7 +127,7 @@ for i in 0 1 2; do
     redis-cli -p "$port" PING >/dev/null 2>&1 && break
     sleep 0.05
   done
-  redis-cli -p "$port" PING | grep -qx PONG
+  [[ "$(redis-cli -p "$port" PING 2>/dev/null | tr -d '\r\n')" == "PONG" ]]
 done
 
 echo "[5/7] select slot fixtures"
