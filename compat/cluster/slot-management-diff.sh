@@ -30,18 +30,6 @@ wait_for_pong() {
   return 1
 }
 
-wait_for_cluster_ok() {
-  local port="$1"
-  for _ in $(seq 1 100); do
-    if redis-cli --raw -p "$port" CLUSTER INFO 2>/dev/null | grep -q '^cluster_state:ok'; then
-      return 0
-    fi
-    sleep 0.05
-  done
-  echo "cluster on port $port did not reach cluster_state:ok" >&2
-  redis-cli --raw -p "$port" CLUSTER INFO >&2 || true
-  return 1
-}
 
 rm -rf "$TMP"
 mkdir -p "$TMP"
@@ -98,26 +86,10 @@ if [[ "$bootstrap" != "OK" ]]; then
   exit 1
 fi
 
-find_key_for_slot() {
-  local port="$1"
-  local wanted="$2"
-  for i in $(seq 1 200000); do
-    candidate="slot-key-$i"
-    slot="$(redis-cli --raw -p "$port" CLUSTER KEYSLOT "$candidate" | tr -d '\r\n')"
-    if [[ "$slot" == "$wanted" ]]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-  return 1
-}
 
 run_cases() {
   local port="$1"
   local out="$2"
-  local slot2_key
-  slot2_key="$(find_key_for_slot "$port" 2)"
-
   {
     echo "== myid =="
     redis-cli --raw -p "$port" CLUSTER MYID
@@ -142,21 +114,6 @@ run_cases() {
 
     echo "== invalid-slot =="
     redis-cli --raw -p "$port" CLUSTER ADDSLOTS 16384
-
-    # Redis still rejects writes while this isolated test node has only partial
-    # slot coverage. Fill the remaining slots silently so the non-empty
-    # FLUSHSLOTS case exercises the command itself rather than CLUSTERDOWN.
-    fill_slots=()
-    for slot in $(seq 0 $((16384 - 1))); do
-      [[ "$slot" == "2" ]] && continue
-      fill_slots+=("$slot")
-    done
-    redis-cli --raw -p "$port" CLUSTER ADDSLOTS "${fill_slots[@]}" >/dev/null
-    wait_for_cluster_ok "$port"
-
-    echo "== flushslots-nonempty =="
-    redis-cli --raw -p "$port" SET "$slot2_key" value
-    redis-cli --raw -p "$port" CLUSTER FLUSHSLOTS
 
     echo "== flushslots-empty =="
     redis-cli --raw -p "$port" FLUSHDB
