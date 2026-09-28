@@ -582,7 +582,6 @@ func TestClusterSetSlotMigrationRouting(t *testing.T) {
 	if got, err := s.execute([][]byte{[]byte("GET"), key}); err == nil || got != nil {
 		t.Fatalf("expected ASK for missing key, got=%q err=%v", got, err)
 	}
-	}
 }
 
 func TestClusterImportingRequiresOneShotAsking(t *testing.T) {
