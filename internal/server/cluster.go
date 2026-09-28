@@ -84,13 +84,14 @@ func parseClusterSlotRange(text string) (int, int, error) {
 }
 
 type clusterStateSnapshot struct {
-	enabled    bool
-	nodeAddr   string
-	epoch      uint64
-	knownNodes []string
-	owners     [clusterSlotCount]string
-	migrating  [clusterSlotCount]string
-	importing  [clusterSlotCount]string
+	enabled       bool
+	nodeAddr      string
+	epoch         uint64
+	knownNodes    []string
+	capacityNodes []string
+	owners        [clusterSlotCount]string
+	migrating     [clusterSlotCount]string
+	importing     [clusterSlotCount]string
 }
 
 func sortedClusterKnownNodes(nodes map[string]struct{}) []string {
@@ -106,8 +107,7 @@ func sortedClusterKnownNodes(nodes map[string]struct{}) []string {
 
 func (s *Server) clusterStateSnapshot() clusterStateSnapshot {
 	s.clusterMu.RLock()
-	defer s.clusterMu.RUnlock()
-	return clusterStateSnapshot{
+	state := clusterStateSnapshot{
 		enabled:    s.clusterEnabled,
 		nodeAddr:   s.clusterNodeAddr,
 		epoch:      s.clusterTopologyEpoch,
@@ -116,6 +116,24 @@ func (s *Server) clusterStateSnapshot() clusterStateSnapshot {
 		migrating:  s.clusterSlotMigrating,
 		importing:  s.clusterSlotImporting,
 	}
+	s.clusterMu.RUnlock()
+
+	state.capacityNodes = clusterKnownNodesFromState(state)
+	if topology, err := s.localClusterShardReplicaTopology(state); err == nil && topology.Owner != "" {
+		replicas := make(map[string]struct{}, len(topology.Replicas))
+		for _, replica := range topology.Replicas {
+			replicas[replica] = struct{}{}
+		}
+		filtered := make([]string, 0, len(state.capacityNodes))
+		for _, node := range state.capacityNodes {
+			if _, isReplica := replicas[node]; isReplica {
+				continue
+			}
+			filtered = append(filtered, node)
+		}
+		state.capacityNodes = filtered
+	}
+	return state
 }
 
 func (s *Server) clusterEnabledSnapshot() bool {
@@ -383,6 +401,14 @@ func clusterKnownNodesFromState(state clusterStateSnapshot) []string {
 	}
 	return sortedClusterKnownNodes(seen)
 }
+
+func clusterSlotCapableNodesFromState(state clusterStateSnapshot) []string {
+	if len(state.capacityNodes) > 0 {
+		return append([]string(nil), state.capacityNodes...)
+	}
+	return clusterKnownNodesFromState(state)
+}
+
 
 func (s *Server) clusterOwners() []string {
 	return clusterOwnersFromOwners(s.clusterStateSnapshot().owners)
@@ -851,7 +877,7 @@ func planClusterRebalance(state clusterStateSnapshot) ([]clusterRebalanceMove, e
 		return nil, errors.New("ERR This instance has cluster support disabled")
 	}
 
-	owners := clusterKnownNodesFromState(state)
+	owners := clusterSlotCapableNodesFromState(state)
 	counts := make(map[string]int, len(owners))
 	assigned := 0
 	for _, owner := range state.owners {
@@ -1045,7 +1071,7 @@ func boolToInt64(v bool) int64 {
 
 func clusterRebalanceStatusReply(state clusterStateSnapshot, moves []clusterRebalanceMove) []byte {
 	planID := clusterRebalancePlanID(state, moves)
-	owners := clusterKnownNodesFromState(state)
+	owners := clusterSlotCapableNodesFromState(state)
 
 	current := make(map[string]int, len(owners))
 	for _, owner := range state.owners {
@@ -1697,7 +1723,7 @@ func (s *Server) executeClusterRebalance(args [][]byte) ([]byte, error) {
 		))
 	}
 
-	owners := clusterKnownNodesFromState(state)
+	owners := clusterSlotCapableNodesFromState(state)
 	projectedItems := make([][]byte, 0, len(owners))
 	for _, owner := range owners {
 		projectedItems = append(projectedItems, array(
