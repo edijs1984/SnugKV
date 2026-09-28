@@ -814,13 +814,6 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				continue
 			}
 
-			if clusterErr := s.server.enforceClusterRouting(msg); clusterErr != nil {
-				if writeProtocol(msg, errorResponse(clusterErr)) != nil {
-					return
-				}
-				continue
-			}
-
 			rawGetStarted := time.Now()
 			if handled, fastErr := s.server.executeAuthorizedConcurrentRawGet(
 				msg,
@@ -922,6 +915,13 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 					txResponse = errorResponse(txErr)
 				}
 				if writeProtocol(msg, txResponse) != nil {
+					return
+				}
+				continue
+			}
+
+			if clusterErr := s.server.enforceClusterRouting(msg); clusterErr != nil {
+				if writeProtocol(msg, errorResponse(clusterErr)) != nil {
 					return
 				}
 				continue
