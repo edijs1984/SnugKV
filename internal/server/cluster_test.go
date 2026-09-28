@@ -1290,3 +1290,130 @@ func TestClusterRebalancePlanIDDeterministic(t *testing.T) {
 		t.Fatalf("plan id length=%d want=40", len(first))
 	}
 }
+
+
+func TestClusterRebalanceApplyDryRunAcceptsFreshPlan(t *testing.T) {
+	s := New(engine.New())
+	a := "127.0.0.1:7000"
+	b := "127.0.0.1:7001"
+	if err := s.configureClusterSlots(true, a, map[string]string{
+		"0-9999":      a,
+		"10000-16383": b,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	state := s.clusterStateSnapshot()
+	moves, err := planClusterRebalance(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planID := clusterRebalancePlanID(state, moves)
+
+	got, err := s.execute([][]byte{
+		[]byte("CLUSTER"), []byte("REBALANCE"), []byte("APPLY"),
+		[]byte(planID), []byte("DRYRUN"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(got)
+	for _, token := range []string{"plan_id", planID, "status", "ready", "moves"} {
+		if !strings.Contains(text, token) {
+			t.Fatalf("dry-run response missing %q: %q", token, text)
+		}
+	}
+	before := s.clusterStateSnapshot()
+	after := s.clusterStateSnapshot()
+	if before.owners != after.owners || before.migrating != after.migrating || before.importing != after.importing {
+		t.Fatal("dry-run mutated cluster state")
+	}
+}
+
+func TestClusterRebalanceApplyDryRunRejectsStalePlan(t *testing.T) {
+	s := New(engine.New())
+	a := "127.0.0.1:7000"
+	b := "127.0.0.1:7001"
+	if err := s.configureClusterSlots(true, a, map[string]string{
+		"0-9999":      a,
+		"10000-16383": b,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	state := s.clusterStateSnapshot()
+	moves, err := planClusterRebalance(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planID := clusterRebalancePlanID(state, moves)
+
+	s.clusterMu.Lock()
+	s.clusterSlotOwners[9999] = b
+	s.clusterMu.Unlock()
+
+	_, err = s.execute([][]byte{
+		[]byte("CLUSTER"), []byte("REBALANCE"), []byte("APPLY"),
+		[]byte(planID), []byte("DRYRUN"),
+	})
+	if err == nil || err.Error() != "ERR REBALANCE plan is stale; run CLUSTER REBALANCE PLAN again" {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestClusterRebalanceApplyDryRunRejectsActiveTransition(t *testing.T) {
+	s := New(engine.New())
+	a := "127.0.0.1:7000"
+	b := "127.0.0.1:7001"
+	if err := s.configureClusterSlots(true, a, map[string]string{
+		"0-9999":      a,
+		"10000-16383": b,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	state := s.clusterStateSnapshot()
+	moves, err := planClusterRebalance(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planID := clusterRebalancePlanID(state, moves)
+
+	s.clusterMu.Lock()
+	s.clusterSlotMigrating[9999] = b
+	s.clusterMu.Unlock()
+
+	_, err = s.execute([][]byte{
+		[]byte("CLUSTER"), []byte("REBALANCE"), []byte("APPLY"),
+		[]byte(planID), []byte("DRYRUN"),
+	})
+	if err == nil || err.Error() != "ERR REBALANCE APPLY refused while slots are migrating or importing" {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestClusterRebalanceApplyDryRunRequiresExplicitMode(t *testing.T) {
+	s := New(engine.New())
+	a := "127.0.0.1:7000"
+	b := "127.0.0.1:7001"
+	if err := s.configureClusterSlots(true, a, map[string]string{
+		"0-9999":      a,
+		"10000-16383": b,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	state := s.clusterStateSnapshot()
+	moves, err := planClusterRebalance(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planID := clusterRebalancePlanID(state, moves)
+
+	_, err = s.execute([][]byte{
+		[]byte("CLUSTER"), []byte("REBALANCE"), []byte("APPLY"), []byte(planID),
+	})
+	if err == nil || err.Error() != "ERR syntax error" {
+		t.Fatalf("err=%v", err)
+	}
+}
