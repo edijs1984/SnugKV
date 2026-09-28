@@ -1155,3 +1155,47 @@ func TestClusterRebalancePlanDoesNotMutateTopology(t *testing.T) {
 		t.Fatal("REBALANCE PLAN mutated cluster topology")
 	}
 }
+
+
+func TestClusterRebalancePlanWireShape(t *testing.T) {
+	s := New(engine.New())
+	a := "127.0.0.1:7000"
+	b := "127.0.0.1:7001"
+	c := "127.0.0.1:7002"
+	if err := s.configureClusterSlots(true, a, map[string]string{
+		"0-8999":      a,
+		"9000-13999":  b,
+		"14000-16383": c,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.execute([][]byte{
+		[]byte("CLUSTER"), []byte("REBALANCE"), []byte("PLAN"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantA := clusterNodeID(a)
+	wantB := clusterNodeID(b)
+	wantC := clusterNodeID(c)
+	text := string(got)
+	if !strings.Contains(text, wantA) {
+		t.Fatalf("plan missing source node id %s: %q", wantA, text)
+	}
+	if !strings.Contains(text, wantB) && !strings.Contains(text, wantC) {
+		t.Fatalf("plan missing target node ids: %q", text)
+	}
+
+	before := s.clusterStateSnapshot()
+	if _, err := s.execute([][]byte{
+		[]byte("CLUSTER"), []byte("REBALANCE"), []byte("PLAN"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	after := s.clusterStateSnapshot()
+	if before.owners != after.owners {
+		t.Fatal("wire planning call mutated ownership")
+	}
+}
