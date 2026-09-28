@@ -313,7 +313,15 @@ func newClusterTransactionTCP(t *testing.T, slots map[string]string) (*TCPServer
 		t.Fatal(err)
 	}
 
-	if err := tcp.server.configureClusterSlots(true, tcp.listener.Addr().String(), slots); err != nil {
+	local := tcp.listener.Addr().String()
+	resolved := make(map[string]string, len(slots))
+	for slotRange, owner := range slots {
+		if owner == "127.0.0.1:0" {
+			owner = local
+		}
+		resolved[slotRange] = owner
+	}
+	if err := tcp.server.configureClusterSlots(true, local, resolved); err != nil {
 		_ = tcp.Close()
 		t.Fatal(err)
 	}
