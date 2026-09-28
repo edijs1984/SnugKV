@@ -1382,6 +1382,10 @@ func errorResponse(err error) []byte {
 		!strings.HasPrefix(message, "OOM ") &&
 		!strings.HasPrefix(message, "WRONGTYPE ") &&
 		!strings.HasPrefix(message, "READONLY ") &&
+		!strings.HasPrefix(message, "MOVED ") &&
+		!strings.HasPrefix(message, "ASK ") &&
+		!strings.HasPrefix(message, "CROSSSLOT ") &&
+		!strings.HasPrefix(message, "CLUSTERDOWN ") &&
 		!strings.HasPrefix(message, "EXECABORT ") &&
 		!strings.HasPrefix(message, "INVALIDOBJ ") &&
 		!strings.HasPrefix(message, "NOAUTH ") &&
