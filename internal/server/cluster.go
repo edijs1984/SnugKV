@@ -929,6 +929,70 @@ func clusterRebalanceHasActiveTransition(state clusterStateSnapshot) bool {
 	return false
 }
 
+type clusterRebalanceRecoveryItem struct {
+	Slot   int
+	Role   string
+	Peer   string
+	Owner  string
+	Action string
+}
+
+func clusterRebalanceRecoveryPlan(state clusterStateSnapshot) []clusterRebalanceRecoveryItem {
+	items := make([]clusterRebalanceRecoveryItem, 0)
+	for slot := 0; slot < clusterSlotCount; slot++ {
+		if target := state.migrating[slot]; target != "" {
+			items = append(items, clusterRebalanceRecoveryItem{
+				Slot:   slot,
+				Role:   "source",
+				Peer:   target,
+				Owner:  state.owners[slot],
+				Action: "resume",
+			})
+		}
+		if source := state.importing[slot]; source != "" {
+			items = append(items, clusterRebalanceRecoveryItem{
+				Slot:   slot,
+				Role:   "target",
+				Peer:   source,
+				Owner:  state.owners[slot],
+				Action: "wait_for_source",
+			})
+		}
+	}
+	return items
+}
+
+func clusterRebalanceRecoveryPlanReply(state clusterStateSnapshot) []byte {
+	items := clusterRebalanceRecoveryPlan(state)
+	replies := make([][]byte, 0, len(items))
+	for _, item := range items {
+		replies = append(replies, array(
+			formatBulkString([]byte("slot")),
+			integer(int64(item.Slot)),
+			formatBulkString([]byte("role")),
+			formatBulkString([]byte(item.Role)),
+			formatBulkString([]byte("peer")),
+			formatBulkString([]byte(item.Peer)),
+			formatBulkString([]byte("owner")),
+			formatBulkString([]byte(item.Owner)),
+			formatBulkString([]byte("action")),
+			formatBulkString([]byte(item.Action)),
+		))
+	}
+	status := "clean"
+	if len(items) > 0 {
+		status = "recovery_needed"
+	}
+	return array(
+		formatBulkString([]byte("status")),
+		formatBulkString([]byte(status)),
+		formatBulkString([]byte("epoch")),
+		integer(int64(state.epoch)),
+		formatBulkString([]byte("transitions")),
+		array(replies...),
+	)
+}
+
 func boolToInt64(v bool) int64 {
 	if v {
 		return 1
@@ -1118,11 +1182,15 @@ func (s *Server) rebalanceMoveOneSlot(state clusterStateSnapshot, move clusterRe
 				[]byte("5000"),
 			})
 			if err != nil {
-				rollback()
+				if moved == 0 {
+					rollback()
+				}
 				return moved, err
 			}
 			if string(result) != "+OK\r\n" && string(result) != "+NOKEY\r\n" {
-				rollback()
+				if moved == 0 {
+					rollback()
+				}
 				return moved, fmt.Errorf("ERR unexpected MIGRATE result %q", result)
 			}
 			if string(result) == "+OK\r\n" {
@@ -1138,12 +1206,89 @@ func (s *Server) rebalanceMoveOneSlot(state clusterStateSnapshot, move clusterRe
 	return moved, nil
 }
 
+func (s *Server) resumeRebalanceSlot(state clusterStateSnapshot, slot int) (int, error) {
+	if slot < 0 || slot >= clusterSlotCount {
+		return 0, errors.New("ERR Invalid or out of range slot")
+	}
+	if state.owners[slot] != state.nodeAddr {
+		return 0, errors.New("ERR REBALANCE RECOVER RESUME must run on the slot owner")
+	}
+	target := state.migrating[slot]
+	if target == "" {
+		return 0, errors.New("ERR REBALANCE RECOVER RESUME requires a locally migrating slot")
+	}
+
+	host, port, err := net.SplitHostPort(target)
+	if err != nil {
+		return 0, fmt.Errorf("ERR invalid rebalance target address: %w", err)
+	}
+
+	moved := 0
+	for {
+		keys := s.clusterLocalKeysInSlot(slot, 64)
+		if len(keys) == 0 {
+			break
+		}
+		for _, key := range keys {
+			result, err := s.executeMigrateDurableLocked([][]byte{
+				[]byte("MIGRATE"),
+				[]byte(host),
+				[]byte(port),
+				[]byte(key),
+				[]byte("0"),
+				[]byte("5000"),
+			})
+			if err != nil {
+				return moved, err
+			}
+			if string(result) != "+OK\r\n" && string(result) != "+NOKEY\r\n" {
+				return moved, fmt.Errorf("ERR unexpected MIGRATE result %q", result)
+			}
+			if string(result) == "+OK\r\n" {
+				moved++
+			}
+		}
+	}
+
+	if err := s.finalizeRebalanceSlotOwners(state, slot, target); err != nil {
+		return moved, err
+	}
+	return moved, nil
+}
+
 func (s *Server) executeClusterRebalance(args [][]byte) ([]byte, error) {
 	if len(args) < 3 {
 		return nil, errors.New("ERR syntax error")
 	}
 
 	mode := strings.ToUpper(string(args[2]))
+	if mode == "RECOVER" {
+		if len(args) == 4 && strings.EqualFold(string(args[3]), "PLAN") {
+			return clusterRebalanceRecoveryPlanReply(s.clusterStateSnapshot()), nil
+		}
+		if len(args) == 5 && strings.EqualFold(string(args[3]), "RESUME") {
+			slot, err := strconv.Atoi(string(args[4]))
+			if err != nil || slot < 0 || slot >= clusterSlotCount {
+				return nil, errors.New("ERR Invalid or out of range slot")
+			}
+			state := s.clusterStateSnapshot()
+			keysMoved, err := s.resumeRebalanceSlot(state, slot)
+			if err != nil {
+				return nil, err
+			}
+			return array(
+				formatBulkString([]byte("status")),
+				formatBulkString([]byte("recovered")),
+				formatBulkString([]byte("slot")),
+				integer(int64(slot)),
+				formatBulkString([]byte("target_addr")),
+				formatBulkString([]byte(state.migrating[slot])),
+				formatBulkString([]byte("keys_moved")),
+				integer(int64(keysMoved)),
+			), nil
+		}
+		return nil, errors.New("ERR syntax error")
+	}
 	if mode == "STATUS" {
 		if len(args) != 3 {
 			return nil, errors.New("ERR syntax error")
