@@ -90,6 +90,7 @@ type Server struct {
 	failoverLeaderLeaseUntil time.Time
 	failoverLeaderFenced     bool
 
+	clusterMu             sync.RWMutex
 	clusterEnabled        bool
 	clusterNodeAddr       string
 	clusterSlotOwners     [clusterSlotCount]string
