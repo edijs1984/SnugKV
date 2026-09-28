@@ -670,6 +670,10 @@ func (s *Server) executeDurableForSessionCaptureState(
 	replicationOffset *int64,
 	durabilitySequence *uint64,
 ) ([]byte, error) {
+	if err := s.enforceClusterRouting(args); err != nil {
+		return nil, err
+	}
+
 	if len(args) > 0 {
 		if info, ok := commandTable[strings.ToUpper(string(args[0]))]; ok && info.write && s.replication.isReadOnlyReplica() {
 			return nil, errors.New("READONLY You can't write against a read only replica.")
