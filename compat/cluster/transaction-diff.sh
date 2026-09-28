@@ -8,16 +8,13 @@ REDIS_BASE="${REDIS_BASE_PORT:-7100}"
 SNUG_BASE="${SNUG_BASE_PORT:-7000}"
 
 dump_failure() {
-  status=$?
-  if (( status != 0 )); then
-    echo "transaction differential failed with exit $status" >&2
-    for log in "$TMP"/redis-*/server.log "$TMP"/snug-*.log; do
-      [[ -f "$log" ]] || continue
-      echo "===== $log =====" >&2
-      tail -n 40 "$log" >&2
-    done
-  fi
-  return "$status"
+  local status="$1"
+  echo "transaction differential failed with exit $status" >&2
+  for log in "$TMP"/redis-*/server.log "$TMP"/snug-*.log; do
+    [[ -f "$log" ]] || continue
+    echo "===== $log =====" >&2
+    tail -n 40 "$log" >&2
+  done
 }
 
 cleanup() {
@@ -29,7 +26,16 @@ cleanup() {
     wait "$pid" 2>/dev/null || true
   done
 }
-trap 'status=$?; if (( status != 0 )); then dump_failure || true; fi; cleanup; exit $status' EXIT
+on_exit() {
+  local status=$?
+  trap - EXIT
+  if (( status != 0 )); then
+    dump_failure "$status"
+  fi
+  cleanup
+  exit "$status"
+}
+trap on_exit EXIT
 
 rm -rf "$TMP"
 mkdir -p "$TMP"
@@ -37,6 +43,7 @@ mkdir -p "$TMP"
 command -v redis-server >/dev/null || { echo "redis-server not found"; exit 1; }
 command -v redis-cli >/dev/null || { echo "redis-cli not found"; exit 1; }
 
+echo "[1/7] build SnugKV"
 cd "$ROOT"
 go build -o "$SNUG_BIN" ./cmd/snugkv
 
@@ -63,6 +70,7 @@ EOF
   echo $! >"$TMP/redis-$port.pid"
 }
 
+echo "[2/7] start Redis Cluster nodes"
 for i in 0 1 2; do
   start_redis_node "$((REDIS_BASE+i))"
 done
@@ -106,6 +114,7 @@ EOF
   echo $! >"$TMP/snug-$port.pid"
 }
 
+echo "[4/7] start SnugKV Cluster nodes"
 for i in 0 1 2; do
   start_snug_node "$((SNUG_BASE+i))" "$i"
 done
@@ -119,6 +128,7 @@ for i in 0 1 2; do
   redis-cli -p "$port" PING | grep -qx PONG
 done
 
+echo "[5/7] select slot fixtures"
 # Find one local key for node 0 and one remote key, avoiding assumptions about
 # exact CRC16 fixtures while keeping both systems on the same logical keys.
 find_key_in_range() {
@@ -196,6 +206,7 @@ EOF
   } >"$out" 2>&1
 }
 
+echo "[6/7] run transaction cases"
 run_cases "$REDIS_BASE" "$TMP/redis.out"
 run_cases "$SNUG_BASE" "$TMP/snug.out"
 
@@ -206,6 +217,7 @@ normalize() {
 normalize "$TMP/redis.out" >"$TMP/redis.normalized"
 normalize "$TMP/snug.out" >"$TMP/snug.normalized"
 
+echo "[7/7] compare outputs"
 echo "===== Redis Cluster ====="
 cat "$TMP/redis.normalized"
 echo
