@@ -524,14 +524,14 @@ func TestClusterShardsGroupsDisjointRangesByOwner(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		":1\r\n0\r\n",
-		":3\r\n100\r\n",
-		":3\r\n201\r\n",
-		":3\r\n300\r\n",
-		":3\r\n101\r\n",
-		":3\r\n200\r\n",
-		":3\r\n301\r\n",
-		":5\r\n16383\r\n",
+		":0\r\n",
+		":100\r\n",
+		":201\r\n",
+		":300\r\n",
+		":101\r\n",
+		":200\r\n",
+		":301\r\n",
+		":16383\r\n",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in reply=%q", want, text)
