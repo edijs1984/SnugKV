@@ -209,12 +209,12 @@ type clusterSlotRange struct {
 	Owner string
 }
 
-func (s *Server) clusterSlotRanges() []clusterSlotRange {
+func clusterSlotRangesFromOwners(owners [clusterSlotCount]string) []clusterSlotRange {
 	out := make([]clusterSlotRange, 0)
 	start := -1
 	owner := ""
 	for slot := 0; slot < clusterSlotCount; slot++ {
-		current := s.clusterSlotOwners[slot]
+		current := owners[slot]
 		if current == owner {
 			continue
 		}
@@ -228,6 +228,10 @@ func (s *Server) clusterSlotRanges() []clusterSlotRange {
 		out = append(out, clusterSlotRange{Start: start, End: clusterSlotCount - 1, Owner: owner})
 	}
 	return out
+}
+
+func (s *Server) clusterSlotRanges() []clusterSlotRange {
+	return clusterSlotRangesFromOwners(s.clusterStateSnapshot().owners)
 }
 
 func clusterNodeEndpointReply(addr string) ([]byte, error) {
@@ -318,9 +322,9 @@ func clusterNodeID(addr string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (s *Server) clusterOwners() []string {
+func clusterOwnersFromOwners(slotOwners [clusterSlotCount]string) []string {
 	seen := make(map[string]struct{})
-	for _, owner := range s.clusterSlotOwners {
+	for _, owner := range slotOwners {
 		if owner != "" {
 			seen[owner] = struct{}{}
 		}
@@ -333,11 +337,15 @@ func (s *Server) clusterOwners() []string {
 	return out
 }
 
-func (s *Server) clusterNodeSlotRanges(owner string) []clusterSlotRange {
+func (s *Server) clusterOwners() []string {
+	return clusterOwnersFromOwners(s.clusterStateSnapshot().owners)
+}
+
+func clusterNodeSlotRangesFromOwners(slotOwners [clusterSlotCount]string, owner string) []clusterSlotRange {
 	ranges := make([]clusterSlotRange, 0)
 	start := -1
 	for slot := 0; slot < clusterSlotCount; slot++ {
-		match := s.clusterSlotOwners[slot] == owner
+		match := slotOwners[slot] == owner
 		if match && start < 0 {
 			start = slot
 			continue
@@ -351,6 +359,10 @@ func (s *Server) clusterNodeSlotRanges(owner string) []clusterSlotRange {
 		ranges = append(ranges, clusterSlotRange{Start: start, End: clusterSlotCount - 1, Owner: owner})
 	}
 	return ranges
+}
+
+func (s *Server) clusterNodeSlotRanges(owner string) []clusterSlotRange {
+	return clusterNodeSlotRangesFromOwners(s.clusterStateSnapshot().owners, owner)
 }
 
 func clusterSlotRangeText(r clusterSlotRange) string {
