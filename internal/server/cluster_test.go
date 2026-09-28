@@ -1189,6 +1189,7 @@ func TestClusterRebalancePlanWireShape(t *testing.T) {
 	wantC := clusterNodeID(c)
 	text := string(got)
 	for _, token := range []string{
+		"plan_id",
 		"moves",
 		"projected",
 		"start",
@@ -1226,5 +1227,66 @@ func TestClusterRebalancePlanWireShape(t *testing.T) {
 	after := s.clusterStateSnapshot()
 	if before.owners != after.owners {
 		t.Fatal("wire planning call mutated ownership")
+	}
+}
+
+
+func TestClusterRebalancePlanIDChangesWithTopology(t *testing.T) {
+	s := New(engine.New())
+	a := "127.0.0.1:7000"
+	b := "127.0.0.1:7001"
+	if err := s.configureClusterSlots(true, a, map[string]string{
+		"0-9999":      a,
+		"10000-16383": b,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	state := s.clusterStateSnapshot()
+	moves, err := planClusterRebalance(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := clusterRebalancePlanID(state, moves)
+
+	s.clusterMu.Lock()
+	s.clusterSlotOwners[9999] = b
+	s.clusterMu.Unlock()
+
+	state = s.clusterStateSnapshot()
+	moves, err = planClusterRebalance(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := clusterRebalancePlanID(state, moves)
+
+	if first == second {
+		t.Fatalf("plan id did not change after topology mutation: %s", first)
+	}
+}
+
+func TestClusterRebalancePlanIDDeterministic(t *testing.T) {
+	s := New(engine.New())
+	a := "127.0.0.1:7000"
+	b := "127.0.0.1:7001"
+	if err := s.configureClusterSlots(true, a, map[string]string{
+		"0-9999":      a,
+		"10000-16383": b,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	state := s.clusterStateSnapshot()
+	moves, err := planClusterRebalance(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := clusterRebalancePlanID(state, moves)
+	second := clusterRebalancePlanID(state, moves)
+	if first != second {
+		t.Fatalf("plan id not deterministic: %s != %s", first, second)
+	}
+	if len(first) != 40 {
+		t.Fatalf("plan id length=%d want=40", len(first))
 	}
 }
