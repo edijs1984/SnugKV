@@ -123,7 +123,8 @@ func (s *Server) enforceClusterRoutingForClientMode(args [][]byte, client *clien
 	}
 	if len(args) == 0 ||
 		strings.EqualFold(string(args[0]), "CLUSTER") ||
-		strings.EqualFold(string(args[0]), "ASKING") {
+		strings.EqualFold(string(args[0]), "ASKING") ||
+		strings.EqualFold(string(args[0]), "RESTORE-ASKING") {
 		return nil
 	}
 
