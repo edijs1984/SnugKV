@@ -106,6 +106,10 @@ func (s *Server) configureClusterSlots(enabled bool, nodeAddr string, ranges map
 
 
 func (s *Server) enforceClusterRouting(args [][]byte) error {
+	return s.enforceClusterRoutingForClient(args, s.executionClient)
+}
+
+func (s *Server) enforceClusterRoutingForClient(args [][]byte, client *clientSession) error {
 	if !s.clusterEnabled {
 		return nil
 	}
@@ -131,8 +135,8 @@ func (s *Server) enforceClusterRouting(args [][]byte) error {
 	}
 
 	asking := false
-	if s.executionClient != nil {
-		asking = s.executionClient.consumeClusterAsking()
+	if client != nil {
+		asking = client.consumeClusterAsking()
 	}
 
 	owner := s.clusterSlotOwners[slot]
