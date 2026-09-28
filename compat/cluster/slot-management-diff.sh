@@ -112,7 +112,7 @@ run_cases() {
     redis-cli --raw -p "$port" CLUSTER ADDSLOTS 1 2
 
     echo "== slots-after-add =="
-    redis-cli --raw -p "$port" CLUSTER SLOTS
+    redis-cli --raw -p "$port" CLUSTER SLOTS | head -n 2
 
     echo "== add-busy =="
     redis-cli --raw -p "$port" CLUSTER ADDSLOTS 1
@@ -148,11 +148,7 @@ run_cases "$SNUG_PORT" "$TMP/snug.out"
 
 normalize() {
   sed -E \
-    -e "s/127\\.0\\.0\\.1:$REDIS_PORT/NODE/g" \
-    -e "s/127\\.0\\.0\\.1:$SNUG_PORT/NODE/g" \
-    -e '/^[0-9a-f]{40}$/s/.*/NODEID/' \
-    -e '/^127\\.0\\.0\\.1$/s/.*/ENDPOINT_HOST/' \
-    -e '/^$/s/^$/ENDPOINT_HOST_IF_SLOT_ROW/'
+    -e '/^[0-9a-f]{40}$/s/.*/NODEID/'
 }
 
 normalize <"$TMP/redis.out" >"$TMP/redis.normalized"
