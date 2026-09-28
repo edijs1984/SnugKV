@@ -887,6 +887,80 @@ func clusterRebalanceHasActiveTransition(state clusterStateSnapshot) bool {
 	return false
 }
 
+func boolToInt64(v bool) int64 {
+	if v {
+		return 1
+	}
+	return 0
+}
+
+func clusterRebalanceStatusReply(state clusterStateSnapshot, moves []clusterRebalanceMove) []byte {
+	planID := clusterRebalancePlanID(state, moves)
+	owners := clusterOwnersFromOwners(state.owners)
+
+	current := make(map[string]int, len(owners))
+	for _, owner := range state.owners {
+		if owner != "" {
+			current[owner]++
+		}
+	}
+
+	targets := make(map[string]int, len(owners))
+	if len(owners) > 0 {
+		base := clusterSlotCount / len(owners)
+		extra := clusterSlotCount % len(owners)
+		for i, owner := range owners {
+			targets[owner] = base
+			if i < extra {
+				targets[owner]++
+			}
+		}
+	}
+
+	slotsToMove := 0
+	for _, move := range moves {
+		slotsToMove += move.End - move.Start + 1
+	}
+
+	nodeItems := make([][]byte, 0, len(owners))
+	for _, owner := range owners {
+		nodeItems = append(nodeItems, array(
+			formatBulkString([]byte("node_id")),
+			formatBulkString([]byte(clusterNodeID(owner))),
+			formatBulkString([]byte("addr")),
+			formatBulkString([]byte(owner)),
+			formatBulkString([]byte("current_slots")),
+			integer(int64(current[owner])),
+			formatBulkString([]byte("target_slots")),
+			integer(int64(targets[owner])),
+			formatBulkString([]byte("delta")),
+			integer(int64(targets[owner]-current[owner])),
+		))
+	}
+
+	status := "ready"
+	if clusterRebalanceHasActiveTransition(state) {
+		status = "transitioning"
+	} else if len(moves) == 0 {
+		status = "balanced"
+	}
+
+	return array(
+		formatBulkString([]byte("status")),
+		formatBulkString([]byte(status)),
+		formatBulkString([]byte("plan_id")),
+		formatBulkString([]byte(planID)),
+		formatBulkString([]byte("active_transition")),
+		integer(boolToInt64(clusterRebalanceHasActiveTransition(state))),
+		formatBulkString([]byte("move_ranges")),
+		integer(int64(len(moves))),
+		formatBulkString([]byte("slots_to_move")),
+		integer(int64(slotsToMove)),
+		formatBulkString([]byte("nodes")),
+		array(nodeItems...),
+	)
+}
+
 func sendClusterControlCommand(addr string, args ...string) error {
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	if err != nil {
@@ -1028,6 +1102,17 @@ func (s *Server) executeClusterRebalance(args [][]byte) ([]byte, error) {
 	}
 
 	mode := strings.ToUpper(string(args[2]))
+	if mode == "STATUS" {
+		if len(args) != 3 {
+			return nil, errors.New("ERR syntax error")
+		}
+		state := s.clusterStateSnapshot()
+		moves, err := planClusterRebalance(state)
+		if err != nil {
+			return nil, err
+		}
+		return clusterRebalanceStatusReply(state, moves), nil
+	}
 	if mode == "APPLY" {
 		if len(args) < 5 {
 			return nil, errors.New("ERR syntax error")
