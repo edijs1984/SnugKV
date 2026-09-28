@@ -1,34 +1,24 @@
 package server
 
-import (
-	"errors"
-	"sync"
-
-	lua "github.com/yuin/gopher-lua"
-)
+import "errors"
 
 type luaClusterScope struct {
 	allowCrossSlot bool
 	runtimeSlot    int
 }
 
-var luaClusterScopes sync.Map // map[*lua.LState]*luaClusterScope
-
-func (s *Server) prepareLuaClusterScope(L *lua.LState, allowCrossSlot bool) func() {
+func (s *Server) newLuaClusterScope(allowCrossSlot bool) *luaClusterScope {
 	if !s.clusterEnabled {
-		return func() {}
+		return nil
 	}
-	luaClusterScopes.Store(L, &luaClusterScope{
+	return &luaClusterScope{
 		allowCrossSlot: allowCrossSlot,
 		runtimeSlot:    -1,
-	})
-	return func() {
-		luaClusterScopes.Delete(L)
 	}
 }
 
-func (s *Server) validateLuaClusterAccess(L *lua.LState, args [][]byte) error {
-	if !s.clusterEnabled {
+func (s *Server) validateLuaClusterAccess(scope *luaClusterScope, args [][]byte) error {
+	if !s.clusterEnabled || scope == nil {
 		return nil
 	}
 
@@ -39,12 +29,6 @@ func (s *Server) validateLuaClusterAccess(L *lua.LState, args [][]byte) error {
 	if len(refs) == 0 {
 		return nil
 	}
-
-	value, ok := luaClusterScopes.Load(L)
-	if !ok {
-		return nil
-	}
-	scope := value.(*luaClusterScope)
 
 	for _, ref := range refs {
 		slot := clusterKeySlot(ref.value)
