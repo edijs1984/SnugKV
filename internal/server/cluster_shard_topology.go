@@ -74,3 +74,42 @@ func clusterTopologyNodeHealth(localAddr, addr string) string {
 	// remote failover member. Dedicated failover health remains authoritative.
 	return "unknown"
 }
+
+
+func (s *Server) clusterSlotCapableNodes(state clusterStateSnapshot) ([]string, error) {
+	replicaMaster, err := s.clusterReplicaMasterMap(state)
+	if err != nil {
+		return nil, err
+	}
+	nodes := clusterKnownNodesFromState(state)
+	out := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		if _, isReplica := replicaMaster[node]; isReplica {
+			continue
+		}
+		out = append(out, node)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func (s *Server) clusterTopologyNodes(state clusterStateSnapshot) ([]string, error) {
+	nodes := clusterKnownNodesFromState(state)
+	topology, err := s.localClusterShardReplicaTopology(state)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]struct{}, len(nodes)+len(topology.Replicas))
+	for _, node := range nodes {
+		seen[node] = struct{}{}
+	}
+	for _, replica := range topology.Replicas {
+		seen[replica] = struct{}{}
+	}
+	out := make([]string, 0, len(seen))
+	for node := range seen {
+		out = append(out, node)
+	}
+	sort.Strings(out)
+	return out, nil
+}
