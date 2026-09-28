@@ -7,6 +7,19 @@ SNUG_BIN="$TMP/snugkv"
 REDIS_BASE="${REDIS_BASE_PORT:-7100}"
 SNUG_BASE="${SNUG_BASE_PORT:-7000}"
 
+dump_failure() {
+  status=$?
+  if (( status != 0 )); then
+    echo "transaction differential failed with exit $status" >&2
+    for log in "$TMP"/redis-*/server.log "$TMP"/snug-*.log; do
+      [[ -f "$log" ]] || continue
+      echo "===== $log =====" >&2
+      tail -n 40 "$log" >&2
+    done
+  fi
+  return "$status"
+}
+
 cleanup() {
   set +e
   for pidfile in "$TMP"/redis-*.pid "$TMP"/snug-*.pid; do
@@ -16,7 +29,7 @@ cleanup() {
     wait "$pid" 2>/dev/null || true
   done
 }
-trap cleanup EXIT
+trap 'status=$?; if (( status != 0 )); then dump_failure || true; fi; cleanup; exit $status' EXIT
 
 rm -rf "$TMP"
 mkdir -p "$TMP"
