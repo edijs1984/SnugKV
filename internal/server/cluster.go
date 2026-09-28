@@ -875,8 +875,51 @@ func planClusterRebalance(state clusterStateSnapshot) ([]clusterRebalanceMove, e
 	return moves, nil
 }
 
+func clusterRebalanceHasActiveTransition(state clusterStateSnapshot) bool {
+	for slot := 0; slot < clusterSlotCount; slot++ {
+		if state.migrating[slot] != "" || state.importing[slot] != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) executeClusterRebalance(args [][]byte) ([]byte, error) {
-	if len(args) != 3 || !strings.EqualFold(string(args[2]), "PLAN") {
+	if len(args) < 3 {
+		return nil, errors.New("ERR syntax error")
+	}
+
+	mode := strings.ToUpper(string(args[2]))
+	if mode == "APPLY" {
+		if len(args) != 5 || !strings.EqualFold(string(args[4]), "DRYRUN") {
+			return nil, errors.New("ERR syntax error")
+		}
+
+		state := s.clusterStateSnapshot()
+		if clusterRebalanceHasActiveTransition(state) {
+			return nil, errors.New("ERR REBALANCE APPLY refused while slots are migrating or importing")
+		}
+
+		moves, err := planClusterRebalance(state)
+		if err != nil {
+			return nil, err
+		}
+		currentPlanID := clusterRebalancePlanID(state, moves)
+		if string(args[3]) != currentPlanID {
+			return nil, errors.New("ERR REBALANCE plan is stale; run CLUSTER REBALANCE PLAN again")
+		}
+
+		return array(
+			formatBulkString([]byte("plan_id")),
+			formatBulkString([]byte(currentPlanID)),
+			formatBulkString([]byte("status")),
+			formatBulkString([]byte("ready")),
+			formatBulkString([]byte("moves")),
+			integer(int64(len(moves))),
+		), nil
+	}
+
+	if mode != "PLAN" || len(args) != 3 {
 		return nil, errors.New("ERR syntax error")
 	}
 
