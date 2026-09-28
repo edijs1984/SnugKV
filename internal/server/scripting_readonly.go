@@ -133,9 +133,8 @@ func (s *Server) runLuaScriptReadOnlyScoped(source, sha string, keys, argv [][]b
 
 	L.SetGlobal("KEYS", luaBytesTable(L, keys))
 	L.SetGlobal("ARGV", luaBytesTable(L, argv))
-	clearClusterScope := s.prepareLuaClusterScope(L, allowCrossSlot)
-	defer clearClusterScope()
-	L.SetGlobal("redis", s.luaRedisModuleReadOnly(L))
+	clusterScope := s.newLuaClusterScope(allowCrossSlot)
+	L.SetGlobal("redis", s.luaRedisModuleReadOnlyScoped(L, clusterScope))
 
 	fn, err := L.LoadString(source)
 	if err != nil {
@@ -157,10 +156,14 @@ func (s *Server) runLuaScriptReadOnlyScoped(source, sha string, keys, argv [][]b
 }
 
 func (s *Server) luaRedisModuleReadOnly(L *lua.LState) *lua.LTable {
+	return s.luaRedisModuleReadOnlyScoped(L, nil)
+}
+
+func (s *Server) luaRedisModuleReadOnlyScoped(L *lua.LState, clusterScope *luaClusterScope) *lua.LTable {
 	module := L.NewTable()
 	L.SetFuncs(module, map[string]lua.LGFunction{
-		"call":         s.luaRedisCallReadOnly(false),
-		"pcall":        s.luaRedisCallReadOnly(true),
+		"call":         s.luaRedisCallReadOnlyWithCluster(false, clusterScope),
+		"pcall":        s.luaRedisCallReadOnlyWithCluster(true, clusterScope),
 		"error_reply":  luaRedisErrorReply,
 		"status_reply": luaRedisStatusReply,
 		"sha1hex":      luaRedisSHA1Hex,
@@ -190,6 +193,10 @@ func scriptCommandWritesOrReplicates(args [][]byte) bool {
 }
 
 func (s *Server) luaRedisCallReadOnly(protected bool) lua.LGFunction {
+	return s.luaRedisCallReadOnlyWithCluster(protected, nil)
+}
+
+func (s *Server) luaRedisCallReadOnlyWithCluster(protected bool, clusterScope *luaClusterScope) lua.LGFunction {
 	return func(L *lua.LState) int {
 		if L.GetTop() < 1 {
 			return luaPushCommandError(L, protected, errors.New("ERR Please specify at least one argument for redis.call()"))
@@ -217,7 +224,7 @@ func (s *Server) luaRedisCallReadOnly(protected bool) lua.LGFunction {
 		if err := s.authorizeExecutionNestedCommand(args); err != nil {
 			return luaPushCommandError(L, protected, err)
 		}
-		if err := s.validateLuaClusterAccess(L, args); err != nil {
+		if err := s.validateLuaClusterAccess(clusterScope, args); err != nil {
 			return luaPushCommandError(L, protected, err)
 		}
 
