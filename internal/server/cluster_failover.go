@@ -3,6 +3,8 @@ package server
 import (
 	"errors"
 	"fmt"
+	"net"
+	"strconv"
 )
 
 func (s *Server) clusterFailoverShardMembers() []string {
@@ -41,9 +43,27 @@ func (s *Server) clusterFailoverCurrentOwner(state clusterStateSnapshot) (string
 	return owner, nil
 }
 
+func validateClusterOwnerAddress(addr string) error {
+	host, portText, err := net.SplitHostPort(addr)
+	if err != nil || host == "" || portText == "" {
+		return errors.New("ERR invalid cluster failover owner address")
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port <= 0 || port > 65535 {
+		return errors.New("ERR invalid cluster failover owner address")
+	}
+	return nil
+}
+
 func (s *Server) replaceClusterOwner(oldOwner, newOwner string) error {
 	if oldOwner == "" || newOwner == "" || oldOwner == newOwner {
 		return errors.New("ERR invalid cluster failover owner replacement")
+	}
+	if err := validateClusterOwnerAddress(oldOwner); err != nil {
+		return err
+	}
+	if err := validateClusterOwnerAddress(newOwner); err != nil {
+		return err
 	}
 
 	s.clusterMu.Lock()
@@ -110,7 +130,7 @@ func (s *Server) convergeClusterFailoverOwnership() error {
 	// Converge existing cluster-owner views first. The promoted node updates
 	// itself last so a partial control-plane failure remains observable there.
 	for _, owner := range clusterOwnersFromOwners(state.owners) {
-		if owner == state.nodeAddr {
+		if owner == state.nodeAddr || owner == oldOwner {
 			continue
 		}
 		if err := s.sendClusterControlCommand(
@@ -125,4 +145,14 @@ func (s *Server) convergeClusterFailoverOwnership() error {
 		return err
 	}
 	return nil
+}
+
+func (s *Server) executeClusterFailoverOwner(args [][]byte) ([]byte, error) {
+	if len(args) != 4 {
+		return nil, errors.New("ERR wrong number of arguments for 'cluster|failover-owner' command")
+	}
+	if err := s.replaceClusterOwner(string(args[2]), string(args[3])); err != nil {
+		return nil, err
+	}
+	return []byte("+OK\r\n"), nil
 }
