@@ -138,6 +138,9 @@ func (s *Server) executeKillableScripting(args [][]byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if s.clusterEnabled && meta.flagged && meta.noCluster {
+		return nil, errors.New("ERR Can not run script on cluster, 'no-cluster' flag is set")
+	}
 	if err := s.rejectFlaggedScriptInvocationOOM(meta); err != nil {
 		return nil, err
 	}
@@ -161,12 +164,13 @@ func (s *Server) executeKillableScripting(args [][]byte) ([]byte, error) {
 				readOnly || meta.noWrites,
 				!meta.flagged,
 				meta.allowOom,
+				!meta.flagged || meta.allowCrossSlotKeys,
 			)
 		},
 	)
 }
 
-func (s *Server) runKillableLuaScript(source, sha string, keys, argv [][]byte, readOnly bool, legacyOOM bool, allowOOM bool) ([]byte, error) {
+func (s *Server) runKillableLuaScript(source, sha string, keys, argv [][]byte, readOnly bool, legacyOOM bool, allowOOM bool, allowCrossSlot bool) ([]byte, error) {
 	L := newScriptLuaState()
 	defer L.Close()
 
@@ -175,15 +179,16 @@ func (s *Server) runKillableLuaScript(source, sha string, keys, argv [][]byte, r
 	L.SetContext(ctx)
 	L.SetGlobal("KEYS", luaBytesTable(L, keys))
 	L.SetGlobal("ARGV", luaBytesTable(L, argv))
+	clusterScope := s.newLuaClusterScope(allowCrossSlot)
 	var legacyState *legacyScriptOOMState
 	if readOnly {
-		L.SetGlobal("redis", s.luaRedisModuleReadOnly(L))
+		L.SetGlobal("redis", s.luaRedisModuleReadOnlyScoped(L, clusterScope))
 	} else if legacyOOM {
 		legacyState = newLegacyScriptOOMState(s)
 		defer legacyState.restore(s)
-		L.SetGlobal("redis", s.luaRedisModuleKillableWithLegacyState(L, legacyState))
+		L.SetGlobal("redis", s.luaRedisModuleKillableWithOptionsAndCluster(L, legacyState, false, clusterScope))
 	} else {
-		L.SetGlobal("redis", s.luaRedisModuleKillableWithOptions(L, nil, allowOOM))
+		L.SetGlobal("redis", s.luaRedisModuleKillableWithOptionsAndCluster(L, nil, allowOOM, clusterScope))
 	}
 
 	fn, err := L.LoadString(source)
@@ -226,10 +231,19 @@ func (s *Server) luaRedisModuleKillableWithOptions(
 	state *legacyScriptOOMState,
 	allowOOM bool,
 ) *lua.LTable {
+	return s.luaRedisModuleKillableWithOptionsAndCluster(L, state, allowOOM, nil)
+}
+
+func (s *Server) luaRedisModuleKillableWithOptionsAndCluster(
+	L *lua.LState,
+	state *legacyScriptOOMState,
+	allowOOM bool,
+	clusterScope *luaClusterScope,
+) *lua.LTable {
 	module := L.NewTable()
 	L.SetFuncs(module, map[string]lua.LGFunction{
-		"call":         s.luaRedisCallKillableWithOptions(false, state, allowOOM),
-		"pcall":        s.luaRedisCallKillableWithOptions(true, state, allowOOM),
+		"call":         s.luaRedisCallKillableWithOptionsAndCluster(false, state, allowOOM, clusterScope),
+		"pcall":        s.luaRedisCallKillableWithOptionsAndCluster(true, state, allowOOM, clusterScope),
 		"error_reply":  luaRedisErrorReply,
 		"status_reply": luaRedisStatusReply,
 		"sha1hex":      luaRedisSHA1Hex,
@@ -253,6 +267,15 @@ func (s *Server) luaRedisCallKillableWithOptions(
 	state *legacyScriptOOMState,
 	allowOOM bool,
 ) lua.LGFunction {
+	return s.luaRedisCallKillableWithOptionsAndCluster(protected, state, allowOOM, nil)
+}
+
+func (s *Server) luaRedisCallKillableWithOptionsAndCluster(
+	protected bool,
+	state *legacyScriptOOMState,
+	allowOOM bool,
+	clusterScope *luaClusterScope,
+) lua.LGFunction {
 	return func(L *lua.LState) int {
 		if L.GetTop() < 1 {
 			return luaPushCommandError(L, protected, errors.New("ERR Please specify at least one argument for redis.call()"))
@@ -275,6 +298,9 @@ func (s *Server) luaRedisCallKillableWithOptions(
 			return luaPushCommandError(L, protected, err)
 		}
 		if err := s.authorizeExecutionNestedCommand(args); err != nil {
+			return luaPushCommandError(L, protected, err)
+		}
+		if err := s.validateLuaClusterAccess(clusterScope, args); err != nil {
 			return luaPushCommandError(L, protected, err)
 		}
 		if scriptCommandWritesDataset(args) {
