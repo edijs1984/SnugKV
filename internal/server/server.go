@@ -302,7 +302,7 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 	}
 	switch cmd {
 	case "ASKING":
-		if !s.clusterEnabled {
+		if !s.clusterEnabledSnapshot() {
 			return nil, errors.New("ERR This instance has cluster support disabled")
 		}
 		if s.executionClient != nil {
