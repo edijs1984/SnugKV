@@ -13,7 +13,7 @@ import (
 	"snugkv/internal/engine"
 )
 
-func writeRESPCommand(t *testing.T, conn net.Conn, args ...string) {
+func writeClusterRESPCommand(t *testing.T, conn net.Conn, args ...string) {
 	t.Helper()
 	var b strings.Builder
 	fmt.Fprintf(&b, "*%d\r\n", len(args))
@@ -76,32 +76,32 @@ func TestClusterAskingIsConnectionScopedTCP(t *testing.T) {
 	second.SetDeadline(time.Now().Add(3 * time.Second))
 	r2 := bufio.NewReader(second)
 
-	writeRESPCommand(t, first, "ASKING")
+	writeClusterRESPCommand(t, first, "ASKING")
 	if got := readRESPLine(t, r1); got != "+OK\r\n" {
 		t.Fatalf("ASKING=%q", got)
 	}
 
-	writeRESPCommand(t, second, "GET", key)
+	writeClusterRESPCommand(t, second, "GET", key)
 	wantMoved := fmt.Sprintf("-MOVED %d %s\r\n", slot, source)
 	if got := readRESPLine(t, r2); got != wantMoved {
 		t.Fatalf("second client GET=%q want=%q", got, wantMoved)
 	}
 
-	writeRESPCommand(t, first, "SET", key, "value")
+	writeClusterRESPCommand(t, first, "SET", key, "value")
 	if got := readRESPLine(t, r1); got != "+OK\r\n" {
 		t.Fatalf("ASKING SET=%q", got)
 	}
 
-	writeRESPCommand(t, first, "GET", key)
+	writeClusterRESPCommand(t, first, "GET", key)
 	if got := readRESPLine(t, r1); got != wantMoved {
 		t.Fatalf("ASKING should be one-shot: GET=%q want=%q", got, wantMoved)
 	}
 
-	writeRESPCommand(t, first, "ASKING")
+	writeClusterRESPCommand(t, first, "ASKING")
 	if got := readRESPLine(t, r1); got != "+OK\r\n" {
 		t.Fatalf("second ASKING=%q", got)
 	}
-	writeRESPCommand(t, first, "GET", key)
+	writeClusterRESPCommand(t, first, "GET", key)
 	if got := readRESPLine(t, r1); got != "$5\r\n" {
 		t.Fatalf("ASKING GET header=%q", got)
 	}
