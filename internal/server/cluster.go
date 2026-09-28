@@ -84,24 +84,37 @@ func parseClusterSlotRange(text string) (int, int, error) {
 }
 
 type clusterStateSnapshot struct {
-	enabled   bool
-	nodeAddr  string
-	epoch     uint64
-	owners    [clusterSlotCount]string
-	migrating [clusterSlotCount]string
-	importing [clusterSlotCount]string
+	enabled    bool
+	nodeAddr   string
+	epoch      uint64
+	knownNodes []string
+	owners     [clusterSlotCount]string
+	migrating  [clusterSlotCount]string
+	importing  [clusterSlotCount]string
+}
+
+func sortedClusterKnownNodes(nodes map[string]struct{}) []string {
+	out := make([]string, 0, len(nodes))
+	for addr := range nodes {
+		if addr != "" {
+			out = append(out, addr)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (s *Server) clusterStateSnapshot() clusterStateSnapshot {
 	s.clusterMu.RLock()
 	defer s.clusterMu.RUnlock()
 	return clusterStateSnapshot{
-		enabled:   s.clusterEnabled,
-		nodeAddr:  s.clusterNodeAddr,
-		epoch:     s.clusterTopologyEpoch,
-		owners:    s.clusterSlotOwners,
-		migrating: s.clusterSlotMigrating,
-		importing: s.clusterSlotImporting,
+		enabled:    s.clusterEnabled,
+		nodeAddr:   s.clusterNodeAddr,
+		epoch:      s.clusterTopologyEpoch,
+		knownNodes: sortedClusterKnownNodes(s.clusterKnownNodes),
+		owners:     s.clusterSlotOwners,
+		migrating:  s.clusterSlotMigrating,
+		importing:  s.clusterSlotImporting,
 	}
 }
 
@@ -126,10 +139,21 @@ func (s *Server) configureClusterSlots(enabled bool, nodeAddr string, ranges map
 		}
 	}
 
+	known := make(map[string]struct{})
+	if nodeAddr != "" {
+		known[nodeAddr] = struct{}{}
+	}
+	for _, owner := range owners {
+		if owner != "" {
+			known[owner] = struct{}{}
+		}
+	}
+
 	s.clusterMu.Lock()
 	s.clusterEnabled = enabled
 	s.clusterNodeAddr = nodeAddr
 	s.clusterTopologyEpoch = 0
+	s.clusterKnownNodes = known
 	s.clusterSlotOwners = owners
 	s.clusterSlotMigrating = [clusterSlotCount]string{}
 	s.clusterSlotImporting = [clusterSlotCount]string{}
@@ -275,10 +299,10 @@ func (s *Server) clusterSlotsReply() ([]byte, error) {
 
 func (s *Server) clusterShardsReply() ([]byte, error) {
 	state := s.clusterStateSnapshot()
-	owners := clusterOwnersFromOwners(state.owners)
-	items := make([][]byte, 0, len(owners))
+	nodes := clusterKnownNodesFromState(state)
+	items := make([][]byte, 0, len(nodes))
 
-	for _, owner := range owners {
+	for _, owner := range nodes {
 		host, portText, err := net.SplitHostPort(owner)
 		if err != nil {
 			return nil, err
@@ -344,6 +368,22 @@ func clusterOwnersFromOwners(slotOwners [clusterSlotCount]string) []string {
 	return out
 }
 
+func clusterKnownNodesFromState(state clusterStateSnapshot) []string {
+	if len(state.knownNodes) > 0 {
+		return append([]string(nil), state.knownNodes...)
+	}
+	seen := make(map[string]struct{})
+	if state.nodeAddr != "" {
+		seen[state.nodeAddr] = struct{}{}
+	}
+	for _, owner := range state.owners {
+		if owner != "" {
+			seen[owner] = struct{}{}
+		}
+	}
+	return sortedClusterKnownNodes(seen)
+}
+
 func (s *Server) clusterOwners() []string {
 	return clusterOwnersFromOwners(s.clusterStateSnapshot().owners)
 }
@@ -381,9 +421,9 @@ func clusterSlotRangeText(r clusterSlotRange) string {
 
 func (s *Server) clusterNodesReply() []byte {
 	state := s.clusterStateSnapshot()
-	owners := clusterOwnersFromOwners(state.owners)
-	lines := make([]string, 0, len(owners))
-	for _, owner := range owners {
+	nodes := clusterKnownNodesFromState(state)
+	lines := make([]string, 0, len(nodes))
+	for _, owner := range nodes {
 		flags := "master"
 		if owner == state.nodeAddr {
 			flags = "myself,master"
@@ -432,6 +472,7 @@ func (s *Server) clusterInfoReply() []byte {
 		state = "ok"
 	}
 	owners := clusterOwnersFromOwners(stateSnapshot.owners)
+	knownNodes := clusterKnownNodesFromState(stateSnapshot)
 	body := fmt.Sprintf(
 		"cluster_state:%s\r\n"+
 			"cluster_slots_assigned:%d\r\n"+
@@ -448,7 +489,7 @@ func (s *Server) clusterInfoReply() []byte {
 		state,
 		assigned,
 		assigned,
-		len(owners),
+		len(knownNodes),
 		len(owners),
 		stateSnapshot.epoch,
 		stateSnapshot.epoch,
@@ -458,7 +499,7 @@ func (s *Server) clusterInfoReply() []byte {
 
 
 func clusterNodeAddressByIDFromState(state clusterStateSnapshot, id string) (string, bool) {
-	for _, owner := range clusterOwnersFromOwners(state.owners) {
+	for _, owner := range clusterKnownNodesFromState(state) {
 		if clusterNodeID(owner) == id {
 			return owner, true
 		}
@@ -792,6 +833,9 @@ func clusterRebalancePlanID(state clusterStateSnapshot, moves []clusterRebalance
 	h := sha1.New()
 	fmt.Fprintf(h, "node=%s\n", state.nodeAddr)
 	fmt.Fprintf(h, "epoch=%d\n", state.epoch)
+	for _, node := range clusterKnownNodesFromState(state) {
+		fmt.Fprintf(h, "node_member=%s\n", node)
+	}
 	for slot, owner := range state.owners {
 		fmt.Fprintf(h, "%d=%s\n", slot, owner)
 	}
@@ -806,7 +850,7 @@ func planClusterRebalance(state clusterStateSnapshot) ([]clusterRebalanceMove, e
 		return nil, errors.New("ERR This instance has cluster support disabled")
 	}
 
-	owners := clusterOwnersFromOwners(state.owners)
+	owners := clusterKnownNodesFromState(state)
 	counts := make(map[string]int, len(owners))
 	assigned := 0
 	for _, owner := range state.owners {
@@ -1000,7 +1044,7 @@ func boolToInt64(v bool) int64 {
 
 func clusterRebalanceStatusReply(state clusterStateSnapshot, moves []clusterRebalanceMove) []byte {
 	planID := clusterRebalancePlanID(state, moves)
-	owners := clusterOwnersFromOwners(state.owners)
+	owners := clusterKnownNodesFromState(state)
 
 	current := make(map[string]int, len(owners))
 	for _, owner := range state.owners {
@@ -1110,7 +1154,7 @@ func (s *Server) sendClusterControlCommand(addr string, args ...string) error {
 
 func (s *Server) finalizeRebalanceSlotOwners(state clusterStateSnapshot, slot int, target string) error {
 	targetID := clusterNodeID(target)
-	owners := clusterOwnersFromOwners(state.owners)
+	owners := clusterKnownNodesFromState(state)
 
 	// Update all remote topology views first. Keep the source in MIGRATING
 	// until every reachable peer agrees, so incomplete convergence remains
@@ -1652,7 +1696,7 @@ func (s *Server) executeClusterRebalance(args [][]byte) ([]byte, error) {
 		))
 	}
 
-	owners := clusterOwnersFromOwners(state.owners)
+	owners := clusterKnownNodesFromState(state)
 	projectedItems := make([][]byte, 0, len(owners))
 	for _, owner := range owners {
 		projectedItems = append(projectedItems, array(

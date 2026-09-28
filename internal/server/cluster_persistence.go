@@ -17,6 +17,7 @@ type clusterTopologyPersistenceState struct {
 	Owners    [clusterSlotCount]string  `json:"owners"`
 	Migrating [clusterSlotCount]string  `json:"migrating"`
 	Importing [clusterSlotCount]string  `json:"importing"`
+	KnownNodes []string                 `json:"known_nodes,omitempty"`
 }
 
 var clusterTopologyPersistencePaths sync.Map // map[*Server]string
@@ -40,6 +41,7 @@ func clusterTopologyStateFromSnapshot(state clusterStateSnapshot) clusterTopolog
 		Owners:    state.owners,
 		Migrating: state.migrating,
 		Importing: state.importing,
+		KnownNodes: clusterKnownNodesFromState(state),
 	}
 }
 
@@ -81,10 +83,26 @@ func (s *TCPServer) ConfigureClusterPersistence(aofPath, snapshotPath string) er
 		return fmt.Errorf("cluster topology recovery: enabled topology has empty node address")
 	}
 
+	known := make(map[string]struct{})
+	for _, addr := range state.KnownNodes {
+		if addr != "" {
+			known[addr] = struct{}{}
+		}
+	}
+	if state.NodeAddr != "" {
+		known[state.NodeAddr] = struct{}{}
+	}
+	for _, owner := range state.Owners {
+		if owner != "" {
+			known[owner] = struct{}{}
+		}
+	}
+
 	s.server.clusterMu.Lock()
 	s.server.clusterEnabled = state.Enabled
 	s.server.clusterNodeAddr = state.NodeAddr
 	s.server.clusterTopologyEpoch = state.Epoch
+	s.server.clusterKnownNodes = known
 	s.server.clusterSlotOwners = state.Owners
 	s.server.clusterSlotMigrating = state.Migrating
 	s.server.clusterSlotImporting = state.Importing
@@ -96,12 +114,13 @@ func (s *TCPServer) ConfigureClusterPersistence(aofPath, snapshotPath string) er
 
 func (s *Server) mutateClusterTopologyLocked(mutator func() error) error {
 	before := clusterStateSnapshot{
-		enabled:   s.clusterEnabled,
-		nodeAddr:  s.clusterNodeAddr,
-		epoch:     s.clusterTopologyEpoch,
-		owners:    s.clusterSlotOwners,
-		migrating: s.clusterSlotMigrating,
-		importing: s.clusterSlotImporting,
+		enabled:    s.clusterEnabled,
+		nodeAddr:   s.clusterNodeAddr,
+		epoch:      s.clusterTopologyEpoch,
+		knownNodes: sortedClusterKnownNodes(s.clusterKnownNodes),
+		owners:     s.clusterSlotOwners,
+		migrating:  s.clusterSlotMigrating,
+		importing:  s.clusterSlotImporting,
 	}
 
 	if err := mutator(); err != nil {
@@ -109,6 +128,7 @@ func (s *Server) mutateClusterTopologyLocked(mutator func() error) error {
 	}
 	if s.clusterEnabled == before.enabled &&
 		s.clusterNodeAddr == before.nodeAddr &&
+		stringSlicesEqual(sortedClusterKnownNodes(s.clusterKnownNodes), before.knownNodes) &&
 		s.clusterSlotOwners == before.owners &&
 		s.clusterSlotMigrating == before.migrating &&
 		s.clusterSlotImporting == before.importing {
@@ -117,17 +137,22 @@ func (s *Server) mutateClusterTopologyLocked(mutator func() error) error {
 
 	s.clusterTopologyEpoch++
 	after := clusterStateSnapshot{
-		enabled:   s.clusterEnabled,
-		nodeAddr:  s.clusterNodeAddr,
-		epoch:     s.clusterTopologyEpoch,
-		owners:    s.clusterSlotOwners,
-		migrating: s.clusterSlotMigrating,
-		importing: s.clusterSlotImporting,
+		enabled:    s.clusterEnabled,
+		nodeAddr:   s.clusterNodeAddr,
+		epoch:      s.clusterTopologyEpoch,
+		knownNodes: sortedClusterKnownNodes(s.clusterKnownNodes),
+		owners:     s.clusterSlotOwners,
+		migrating:  s.clusterSlotMigrating,
+		importing:  s.clusterSlotImporting,
 	}
 	if err := s.persistClusterTopologySnapshot(after); err != nil {
 		s.clusterEnabled = before.enabled
 		s.clusterNodeAddr = before.nodeAddr
 		s.clusterTopologyEpoch = before.epoch
+		s.clusterKnownNodes = make(map[string]struct{}, len(before.knownNodes))
+		for _, addr := range before.knownNodes {
+			s.clusterKnownNodes[addr] = struct{}{}
+		}
 		s.clusterSlotOwners = before.owners
 		s.clusterSlotMigrating = before.migrating
 		s.clusterSlotImporting = before.importing

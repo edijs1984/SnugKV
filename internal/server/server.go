@@ -95,6 +95,7 @@ type Server struct {
 	clusterEnabled        bool
 	clusterNodeAddr       string
 	clusterTopologyEpoch  uint64
+	clusterKnownNodes     map[string]struct{}
 	clusterSlotOwners     [clusterSlotCount]string
 	clusterSlotMigrating  [clusterSlotCount]string
 	clusterSlotImporting  [clusterSlotCount]string
@@ -334,6 +335,10 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			return s.executeClusterMyID(args)
 		case "REBALANCE":
 			return s.executeClusterRebalance(args)
+		case "JOIN":
+			return s.executeClusterJoin(args)
+		case "MEMBERSHIP":
+			return s.executeClusterMembership(args)
 		case "FAILOVER-OWNER":
 			return s.executeClusterFailoverOwner(args)
 		case "SLOTS":
