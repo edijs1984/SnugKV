@@ -534,11 +534,12 @@ func (s *Server) executeKeyDumpRestore(args [][]byte) ([]byte, error) {
 			return nil, errors.New("ERR wrong number of arguments for 'restore' command")
 		}
 		if cmd == "RESTORE-ASKING" {
-			if !s.clusterEnabled {
+			state := s.clusterStateSnapshot()
+			if !state.enabled {
 				return nil, errors.New("ERR This instance has cluster support disabled")
 			}
 			slot := clusterKeySlot(args[1])
-			if s.clusterSlotImporting[slot] == "" {
+			if state.importing[slot] == "" {
 				return nil, errors.New("ERR RESTORE-ASKING is only allowed for importing slots")
 			}
 		}
