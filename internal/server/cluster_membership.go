@@ -1,13 +1,16 @@
 package server
 
 import (
+	"bufio"
 	"crypto/sha1"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"sort"
 	"strconv"
+	"time"
 )
 
 func clusterOwnershipDigest(state clusterStateSnapshot) string {
@@ -84,11 +87,294 @@ func (s *Server) addClusterKnownNode(addr, digest string) error {
 	})
 }
 
+
+type clusterMembershipView struct {
+	NodeAddr string   `json:"node_addr"`
+	Digest   string   `json:"digest"`
+	Nodes    []string `json:"nodes"`
+}
+
+func (s *Server) clusterMembershipViewForDigest(digest string) (clusterMembershipView, error) {
+	state := s.clusterStateSnapshot()
+	if !state.enabled {
+		return clusterMembershipView{}, errors.New("ERR This instance has cluster support disabled")
+	}
+	if clusterRebalanceHasActiveTransition(state) {
+		return clusterMembershipView{}, errors.New("ERR cluster membership recovery refused while slots are migrating or importing")
+	}
+	localDigest := clusterOwnershipDigest(state)
+	if localDigest != digest {
+		return clusterMembershipView{}, errors.New("ERR cluster membership recovery topology does not match")
+	}
+	return clusterMembershipView{
+		NodeAddr: state.nodeAddr,
+		Digest:   localDigest,
+		Nodes:    clusterKnownNodesFromState(state),
+	}, nil
+}
+
+func (s *Server) queryClusterMembershipView(addr, digest string) (clusterMembershipView, error) {
+	host, portText, err := net.SplitHostPort(addr)
+	if err != nil {
+		return clusterMembershipView{}, fmt.Errorf("ERR invalid membership recovery peer address: %w", err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port <= 0 || port > 65535 {
+		return clusterMembershipView{}, errors.New("ERR invalid membership recovery peer address")
+	}
+
+	conn, err := s.dialReplicationUpstream(host, port)
+	if err != nil {
+		return clusterMembershipView{}, fmt.Errorf("ERR membership recovery peer connection failed: %w", err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+
+	reader := bufio.NewReader(conn)
+	if err := authenticateReplicationUpstream(
+		conn,
+		reader,
+		s.replicationMasterUser,
+		s.replicationMasterAuth,
+	); err != nil {
+		return clusterMembershipView{}, fmt.Errorf("ERR membership recovery peer authentication failed: %w", err)
+	}
+	if err := writeReplicationRESPCommand(
+		conn,
+		"CLUSTER", "MEMBERSHIP", "VIEW", digest,
+	); err != nil {
+		return clusterMembershipView{}, fmt.Errorf("ERR membership recovery peer write failed: %w", err)
+	}
+
+	payload, err := readRESPBulk(reader)
+	if err != nil {
+		return clusterMembershipView{}, fmt.Errorf("ERR membership recovery peer read failed: %w", err)
+	}
+	var view clusterMembershipView
+	if err := json.Unmarshal(payload, &view); err != nil {
+		return clusterMembershipView{}, fmt.Errorf("ERR invalid membership recovery view: %w", err)
+	}
+	return view, nil
+}
+
+func validateClusterMembershipView(state clusterStateSnapshot, peer string, view clusterMembershipView) error {
+	if view.Digest != clusterOwnershipDigest(state) {
+		return errors.New("ERR cluster membership recovery topology does not match")
+	}
+	if view.NodeAddr != peer {
+		return fmt.Errorf("ERR membership recovery peer identity mismatch: remote=%s expected=%s", view.NodeAddr, peer)
+	}
+	if len(view.Nodes) == 0 {
+		return errors.New("ERR membership recovery view has no nodes")
+	}
+
+	seen := make(map[string]struct{}, len(view.Nodes))
+	for _, node := range view.Nodes {
+		if err := validateClusterNodeAddress(node); err != nil {
+			return err
+		}
+		if _, exists := seen[node]; exists {
+			return errors.New("ERR membership recovery view contains duplicate nodes")
+		}
+		seen[node] = struct{}{}
+	}
+	for _, owner := range state.owners {
+		if owner == "" {
+			continue
+		}
+		if _, exists := seen[owner]; !exists {
+			return fmt.Errorf("ERR membership recovery cannot remove slot owner %s", owner)
+		}
+	}
+	return nil
+}
+
+func clusterMembershipRecoveryDiff(local, authoritative []string) (add, remove []string) {
+	localSet := make(map[string]struct{}, len(local))
+	authSet := make(map[string]struct{}, len(authoritative))
+	for _, node := range local {
+		localSet[node] = struct{}{}
+	}
+	for _, node := range authoritative {
+		authSet[node] = struct{}{}
+		if _, exists := localSet[node]; !exists {
+			add = append(add, node)
+		}
+	}
+	for _, node := range local {
+		if _, exists := authSet[node]; !exists {
+			remove = append(remove, node)
+		}
+	}
+	sort.Strings(add)
+	sort.Strings(remove)
+	return add, remove
+}
+
+func clusterMembershipRecoveryPlanID(state clusterStateSnapshot, peer string, view clusterMembershipView) string {
+	h := sha1.New()
+	fmt.Fprintf(h, "peer=%s\n", peer)
+	fmt.Fprintf(h, "digest=%s\n", view.Digest)
+	for _, node := range clusterKnownNodesFromState(state) {
+		fmt.Fprintf(h, "local=%s\n", node)
+	}
+	for _, node := range view.Nodes {
+		fmt.Fprintf(h, "authoritative=%s\n", node)
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func clusterMembershipRecoveryPlanReply(state clusterStateSnapshot, peer string, view clusterMembershipView) []byte {
+	add, remove := clusterMembershipRecoveryDiff(clusterKnownNodesFromState(state), view.Nodes)
+	addItems := make([][]byte, 0, len(add))
+	removeItems := make([][]byte, 0, len(remove))
+	for _, node := range add {
+		addItems = append(addItems, formatBulkString([]byte(node)))
+	}
+	for _, node := range remove {
+		removeItems = append(removeItems, formatBulkString([]byte(node)))
+	}
+	return array(
+		formatBulkString([]byte("plan_id")),
+		formatBulkString([]byte(clusterMembershipRecoveryPlanID(state, peer, view))),
+		formatBulkString([]byte("peer")),
+		formatBulkString([]byte(peer)),
+		formatBulkString([]byte("digest")),
+		formatBulkString([]byte(view.Digest)),
+		formatBulkString([]byte("add")),
+		array(addItems...),
+		formatBulkString([]byte("remove")),
+		array(removeItems...),
+	)
+}
+
+func (s *Server) applyClusterMembershipRecovery(state clusterStateSnapshot, peer string, view clusterMembershipView, planID string) error {
+	if err := validateClusterMembershipView(state, peer, view); err != nil {
+		return err
+	}
+	if clusterMembershipRecoveryPlanID(state, peer, view) != planID {
+		return errors.New("ERR CLUSTER MEMBERSHIP RECOVER plan is stale; run PLAN again")
+	}
+
+	s.clusterMu.Lock()
+	defer s.clusterMu.Unlock()
+
+	current := clusterStateSnapshot{
+		enabled:    s.clusterEnabled,
+		nodeAddr:   s.clusterNodeAddr,
+		epoch:      s.clusterTopologyEpoch,
+		knownNodes: sortedClusterKnownNodes(s.clusterKnownNodes),
+		owners:     s.clusterSlotOwners,
+		migrating:  s.clusterSlotMigrating,
+		importing:  s.clusterSlotImporting,
+	}
+	if clusterRebalanceHasActiveTransition(current) {
+		return errors.New("ERR cluster membership recovery refused while slots are migrating or importing")
+	}
+	if clusterOwnershipDigest(current) != view.Digest {
+		return errors.New("ERR CLUSTER MEMBERSHIP RECOVER plan is stale; run PLAN again")
+	}
+	if clusterMembershipRecoveryPlanID(current, peer, view) != planID {
+		return errors.New("ERR CLUSTER MEMBERSHIP RECOVER plan is stale; run PLAN again")
+	}
+
+	return s.mutateClusterTopologyLocked(func() error {
+		s.clusterKnownNodes = make(map[string]struct{}, len(view.Nodes))
+		for _, node := range view.Nodes {
+			s.clusterKnownNodes[node] = struct{}{}
+		}
+		return nil
+	})
+}
+
+func (s *Server) executeClusterMembershipRecover(args [][]byte) ([]byte, error) {
+	if len(args) != 5 && len(args) != 6 {
+		return nil, errors.New("ERR syntax error")
+	}
+	peer := string(args[3])
+	if err := validateClusterNodeAddress(peer); err != nil {
+		return nil, err
+	}
+	mode := stringUpper(args[4])
+	if mode != "PLAN" && mode != "APPLY" {
+		return nil, errors.New("ERR syntax error")
+	}
+	if mode == "PLAN" && len(args) != 5 {
+		return nil, errors.New("ERR syntax error")
+	}
+	if mode == "APPLY" && len(args) != 6 {
+		return nil, errors.New("ERR syntax error")
+	}
+
+	state := s.clusterStateSnapshot()
+	if !state.enabled {
+		return nil, errors.New("ERR This instance has cluster support disabled")
+	}
+	if clusterRebalanceHasActiveTransition(state) {
+		return nil, errors.New("ERR cluster membership recovery refused while slots are migrating or importing")
+	}
+
+	view, err := s.queryClusterMembershipView(peer, clusterOwnershipDigest(state))
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(view.Nodes)
+	if err := validateClusterMembershipView(state, peer, view); err != nil {
+		return nil, err
+	}
+
+	if mode == "PLAN" {
+		return clusterMembershipRecoveryPlanReply(state, peer, view), nil
+	}
+
+	release, err := s.beginClusterRebalanceOperation()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
+	state = s.clusterStateSnapshot()
+	view, err = s.queryClusterMembershipView(peer, clusterOwnershipDigest(state))
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(view.Nodes)
+	if err := s.applyClusterMembershipRecovery(state, peer, view, string(args[5])); err != nil {
+		return nil, err
+	}
+	add, remove := clusterMembershipRecoveryDiff(clusterKnownNodesFromState(state), view.Nodes)
+	return array(
+		formatBulkString([]byte("status")),
+		formatBulkString([]byte("recovered")),
+		formatBulkString([]byte("added")),
+		integer(int64(len(add))),
+		formatBulkString([]byte("removed")),
+		integer(int64(len(remove))),
+	), nil
+}
+
 func (s *Server) executeClusterMembership(args [][]byte) ([]byte, error) {
 	if len(args) < 3 {
 		return nil, errors.New("ERR syntax error")
 	}
 	switch stringUpper(args[2]) {
+	case "RECOVER":
+		return s.executeClusterMembershipRecover(args)
+
+	case "VIEW":
+		if len(args) != 4 {
+			return nil, errors.New("ERR syntax error")
+		}
+		view, err := s.clusterMembershipViewForDigest(string(args[3]))
+		if err != nil {
+			return nil, err
+		}
+		payload, err := json.Marshal(view)
+		if err != nil {
+			return nil, err
+		}
+		return formatBulkString(payload), nil
+
 	case "CHECK":
 		if len(args) != 5 {
 			return nil, errors.New("ERR syntax error")
