@@ -301,6 +301,7 @@ func (s *Server) loadFunctionLibrary(code string) (*functionLibrary, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), scriptExecutionLimit)
 	defer cancel()
 	L.SetContext(ctx)
+	s.prepareLuaClusterScope(L, fn.allowCrossSlotKeys)
 	if err := L.DoString(body); err != nil {
 		L.Close()
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -532,6 +533,9 @@ func (s *Server) executeFCall(args [][]byte, readOnly bool) ([]byte, error) {
 	fn := functionRegistryForServer(s).lookup(string(args[1]))
 	if fn == nil {
 		return nil, errors.New("ERR Function not found")
+	}
+	if s.clusterEnabled && fn.noCluster {
+		return nil, errors.New("ERR Can not run script on cluster, 'no-cluster' flag is set")
 	}
 	if err := s.rejectFunctionInvocationOOM(fn); err != nil {
 		return nil, err
