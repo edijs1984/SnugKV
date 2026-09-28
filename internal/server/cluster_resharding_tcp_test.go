@@ -80,6 +80,9 @@ func TestClusterAskingIsConnectionScopedTCP(t *testing.T) {
 	if got := readRESPLine(t, r1); got != "+OK\r\n" {
 		t.Fatalf("ASKING=%q", got)
 	}
+	if client := tcp.clientByID(1); client == nil || !client.clusterAskingEnabled() {
+		t.Fatalf("ASKING flag not set on first TCP client: client=%v", client)
+	}
 
 	writeClusterRESPCommand(t, second, "GET", key)
 	wantMoved := fmt.Sprintf("-MOVED %d %s\r\n", slot, source)
@@ -87,6 +90,9 @@ func TestClusterAskingIsConnectionScopedTCP(t *testing.T) {
 		t.Fatalf("second client GET=%q want=%q", got, wantMoved)
 	}
 
+	if client := tcp.clientByID(1); client == nil || !client.clusterAskingEnabled() {
+		t.Fatalf("ASKING flag consumed before first SET: client=%v", client)
+	}
 	writeClusterRESPCommand(t, first, "SET", key, "value")
 	if got := readRESPLine(t, r1); got != "+OK\r\n" {
 		t.Fatalf("ASKING SET=%q", got)
