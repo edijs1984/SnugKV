@@ -29,8 +29,10 @@ func TestClusterShardTopologyReportsReplicaUnderOwner(t *testing.T) {
 	}
 	text := string(shards)
 	for _, want := range []string{
-		master,
-		replica,
+		clusterNodeID(master),
+		clusterNodeID(replica),
+		":7000\r\n",
+		":7001\r\n",
 		"$6\r\nmaster\r\n",
 		"$7\r\nreplica\r\n",
 	} {
