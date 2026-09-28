@@ -42,6 +42,9 @@ type Config struct {
 	FailoverAdvertiseAddr  string   `json:"failover_advertise_addr"`
 	FailoverDiscoverySeeds []string `json:"failover_discovery_seeds"`
 	FailoverDiscoveryIntervalMS int64 `json:"failover_discovery_interval_ms"`
+	ClusterEnabled        bool              `json:"cluster_enabled"`
+	ClusterNodeAddr       string            `json:"cluster_node_addr"`
+	ClusterSlots          map[string]string `json:"cluster_slots"`
 	ACLFile             string `json:"acl_file"`
 	Fsync               string `json:"fsync"`
 	MaxMemory           uint64 `json:"max_memory"`
@@ -83,6 +86,46 @@ func (c Config) Validate() error {
 			}
 		}
 	}
+	if c.ClusterEnabled {
+		if c.ClusterNodeAddr == "" {
+			return errors.New("cluster_enabled requires cluster_node_addr")
+		}
+		host, port, err := net.SplitHostPort(c.ClusterNodeAddr)
+		if err != nil || host == "" || port == "" {
+			return errors.New("cluster_node_addr must be host:port")
+		}
+		p, err := strconv.Atoi(port)
+		if err != nil || p <= 0 || p > 65535 {
+			return errors.New("cluster_node_addr must use a valid port")
+		}
+		if len(c.ClusterSlots) == 0 {
+			return errors.New("cluster_enabled requires cluster_slots")
+		}
+		owned := make([]bool, 16384)
+		for rangeText, owner := range c.ClusterSlots {
+			start, end, err := parseClusterSlotRangeConfig(rangeText)
+			if err != nil {
+				return err
+			}
+			host, port, err := net.SplitHostPort(owner)
+			if err != nil || host == "" || port == "" {
+				return errors.New("cluster_slots owners must be host:port")
+			}
+			p, err := strconv.Atoi(port)
+			if err != nil || p <= 0 || p > 65535 {
+				return errors.New("cluster_slots owners must use a valid port")
+			}
+			for slot := start; slot <= end; slot++ {
+				if owned[slot] {
+					return fmt.Errorf("cluster slot %d has multiple owners", slot)
+				}
+				owned[slot] = true
+			}
+		}
+	} else if c.ClusterNodeAddr != "" || len(c.ClusterSlots) > 0 {
+		return errors.New("cluster_node_addr and cluster_slots require cluster_enabled")
+	}
+
 	if c.FailoverAdvertiseAddr != "" {
 		host, port, err := net.SplitHostPort(c.FailoverAdvertiseAddr)
 		if err != nil || host == "" || port == "" {
@@ -288,6 +331,27 @@ func (c *Config) ApplyEnv() error {
 			}
 		}
 	}
+	if v, ok := os.LookupEnv("SNUGKV_CLUSTER_ENABLED"); ok {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return errors.New("invalid SNUGKV_CLUSTER_ENABLED")
+		}
+		c.ClusterEnabled = b
+	}
+	if v, ok := os.LookupEnv("SNUGKV_CLUSTER_SLOTS"); ok {
+		c.ClusterSlots = make(map[string]string)
+		for _, item := range strings.Split(v, ",") {
+			item = strings.TrimSpace(item)
+			if item == "" {
+				continue
+			}
+			parts := strings.SplitN(item, "=", 2)
+			if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+				return errors.New("invalid SNUGKV_CLUSTER_SLOTS")
+			}
+			c.ClusterSlots[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+		}
+	}
 	if v, ok := os.LookupEnv("SNUGKV_MASTERTLS"); ok {
 		b, err := strconv.ParseBool(v)
 		if err != nil {
@@ -309,7 +373,7 @@ func (c *Config) ApplyEnv() error {
 		}
 		c.JSONShape = b
 	}
-	for name, dst := range map[string]*string{"AOF_PATH": &c.AOFPath, "AOF_REWRITE_PATH": &c.AOFRewritePath, "SNAPSHOT_PATH": &c.SnapshotPath, "ACL_FILE": &c.ACLFile, "FSYNC": &c.Fsync, "EVICTION_POLICY": &c.EvictionPolicy, "METRICS_LISTEN": &c.MetricsAddr, "ADMIN_LISTEN": &c.AdminAddr, "OPTIMIZER_MODE": &c.OptimizerMode, "MASTERUSER": &c.MasterUser, "MASTERAUTH": &c.MasterAuth, "FAILOVER_GROUP_ID": &c.FailoverGroupID, "FAILOVER_ADVERTISE_ADDR": &c.FailoverAdvertiseAddr, "MASTERTLS_CA_CERT": &c.MasterTLSCACert, "MASTERTLS_CERT": &c.MasterTLSCert, "MASTERTLS_KEY": &c.MasterTLSKey, "MASTERTLS_SERVER_NAME": &c.MasterTLSServerName} {
+	for name, dst := range map[string]*string{"AOF_PATH": &c.AOFPath, "AOF_REWRITE_PATH": &c.AOFRewritePath, "SNAPSHOT_PATH": &c.SnapshotPath, "ACL_FILE": &c.ACLFile, "FSYNC": &c.Fsync, "EVICTION_POLICY": &c.EvictionPolicy, "METRICS_LISTEN": &c.MetricsAddr, "ADMIN_LISTEN": &c.AdminAddr, "OPTIMIZER_MODE": &c.OptimizerMode, "MASTERUSER": &c.MasterUser, "MASTERAUTH": &c.MasterAuth, "FAILOVER_GROUP_ID": &c.FailoverGroupID, "FAILOVER_ADVERTISE_ADDR": &c.FailoverAdvertiseAddr, "CLUSTER_NODE_ADDR": &c.ClusterNodeAddr, "MASTERTLS_CA_CERT": &c.MasterTLSCACert, "MASTERTLS_CERT": &c.MasterTLSCert, "MASTERTLS_KEY": &c.MasterTLSKey, "MASTERTLS_SERVER_NAME": &c.MasterTLSServerName} {
 		if v, ok := os.LookupEnv("SNUGKV_" + name); ok {
 			*dst = v
 		}
@@ -364,4 +428,32 @@ func (c *Config) ApplyEnv() error {
 		}
 	}
 	return nil
+}
+
+
+func parseClusterSlotRangeConfig(text string) (int, int, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return 0, 0, errors.New("empty cluster slot range")
+	}
+	if !strings.Contains(text, "-") {
+		slot, err := strconv.Atoi(text)
+		if err != nil || slot < 0 || slot >= 16384 {
+			return 0, 0, fmt.Errorf("invalid cluster slot %q", text)
+		}
+		return slot, slot, nil
+	}
+	parts := strings.Split(text, "-")
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("invalid cluster slot range %q", text)
+	}
+	start, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid cluster slot range %q", text)
+	}
+	end, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err != nil || start < 0 || end < 0 || start >= 16384 || end >= 16384 || start > end {
+		return 0, 0, fmt.Errorf("invalid cluster slot range %q", text)
+	}
+	return start, end, nil
 }

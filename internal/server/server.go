@@ -90,6 +90,10 @@ type Server struct {
 	failoverLeaderLeaseUntil time.Time
 	failoverLeaderFenced     bool
 
+	clusterEnabled    bool
+	clusterNodeAddr   string
+	clusterSlotOwners [clusterSlotCount]string
+
 	// executionACLUsername / executionACLArgs are valid only while durableMu is
 	// held. TCP and transaction execution populate them so dynamic command
 	// access (Lua/Functions and SORT BY/GET) can enforce the invoking user's
@@ -198,6 +202,7 @@ var commandTable = map[string]commandInfo{
 	"WAITAOF":     {4, 4, 0, 0, 0, false},
 	"CONFIG":      {2, 0, 0, 0, 0, false},
 	"CLIENT":      {2, 0, 0, 0, 0, false},
+	"CLUSTER":     {2, 0, 0, 0, 0, false},
 	"SCAN":        {2, 0, 0, 0, 0, false},
 	"KEYS":        {2, 2, 0, 0, 0, false},
 	"RANDOMKEY":   {1, 1, 0, 0, 0, false},
@@ -281,6 +286,9 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		}
 		return nil, fmt.Errorf("ERR wrong number of arguments for '%s' command", strings.ToLower(cmd))
 	}
+	if err := s.enforceClusterRouting(args); err != nil {
+		return nil, err
+	}
 	if info.write && s.failoverWritesFenced(time.Now()) {
 		return nil, errors.New("READONLY failover leader lease is not valid")
 	}
@@ -289,6 +297,38 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		key = string(args[1])
 	}
 	switch cmd {
+	case "CLUSTER":
+		subcommand := strings.ToUpper(string(args[1]))
+		switch subcommand {
+		case "KEYSLOT":
+			if len(args) != 3 {
+				return nil, errors.New("ERR wrong number of arguments for 'cluster|keyslot' command")
+			}
+			return integer(int64(clusterKeySlot(args[2]))), nil
+		case "SLOTS":
+			if len(args) != 2 {
+				return nil, errors.New("ERR wrong number of arguments for 'cluster|slots' command")
+			}
+			return s.clusterSlotsReply()
+		case "SHARDS":
+			if len(args) != 2 {
+				return nil, errors.New("ERR wrong number of arguments for 'cluster|shards' command")
+			}
+			return s.clusterShardsReply()
+		case "NODES":
+			if len(args) != 2 {
+				return nil, errors.New("ERR wrong number of arguments for 'cluster|nodes' command")
+			}
+			return s.clusterNodesReply(), nil
+		case "INFO":
+			if len(args) != 2 {
+				return nil, errors.New("ERR wrong number of arguments for 'cluster|info' command")
+			}
+			return s.clusterInfoReply(), nil
+		default:
+			return nil, errors.New("ERR unknown subcommand")
+		}
+
 	case "VADD", "VCARD", "VDIM", "VEMB", "VISMEMBER", "VREM",
 		"VGETATTR", "VSETATTR", "VRANDMEMBER", "VINFO", "VLINKS", "VSIM":
 		return s.executeVectorSet(args)
