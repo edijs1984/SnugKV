@@ -2,7 +2,6 @@ package server
 
 import (
 	"bufio"
-	"bytes"
 	"crypto/sha1"
 	"encoding/hex"
 	"errors"
@@ -1067,25 +1066,37 @@ func clusterRebalanceStatusReply(state clusterStateSnapshot, moves []clusterReba
 	)
 }
 
-func sendClusterControlCommand(addr string, args ...string) error {
-	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+func (s *Server) sendClusterControlCommand(addr string, args ...string) error {
+	host, portText, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("ERR invalid rebalance target address: %w", err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port <= 0 || port > 65535 {
+		return fmt.Errorf("ERR invalid rebalance target address: %s", addr)
+	}
+
+	conn, err := s.dialReplicationUpstream(host, port)
 	if err != nil {
 		return fmt.Errorf("ERR rebalance target connection failed: %w", err)
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 
-	var request bytes.Buffer
-	parts := make([][]byte, 0, len(args))
-	for _, arg := range args {
-		parts = append(parts, []byte(arg))
+	reader := bufio.NewReader(conn)
+	if err := authenticateReplicationUpstream(
+		conn,
+		reader,
+		s.replicationMasterUser,
+		s.replicationMasterAuth,
+	); err != nil {
+		return fmt.Errorf("ERR rebalance target authentication failed: %w", err)
 	}
-	appendRESPCommand(&request, parts...)
-	if _, err := conn.Write(request.Bytes()); err != nil {
+	if err := writeReplicationRESPCommand(conn, args...); err != nil {
 		return fmt.Errorf("ERR rebalance target write failed: %w", err)
 	}
 
-	line, err := readMigrateLine(bufio.NewReader(conn))
+	line, err := readMigrateLine(reader)
 	if err != nil {
 		return fmt.Errorf("ERR rebalance target read failed: %w", err)
 	}
@@ -1109,7 +1120,7 @@ func (s *Server) finalizeRebalanceSlotOwners(state clusterStateSnapshot, slot in
 		if owner == state.nodeAddr {
 			continue
 		}
-		if err := sendClusterControlCommand(
+		if err := s.sendClusterControlCommand(
 			owner,
 			"CLUSTER", "SETSLOT", strconv.Itoa(slot), "NODE", targetID,
 		); err != nil {
@@ -1124,6 +1135,31 @@ func (s *Server) finalizeRebalanceSlotOwners(state clusterStateSnapshot, slot in
 	return err
 }
 
+func (s *Server) rebalanceMigrateArgs(host, port, key string) [][]byte {
+	args := [][]byte{
+		[]byte("MIGRATE"),
+		[]byte(host),
+		[]byte(port),
+		[]byte(key),
+		[]byte("0"),
+		[]byte("5000"),
+	}
+	if s.replicationMasterAuth == "" {
+		return args
+	}
+	if s.replicationMasterUser != "" {
+		return append(args,
+			[]byte("AUTH2"),
+			[]byte(s.replicationMasterUser),
+			[]byte(s.replicationMasterAuth),
+		)
+	}
+	return append(args,
+		[]byte("AUTH"),
+		[]byte(s.replicationMasterAuth),
+	)
+}
+
 func (s *Server) rebalanceMoveOneSlot(state clusterStateSnapshot, move clusterRebalanceMove) (int, error) {
 	if move.Source != state.nodeAddr {
 		return 0, fmt.Errorf("ERR REBALANCE APPLY ONCE must run on source node %s", move.Source)
@@ -1132,7 +1168,7 @@ func (s *Server) rebalanceMoveOneSlot(state clusterStateSnapshot, move clusterRe
 	targetID := clusterNodeID(move.Target)
 	sourceID := clusterNodeID(move.Source)
 
-	if err := sendClusterControlCommand(
+	if err := s.sendClusterControlCommand(
 		move.Target,
 		"CLUSTER", "SETSLOT", strconv.Itoa(slot), "IMPORTING", sourceID,
 	); err != nil {
@@ -1145,7 +1181,7 @@ func (s *Server) rebalanceMoveOneSlot(state clusterStateSnapshot, move clusterRe
 		})
 	}
 	remoteStable := func() {
-		_ = sendClusterControlCommand(move.Target, "CLUSTER", "SETSLOT", strconv.Itoa(slot), "STABLE")
+		_ = s.sendClusterControlCommand(move.Target, "CLUSTER", "SETSLOT", strconv.Itoa(slot), "STABLE")
 	}
 	rollback := func() {
 		localStable()
@@ -1173,14 +1209,9 @@ func (s *Server) rebalanceMoveOneSlot(state clusterStateSnapshot, move clusterRe
 				rollback()
 				return moved, fmt.Errorf("ERR invalid rebalance target address: %w", err)
 			}
-			result, err := s.executeMigrateDurableLocked([][]byte{
-				[]byte("MIGRATE"),
-				[]byte(host),
-				[]byte(port),
-				[]byte(key),
-				[]byte("0"),
-				[]byte("5000"),
-			})
+			result, err := s.executeMigrateDurableLocked(
+				s.rebalanceMigrateArgs(host, port, key),
+			)
 			if err != nil {
 				if moved == 0 {
 					rollback()
@@ -1230,14 +1261,9 @@ func (s *Server) resumeRebalanceSlot(state clusterStateSnapshot, slot int) (int,
 			break
 		}
 		for _, key := range keys {
-			result, err := s.executeMigrateDurableLocked([][]byte{
-				[]byte("MIGRATE"),
-				[]byte(host),
-				[]byte(port),
-				[]byte(key),
-				[]byte("0"),
-				[]byte("5000"),
-			})
+			result, err := s.executeMigrateDurableLocked(
+				s.rebalanceMigrateArgs(host, port, key),
+			)
 			if err != nil {
 				return moved, err
 			}

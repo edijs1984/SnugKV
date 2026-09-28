@@ -1120,8 +1120,18 @@ func writeReplicationRESPCommand(conn net.Conn, args ...string) error {
 	for _, arg := range args {
 		fmt.Fprintf(&buf, "$%d\r\n%s\r\n", len(arg), arg)
 	}
-	_, err := conn.Write(buf.Bytes())
-	return err
+	payload := buf.Bytes()
+	for len(payload) > 0 {
+		n, err := conn.Write(payload)
+		if err != nil {
+			return err
+		}
+		if n <= 0 {
+			return io.ErrUnexpectedEOF
+		}
+		payload = payload[n:]
+	}
+	return nil
 }
 
 func (s *Server) writeReplicationACK(conn net.Conn, ackOffset int64) error {
