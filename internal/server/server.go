@@ -333,6 +333,8 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			return s.executeClusterMyID(args)
 		case "REBALANCE":
 			return s.executeClusterRebalance(args)
+		case "FAILOVER-OWNER":
+			return s.executeClusterFailoverOwner(args)
 		case "SLOTS":
 			if len(args) != 2 {
 				return nil, errors.New("ERR wrong number of arguments for 'cluster|slots' command")
