@@ -500,3 +500,41 @@ func TestClusterRoutingAppliesToCapturedStatePath(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+
+func TestClusterShardsGroupsDisjointRangesByOwner(t *testing.T) {
+	s := New(engine.New())
+	if err := s.configureClusterSlots(true, "127.0.0.1:7000", map[string]string{
+		"0-100":       "127.0.0.1:7000",
+		"101-200":     "127.0.0.1:7001",
+		"201-300":     "127.0.0.1:7000",
+		"301-16383":   "127.0.0.1:7001",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	reply, err := s.clusterShardsReply()
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(reply)
+
+	if strings.Count(text, "127.0.0.1") != 4 {
+		t.Fatalf("expected exactly two shard nodes, reply=%q", text)
+	}
+
+	for _, want := range []string{
+		":1\r\n0\r\n",
+		":3\r\n100\r\n",
+		":3\r\n201\r\n",
+		":3\r\n300\r\n",
+		":3\r\n101\r\n",
+		":3\r\n200\r\n",
+		":3\r\n301\r\n",
+		":5\r\n16383\r\n",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q in reply=%q", want, text)
+		}
+	}
+}
