@@ -1,6 +1,8 @@
 package server
 
 import (
+	"bufio"
+	"bytes"
 	"crypto/sha1"
 	"encoding/hex"
 	"errors"
@@ -9,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const clusterSlotCount = 16384
@@ -884,6 +887,125 @@ func clusterRebalanceHasActiveTransition(state clusterStateSnapshot) bool {
 	return false
 }
 
+func sendClusterControlCommand(addr string, args ...string) error {
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		return fmt.Errorf("ERR rebalance target connection failed: %w", err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+
+	var request bytes.Buffer
+	parts := make([][]byte, 0, len(args))
+	for _, arg := range args {
+		parts = append(parts, []byte(arg))
+	}
+	appendRESPCommand(&request, parts...)
+	if _, err := conn.Write(request.Bytes()); err != nil {
+		return fmt.Errorf("ERR rebalance target write failed: %w", err)
+	}
+
+	line, err := readMigrateLine(bufio.NewReader(conn))
+	if err != nil {
+		return fmt.Errorf("ERR rebalance target read failed: %w", err)
+	}
+	if strings.HasPrefix(line, "-") {
+		return errors.New(strings.TrimPrefix(line, "-"))
+	}
+	if line != "+OK" {
+		return fmt.Errorf("ERR unexpected rebalance target response: %s", line)
+	}
+	return nil
+}
+
+func (s *Server) rebalanceMoveOneSlot(state clusterStateSnapshot, move clusterRebalanceMove) (int, error) {
+	if move.Source != state.nodeAddr {
+		return 0, fmt.Errorf("ERR REBALANCE APPLY ONCE must run on source node %s", move.Source)
+	}
+	slot := move.Start
+	targetID := clusterNodeID(move.Target)
+	sourceID := clusterNodeID(move.Source)
+
+	if err := sendClusterControlCommand(
+		move.Target,
+		"CLUSTER", "SETSLOT", strconv.Itoa(slot), "IMPORTING", sourceID,
+	); err != nil {
+		return 0, err
+	}
+
+	localStable := func() {
+		_, _ = s.executeClusterSetSlot([][]byte{
+			[]byte("CLUSTER"), []byte("SETSLOT"), []byte(strconv.Itoa(slot)), []byte("STABLE"),
+		})
+	}
+	remoteStable := func() {
+		_ = sendClusterControlCommand(move.Target, "CLUSTER", "SETSLOT", strconv.Itoa(slot), "STABLE")
+	}
+	rollback := func() {
+		localStable()
+		remoteStable()
+	}
+
+	if _, err := s.executeClusterSetSlot([][]byte{
+		[]byte("CLUSTER"), []byte("SETSLOT"), []byte(strconv.Itoa(slot)),
+		[]byte("MIGRATING"), []byte(targetID),
+	}); err != nil {
+		remoteStable()
+		return 0, err
+	}
+
+	moved := 0
+	for {
+		keys := s.clusterLocalKeysInSlot(slot, 64)
+		if len(keys) == 0 {
+			break
+		}
+
+		for _, key := range keys {
+			host, port, err := net.SplitHostPort(move.Target)
+			if err != nil {
+				rollback()
+				return moved, fmt.Errorf("ERR invalid rebalance target address: %w", err)
+			}
+			result, err := s.executeMigrateDurableLocked([][]byte{
+				[]byte("MIGRATE"),
+				[]byte(host),
+				[]byte(port),
+				[]byte(key),
+				[]byte("0"),
+				[]byte("5000"),
+			})
+			if err != nil {
+				rollback()
+				return moved, err
+			}
+			if string(result) != "+OK\r\n" && string(result) != "+NOKEY\r\n" {
+				rollback()
+				return moved, fmt.Errorf("ERR unexpected MIGRATE result %q", result)
+			}
+			if string(result) == "+OK\r\n" {
+				moved++
+			}
+		}
+	}
+
+	if _, err := s.executeClusterSetSlot([][]byte{
+		[]byte("CLUSTER"), []byte("SETSLOT"), []byte(strconv.Itoa(slot)),
+		[]byte("NODE"), []byte(targetID),
+	}); err != nil {
+		rollback()
+		return moved, err
+	}
+	if err := sendClusterControlCommand(
+		move.Target,
+		"CLUSTER", "SETSLOT", strconv.Itoa(slot), "NODE", targetID,
+	); err != nil {
+		return moved, err
+	}
+
+	return moved, nil
+}
+
 func (s *Server) executeClusterRebalance(args [][]byte) ([]byte, error) {
 	if len(args) < 3 {
 		return nil, errors.New("ERR syntax error")
@@ -891,7 +1013,11 @@ func (s *Server) executeClusterRebalance(args [][]byte) ([]byte, error) {
 
 	mode := strings.ToUpper(string(args[2]))
 	if mode == "APPLY" {
-		if len(args) != 5 || !strings.EqualFold(string(args[4]), "DRYRUN") {
+		if len(args) != 5 {
+			return nil, errors.New("ERR syntax error")
+		}
+		applyMode := strings.ToUpper(string(args[4]))
+		if applyMode != "DRYRUN" && applyMode != "ONCE" {
 			return nil, errors.New("ERR syntax error")
 		}
 
@@ -909,13 +1035,50 @@ func (s *Server) executeClusterRebalance(args [][]byte) ([]byte, error) {
 			return nil, errors.New("ERR REBALANCE plan is stale; run CLUSTER REBALANCE PLAN again")
 		}
 
+		if applyMode == "DRYRUN" {
+			return array(
+				formatBulkString([]byte("plan_id")),
+				formatBulkString([]byte(currentPlanID)),
+				formatBulkString([]byte("status")),
+				formatBulkString([]byte("ready")),
+				formatBulkString([]byte("moves")),
+				integer(int64(len(moves))),
+			), nil
+		}
+
+		if len(moves) == 0 {
+			return array(
+				formatBulkString([]byte("plan_id")),
+				formatBulkString([]byte(currentPlanID)),
+				formatBulkString([]byte("status")),
+				formatBulkString([]byte("balanced")),
+				formatBulkString([]byte("slots_moved")),
+				integer(0),
+				formatBulkString([]byte("keys_moved")),
+				integer(0),
+			), nil
+		}
+
+		slot := moves[0].Start
+		keysMoved, err := s.rebalanceMoveOneSlot(state, moves[0])
+		if err != nil {
+			return nil, err
+		}
 		return array(
 			formatBulkString([]byte("plan_id")),
 			formatBulkString([]byte(currentPlanID)),
 			formatBulkString([]byte("status")),
-			formatBulkString([]byte("ready")),
-			formatBulkString([]byte("moves")),
-			integer(int64(len(moves))),
+			formatBulkString([]byte("moved")),
+			formatBulkString([]byte("slot")),
+			integer(int64(slot)),
+			formatBulkString([]byte("source_addr")),
+			formatBulkString([]byte(moves[0].Source)),
+			formatBulkString([]byte("target_addr")),
+			formatBulkString([]byte(moves[0].Target)),
+			formatBulkString([]byte("slots_moved")),
+			integer(1),
+			formatBulkString([]byte("keys_moved")),
+			integer(int64(keysMoved)),
 		), nil
 	}
 
