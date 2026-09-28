@@ -303,3 +303,202 @@ func TestClusterWatchReturnsMoved(t *testing.T) {
 		t.Fatalf("WATCH err=%v want=%q", err, want)
 	}
 }
+
+
+func newClusterTransactionTCP(t *testing.T, slots map[string]string) (*TCPServer, net.Conn, *bufio.Reader) {
+	t.Helper()
+
+	tcp, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := tcp.server.configureClusterSlots(true, tcp.listener.Addr().String(), slots); err != nil {
+		_ = tcp.Close()
+		t.Fatal(err)
+	}
+
+	conn, err := net.Dial("tcp", tcp.listener.Addr().String())
+	if err != nil {
+		_ = tcp.Close()
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() {
+		_ = conn.Close()
+		_ = tcp.Close()
+	})
+
+	return tcp, conn, bufio.NewReader(conn)
+}
+
+func TestClusterTransactionTCPSameSlotExec(t *testing.T) {
+	_, conn, r := newClusterTransactionTCP(t, map[string]string{
+		"0-16383": "127.0.0.1:0",
+	})
+
+	if got := txCommand(t, conn, r, "MULTI"); got != "+OK\r\n" {
+		t.Fatalf("MULTI = %q", got)
+	}
+	if got := txCommand(t, conn, r, "SET", "acct:{42}:a", "A"); got != "+QUEUED\r\n" {
+		t.Fatalf("first SET = %q", got)
+	}
+	if got := txCommand(t, conn, r, "SET", "acct:{42}:b", "B"); got != "+QUEUED\r\n" {
+		t.Fatalf("second SET = %q", got)
+	}
+	if got, want := txCommand(t, conn, r, "EXEC"), "*2\r\n+OK\r\n+OK\r\n"; got != want {
+		t.Fatalf("EXEC = %q, want %q", got, want)
+	}
+}
+
+func TestClusterTransactionTCPCrossSlotExecAbort(t *testing.T) {
+	tcp, conn, r := newClusterTransactionTCP(t, map[string]string{
+		"0-16383": "127.0.0.1:0",
+	})
+	local := tcp.listener.Addr().String()
+	if err := tcp.server.configureClusterSlots(true, local, map[string]string{
+		"0-16383": local,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := txCommand(t, conn, r, "MULTI"); got != "+OK\r\n" {
+		t.Fatalf("MULTI = %q", got)
+	}
+	if got := txCommand(t, conn, r, "SET", "hello", "1"); got != "+QUEUED\r\n" {
+		t.Fatalf("first SET = %q", got)
+	}
+	if got := txCommand(t, conn, r, "SET", "foo", "2"); got != "-CROSSSLOT Keys in request don't hash to the same slot\r\n" {
+		t.Fatalf("cross-slot SET = %q", got)
+	}
+	if got := txCommand(t, conn, r, "EXEC"); got != "-EXECABORT Transaction discarded because of previous errors.\r\n" {
+		t.Fatalf("EXEC = %q", got)
+	}
+}
+
+func TestClusterTransactionTCPMovedExecAbort(t *testing.T) {
+	tcp, conn, r := newClusterTransactionTCP(t, map[string]string{
+		"0-16383": "127.0.0.1:0",
+	})
+	local := tcp.listener.Addr().String()
+	if err := tcp.server.configureClusterSlots(true, local, map[string]string{
+		"0-8191":     local,
+		"8192-16383": "127.0.0.1:7001",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	slot := clusterKeySlot([]byte("foo"))
+	if slot < 8192 {
+		t.Fatalf("fixture foo slot=%d, expected remote range", slot)
+	}
+
+	if got := txCommand(t, conn, r, "MULTI"); got != "+OK\r\n" {
+		t.Fatalf("MULTI = %q", got)
+	}
+	wantMoved := fmt.Sprintf("-MOVED %d 127.0.0.1:7001\r\n", slot)
+	if got := txCommand(t, conn, r, "SET", "foo", "2"); got != wantMoved {
+		t.Fatalf("remote SET = %q, want %q", got, wantMoved)
+	}
+	if got := txCommand(t, conn, r, "EXEC"); got != "-EXECABORT Transaction discarded because of previous errors.\r\n" {
+		t.Fatalf("EXEC = %q", got)
+	}
+}
+
+func TestClusterTransactionTCPWatchSameSlotExec(t *testing.T) {
+	tcp, conn, r := newClusterTransactionTCP(t, map[string]string{
+		"0-16383": "127.0.0.1:0",
+	})
+	local := tcp.listener.Addr().String()
+	if err := tcp.server.configureClusterSlots(true, local, map[string]string{
+		"0-16383": local,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := txCommand(t, conn, r, "WATCH", "acct:{42}:a"); got != "+OK\r\n" {
+		t.Fatalf("WATCH = %q", got)
+	}
+	if got := txCommand(t, conn, r, "MULTI"); got != "+OK\r\n" {
+		t.Fatalf("MULTI = %q", got)
+	}
+	if got := txCommand(t, conn, r, "SET", "acct:{42}:b", "B"); got != "+QUEUED\r\n" {
+		t.Fatalf("SET = %q", got)
+	}
+	if got := txCommand(t, conn, r, "EXEC"); got != "*1\r\n+OK\r\n" {
+		t.Fatalf("EXEC = %q", got)
+	}
+}
+
+func TestClusterTransactionTCPWatchMoved(t *testing.T) {
+	tcp, conn, r := newClusterTransactionTCP(t, map[string]string{
+		"0-16383": "127.0.0.1:0",
+	})
+	local := tcp.listener.Addr().String()
+	if err := tcp.server.configureClusterSlots(true, local, map[string]string{
+		"0-8191":     local,
+		"8192-16383": "127.0.0.1:7001",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	slot := clusterKeySlot([]byte("foo"))
+	want := fmt.Sprintf("-MOVED %d 127.0.0.1:7001\r\n", slot)
+	if got := txCommand(t, conn, r, "WATCH", "foo"); got != want {
+		t.Fatalf("WATCH = %q, want %q", got, want)
+	}
+}
+
+func TestClusterTransactionTCPDiscardResetsSlotAffinity(t *testing.T) {
+	tcp, conn, r := newClusterTransactionTCP(t, map[string]string{
+		"0-16383": "127.0.0.1:0",
+	})
+	local := tcp.listener.Addr().String()
+	if err := tcp.server.configureClusterSlots(true, local, map[string]string{
+		"0-16383": local,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_ = txCommand(t, conn, r, "MULTI")
+	if got := txCommand(t, conn, r, "SET", "hello", "1"); got != "+QUEUED\r\n" {
+		t.Fatalf("first transaction SET = %q", got)
+	}
+	if got := txCommand(t, conn, r, "DISCARD"); got != "+OK\r\n" {
+		t.Fatalf("DISCARD = %q", got)
+	}
+
+	_ = txCommand(t, conn, r, "MULTI")
+	if got := txCommand(t, conn, r, "SET", "foo", "2"); got != "+QUEUED\r\n" {
+		t.Fatalf("second transaction SET = %q", got)
+	}
+	if got := txCommand(t, conn, r, "EXEC"); got != "*1\r\n+OK\r\n" {
+		t.Fatalf("second EXEC = %q", got)
+	}
+}
+
+func TestClusterTransactionTCPExecResetsSlotAffinity(t *testing.T) {
+	tcp, conn, r := newClusterTransactionTCP(t, map[string]string{
+		"0-16383": "127.0.0.1:0",
+	})
+	local := tcp.listener.Addr().String()
+	if err := tcp.server.configureClusterSlots(true, local, map[string]string{
+		"0-16383": local,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_ = txCommand(t, conn, r, "MULTI")
+	_ = txCommand(t, conn, r, "SET", "hello", "1")
+	if got := txCommand(t, conn, r, "EXEC"); got != "*1\r\n+OK\r\n" {
+		t.Fatalf("first EXEC = %q", got)
+	}
+
+	_ = txCommand(t, conn, r, "MULTI")
+	if got := txCommand(t, conn, r, "SET", "foo", "2"); got != "+QUEUED\r\n" {
+		t.Fatalf("second transaction SET = %q", got)
+	}
+	if got := txCommand(t, conn, r, "EXEC"); got != "*1\r\n+OK\r\n" {
+		t.Fatalf("second EXEC = %q", got)
+	}
+}
