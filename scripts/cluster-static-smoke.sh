@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BIN=/tmp/snugkv-cluster-smoke
+BIN=/tmp/snugkv-cluster-smoke-bin
 TMP=/tmp/snugkv-cluster-smoke
 
 cleanup() {
