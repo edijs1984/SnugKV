@@ -1024,3 +1024,134 @@ func TestClusterMyID(t *testing.T) {
 		t.Fatalf("MYID=%q want=%q", got, want)
 	}
 }
+
+
+func TestClusterRebalancePlanBalancedIsEmpty(t *testing.T) {
+	s := New(engine.New())
+	a := "127.0.0.1:7000"
+	b := "127.0.0.1:7001"
+	if err := s.configureClusterSlots(true, a, map[string]string{
+		"0-8191":     a,
+		"8192-16383": b,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.execute([][]byte{
+		[]byte("CLUSTER"), []byte("REBALANCE"), []byte("PLAN"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "*0\r\n" {
+		t.Fatalf("REBALANCE PLAN=%q", got)
+	}
+}
+
+func TestClusterRebalancePlanMovesOnlySurplusSlots(t *testing.T) {
+	s := New(engine.New())
+	a := "127.0.0.1:7000"
+	b := "127.0.0.1:7001"
+	if err := s.configureClusterSlots(true, a, map[string]string{
+		"0-9999":     a,
+		"10000-16383": b,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	moves, err := planClusterRebalance(s.clusterStateSnapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(moves) != 1 {
+		t.Fatalf("moves=%v", moves)
+	}
+	move := moves[0]
+	if move.Start != 8192 || move.End != 9999 || move.Source != a || move.Target != b {
+		t.Fatalf("move=%+v", move)
+	}
+}
+
+func TestClusterRebalancePlanThreeOwnersDeterministic(t *testing.T) {
+	s := New(engine.New())
+	a := "127.0.0.1:7000"
+	b := "127.0.0.1:7001"
+	c := "127.0.0.1:7002"
+	if err := s.configureClusterSlots(true, a, map[string]string{
+		"0-8999":      a,
+		"9000-13999":  b,
+		"14000-16383": c,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := planClusterRebalance(s.clusterStateSnapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := planClusterRebalance(s.clusterStateSnapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(first) != fmt.Sprint(second) {
+		t.Fatalf("plan not deterministic: first=%v second=%v", first, second)
+	}
+
+	targetCounts := map[string]int{a: 5462, b: 5461, c: 5461}
+	counts := map[string]int{a: 9000, b: 5000, c: 2384}
+	for _, move := range first {
+		n := move.End - move.Start + 1
+		counts[move.Source] -= n
+		counts[move.Target] += n
+	}
+	for owner, want := range targetCounts {
+		if counts[owner] != want {
+			t.Fatalf("owner %s count=%d want=%d plan=%v", owner, counts[owner], want, first)
+		}
+	}
+}
+
+func TestClusterRebalancePlanRequiresFullCoverage(t *testing.T) {
+	s := New(engine.New())
+	a := "127.0.0.1:7000"
+	b := "127.0.0.1:7001"
+	if err := s.configureClusterSlots(true, a, map[string]string{
+		"0-100": a,
+		"200-300": b,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := s.execute([][]byte{
+		[]byte("CLUSTER"), []byte("REBALANCE"), []byte("PLAN"),
+	})
+	if err == nil || err.Error() != "ERR REBALANCE PLAN requires all hash slots to be assigned" {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestClusterRebalancePlanDoesNotMutateTopology(t *testing.T) {
+	s := New(engine.New())
+	a := "127.0.0.1:7000"
+	b := "127.0.0.1:7001"
+	if err := s.configureClusterSlots(true, a, map[string]string{
+		"0-9999":      a,
+		"10000-16383": b,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before := s.clusterStateSnapshot()
+
+	if _, err := s.execute([][]byte{
+		[]byte("CLUSTER"), []byte("REBALANCE"), []byte("PLAN"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	after := s.clusterStateSnapshot()
+
+	if before.owners != after.owners ||
+		before.migrating != after.migrating ||
+		before.importing != after.importing {
+		t.Fatal("REBALANCE PLAN mutated cluster topology")
+	}
+}
