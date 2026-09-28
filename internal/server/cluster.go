@@ -426,7 +426,7 @@ func (s *Server) clusterSlotHasKeys(slot int) bool {
 }
 
 func (s *Server) clusterLocalKeysInSlot(slot, limit int) []string {
-	if !s.clusterEnabled || slot < 0 || slot >= clusterSlotCount {
+	if !s.clusterEnabled || slot < 0 || slot >= clusterSlotCount || limit == 0 {
 		return nil
 	}
 	if s.clusterSlotOwners[slot] != s.clusterNodeAddr {
