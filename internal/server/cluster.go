@@ -745,6 +745,18 @@ type clusterRebalanceMove struct {
 	Target string
 }
 
+func clusterRebalancePlanID(state clusterStateSnapshot, moves []clusterRebalanceMove) string {
+	h := sha1.New()
+	fmt.Fprintf(h, "node=%s\n", state.nodeAddr)
+	for slot, owner := range state.owners {
+		fmt.Fprintf(h, "%d=%s\n", slot, owner)
+	}
+	for _, move := range moves {
+		fmt.Fprintf(h, "move=%d-%d:%s>%s\n", move.Start, move.End, move.Source, move.Target)
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 func planClusterRebalance(state clusterStateSnapshot) ([]clusterRebalanceMove, error) {
 	if !state.enabled {
 		return nil, errors.New("ERR This instance has cluster support disabled")
@@ -873,6 +885,7 @@ func (s *Server) executeClusterRebalance(args [][]byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	planID := clusterRebalancePlanID(state, moves)
 
 	projected := make(map[string]int)
 	for _, owner := range state.owners {
@@ -918,6 +931,8 @@ func (s *Server) executeClusterRebalance(args [][]byte) ([]byte, error) {
 	}
 
 	return array(
+		formatBulkString([]byte("plan_id")),
+		formatBulkString([]byte(planID)),
 		formatBulkString([]byte("moves")),
 		array(moveItems...),
 		formatBulkString([]byte("projected")),
