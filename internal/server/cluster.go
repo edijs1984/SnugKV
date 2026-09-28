@@ -610,12 +610,13 @@ func (s *Server) executeClusterSetSlot(args [][]byte) ([]byte, error) {
 	}
 
 	state := clusterStateSnapshot{
-		enabled:   s.clusterEnabled,
-		nodeAddr:  s.clusterNodeAddr,
-		epoch:     s.clusterTopologyEpoch,
-		owners:    s.clusterSlotOwners,
-		migrating: s.clusterSlotMigrating,
-		importing: s.clusterSlotImporting,
+		enabled:    s.clusterEnabled,
+		nodeAddr:   s.clusterNodeAddr,
+		epoch:      s.clusterTopologyEpoch,
+		knownNodes: sortedClusterKnownNodes(s.clusterKnownNodes),
+		owners:     s.clusterSlotOwners,
+		migrating:  s.clusterSlotMigrating,
+		importing:  s.clusterSlotImporting,
 	}
 
 	switch action {
