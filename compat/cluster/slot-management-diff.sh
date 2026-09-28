@@ -130,6 +130,16 @@ run_cases() {
     echo "== invalid-slot =="
     redis-cli --raw -p "$port" CLUSTER ADDSLOTS 16384
 
+    # Redis still rejects writes while this isolated test node has only partial
+    # slot coverage. Fill the remaining slots silently so the non-empty
+    # FLUSHSLOTS case exercises the command itself rather than CLUSTERDOWN.
+    fill_slots=()
+    for slot in $(seq 0 $((16384 - 1))); do
+      [[ "$slot" == "2" ]] && continue
+      fill_slots+=("$slot")
+    done
+    redis-cli --raw -p "$port" CLUSTER ADDSLOTS "${fill_slots[@]}" >/dev/null
+
     echo "== flushslots-nonempty =="
     redis-cli --raw -p "$port" SET "$slot2_key" value
     redis-cli --raw -p "$port" CLUSTER FLUSHSLOTS
