@@ -1417,3 +1417,107 @@ func TestClusterRebalanceApplyDryRunRequiresExplicitMode(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+
+func TestClusterRebalanceStatusBalanced(t *testing.T) {
+	s := New(engine.New())
+	a := "127.0.0.1:7000"
+	b := "127.0.0.1:7001"
+	if err := s.configureClusterSlots(true, a, map[string]string{
+		"0-8191":     a,
+		"8192-16383": b,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.execute([][]byte{
+		[]byte("CLUSTER"), []byte("REBALANCE"), []byte("STATUS"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(got)
+	for _, token := range []string{
+		"status", "balanced",
+		"plan_id",
+		"active_transition", ":0\r\n",
+		"move_ranges",
+		"slots_to_move",
+		"nodes",
+		"current_slots",
+		"target_slots",
+		"delta",
+	} {
+		if !strings.Contains(text, token) {
+			t.Fatalf("status missing %q: %q", token, text)
+		}
+	}
+	if strings.Count(text, ":8192\r\n") < 4 {
+		t.Fatalf("balanced status missing expected current/target counts: %q", text)
+	}
+}
+
+func TestClusterRebalanceStatusReadyShowsRemainingWork(t *testing.T) {
+	s := New(engine.New())
+	a := "127.0.0.1:7000"
+	b := "127.0.0.1:7001"
+	if err := s.configureClusterSlots(true, a, map[string]string{
+		"0-9999":      a,
+		"10000-16383": b,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.execute([][]byte{
+		[]byte("CLUSTER"), []byte("REBALANCE"), []byte("STATUS"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(got)
+	for _, token := range []string{
+		"status", "ready",
+		"active_transition",
+		"move_ranges",
+		"slots_to_move",
+		":1808\r\n",
+		":10000\r\n",
+		":6384\r\n",
+		":8192\r\n",
+		":-1808\r\n",
+	} {
+		if !strings.Contains(text, token) {
+			t.Fatalf("status missing %q: %q", token, text)
+		}
+	}
+}
+
+func TestClusterRebalanceStatusTransitioning(t *testing.T) {
+	s := New(engine.New())
+	a := "127.0.0.1:7000"
+	b := "127.0.0.1:7001"
+	if err := s.configureClusterSlots(true, a, map[string]string{
+		"0-9999":      a,
+		"10000-16383": b,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s.clusterMu.Lock()
+	s.clusterSlotMigrating[9999] = b
+	s.clusterMu.Unlock()
+
+	got, err := s.execute([][]byte{
+		[]byte("CLUSTER"), []byte("REBALANCE"), []byte("STATUS"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(got)
+	if !strings.Contains(text, "$6\r\nstatus\r\n$13\r\ntransitioning\r\n") {
+		t.Fatalf("status not transitioning: %q", text)
+	}
+	if !strings.Contains(text, "$17\r\nactive_transition\r\n:1\r\n") {
+		t.Fatalf("active_transition not set: %q", text)
+	}
+}
