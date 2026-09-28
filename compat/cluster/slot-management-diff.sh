@@ -30,6 +30,19 @@ wait_for_pong() {
   return 1
 }
 
+wait_for_cluster_ok() {
+  local port="$1"
+  for _ in $(seq 1 100); do
+    if redis-cli --raw -p "$port" CLUSTER INFO 2>/dev/null | grep -q '^cluster_state:ok'; then
+      return 0
+    fi
+    sleep 0.05
+  done
+  echo "cluster on port $port did not reach cluster_state:ok" >&2
+  redis-cli --raw -p "$port" CLUSTER INFO >&2 || true
+  return 1
+}
+
 rm -rf "$TMP"
 mkdir -p "$TMP"
 cd "$ROOT"
@@ -139,6 +152,7 @@ run_cases() {
       fill_slots+=("$slot")
     done
     redis-cli --raw -p "$port" CLUSTER ADDSLOTS "${fill_slots[@]}" >/dev/null
+    wait_for_cluster_ok "$port"
 
     echo "== flushslots-nonempty =="
     redis-cli --raw -p "$port" SET "$slot2_key" value
