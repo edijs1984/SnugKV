@@ -621,3 +621,118 @@ func (s *Server) executeClusterSetSlot(args [][]byte) ([]byte, error) {
 		return nil, errors.New("ERR Invalid CLUSTER SETSLOT action or number of arguments")
 	}
 }
+
+
+func parseClusterSlotArguments(args [][]byte, start int) ([]int, error) {
+	if len(args) <= start {
+		return nil, errors.New("ERR wrong number of arguments for cluster slot command")
+	}
+	slots := make([]int, 0, len(args)-start)
+	seen := make(map[int]struct{}, len(args)-start)
+	for _, raw := range args[start:] {
+		slot, err := strconv.Atoi(string(raw))
+		if err != nil || slot < 0 || slot >= clusterSlotCount {
+			return nil, errors.New("ERR Invalid or out of range slot")
+		}
+		if _, ok := seen[slot]; ok {
+			return nil, fmt.Errorf("ERR Slot %d specified multiple times", slot)
+		}
+		seen[slot] = struct{}{}
+		slots = append(slots, slot)
+	}
+	return slots, nil
+}
+
+func (s *Server) executeClusterAddSlots(args [][]byte) ([]byte, error) {
+	if len(args) < 3 {
+		return nil, errors.New("ERR wrong number of arguments for 'cluster|addslots' command")
+	}
+	slots, err := parseClusterSlotArguments(args, 2)
+	if err != nil {
+		return nil, err
+	}
+
+	s.clusterMu.Lock()
+	defer s.clusterMu.Unlock()
+	if !s.clusterEnabled {
+		return nil, errors.New("ERR This instance has cluster support disabled")
+	}
+
+	for _, slot := range slots {
+		if s.clusterSlotOwners[slot] != "" {
+			return nil, fmt.Errorf("ERR Slot %d is already busy", slot)
+		}
+	}
+	for _, slot := range slots {
+		s.clusterSlotOwners[slot] = s.clusterNodeAddr
+		s.clusterSlotMigrating[slot] = ""
+		s.clusterSlotImporting[slot] = ""
+	}
+	return []byte("+OK\r\n"), nil
+}
+
+func (s *Server) executeClusterDelSlots(args [][]byte) ([]byte, error) {
+	if len(args) < 3 {
+		return nil, errors.New("ERR wrong number of arguments for 'cluster|delslots' command")
+	}
+	slots, err := parseClusterSlotArguments(args, 2)
+	if err != nil {
+		return nil, err
+	}
+
+	s.clusterMu.Lock()
+	defer s.clusterMu.Unlock()
+	if !s.clusterEnabled {
+		return nil, errors.New("ERR This instance has cluster support disabled")
+	}
+
+	for _, slot := range slots {
+		if s.clusterSlotOwners[slot] == "" {
+			return nil, fmt.Errorf("ERR Slot %d is already unassigned", slot)
+		}
+		if s.clusterSlotOwners[slot] != s.clusterNodeAddr {
+			return nil, fmt.Errorf("ERR Slot %d is not owned by me", slot)
+		}
+	}
+	for _, slot := range slots {
+		s.clusterSlotOwners[slot] = ""
+		s.clusterSlotMigrating[slot] = ""
+		s.clusterSlotImporting[slot] = ""
+	}
+	return []byte("+OK\r\n"), nil
+}
+
+func (s *Server) executeClusterFlushSlots(args [][]byte) ([]byte, error) {
+	if len(args) != 2 {
+		return nil, errors.New("ERR wrong number of arguments for 'cluster|flushslots' command")
+	}
+	if len(s.store.Keys("*")) != 0 {
+		return nil, errors.New("ERR DB must be empty to perform CLUSTER FLUSHSLOTS.")
+	}
+
+	s.clusterMu.Lock()
+	defer s.clusterMu.Unlock()
+	if !s.clusterEnabled {
+		return nil, errors.New("ERR This instance has cluster support disabled")
+	}
+
+	for slot := 0; slot < clusterSlotCount; slot++ {
+		if s.clusterSlotOwners[slot] == s.clusterNodeAddr {
+			s.clusterSlotOwners[slot] = ""
+		}
+		s.clusterSlotMigrating[slot] = ""
+		s.clusterSlotImporting[slot] = ""
+	}
+	return []byte("+OK\r\n"), nil
+}
+
+func (s *Server) executeClusterMyID(args [][]byte) ([]byte, error) {
+	if len(args) != 2 {
+		return nil, errors.New("ERR wrong number of arguments for 'cluster|myid' command")
+	}
+	state := s.clusterStateSnapshot()
+	if !state.enabled {
+		return nil, errors.New("ERR This instance has cluster support disabled")
+	}
+	return formatBulkString([]byte(clusterNodeID(state.nodeAddr))), nil
+}
