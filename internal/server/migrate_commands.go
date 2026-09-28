@@ -183,6 +183,21 @@ func (s *Server) prepareMigrateItems(keys [][]byte) ([]migrateItem, error) {
 	return items, nil
 }
 
+func (s *Server) migrateRestoreCommand(host, port string, key []byte) []byte {
+	if !s.clusterEnabled {
+		return []byte("RESTORE")
+	}
+	slot := clusterKeySlot(key)
+	target := s.clusterSlotMigrating[slot]
+	if target == "" {
+		return []byte("RESTORE")
+	}
+	if target == net.JoinHostPort(host, port) {
+		return []byte("RESTORE-ASKING")
+	}
+	return []byte("RESTORE")
+}
+
 func (s *Server) executeMigrate(args [][]byte) ([]byte, error) {
 	if len(args) < 6 {
 		return nil, errors.New("ERR wrong number of arguments for 'migrate' command")
@@ -242,7 +257,7 @@ func (s *Server) executeMigrate(args [][]byte) ([]byte, error) {
 
 	for _, item := range items {
 		parts := [][]byte{
-			[]byte("RESTORE"),
+			s.migrateRestoreCommand(host, port, item.key),
 			item.key,
 			[]byte(strconv.FormatInt(item.ttlMS, 10)),
 			item.payload,
