@@ -40,6 +40,7 @@ type transactionSession struct {
 	waitAOFSequence        uint64
 	clusterSlot            int
 	clusterSlotSet         bool
+	clusterCrossSlot       bool
 }
 
 type transactionWatchRegistry struct {
@@ -175,6 +176,7 @@ func (session *transactionSession) clearMultiLocked() {
 	session.queue = nil
 	session.clusterSlot = 0
 	session.clusterSlotSet = false
+	session.clusterCrossSlot = false
 }
 
 func (session *transactionSession) close() {
@@ -274,8 +276,10 @@ func (session *transactionSession) queueCommand(args [][]byte) ([]byte, error) {
 		if len(keys) > 0 {
 			slot := clusterKeySlot(keys[0].value)
 			if session.clusterSlotSet && session.clusterSlot != slot {
-				session.queueDirty = true
-				return nil, errors.New("CROSSSLOT Keys in request don't hash to the same slot")
+				// Redis Cluster still queues individually valid local commands in
+				// MULTI even when they target different slots. The transaction-wide
+				// slot constraint is enforced by EXEC.
+				session.clusterCrossSlot = true
 			}
 			if !session.clusterSlotSet {
 				session.clusterSlot = slot
@@ -417,6 +421,12 @@ func (session *transactionSession) exec() ([]byte, error) {
 		session.clearMultiLocked()
 		session.clearWatchLocked()
 		return nil, errors.New("EXECABORT Transaction discarded because of previous errors.")
+	}
+
+	if session.clusterCrossSlot {
+		session.clearMultiLocked()
+		session.clearWatchLocked()
+		return nil, errors.New("CROSSSLOT Keys in request don't hash to the same slot")
 	}
 
 	// Redis re-checks ACL rules at EXEC time. A command that was legal when it
