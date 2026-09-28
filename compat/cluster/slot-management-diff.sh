@@ -84,9 +84,26 @@ if [[ "$bootstrap" != "OK" ]]; then
   exit 1
 fi
 
+find_key_for_slot() {
+  local port="$1"
+  local wanted="$2"
+  for i in $(seq 1 200000); do
+    candidate="slot-key-$i"
+    slot="$(redis-cli --raw -p "$port" CLUSTER KEYSLOT "$candidate" | tr -d '\r\n')"
+    if [[ "$slot" == "$wanted" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
 run_cases() {
   local port="$1"
   local out="$2"
+  local slot2_key
+  slot2_key="$(find_key_for_slot "$port" 2)"
+
   {
     echo "== myid =="
     redis-cli --raw -p "$port" CLUSTER MYID
@@ -113,7 +130,7 @@ run_cases() {
     redis-cli --raw -p "$port" CLUSTER ADDSLOTS 16384
 
     echo "== flushslots-nonempty =="
-    redis-cli --raw -p "$port" SET foo value
+    redis-cli --raw -p "$port" SET "$slot2_key" value
     redis-cli --raw -p "$port" CLUSTER FLUSHSLOTS
 
     echo "== flushslots-empty =="
@@ -130,7 +147,12 @@ run_cases "$REDIS_PORT" "$TMP/redis.out"
 run_cases "$SNUG_PORT" "$TMP/snug.out"
 
 normalize() {
-  sed -E     -e "s/127\.0\.0\.1:$REDIS_PORT/NODE/g"     -e "s/127\.0\.0\.1:$SNUG_PORT/NODE/g"     -e '/^[0-9a-f]{40}$/s/.*/NODEID/'
+  sed -E \
+    -e "s/127\\.0\\.0\\.1:$REDIS_PORT/NODE/g" \
+    -e "s/127\\.0\\.0\\.1:$SNUG_PORT/NODE/g" \
+    -e '/^[0-9a-f]{40}$/s/.*/NODEID/' \
+    -e '/^127\\.0\\.0\\.1$/s/.*/ENDPOINT_HOST/' \
+    -e '/^$/s/^$/ENDPOINT_HOST_IF_SLOT_ROW/'
 }
 
 normalize <"$TMP/redis.out" >"$TMP/redis.normalized"
