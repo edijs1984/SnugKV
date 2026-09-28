@@ -747,7 +747,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 		// the TCP write fast paths below. Enforce cluster ownership here before
 		// any such path can mutate the local store or acknowledge the command.
 		if borrowedSet {
-			if clusterErr := s.server.enforceClusterRouting(msg); clusterErr != nil {
+			if clusterErr := s.server.enforceClusterRoutingForClient(msg, clientSession); clusterErr != nil {
 				if writeProtocol(msg, errorResponse(clusterErr)) != nil {
 					return
 				}
@@ -819,7 +819,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				}
 			}
 
-			if clusterErr := s.server.enforceClusterRouting(msg); clusterErr != nil {
+			if clusterErr := s.server.enforceClusterRoutingForClient(msg, clientSession); clusterErr != nil {
 				if writeProtocol(msg, errorResponse(clusterErr)) != nil {
 					return
 				}
@@ -932,7 +932,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				continue
 			}
 
-			if clusterErr := s.server.enforceClusterRouting(msg); clusterErr != nil {
+			if clusterErr := s.server.enforceClusterRoutingForClient(msg, clientSession); clusterErr != nil {
 				if writeProtocol(msg, errorResponse(clusterErr)) != nil {
 					return
 				}
