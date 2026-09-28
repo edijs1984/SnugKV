@@ -134,22 +134,44 @@ setup_migration "$REDIS_BASE" "$((REDIS_BASE+1))" "$redis_src_id" "$redis_dst_id
 setup_migration "$SNUG_BASE" "$((SNUG_BASE+1))" "$snug_src_id" "$snug_dst_id"
 
 move_all() {
-  local src="$1" dst="$2"
+  local label="$1" src="$2" dst="$3"
   local host="127.0.0.1"
+  local round=0
+
   while true; do
+    round=$((round+1))
+    if (( round > 20 )); then
+      echo "$label migration did not converge after 20 rounds" >&2
+      echo "remaining keys:" >&2
+      redis-cli --raw -p "$src" CLUSTER GETKEYSINSLOT "$SLOT" 100 >&2 || true
+      return 1
+    fi
+
     mapfile -t keys < <(redis-cli --raw -p "$src" CLUSTER GETKEYSINSLOT "$SLOT" 10)
     if (( ${#keys[@]} == 0 )); then
+      echo "$label migration complete after $((round-1)) round(s)"
       break
     fi
+
+    echo "$label round $round: ${#keys[@]} key(s): ${keys[*]}"
     for key in "${keys[@]}"; do
       [[ -n "$key" ]] || continue
-      expect_ok redis-cli --raw -p "$src" MIGRATE "$host" "$dst" "$key" 0 5000
+      echo "$label MIGRATE $key"
+      output="$(timeout 8s redis-cli --raw -p "$src" MIGRATE "$host" "$dst" "$key" 0 5000 2>&1)" || {
+        status=$?
+        echo "$label MIGRATE failed/hung for $key (exit $status): $output" >&2
+        return 1
+      }
+      if [[ "$output" != "OK" ]]; then
+        echo "$label MIGRATE unexpected response for $key: $output" >&2
+        return 1
+      fi
     done
   done
 }
 
-move_all "$REDIS_BASE" "$((REDIS_BASE+1))"
-move_all "$SNUG_BASE" "$((SNUG_BASE+1))"
+move_all "redis" "$REDIS_BASE" "$((REDIS_BASE+1))"
+move_all "snug" "$SNUG_BASE" "$((SNUG_BASE+1))"
 
 run_cases() {
   local src="$1" dst="$2" dst_id="$3" out="$4"
