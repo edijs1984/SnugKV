@@ -406,6 +406,15 @@ func (s *Server) clusterNodeAddressByID(id string) (string, bool) {
 	return "", false
 }
 
+func (s *Server) clusterSlotHasKeys(slot int) bool {
+	for _, key := range s.store.Keys("*") {
+		if clusterKeySlot([]byte(key)) == slot {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) executeClusterSetSlot(args [][]byte) ([]byte, error) {
 	if !s.clusterEnabled {
 		return nil, errors.New("ERR This instance has cluster support disabled")
@@ -466,6 +475,14 @@ func (s *Server) executeClusterSetSlot(args [][]byte) ([]byte, error) {
 		owner, ok := s.clusterNodeAddressByID(string(args[4]))
 		if !ok {
 			return nil, errors.New("ERR I don't know about node specified")
+		}
+		if s.clusterSlotOwners[slot] == s.clusterNodeAddr &&
+			owner != s.clusterNodeAddr &&
+			s.clusterSlotHasKeys(slot) {
+			return nil, fmt.Errorf(
+				"ERR Can't assign hashslot %d to a different node while I still hold keys for this hash slot.",
+				slot,
+			)
 		}
 		s.clusterSlotOwners[slot] = owner
 		s.clusterSlotMigrating[slot] = ""
