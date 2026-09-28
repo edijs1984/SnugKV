@@ -205,6 +205,12 @@ EOF
     echo "== source-existing-after-import =="
     redis-cli --raw -p "$src" GET "$EXISTING"
 
+    echo "== finalize-owner-blocked =="
+    redis-cli --raw -p "$src" CLUSTER SETSLOT "$SLOT" NODE "$dst_id"
+
+    echo "== remove-source-key =="
+    redis-cli --raw -p "$src" DEL "$EXISTING"
+
     echo "== finalize-owner =="
     redis-cli --raw -p "$src" CLUSTER SETSLOT "$SLOT" NODE "$dst_id"
     redis-cli --raw -p "$dst" CLUSTER SETSLOT "$SLOT" NODE "$dst_id"
