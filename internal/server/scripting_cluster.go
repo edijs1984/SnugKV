@@ -2,21 +2,29 @@ package server
 
 import (
 	"errors"
+	"sync"
 
 	lua "github.com/yuin/gopher-lua"
 )
 
-const (
-	luaClusterAllowCrossSlotGlobal = "__snug_cluster_allow_cross_slot"
-	luaClusterRuntimeSlotGlobal    = "__snug_cluster_runtime_slot"
-)
+type luaClusterScope struct {
+	allowCrossSlot bool
+	runtimeSlot    int
+}
 
-func (s *Server) prepareLuaClusterScope(L *lua.LState, allowCrossSlot bool) {
+var luaClusterScopes sync.Map // map[*lua.LState]*luaClusterScope
+
+func (s *Server) prepareLuaClusterScope(L *lua.LState, allowCrossSlot bool) func() {
 	if !s.clusterEnabled {
-		return
+		return func() {}
 	}
-	L.SetGlobal(luaClusterAllowCrossSlotGlobal, lua.LBool(allowCrossSlot))
-	L.SetGlobal(luaClusterRuntimeSlotGlobal, lua.LNumber(-1))
+	luaClusterScopes.Store(L, &luaClusterScope{
+		allowCrossSlot: allowCrossSlot,
+		runtimeSlot:    -1,
+	})
+	return func() {
+		luaClusterScopes.Delete(L)
+	}
 }
 
 func (s *Server) validateLuaClusterAccess(L *lua.LState, args [][]byte) error {
@@ -32,19 +40,11 @@ func (s *Server) validateLuaClusterAccess(L *lua.LState, args [][]byte) error {
 		return nil
 	}
 
-	allowCrossSlot := false
-	if value := L.GetGlobal(luaClusterAllowCrossSlotGlobal); value != lua.LNil {
-		if enabled, ok := value.(lua.LBool); ok {
-			allowCrossSlot = bool(enabled)
-		}
+	value, ok := luaClusterScopes.Load(L)
+	if !ok {
+		return nil
 	}
-
-	runtimeSlot := -1
-	if value := L.GetGlobal(luaClusterRuntimeSlotGlobal); value != lua.LNil {
-		if slot, ok := value.(lua.LNumber); ok {
-			runtimeSlot = int(slot)
-		}
-	}
+	scope := value.(*luaClusterScope)
 
 	for _, ref := range refs {
 		slot := clusterKeySlot(ref.value)
@@ -56,15 +56,14 @@ func (s *Server) validateLuaClusterAccess(L *lua.LState, args [][]byte) error {
 			return errors.New("ERR Script attempted to access a non local key in a cluster node")
 		}
 
-		if allowCrossSlot {
+		if scope.allowCrossSlot {
 			continue
 		}
-		if runtimeSlot < 0 {
-			runtimeSlot = slot
-			L.SetGlobal(luaClusterRuntimeSlotGlobal, lua.LNumber(slot))
+		if scope.runtimeSlot < 0 {
+			scope.runtimeSlot = slot
 			continue
 		}
-		if slot != runtimeSlot {
+		if slot != scope.runtimeSlot {
 			return errors.New("ERR Script attempted to access a non local key in a cluster node")
 		}
 	}
