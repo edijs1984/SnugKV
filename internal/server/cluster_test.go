@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -536,5 +537,122 @@ func TestClusterShardsGroupsDisjointRangesByOwner(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in reply=%q", want, text)
 		}
+	}
+}
+
+
+func TestClusterSetSlotMigrationRouting(t *testing.T) {
+	s := New(engine.New())
+	local := "127.0.0.1:7000"
+	target := "127.0.0.1:7001"
+	key := []byte("foo")
+	slot := clusterKeySlot(key)
+
+	if err := s.configureClusterSlots(true, local, map[string]string{
+		"0-16383": local,
+		fmt.Sprintf("%d", clusterKeySlot([]byte("remote-fixture"))): target,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	targetID := clusterNodeID(target)
+	if _, err := s.execute([][]byte{
+		[]byte("CLUSTER"), []byte("SETSLOT"),
+		[]byte(strconv.Itoa(slot)), []byte("MIGRATING"), []byte(targetID),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := s.execute([][]byte{[]byte("GET"), key})
+	if err == nil || err.Error() != fmt.Sprintf("ASK %d %s", slot, target) {
+		t.Fatalf("missing migrating key err=%v", err)
+	}
+
+	if _, err := s.execute([][]byte{[]byte("SET"), key, []byte("value")}); err != nil {
+		t.Fatalf("SET existing migration key seed: %v", err)
+	}
+	if got, err := s.execute([][]byte{[]byte("GET"), key}); err != nil || string(got) != "$5\r\nvalue\r\n" {
+		t.Fatalf("local migrating GET=%q err=%v", got, err)
+	}
+}
+
+func TestClusterImportingRequiresOneShotAsking(t *testing.T) {
+	s := New(engine.New())
+	local := "127.0.0.1:7000"
+	source := "127.0.0.1:7001"
+	key := []byte("foo")
+	slot := clusterKeySlot(key)
+
+	if err := s.configureClusterSlots(true, local, map[string]string{
+		"0-16383": source,
+		fmt.Sprintf("%d", clusterKeySlot([]byte("local-fixture"))): local,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	sourceID := clusterNodeID(source)
+	if _, err := s.execute([][]byte{
+		[]byte("CLUSTER"), []byte("SETSLOT"),
+		[]byte(strconv.Itoa(slot)), []byte("IMPORTING"), []byte(sourceID),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	client := newClientSession(1, nil, "client", local)
+	s.executionClient = client
+	defer func() { s.executionClient = nil }()
+
+	if _, err := s.execute([][]byte{[]byte("GET"), key}); err == nil ||
+		err.Error() != fmt.Sprintf("MOVED %d %s", slot, source) {
+		t.Fatalf("GET without ASKING err=%v", err)
+	}
+
+	if got, err := s.execute([][]byte{[]byte("ASKING")}); err != nil || string(got) != "+OK\r\n" {
+		t.Fatalf("ASKING=%q err=%v", got, err)
+	}
+	if _, err := s.execute([][]byte{[]byte("SET"), key, []byte("imported")}); err != nil {
+		t.Fatalf("ASKING SET err=%v", err)
+	}
+
+	if _, err := s.execute([][]byte{[]byte("GET"), key}); err == nil ||
+		err.Error() != fmt.Sprintf("MOVED %d %s", slot, source) {
+		t.Fatalf("ASKING must be one-shot, err=%v", err)
+	}
+}
+
+func TestClusterSetSlotNodeAndStable(t *testing.T) {
+	s := New(engine.New())
+	local := "127.0.0.1:7000"
+	other := "127.0.0.1:7001"
+	key := []byte("foo")
+	slot := clusterKeySlot(key)
+
+	if err := s.configureClusterSlots(true, local, map[string]string{
+		"0-8191":     local,
+		"8192-16383": other,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.execute([][]byte{
+		[]byte("CLUSTER"), []byte("SETSLOT"),
+		[]byte(strconv.Itoa(slot)), []byte("NODE"), []byte(clusterNodeID(local)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if s.clusterSlotOwners[slot] != local {
+		t.Fatalf("slot owner=%q want=%q", s.clusterSlotOwners[slot], local)
+	}
+
+	s.clusterSlotMigrating[slot] = other
+	s.clusterSlotImporting[slot] = other
+	if _, err := s.execute([][]byte{
+		[]byte("CLUSTER"), []byte("SETSLOT"),
+		[]byte(strconv.Itoa(slot)), []byte("STABLE"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if s.clusterSlotMigrating[slot] != "" || s.clusterSlotImporting[slot] != "" {
+		t.Fatalf("STABLE did not clear migration state")
 	}
 }
