@@ -868,19 +868,59 @@ func (s *Server) executeClusterRebalance(args [][]byte) ([]byte, error) {
 		return nil, errors.New("ERR syntax error")
 	}
 
-	moves, err := planClusterRebalance(s.clusterStateSnapshot())
+	state := s.clusterStateSnapshot()
+	moves, err := planClusterRebalance(state)
 	if err != nil {
 		return nil, err
 	}
 
-	items := make([][]byte, 0, len(moves))
+	projected := make(map[string]int)
+	for _, owner := range state.owners {
+		if owner != "" {
+			projected[owner]++
+		}
+	}
 	for _, move := range moves {
-		items = append(items, array(
+		count := move.End - move.Start + 1
+		projected[move.Source] -= count
+		projected[move.Target] += count
+	}
+
+	moveItems := make([][]byte, 0, len(moves))
+	for _, move := range moves {
+		moveItems = append(moveItems, array(
+			formatBulkString([]byte("start")),
 			integer(int64(move.Start)),
+			formatBulkString([]byte("end")),
 			integer(int64(move.End)),
+			formatBulkString([]byte("source_id")),
 			formatBulkString([]byte(clusterNodeID(move.Source))),
+			formatBulkString([]byte("source_addr")),
+			formatBulkString([]byte(move.Source)),
+			formatBulkString([]byte("target_id")),
 			formatBulkString([]byte(clusterNodeID(move.Target))),
+			formatBulkString([]byte("target_addr")),
+			formatBulkString([]byte(move.Target)),
 		))
 	}
-	return array(items...), nil
+
+	owners := clusterOwnersFromOwners(state.owners)
+	projectedItems := make([][]byte, 0, len(owners))
+	for _, owner := range owners {
+		projectedItems = append(projectedItems, array(
+			formatBulkString([]byte("node_id")),
+			formatBulkString([]byte(clusterNodeID(owner))),
+			formatBulkString([]byte("addr")),
+			formatBulkString([]byte(owner)),
+			formatBulkString([]byte("slots")),
+			integer(int64(projected[owner])),
+		))
+	}
+
+	return array(
+		formatBulkString([]byte("moves")),
+		array(moveItems...),
+		formatBulkString([]byte("projected")),
+		array(projectedItems...),
+	), nil
 }
