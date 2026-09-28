@@ -116,7 +116,7 @@ func (s *Server) executeEvalReadOnly(args [][]byte, bySHA bool) ([]byte, error) 
 		return nil, err
 	}
 
-	return s.runLuaScriptReadOnly(meta.body, sha, keys, argv)
+	return s.runLuaScriptReadOnlyScoped(meta.body, sha, keys, argv, !meta.flagged || meta.allowCrossSlotKeys)
 }
 
 func (s *Server) runLuaScriptReadOnly(source, sha string, keys, argv [][]byte) ([]byte, error) {
@@ -133,7 +133,8 @@ func (s *Server) runLuaScriptReadOnlyScoped(source, sha string, keys, argv [][]b
 
 	L.SetGlobal("KEYS", luaBytesTable(L, keys))
 	L.SetGlobal("ARGV", luaBytesTable(L, argv))
-	s.prepareLuaClusterScope(L, allowCrossSlot)
+	clearClusterScope := s.prepareLuaClusterScope(L, allowCrossSlot)
+	defer clearClusterScope()
 	L.SetGlobal("redis", s.luaRedisModuleReadOnly(L))
 
 	fn, err := L.LoadString(source)
