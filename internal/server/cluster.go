@@ -736,3 +736,206 @@ func (s *Server) executeClusterMyID(args [][]byte) ([]byte, error) {
 	}
 	return formatBulkString([]byte(clusterNodeID(state.nodeAddr))), nil
 }
+
+
+type clusterRebalanceMove struct {
+	Start  int
+	End    int
+	Source string
+	Target string
+}
+
+func clusterRebalancePlanID(state clusterStateSnapshot, moves []clusterRebalanceMove) string {
+	h := sha1.New()
+	fmt.Fprintf(h, "node=%s\n", state.nodeAddr)
+	for slot, owner := range state.owners {
+		fmt.Fprintf(h, "%d=%s\n", slot, owner)
+	}
+	for _, move := range moves {
+		fmt.Fprintf(h, "move=%d-%d:%s>%s\n", move.Start, move.End, move.Source, move.Target)
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func planClusterRebalance(state clusterStateSnapshot) ([]clusterRebalanceMove, error) {
+	if !state.enabled {
+		return nil, errors.New("ERR This instance has cluster support disabled")
+	}
+
+	owners := clusterOwnersFromOwners(state.owners)
+	if len(owners) < 2 {
+		return []clusterRebalanceMove{}, nil
+	}
+
+	counts := make(map[string]int, len(owners))
+	assigned := 0
+	for _, owner := range state.owners {
+		if owner == "" {
+			continue
+		}
+		counts[owner]++
+		assigned++
+	}
+	if assigned != clusterSlotCount {
+		return nil, errors.New("ERR REBALANCE PLAN requires all hash slots to be assigned")
+	}
+
+	targets := make(map[string]int, len(owners))
+	base := clusterSlotCount / len(owners)
+	extra := clusterSlotCount % len(owners)
+	for i, owner := range owners {
+		targets[owner] = base
+		if i < extra {
+			targets[owner]++
+		}
+	}
+
+	type ownerDelta struct {
+		owner string
+		slots []int
+		need  int
+	}
+
+	donors := make([]ownerDelta, 0)
+	receivers := make([]ownerDelta, 0)
+	for _, owner := range owners {
+		delta := counts[owner] - targets[owner]
+		if delta > 0 {
+			slots := make([]int, 0, counts[owner])
+			for slot, slotOwner := range state.owners {
+				if slotOwner == owner {
+					slots = append(slots, slot)
+				}
+			}
+			sort.Sort(sort.Reverse(sort.IntSlice(slots)))
+			donors = append(donors, ownerDelta{owner: owner, slots: slots, need: delta})
+		} else if delta < 0 {
+			receivers = append(receivers, ownerDelta{owner: owner, need: -delta})
+		}
+	}
+
+	moves := make([]clusterRebalanceMove, 0)
+	for ri := range receivers {
+		receiver := &receivers[ri]
+		for receiver.need > 0 {
+			if len(donors) == 0 {
+				return nil, errors.New("ERR rebalance planner could not satisfy target distribution")
+			}
+			donor := &donors[0]
+			if donor.need == 0 {
+				donors = donors[1:]
+				continue
+			}
+
+			take := receiver.need
+			if donor.need < take {
+				take = donor.need
+			}
+			if take > len(donor.slots) {
+				return nil, errors.New("ERR rebalance planner source slot accounting mismatch")
+			}
+
+			selected := append([]int(nil), donor.slots[:take]...)
+			donor.slots = donor.slots[take:]
+			donor.need -= take
+			receiver.need -= take
+
+			sort.Ints(selected)
+			start := selected[0]
+			prev := selected[0]
+			for _, slot := range selected[1:] {
+				if slot == prev+1 {
+					prev = slot
+					continue
+				}
+				moves = append(moves, clusterRebalanceMove{
+					Start: start, End: prev, Source: donor.owner, Target: receiver.owner,
+				})
+				start = slot
+				prev = slot
+			}
+			moves = append(moves, clusterRebalanceMove{
+				Start: start, End: prev, Source: donor.owner, Target: receiver.owner,
+			})
+		}
+	}
+
+	sort.Slice(moves, func(i, j int) bool {
+		if moves[i].Start != moves[j].Start {
+			return moves[i].Start < moves[j].Start
+		}
+		if moves[i].End != moves[j].End {
+			return moves[i].End < moves[j].End
+		}
+		if moves[i].Source != moves[j].Source {
+			return moves[i].Source < moves[j].Source
+		}
+		return moves[i].Target < moves[j].Target
+	})
+	return moves, nil
+}
+
+func (s *Server) executeClusterRebalance(args [][]byte) ([]byte, error) {
+	if len(args) != 3 || !strings.EqualFold(string(args[2]), "PLAN") {
+		return nil, errors.New("ERR syntax error")
+	}
+
+	state := s.clusterStateSnapshot()
+	moves, err := planClusterRebalance(state)
+	if err != nil {
+		return nil, err
+	}
+	planID := clusterRebalancePlanID(state, moves)
+
+	projected := make(map[string]int)
+	for _, owner := range state.owners {
+		if owner != "" {
+			projected[owner]++
+		}
+	}
+	for _, move := range moves {
+		count := move.End - move.Start + 1
+		projected[move.Source] -= count
+		projected[move.Target] += count
+	}
+
+	moveItems := make([][]byte, 0, len(moves))
+	for _, move := range moves {
+		moveItems = append(moveItems, array(
+			formatBulkString([]byte("start")),
+			integer(int64(move.Start)),
+			formatBulkString([]byte("end")),
+			integer(int64(move.End)),
+			formatBulkString([]byte("source_id")),
+			formatBulkString([]byte(clusterNodeID(move.Source))),
+			formatBulkString([]byte("source_addr")),
+			formatBulkString([]byte(move.Source)),
+			formatBulkString([]byte("target_id")),
+			formatBulkString([]byte(clusterNodeID(move.Target))),
+			formatBulkString([]byte("target_addr")),
+			formatBulkString([]byte(move.Target)),
+		))
+	}
+
+	owners := clusterOwnersFromOwners(state.owners)
+	projectedItems := make([][]byte, 0, len(owners))
+	for _, owner := range owners {
+		projectedItems = append(projectedItems, array(
+			formatBulkString([]byte("node_id")),
+			formatBulkString([]byte(clusterNodeID(owner))),
+			formatBulkString([]byte("addr")),
+			formatBulkString([]byte(owner)),
+			formatBulkString([]byte("slots")),
+			integer(int64(projected[owner])),
+		))
+	}
+
+	return array(
+		formatBulkString([]byte("plan_id")),
+		formatBulkString([]byte(planID)),
+		formatBulkString([]byte("moves")),
+		array(moveItems...),
+		formatBulkString([]byte("projected")),
+		array(projectedItems...),
+	), nil
+}

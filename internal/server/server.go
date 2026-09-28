@@ -330,6 +330,8 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			return s.executeClusterFlushSlots(args)
 		case "MYID":
 			return s.executeClusterMyID(args)
+		case "REBALANCE":
+			return s.executeClusterRebalance(args)
 		case "SLOTS":
 			if len(args) != 2 {
 				return nil, errors.New("ERR wrong number of arguments for 'cluster|slots' command")
