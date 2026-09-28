@@ -245,3 +245,174 @@ func TestClusterRebalanceApplyOnceConvergesThirdNodeTopology(t *testing.T) {
 		}
 	}
 }
+
+
+func TestClusterRebalanceApplyBatchMovesMultipleSlots(t *testing.T) {
+	sourceTCP, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sourceTCP.Close()
+
+	targetTCP, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer targetTCP.Close()
+
+	sourceAddr := sourceTCP.listener.Addr().String()
+	targetAddr := targetTCP.listener.Addr().String()
+
+	ranges := map[string]string{
+		"0-9999":      sourceAddr,
+		"10000-16383": targetAddr,
+	}
+	if err := sourceTCP.server.configureClusterSlots(true, sourceAddr, ranges); err != nil {
+		t.Fatal(err)
+	}
+	if err := targetTCP.server.configureClusterSlots(true, targetAddr, ranges); err != nil {
+		t.Fatal(err)
+	}
+
+	state := sourceTCP.server.clusterStateSnapshot()
+	moves, err := planClusterRebalance(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(moves) == 0 || moves[0].End-moves[0].Start < 1 {
+		t.Fatalf("expected a move range with at least two slots: %+v", moves)
+	}
+
+	slot1 := moves[0].Start
+	slot2 := moves[0].Start + 1
+	key1 := findClusterTestKeyForSlot(slot1)
+	key2 := findClusterTestKeyForSlot(slot2)
+	if key1 == "" || key2 == "" {
+		t.Fatalf("failed to find test keys for slots %d and %d", slot1, slot2)
+	}
+
+	for _, tc := range []struct {
+		key   string
+		value string
+	}{
+		{key1, "one"},
+		{key2, "two"},
+	} {
+		if _, err := sourceTCP.server.execute([][]byte{
+			[]byte("SET"), []byte(tc.key), []byte(tc.value),
+		}); err != nil {
+			t.Fatalf("seed %q: %v", tc.key, err)
+		}
+	}
+
+	planID := clusterRebalancePlanID(state, moves)
+	got, err := sourceTCP.server.execute([][]byte{
+		[]byte("CLUSTER"), []byte("REBALANCE"), []byte("APPLY"),
+		[]byte(planID), []byte("BATCH"), []byte("2"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(got)
+	for _, token := range []string{"status", "moved", "slots_moved", ":2\r\n", "keys_moved"} {
+		if !strings.Contains(text, token) {
+			t.Fatalf("batch response missing %q: %q", token, text)
+		}
+	}
+
+	for _, slot := range []int{slot1, slot2} {
+		sourceState := sourceTCP.server.clusterStateSnapshot()
+		targetState := targetTCP.server.clusterStateSnapshot()
+		if sourceState.owners[slot] != targetAddr {
+			t.Fatalf("source owner[%d]=%q want=%q", slot, sourceState.owners[slot], targetAddr)
+		}
+		if targetState.owners[slot] != targetAddr {
+			t.Fatalf("target owner[%d]=%q want=%q", slot, targetState.owners[slot], targetAddr)
+		}
+		if sourceState.migrating[slot] != "" || sourceState.importing[slot] != "" {
+			t.Fatalf("source slot %d transition not cleared", slot)
+		}
+		if targetState.migrating[slot] != "" || targetState.importing[slot] != "" {
+			t.Fatalf("target slot %d transition not cleared", slot)
+		}
+	}
+
+	for _, tc := range []struct {
+		key   string
+		value string
+	}{
+		{key1, "one"},
+		{key2, "two"},
+	} {
+		if sourceTCP.server.store.Exists([]string{tc.key}) != 0 {
+			t.Fatalf("source still contains %q", tc.key)
+		}
+		gotValue, err := targetTCP.server.execute([][]byte{
+			[]byte("GET"), []byte(tc.key),
+		})
+		if err != nil {
+			t.Fatalf("target GET %q: %v", tc.key, err)
+		}
+		want := fmt.Sprintf("$%d\r\n%s\r\n", len(tc.value), tc.value)
+		if string(gotValue) != want {
+			t.Fatalf("target GET %q=%q want=%q", tc.key, gotValue, want)
+		}
+	}
+}
+
+func TestClusterRebalanceApplyBatchValidatesLimit(t *testing.T) {
+	s := New(engine.New())
+	a := "127.0.0.1:7000"
+	b := "127.0.0.1:7001"
+	if err := s.configureClusterSlots(true, a, map[string]string{
+		"0-9999":      a,
+		"10000-16383": b,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	state := s.clusterStateSnapshot()
+	moves, err := planClusterRebalance(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planID := clusterRebalancePlanID(state, moves)
+
+	for _, limit := range []string{"0", "-1", "nope"} {
+		_, err := s.execute([][]byte{
+			[]byte("CLUSTER"), []byte("REBALANCE"), []byte("APPLY"),
+			[]byte(planID), []byte("BATCH"), []byte(limit),
+		})
+		if err == nil || err.Error() != "ERR REBALANCE APPLY BATCH limit must be a positive integer" {
+			t.Fatalf("limit=%q err=%v", limit, err)
+		}
+	}
+}
+
+func TestClusterRebalanceApplyBatchRequiresLocalSource(t *testing.T) {
+	s := New(engine.New())
+	a := "127.0.0.1:7000"
+	b := "127.0.0.1:7001"
+	if err := s.configureClusterSlots(true, b, map[string]string{
+		"0-9999":      a,
+		"10000-16383": b,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	state := s.clusterStateSnapshot()
+	moves, err := planClusterRebalance(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planID := clusterRebalancePlanID(state, moves)
+
+	_, err = s.execute([][]byte{
+		[]byte("CLUSTER"), []byte("REBALANCE"), []byte("APPLY"),
+		[]byte(planID), []byte("BATCH"), []byte("2"),
+	})
+	want := "ERR REBALANCE APPLY BATCH has no planned slots sourced by this node " + b
+	if err == nil || err.Error() != want {
+		t.Fatalf("err=%v want=%q", err, want)
+	}
+}

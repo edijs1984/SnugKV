@@ -1029,11 +1029,17 @@ func (s *Server) executeClusterRebalance(args [][]byte) ([]byte, error) {
 
 	mode := strings.ToUpper(string(args[2]))
 	if mode == "APPLY" {
-		if len(args) != 5 {
+		if len(args) < 5 {
 			return nil, errors.New("ERR syntax error")
 		}
 		applyMode := strings.ToUpper(string(args[4]))
-		if applyMode != "DRYRUN" && applyMode != "ONCE" {
+		if applyMode != "DRYRUN" && applyMode != "ONCE" && applyMode != "BATCH" {
+			return nil, errors.New("ERR syntax error")
+		}
+		if (applyMode == "DRYRUN" || applyMode == "ONCE") && len(args) != 5 {
+			return nil, errors.New("ERR syntax error")
+		}
+		if applyMode == "BATCH" && len(args) != 6 {
 			return nil, errors.New("ERR syntax error")
 		}
 
@@ -1059,6 +1065,73 @@ func (s *Server) executeClusterRebalance(args [][]byte) ([]byte, error) {
 				formatBulkString([]byte("ready")),
 				formatBulkString([]byte("moves")),
 				integer(int64(len(moves))),
+			), nil
+		}
+
+		if applyMode == "BATCH" {
+			limit, err := strconv.Atoi(string(args[5]))
+			if err != nil || limit <= 0 {
+				return nil, errors.New("ERR REBALANCE APPLY BATCH limit must be a positive integer")
+			}
+
+			slotsMoved := 0
+			keysMoved := 0
+			for _, move := range moves {
+				if move.Source != state.nodeAddr {
+					continue
+				}
+				for slot := move.Start; slot <= move.End && slotsMoved < limit; slot++ {
+					single := clusterRebalanceMove{
+						Start: slot,
+						End: slot,
+						Source: move.Source,
+						Target: move.Target,
+					}
+					moved, moveErr := s.rebalanceMoveOneSlot(state, single)
+					keysMoved += moved
+					if moveErr != nil {
+						if slotsMoved == 0 {
+							return nil, moveErr
+						}
+						return array(
+							formatBulkString([]byte("plan_id")),
+							formatBulkString([]byte(currentPlanID)),
+							formatBulkString([]byte("status")),
+							formatBulkString([]byte("partial")),
+							formatBulkString([]byte("slots_moved")),
+							integer(int64(slotsMoved)),
+							formatBulkString([]byte("keys_moved")),
+							integer(int64(keysMoved)),
+							formatBulkString([]byte("failed_slot")),
+							integer(int64(slot)),
+							formatBulkString([]byte("error")),
+							formatBulkString([]byte(moveErr.Error())),
+						), nil
+					}
+					slotsMoved++
+				}
+				if slotsMoved >= limit {
+					break
+				}
+			}
+
+			if slotsMoved == 0 && len(moves) > 0 {
+				return nil, fmt.Errorf("ERR REBALANCE APPLY BATCH has no planned slots sourced by this node %s", state.nodeAddr)
+			}
+
+			status := "moved"
+			if len(moves) == 0 {
+				status = "balanced"
+			}
+			return array(
+				formatBulkString([]byte("plan_id")),
+				formatBulkString([]byte(currentPlanID)),
+				formatBulkString([]byte("status")),
+				formatBulkString([]byte(status)),
+				formatBulkString([]byte("slots_moved")),
+				integer(int64(slotsMoved)),
+				formatBulkString([]byte("keys_moved")),
+				integer(int64(keysMoved)),
 			), nil
 		}
 
