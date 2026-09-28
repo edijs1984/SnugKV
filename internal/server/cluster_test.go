@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -385,5 +386,23 @@ func TestClusterNodesAndInfoArity(t *testing.T) {
 	}
 	if _, err := s.execute([][]byte{[]byte("CLUSTER"), []byte("INFO"), []byte("extra")}); err == nil {
 		t.Fatal("expected CLUSTER INFO arity error")
+	}
+}
+
+
+func TestClusterErrorsKeepNativeRedisClasses(t *testing.T) {
+	tests := []struct {
+		err  error
+		want string
+	}{
+		{errors.New("MOVED 123 127.0.0.1:7001"), "-MOVED 123 127.0.0.1:7001\r\n"},
+		{errors.New("ASK 123 127.0.0.1:7001"), "-ASK 123 127.0.0.1:7001\r\n"},
+		{errors.New("CROSSSLOT Keys in request don't hash to the same slot"), "-CROSSSLOT Keys in request don't hash to the same slot\r\n"},
+		{errors.New("CLUSTERDOWN Hash slot not served"), "-CLUSTERDOWN Hash slot not served\r\n"},
+	}
+	for _, tt := range tests {
+		if got := string(errorResponse(tt.err)); got != tt.want {
+			t.Fatalf("errorResponse(%q)=%q want=%q", tt.err, got, tt.want)
+		}
 	}
 }
