@@ -220,7 +220,7 @@ normalize() {
     -e "s/127\.0\.0\.1:$SNUG_BASE/NODE0/g" \
     -e "s/127\.0\.0\.1:$((SNUG_BASE+1))/NODE1/g" \
     -e "s/127\.0\.0\.1:$((SNUG_BASE+2))/NODE2/g" \
-    -e 's#ERR Error running script \(call to f_([0-9a-f]+)\): .*Script attempted to access a non local key in a cluster node.*#ERR Error running script (call to f_\1): Script attempted to access a non local key in a cluster node#' \
+    -e 's#ERR Error running script \(call to f_([0-9a-f]+)\): .*non local key in a cluster node.*#ERR Error running script (call to f_\1): non local key in a cluster node#' \
     "$input"
 }
 
