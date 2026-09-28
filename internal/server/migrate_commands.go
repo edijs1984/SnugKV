@@ -184,11 +184,12 @@ func (s *Server) prepareMigrateItems(keys [][]byte) ([]migrateItem, error) {
 }
 
 func (s *Server) migrateRestoreCommand(host, port string, key []byte) []byte {
-	if !s.clusterEnabled {
+	state := s.clusterStateSnapshot()
+	if !state.enabled {
 		return []byte("RESTORE")
 	}
 	slot := clusterKeySlot(key)
-	target := s.clusterSlotMigrating[slot]
+	target := state.migrating[slot]
 	if target == "" {
 		return []byte("RESTORE")
 	}

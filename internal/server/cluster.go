@@ -81,26 +81,54 @@ func parseClusterSlotRange(text string) (int, int, error) {
 	return start, end, nil
 }
 
-func (s *Server) configureClusterSlots(enabled bool, nodeAddr string, ranges map[string]string) error {
-	s.clusterEnabled = enabled
-	s.clusterNodeAddr = nodeAddr
-	for i := range s.clusterSlotOwners {
-		s.clusterSlotOwners[i] = ""
-		s.clusterSlotMigrating[i] = ""
-		s.clusterSlotImporting[i] = ""
+type clusterStateSnapshot struct {
+	enabled   bool
+	nodeAddr  string
+	owners    [clusterSlotCount]string
+	migrating [clusterSlotCount]string
+	importing [clusterSlotCount]string
+}
+
+func (s *Server) clusterStateSnapshot() clusterStateSnapshot {
+	s.clusterMu.RLock()
+	defer s.clusterMu.RUnlock()
+	return clusterStateSnapshot{
+		enabled:   s.clusterEnabled,
+		nodeAddr:  s.clusterNodeAddr,
+		owners:    s.clusterSlotOwners,
+		migrating: s.clusterSlotMigrating,
+		importing: s.clusterSlotImporting,
 	}
+}
+
+func (s *Server) clusterEnabledSnapshot() bool {
+	s.clusterMu.RLock()
+	defer s.clusterMu.RUnlock()
+	return s.clusterEnabled
+}
+
+func (s *Server) configureClusterSlots(enabled bool, nodeAddr string, ranges map[string]string) error {
+	var owners [clusterSlotCount]string
 	for rangeText, owner := range ranges {
 		start, end, err := parseClusterSlotRange(rangeText)
 		if err != nil {
 			return err
 		}
 		for slot := start; slot <= end; slot++ {
-			if s.clusterSlotOwners[slot] != "" {
+			if owners[slot] != "" {
 				return fmt.Errorf("cluster slot %d has multiple owners", slot)
 			}
-			s.clusterSlotOwners[slot] = owner
+			owners[slot] = owner
 		}
 	}
+
+	s.clusterMu.Lock()
+	s.clusterEnabled = enabled
+	s.clusterNodeAddr = nodeAddr
+	s.clusterSlotOwners = owners
+	s.clusterSlotMigrating = [clusterSlotCount]string{}
+	s.clusterSlotImporting = [clusterSlotCount]string{}
+	s.clusterMu.Unlock()
 	return nil
 }
 
@@ -118,7 +146,8 @@ func (s *Server) previewClusterRoutingForClient(args [][]byte, client *clientSes
 }
 
 func (s *Server) enforceClusterRoutingForClientMode(args [][]byte, client *clientSession, consumeAsking bool) error {
-	if !s.clusterEnabled {
+	state := s.clusterStateSnapshot()
+	if !state.enabled {
 		return nil
 	}
 	if len(args) == 0 ||
@@ -152,13 +181,13 @@ func (s *Server) enforceClusterRoutingForClientMode(args [][]byte, client *clien
 		}
 	}
 
-	owner := s.clusterSlotOwners[slot]
+	owner := state.owners[slot]
 	if owner == "" {
 		return errors.New("CLUSTERDOWN Hash slot not served")
 	}
 
-	if owner == s.clusterNodeAddr {
-		if target := s.clusterSlotMigrating[slot]; target != "" && len(keys) == 1 {
+	if owner == state.nodeAddr {
+		if target := state.migrating[slot]; target != "" && len(keys) == 1 {
 			if s.store.Exists([]string{string(keys[0].value)}) == 0 {
 				return fmt.Errorf("ASK %d %s", slot, target)
 			}
@@ -166,7 +195,7 @@ func (s *Server) enforceClusterRoutingForClientMode(args [][]byte, client *clien
 		return nil
 	}
 
-	if source := s.clusterSlotImporting[slot]; source != "" && asking {
+	if source := state.importing[slot]; source != "" && asking {
 		return nil
 	}
 
@@ -180,12 +209,12 @@ type clusterSlotRange struct {
 	Owner string
 }
 
-func (s *Server) clusterSlotRanges() []clusterSlotRange {
+func clusterSlotRangesFromOwners(owners [clusterSlotCount]string) []clusterSlotRange {
 	out := make([]clusterSlotRange, 0)
 	start := -1
 	owner := ""
 	for slot := 0; slot < clusterSlotCount; slot++ {
-		current := s.clusterSlotOwners[slot]
+		current := owners[slot]
 		if current == owner {
 			continue
 		}
@@ -199,6 +228,10 @@ func (s *Server) clusterSlotRanges() []clusterSlotRange {
 		out = append(out, clusterSlotRange{Start: start, End: clusterSlotCount - 1, Owner: owner})
 	}
 	return out
+}
+
+func (s *Server) clusterSlotRanges() []clusterSlotRange {
+	return clusterSlotRangesFromOwners(s.clusterStateSnapshot().owners)
 }
 
 func clusterNodeEndpointReply(addr string) ([]byte, error) {
@@ -218,7 +251,8 @@ func clusterNodeEndpointReply(addr string) ([]byte, error) {
 }
 
 func (s *Server) clusterSlotsReply() ([]byte, error) {
-	ranges := s.clusterSlotRanges()
+	state := s.clusterStateSnapshot()
+	ranges := clusterSlotRangesFromOwners(state.owners)
 	items := make([][]byte, 0, len(ranges))
 	for _, r := range ranges {
 		node, err := clusterNodeEndpointReply(r.Owner)
@@ -235,7 +269,8 @@ func (s *Server) clusterSlotsReply() ([]byte, error) {
 }
 
 func (s *Server) clusterShardsReply() ([]byte, error) {
-	owners := s.clusterOwners()
+	state := s.clusterStateSnapshot()
+	owners := clusterOwnersFromOwners(state.owners)
 	items := make([][]byte, 0, len(owners))
 
 	for _, owner := range owners {
@@ -249,7 +284,7 @@ func (s *Server) clusterShardsReply() ([]byte, error) {
 		}
 
 		slotItems := make([][]byte, 0)
-		for _, r := range s.clusterNodeSlotRanges(owner) {
+		for _, r := range clusterNodeSlotRangesFromOwners(state.owners, owner) {
 			slotItems = append(
 				slotItems,
 				integer(int64(r.Start)),
@@ -289,9 +324,9 @@ func clusterNodeID(addr string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (s *Server) clusterOwners() []string {
+func clusterOwnersFromOwners(slotOwners [clusterSlotCount]string) []string {
 	seen := make(map[string]struct{})
-	for _, owner := range s.clusterSlotOwners {
+	for _, owner := range slotOwners {
 		if owner != "" {
 			seen[owner] = struct{}{}
 		}
@@ -304,11 +339,15 @@ func (s *Server) clusterOwners() []string {
 	return out
 }
 
-func (s *Server) clusterNodeSlotRanges(owner string) []clusterSlotRange {
+func (s *Server) clusterOwners() []string {
+	return clusterOwnersFromOwners(s.clusterStateSnapshot().owners)
+}
+
+func clusterNodeSlotRangesFromOwners(slotOwners [clusterSlotCount]string, owner string) []clusterSlotRange {
 	ranges := make([]clusterSlotRange, 0)
 	start := -1
 	for slot := 0; slot < clusterSlotCount; slot++ {
-		match := s.clusterSlotOwners[slot] == owner
+		match := slotOwners[slot] == owner
 		if match && start < 0 {
 			start = slot
 			continue
@@ -324,6 +363,10 @@ func (s *Server) clusterNodeSlotRanges(owner string) []clusterSlotRange {
 	return ranges
 }
 
+func (s *Server) clusterNodeSlotRanges(owner string) []clusterSlotRange {
+	return clusterNodeSlotRangesFromOwners(s.clusterStateSnapshot().owners, owner)
+}
+
 func clusterSlotRangeText(r clusterSlotRange) string {
 	if r.Start == r.End {
 		return strconv.Itoa(r.Start)
@@ -332,11 +375,12 @@ func clusterSlotRangeText(r clusterSlotRange) string {
 }
 
 func (s *Server) clusterNodesReply() []byte {
-	owners := s.clusterOwners()
+	state := s.clusterStateSnapshot()
+	owners := clusterOwnersFromOwners(state.owners)
 	lines := make([]string, 0, len(owners))
 	for _, owner := range owners {
 		flags := "master"
-		if owner == s.clusterNodeAddr {
+		if owner == state.nodeAddr {
 			flags = "myself,master"
 		}
 		parts := []string{
@@ -349,15 +393,15 @@ func (s *Server) clusterNodesReply() []byte {
 			"0",
 			"connected",
 		}
-		for _, r := range s.clusterNodeSlotRanges(owner) {
+		for _, r := range clusterNodeSlotRangesFromOwners(state.owners, owner) {
 			parts = append(parts, clusterSlotRangeText(r))
 		}
-		if owner == s.clusterNodeAddr {
+		if owner == state.nodeAddr {
 			for slot := 0; slot < clusterSlotCount; slot++ {
-				if target := s.clusterSlotMigrating[slot]; target != "" {
+				if target := state.migrating[slot]; target != "" {
 					parts = append(parts, fmt.Sprintf("[%d->-%s]", slot, clusterNodeID(target)))
 				}
-				if source := s.clusterSlotImporting[slot]; source != "" {
+				if source := state.importing[slot]; source != "" {
 					parts = append(parts, fmt.Sprintf("[%d-<-%s]", slot, clusterNodeID(source)))
 				}
 			}
@@ -371,8 +415,9 @@ func (s *Server) clusterNodesReply() []byte {
 }
 
 func (s *Server) clusterInfoReply() []byte {
+	stateSnapshot := s.clusterStateSnapshot()
 	assigned := 0
-	for _, owner := range s.clusterSlotOwners {
+	for _, owner := range stateSnapshot.owners {
 		if owner != "" {
 			assigned++
 		}
@@ -381,7 +426,7 @@ func (s *Server) clusterInfoReply() []byte {
 	if assigned == clusterSlotCount {
 		state = "ok"
 	}
-	owners := s.clusterOwners()
+	owners := clusterOwnersFromOwners(stateSnapshot.owners)
 	body := fmt.Sprintf(
 		"cluster_state:%s\r\n"+
 			"cluster_slots_assigned:%d\r\n"+
@@ -405,16 +450,20 @@ func (s *Server) clusterInfoReply() []byte {
 }
 
 
-func (s *Server) clusterNodeAddressByID(id string) (string, bool) {
-	for _, owner := range s.clusterOwners() {
+func clusterNodeAddressByIDFromState(state clusterStateSnapshot, id string) (string, bool) {
+	for _, owner := range clusterOwnersFromOwners(state.owners) {
 		if clusterNodeID(owner) == id {
 			return owner, true
 		}
 	}
-	if s.clusterNodeAddr != "" && clusterNodeID(s.clusterNodeAddr) == id {
-		return s.clusterNodeAddr, true
+	if state.nodeAddr != "" && clusterNodeID(state.nodeAddr) == id {
+		return state.nodeAddr, true
 	}
 	return "", false
+}
+
+func (s *Server) clusterNodeAddressByID(id string) (string, bool) {
+	return clusterNodeAddressByIDFromState(s.clusterStateSnapshot(), id)
 }
 
 func (s *Server) clusterSlotHasKeys(slot int) bool {
@@ -427,10 +476,11 @@ func (s *Server) clusterSlotHasKeys(slot int) bool {
 }
 
 func (s *Server) clusterLocalKeysInSlot(slot, limit int) []string {
-	if !s.clusterEnabled || slot < 0 || slot >= clusterSlotCount || limit == 0 {
+	state := s.clusterStateSnapshot()
+	if !state.enabled || slot < 0 || slot >= clusterSlotCount || limit == 0 {
 		return nil
 	}
-	if s.clusterSlotOwners[slot] != s.clusterNodeAddr {
+	if state.owners[slot] != state.nodeAddr {
 		return nil
 	}
 
@@ -449,7 +499,7 @@ func (s *Server) clusterLocalKeysInSlot(slot, limit int) []string {
 }
 
 func (s *Server) clusterCountKeysInSlot(args [][]byte) ([]byte, error) {
-	if !s.clusterEnabled {
+	if !s.clusterEnabledSnapshot() {
 		return nil, errors.New("ERR This instance has cluster support disabled")
 	}
 	if len(args) != 3 {
@@ -463,7 +513,7 @@ func (s *Server) clusterCountKeysInSlot(args [][]byte) ([]byte, error) {
 }
 
 func (s *Server) clusterGetKeysInSlot(args [][]byte) ([]byte, error) {
-	if !s.clusterEnabled {
+	if !s.clusterEnabledSnapshot() {
 		return nil, errors.New("ERR This instance has cluster support disabled")
 	}
 	if len(args) != 4 {
@@ -487,9 +537,6 @@ func (s *Server) clusterGetKeysInSlot(args [][]byte) ([]byte, error) {
 }
 
 func (s *Server) executeClusterSetSlot(args [][]byte) ([]byte, error) {
-	if !s.clusterEnabled {
-		return nil, errors.New("ERR This instance has cluster support disabled")
-	}
 	if len(args) < 4 {
 		return nil, errors.New("ERR wrong number of arguments for 'cluster|setslot' command")
 	}
@@ -500,20 +547,36 @@ func (s *Server) executeClusterSetSlot(args [][]byte) ([]byte, error) {
 	}
 
 	action := strings.ToUpper(string(args[3]))
+	if action == "STABLE" && len(args) != 4 {
+		return nil, errors.New("ERR wrong number of arguments for 'cluster|setslot' command")
+	}
+	if action != "STABLE" && len(args) != 5 {
+		return nil, errors.New("ERR wrong number of arguments for 'cluster|setslot' command")
+	}
+
+	s.clusterMu.Lock()
+	defer s.clusterMu.Unlock()
+
+	if !s.clusterEnabled {
+		return nil, errors.New("ERR This instance has cluster support disabled")
+	}
+
+	state := clusterStateSnapshot{
+		enabled:   s.clusterEnabled,
+		nodeAddr:  s.clusterNodeAddr,
+		owners:    s.clusterSlotOwners,
+		migrating: s.clusterSlotMigrating,
+		importing: s.clusterSlotImporting,
+	}
+
 	switch action {
 	case "STABLE":
-		if len(args) != 4 {
-			return nil, errors.New("ERR wrong number of arguments for 'cluster|setslot' command")
-		}
 		s.clusterSlotMigrating[slot] = ""
 		s.clusterSlotImporting[slot] = ""
 		return []byte("+OK\r\n"), nil
 
 	case "MIGRATING":
-		if len(args) != 5 {
-			return nil, errors.New("ERR wrong number of arguments for 'cluster|setslot' command")
-		}
-		target, ok := s.clusterNodeAddressByID(string(args[4]))
+		target, ok := clusterNodeAddressByIDFromState(state, string(args[4]))
 		if !ok {
 			return nil, errors.New("ERR I don't know about node specified")
 		}
@@ -525,10 +588,7 @@ func (s *Server) executeClusterSetSlot(args [][]byte) ([]byte, error) {
 		return []byte("+OK\r\n"), nil
 
 	case "IMPORTING":
-		if len(args) != 5 {
-			return nil, errors.New("ERR wrong number of arguments for 'cluster|setslot' command")
-		}
-		source, ok := s.clusterNodeAddressByID(string(args[4]))
+		source, ok := clusterNodeAddressByIDFromState(state, string(args[4]))
 		if !ok {
 			return nil, errors.New("ERR I don't know about node specified")
 		}
@@ -540,10 +600,7 @@ func (s *Server) executeClusterSetSlot(args [][]byte) ([]byte, error) {
 		return []byte("+OK\r\n"), nil
 
 	case "NODE":
-		if len(args) != 5 {
-			return nil, errors.New("ERR wrong number of arguments for 'cluster|setslot' command")
-		}
-		owner, ok := s.clusterNodeAddressByID(string(args[4]))
+		owner, ok := clusterNodeAddressByIDFromState(state, string(args[4]))
 		if !ok {
 			return nil, errors.New("ERR I don't know about node specified")
 		}
