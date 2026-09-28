@@ -95,6 +95,7 @@ type Server struct {
 	clusterEnabled        bool
 	clusterNodeAddr       string
 	clusterTopologyEpoch  uint64
+	clusterKnownNodes     map[string]struct{}
 	clusterSlotOwners     [clusterSlotCount]string
 	clusterSlotMigrating  [clusterSlotCount]string
 	clusterSlotImporting  [clusterSlotCount]string
