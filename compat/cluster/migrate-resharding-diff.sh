@@ -147,15 +147,28 @@ move_all() {
       return 1
     fi
 
-    mapfile -t keys < <(redis-cli --raw -p "$src" CLUSTER GETKEYSINSLOT "$SLOT" 10)
-    if (( ${#keys[@]} == 0 )); then
+    remaining="$(redis-cli --raw -p "$src" CLUSTER COUNTKEYSINSLOT "$SLOT" | tr -d '\r\n')"
+    if [[ "$remaining" == "0" ]]; then
       echo "$label migration complete after $((round-1)) round(s)"
       break
     fi
+    if ! [[ "$remaining" =~ ^[0-9]+$ ]]; then
+      echo "$label invalid COUNTKEYSINSLOT response: $remaining" >&2
+      return 1
+    fi
 
-    echo "$label round $round: ${#keys[@]} key(s): ${keys[*]}"
+    mapfile -t raw_keys < <(redis-cli --raw -p "$src" CLUSTER GETKEYSINSLOT "$SLOT" 10)
+    keys=()
+    for key in "${raw_keys[@]}"; do
+      [[ -n "$key" ]] && keys+=("$key")
+    done
+    if (( ${#keys[@]} == 0 )); then
+      echo "$label COUNTKEYSINSLOT=$remaining but GETKEYSINSLOT returned no keys" >&2
+      return 1
+    fi
+
+    echo "$label round $round: remaining=$remaining, batch=${#keys[@]} key(s): ${keys[*]}"
     for key in "${keys[@]}"; do
-      [[ -n "$key" ]] || continue
       echo "$label MIGRATE $key"
       output="$(timeout 8s redis-cli --raw -p "$src" MIGRATE "$host" "$dst" "$key" 0 5000 2>&1)" || {
         status=$?
