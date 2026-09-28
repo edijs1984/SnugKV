@@ -918,6 +918,32 @@ func sendClusterControlCommand(addr string, args ...string) error {
 	return nil
 }
 
+func (s *Server) finalizeRebalanceSlotOwners(state clusterStateSnapshot, slot int, target string) error {
+	targetID := clusterNodeID(target)
+	owners := clusterOwnersFromOwners(state.owners)
+
+	// Update all remote topology views first. Keep the source in MIGRATING
+	// until every reachable peer agrees, so incomplete convergence remains
+	// observable and can be retried safely.
+	for _, owner := range owners {
+		if owner == state.nodeAddr {
+			continue
+		}
+		if err := sendClusterControlCommand(
+			owner,
+			"CLUSTER", "SETSLOT", strconv.Itoa(slot), "NODE", targetID,
+		); err != nil {
+			return fmt.Errorf("ERR rebalance topology convergence failed for %s: %w", owner, err)
+		}
+	}
+
+	_, err := s.executeClusterSetSlot([][]byte{
+		[]byte("CLUSTER"), []byte("SETSLOT"), []byte(strconv.Itoa(slot)),
+		[]byte("NODE"), []byte(targetID),
+	})
+	return err
+}
+
 func (s *Server) rebalanceMoveOneSlot(state clusterStateSnapshot, move clusterRebalanceMove) (int, error) {
 	if move.Source != state.nodeAddr {
 		return 0, fmt.Errorf("ERR REBALANCE APPLY ONCE must run on source node %s", move.Source)
@@ -989,17 +1015,7 @@ func (s *Server) rebalanceMoveOneSlot(state clusterStateSnapshot, move clusterRe
 		}
 	}
 
-	if _, err := s.executeClusterSetSlot([][]byte{
-		[]byte("CLUSTER"), []byte("SETSLOT"), []byte(strconv.Itoa(slot)),
-		[]byte("NODE"), []byte(targetID),
-	}); err != nil {
-		rollback()
-		return moved, err
-	}
-	if err := sendClusterControlCommand(
-		move.Target,
-		"CLUSTER", "SETSLOT", strconv.Itoa(slot), "NODE", targetID,
-	); err != nil {
+	if err := s.finalizeRebalanceSlotOwners(state, slot, move.Target); err != nil {
 		return moved, err
 	}
 
