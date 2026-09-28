@@ -436,3 +436,40 @@ func TestClusterModeDisablesScalarFastPaths(t *testing.T) {
 		t.Fatalf("raw GET fast path handled=%t err=%v", handled, err)
 	}
 }
+
+
+func TestClusterRoutingAppliesToPublicExecute(t *testing.T) {
+	s := New(engine.New())
+	key := []byte("foo")
+	slot := clusterKeySlot(key)
+	if err := s.configureClusterSlots(true, "127.0.0.1:7000", map[string]string{
+		fmt.Sprintf("%d", slot): "127.0.0.1:7001",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := s.Execute([][]byte{[]byte("GET"), key})
+	if err == nil || err.Error() != fmt.Sprintf("MOVED %d 127.0.0.1:7001", slot) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestClusterRoutingPublicExecuteLocalReadWrite(t *testing.T) {
+	s := New(engine.New())
+	if err := s.configureClusterSlots(true, "127.0.0.1:7000", map[string]string{
+		"0-16383": "127.0.0.1:7000",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.Execute([][]byte{[]byte("SET"), []byte("foo"), []byte("bar")}); err != nil {
+		t.Fatal(err)
+	}
+	reply, err := s.Execute([][]byte{[]byte("GET"), []byte("foo")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(reply) != "$3\r\nbar\r\n" {
+		t.Fatalf("reply=%q", reply)
+	}
+}
