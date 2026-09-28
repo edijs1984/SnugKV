@@ -406,3 +406,33 @@ func TestClusterErrorsKeepNativeRedisClasses(t *testing.T) {
 		}
 	}
 }
+
+
+func TestClusterModeDisablesScalarFastPaths(t *testing.T) {
+	s := New(engine.New())
+	if err := s.configureClusterSlots(true, "127.0.0.1:7000", map[string]string{
+		"0-16383": "127.0.0.1:7000",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, handled, err := s.executeAuthorizedConcurrentGet([][]byte{
+		[]byte("GET"), []byte("key"),
+	}); err != nil || handled {
+		t.Fatalf("GET fast path handled=%t err=%v", handled, err)
+	}
+
+	if _, handled, err := s.executeAuthorizedConcurrentSet([][]byte{
+		[]byte("SET"), []byte("key"), []byte("value"),
+	}); err != nil || handled {
+		t.Fatalf("SET fast path handled=%t err=%v", handled, err)
+	}
+
+	handled, err := s.executeAuthorizedConcurrentRawGet(
+		[][]byte{[]byte("GET"), []byte("key")},
+		func([]byte) error { return nil },
+	)
+	if err != nil || handled {
+		t.Fatalf("raw GET fast path handled=%t err=%v", handled, err)
+	}
+}
