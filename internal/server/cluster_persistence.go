@@ -107,6 +107,13 @@ func (s *Server) mutateClusterTopologyLocked(mutator func() error) error {
 	if err := mutator(); err != nil {
 		return err
 	}
+	if s.clusterEnabled == before.enabled &&
+		s.clusterNodeAddr == before.nodeAddr &&
+		s.clusterSlotOwners == before.owners &&
+		s.clusterSlotMigrating == before.migrating &&
+		s.clusterSlotImporting == before.importing {
+		return nil
+	}
 
 	s.clusterTopologyEpoch++
 	after := clusterStateSnapshot{
