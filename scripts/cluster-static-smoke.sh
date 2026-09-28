@@ -102,9 +102,109 @@ printf 'SET1: %s\n' "$set1"
 printf 'SET2: %s\n' "$set2"
 printf 'SET3: %s\n' "$set3"
 
-grep -q '^OK$' <<<"$set1"
-grep -q '^OK$' <<<"$set2"
-grep -q '^OK$' <<<"$set3"
+grep -q '^OKget2="$(redis-cli --raw -c -p 7000 GET "$k2" 2>&1)"
+get3="$(redis-cli --raw -c -p 7000 GET "$k3" 2>&1)"
+
+printf 'GET1: %s\n' "$get1"
+printf 'GET2: %s\n' "$get2"
+printf 'GET3: %s\n' "$get3"
+
+grep -q '^one$' <<<"$get1"
+grep -q '^two$' <<<"$get2"
+grep -q '^three$' <<<"$get3"
+
+echo "[3/4] hash-tag and CROSSSLOT"
+tagged="$(redis-cli --raw -c -p 7000 MSET "acct:{42}:a" A "acct:{42}:b" B 2>&1)"
+printf 'MSET tagged: %s\n' "$tagged"
+grep -q '^OK$' <<<"$tagged"
+
+cross="$(redis-cli --raw -p 7000 MGET "$k1" "$k2" 2>&1 || true)"
+echo "CROSSSLOT reply: $cross"
+grep -Fq "CROSSSLOT Keys in request don't hash to the same slot" <<<"$cross"
+
+echo "[4/4] topology discovery"
+info="$(redis-cli --raw -p 7000 CLUSTER INFO)"
+nodes="$(redis-cli --raw -p 7000 CLUSTER NODES)"
+
+grep -q "cluster_state:ok" <<<"$info"
+[[ "$(wc -l <<<"$nodes")" -eq 3 ]]
+
+redis-cli --raw -p 7000 CLUSTER SLOTS >/dev/null
+redis-cli --raw -p 7000 CLUSTER SHARDS >/dev/null
+
+echo "cluster static smoke: PASS"
+ <<<"$set1"
+grep -q '^OKget2="$(redis-cli --raw -c -p 7000 GET "$k2" 2>&1)"
+get3="$(redis-cli --raw -c -p 7000 GET "$k3" 2>&1)"
+
+printf 'GET1: %s\n' "$get1"
+printf 'GET2: %s\n' "$get2"
+printf 'GET3: %s\n' "$get3"
+
+grep -q '^one$' <<<"$get1"
+grep -q '^two$' <<<"$get2"
+grep -q '^three$' <<<"$get3"
+
+echo "[3/4] hash-tag and CROSSSLOT"
+tagged="$(redis-cli --raw -c -p 7000 MSET "acct:{42}:a" A "acct:{42}:b" B 2>&1)"
+printf 'MSET tagged: %s\n' "$tagged"
+grep -q '^OK$' <<<"$tagged"
+
+cross="$(redis-cli --raw -p 7000 MGET "$k1" "$k2" 2>&1 || true)"
+echo "CROSSSLOT reply: $cross"
+grep -Fq "CROSSSLOT Keys in request don't hash to the same slot" <<<"$cross"
+
+echo "[4/4] topology discovery"
+info="$(redis-cli --raw -p 7000 CLUSTER INFO)"
+nodes="$(redis-cli --raw -p 7000 CLUSTER NODES)"
+
+grep -q "cluster_state:ok" <<<"$info"
+[[ "$(wc -l <<<"$nodes")" -eq 3 ]]
+
+redis-cli --raw -p 7000 CLUSTER SLOTS >/dev/null
+redis-cli --raw -p 7000 CLUSTER SHARDS >/dev/null
+
+echo "cluster static smoke: PASS"
+ <<<"$set2"
+grep -q '^OKget2="$(redis-cli --raw -c -p 7000 GET "$k2" 2>&1)"
+get3="$(redis-cli --raw -c -p 7000 GET "$k3" 2>&1)"
+
+printf 'GET1: %s\n' "$get1"
+printf 'GET2: %s\n' "$get2"
+printf 'GET3: %s\n' "$get3"
+
+grep -q '^one$' <<<"$get1"
+grep -q '^two$' <<<"$get2"
+grep -q '^three$' <<<"$get3"
+
+echo "[3/4] hash-tag and CROSSSLOT"
+tagged="$(redis-cli --raw -c -p 7000 MSET "acct:{42}:a" A "acct:{42}:b" B 2>&1)"
+printf 'MSET tagged: %s\n' "$tagged"
+grep -q '^OK$' <<<"$tagged"
+
+cross="$(redis-cli --raw -p 7000 MGET "$k1" "$k2" 2>&1 || true)"
+echo "CROSSSLOT reply: $cross"
+grep -Fq "CROSSSLOT Keys in request don't hash to the same slot" <<<"$cross"
+
+echo "[4/4] topology discovery"
+info="$(redis-cli --raw -p 7000 CLUSTER INFO)"
+nodes="$(redis-cli --raw -p 7000 CLUSTER NODES)"
+
+grep -q "cluster_state:ok" <<<"$info"
+[[ "$(wc -l <<<"$nodes")" -eq 3 ]]
+
+redis-cli --raw -p 7000 CLUSTER SLOTS >/dev/null
+redis-cli --raw -p 7000 CLUSTER SHARDS >/dev/null
+
+echo "cluster static smoke: PASS"
+ <<<"$set3"
+
+direct1="$(redis-cli --raw -p 7000 GET "$k1" 2>&1)"
+direct2="$(redis-cli --raw -p 7001 GET "$k2" 2>&1)"
+direct3="$(redis-cli --raw -p 7002 GET "$k3" 2>&1)"
+printf 'DIRECT1@7000: %s\n' "$direct1"
+printf 'DIRECT2@7001: %s\n' "$direct2"
+printf 'DIRECT3@7002: %s\n' "$direct3"
 
 get1="$(redis-cli --raw -c -p 7000 GET "$k1" 2>&1)"
 get2="$(redis-cli --raw -c -p 7000 GET "$k2" 2>&1)"
