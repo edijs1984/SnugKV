@@ -198,10 +198,11 @@ func (s *Server) clusterSlotsReply() ([]byte, error) {
 }
 
 func (s *Server) clusterShardsReply() ([]byte, error) {
-	ranges := s.clusterSlotRanges()
-	items := make([][]byte, 0, len(ranges))
-	for _, r := range ranges {
-		host, portText, err := net.SplitHostPort(r.Owner)
+	owners := s.clusterOwners()
+	items := make([][]byte, 0, len(owners))
+
+	for _, owner := range owners {
+		host, portText, err := net.SplitHostPort(owner)
 		if err != nil {
 			return nil, err
 		}
@@ -209,9 +210,19 @@ func (s *Server) clusterShardsReply() ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+
+		slotItems := make([][]byte, 0)
+		for _, r := range s.clusterNodeSlotRanges(owner) {
+			slotItems = append(
+				slotItems,
+				integer(int64(r.Start)),
+				integer(int64(r.End)),
+			)
+		}
+
 		node := array(
 			formatBulkString([]byte("id")),
-			formatBulkString([]byte(clusterNodeID(r.Owner))),
+			formatBulkString([]byte(clusterNodeID(owner))),
 			formatBulkString([]byte("endpoint")),
 			formatBulkString([]byte(host)),
 			formatBulkString([]byte("ip")),
@@ -223,17 +234,18 @@ func (s *Server) clusterShardsReply() ([]byte, error) {
 			formatBulkString([]byte("health")),
 			formatBulkString([]byte("online")),
 		)
+
 		shard := array(
 			formatBulkString([]byte("slots")),
-			array(integer(int64(r.Start)), integer(int64(r.End))),
+			array(slotItems...),
 			formatBulkString([]byte("nodes")),
 			array(node),
 		)
 		items = append(items, shard)
 	}
+
 	return array(items...), nil
 }
-
 
 func clusterNodeID(addr string) string {
 	sum := sha1.Sum([]byte(addr))
