@@ -125,7 +125,7 @@ func (s *Server) convergeClusterFailoverOwnership() error {
 		return nil
 	}
 	if s.failoverAdvertiseAddr == "" {
-		return errors.New("ERR cluster failover requires failover_advertise_addr")
+		return nil
 	}
 	if state.nodeAddr != s.failoverAdvertiseAddr {
 		return fmt.Errorf(
