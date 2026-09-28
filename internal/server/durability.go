@@ -118,7 +118,8 @@ func (s *Server) executeAuthorizedConcurrentRawGet(
 	args [][]byte,
 	writeBulk func([]byte) error,
 ) (handled bool, err error) {
-	if len(args) != 2 ||
+	if s.clusterEnabled ||
+		len(args) != 2 ||
 		!bytes.EqualFold(args[0], []byte("GET")) ||
 		s.journal != nil ||
 		atomic.LoadUint32(&s.metricsEnabled) != 0 {
@@ -152,7 +153,8 @@ func (s *Server) executeAuthorizedConcurrentKnownGetIntoAt(
 	dst []byte,
 	now time.Time,
 ) (value []byte, found bool, handled bool, err error) {
-	if s.journal != nil ||
+	if s.clusterEnabled ||
+		s.journal != nil ||
 		atomic.LoadUint32(&s.metricsEnabled) != 0 {
 		return nil, false, false, nil
 	}
@@ -182,7 +184,8 @@ func (s *Server) executeAuthorizedConcurrentGetInto(
 	args [][]byte,
 	dst []byte,
 ) (value []byte, found bool, handled bool, err error) {
-	if len(args) != 2 ||
+	if s.clusterEnabled ||
+		len(args) != 2 ||
 		!bytes.EqualFold(args[0], []byte("GET")) ||
 		s.journal != nil ||
 		atomic.LoadUint32(&s.metricsEnabled) != 0 {
@@ -210,7 +213,8 @@ func (s *Server) executeAuthorizedConcurrentGetInto(
 // frame caller-owned decoded bytes directly into its existing connection buffer,
 // avoiding a second value-sized allocation and copy after codec decode.
 func (s *Server) executeAuthorizedConcurrentGetValue(args [][]byte) (value []byte, found bool, handled bool, err error) {
-	if len(args) != 2 ||
+	if s.clusterEnabled ||
+		len(args) != 2 ||
 		!bytes.EqualFold(args[0], []byte("GET")) ||
 		s.journal != nil ||
 		atomic.LoadUint32(&s.metricsEnabled) != 0 {
@@ -249,10 +253,14 @@ func (s *Server) executeAuthorizedConcurrentGet(args [][]byte) (response []byte,
 // It is only used when persistence, metrics, WATCH and maxmemory semantics do not
 // require the ordinary durability/pressure path.
 func (s *Server) executeAuthorizedConcurrentSet(args [][]byte) (response []byte, handled bool, err error) {
+	if s.clusterEnabled {
+		return nil, false, nil
+	}
 	if len(args) == 3 && bytes.EqualFold(args[0], []byte("SET")) && s.replication.isReadOnlyReplica() {
 		return nil, true, errors.New("READONLY You can't write against a read only replica.")
 	}
-	if len(args) != 3 ||
+	if s.clusterEnabled ||
+		len(args) != 3 ||
 		!bytes.EqualFold(args[0], []byte("SET")) ||
 		s.journal != nil ||
 		s.replication.primaryHasReplicas() ||
@@ -282,7 +290,8 @@ func (s *Server) executeAuthorizedConcurrentSet(args [][]byte) (response []byte,
 }
 
 func (s *Server) executeAuthorizedConcurrentAOFSet(args [][]byte) (response []byte, durabilitySequence uint64, handled bool, err error) {
-	if len(args) != 3 ||
+	if s.clusterEnabled ||
+		len(args) != 3 ||
 		!bytes.EqualFold(args[0], []byte("SET")) ||
 		s.journal == nil ||
 		s.replication.primaryHasReplicas() ||
@@ -330,7 +339,8 @@ func (s *Server) executeAuthorizedConcurrentAOFSet(args [][]byte) (response []by
 }
 
 func (s *Server) executeAuthorizedSerializedAOFSetBatch(keys, values [][]byte) (durabilitySequence uint64, handled bool, err error) {
-	if len(keys) < 2 || len(keys) != len(values) ||
+	if s.clusterEnabled ||
+		len(keys) < 2 || len(keys) != len(values) ||
 		s.journal == nil ||
 		s.replication.primaryHasReplicas() ||
 		atomic.LoadUint32(&s.metricsEnabled) != 0 ||
@@ -408,7 +418,8 @@ func (s *Server) executeAuthorizedSerializedAOFSetBatch(keys, values [][]byte) (
 // It bypasses generic command dispatch only when AOF, metrics and maxmemory do
 // not require the ordinary durability/pressure path.
 func (s *Server) executeAuthorizedSerializedReplicatedSetBatch(keys [][]byte, values [][]byte) (replicationOffset int64, handled bool, err error) {
-	if len(keys) < 2 || len(keys) != len(values) ||
+	if s.clusterEnabled ||
+		len(keys) < 2 || len(keys) != len(values) ||
 		s.journal != nil ||
 		atomic.LoadUint32(&s.metricsEnabled) != 0 ||
 		s.store.MaxMemory() != 0 {
