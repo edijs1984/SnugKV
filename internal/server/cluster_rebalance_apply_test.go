@@ -155,3 +155,93 @@ func TestClusterRebalanceApplyOnceRequiresSourceCoordinator(t *testing.T) {
 		t.Fatalf("err=%v want=%q", err, want)
 	}
 }
+
+
+func TestClusterRebalanceApplyOnceConvergesThirdNodeTopology(t *testing.T) {
+	sourceTCP, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sourceTCP.Close()
+
+	targetTCP, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer targetTCP.Close()
+
+	observerTCP, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer observerTCP.Close()
+
+	sourceAddr := sourceTCP.listener.Addr().String()
+	targetAddr := targetTCP.listener.Addr().String()
+	observerAddr := observerTCP.listener.Addr().String()
+
+	ranges := map[string]string{
+		"0-8999":      sourceAddr,
+		"9000-13999":  targetAddr,
+		"14000-16383": observerAddr,
+	}
+	nodes := []struct {
+		server *Server
+		addr   string
+	}{
+		{sourceTCP.server, sourceAddr},
+		{targetTCP.server, targetAddr},
+		{observerTCP.server, observerAddr},
+	}
+	for _, node := range nodes {
+		if err := node.server.configureClusterSlots(true, node.addr, ranges); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	state := sourceTCP.server.clusterStateSnapshot()
+	moves, err := planClusterRebalance(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(moves) == 0 {
+		t.Fatal("expected rebalance moves")
+	}
+	if moves[0].Source != sourceAddr {
+		t.Fatalf("first move source=%q want=%q plan=%+v", moves[0].Source, sourceAddr, moves)
+	}
+
+	slot := moves[0].Start
+	key := findClusterTestKeyForSlot(slot)
+	if key == "" {
+		t.Fatalf("failed to find key for slot %d", slot)
+	}
+	if _, err := sourceTCP.server.execute([][]byte{
+		[]byte("SET"), []byte(key), []byte("value"),
+	}); err != nil {
+		t.Fatalf("seed source key: %v", err)
+	}
+
+	planID := clusterRebalancePlanID(state, moves)
+	if _, err := sourceTCP.server.execute([][]byte{
+		[]byte("CLUSTER"), []byte("REBALANCE"), []byte("APPLY"),
+		[]byte(planID), []byte("ONCE"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, srv := range map[string]*Server{
+		"source":   sourceTCP.server,
+		"target":   targetTCP.server,
+		"observer": observerTCP.server,
+	} {
+		got := srv.clusterStateSnapshot()
+		if got.owners[slot] != moves[0].Target {
+			t.Fatalf("%s owner[%d]=%q want=%q", name, slot, got.owners[slot], moves[0].Target)
+		}
+		if got.migrating[slot] != "" || got.importing[slot] != "" {
+			t.Fatalf("%s transition not cleared: migrating=%q importing=%q",
+				name, got.migrating[slot], got.importing[slot])
+		}
+	}
+}
