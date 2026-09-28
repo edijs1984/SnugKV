@@ -62,6 +62,10 @@ func markRunningFunctionWrite(s *Server) error {
 // through the running-function state before dispatch. That gate is what makes
 // FUNCTION KILL atomic with respect to the first write.
 func (s *Server) luaRedisCallFunction(protected bool) lua.LGFunction {
+	return s.luaRedisCallFunctionWithCluster(protected, nil)
+}
+
+func (s *Server) luaRedisCallFunctionWithCluster(protected bool, clusterScope *luaClusterScope) lua.LGFunction {
 	return func(L *lua.LState) int {
 		if L.GetTop() < 1 {
 			return luaPushCommandError(L, protected, errors.New("ERR Please specify at least one argument for redis.call()"))
@@ -84,6 +88,9 @@ func (s *Server) luaRedisCallFunction(protected bool) lua.LGFunction {
 			return luaPushCommandError(L, protected, err)
 		}
 		if err := s.authorizeExecutionNestedCommand(args); err != nil {
+			return luaPushCommandError(L, protected, err)
+		}
+		if err := s.validateLuaClusterAccess(clusterScope, args); err != nil {
 			return luaPushCommandError(L, protected, err)
 		}
 		if scriptCommandWritesDataset(args) {
@@ -141,6 +148,9 @@ func (s *Server) executeKillableFunctionCall(args [][]byte) ([]byte, error) {
 	if fn == nil {
 		return nil, errors.New("ERR Function not found")
 	}
+	if s.clusterEnabled && fn.noCluster {
+		return nil, errors.New("ERR Can not run script on cluster, 'no-cluster' flag is set")
+	}
 	if err := s.rejectFunctionInvocationOOM(fn); err != nil {
 		return nil, err
 	}
@@ -160,12 +170,13 @@ func (s *Server) executeKillableFunctionCall(args [][]byte) ([]byte, error) {
 
 func (s *Server) runKillableRegisteredFunction(fn *registeredFunction, keys, argv [][]byte, readOnly bool) ([]byte, error) {
 	L := fn.library.state
+	clusterScope := s.newLuaClusterScope(fn.allowCrossSlotKeys)
 	if readOnly {
-		fn.library.redis.RawSetString("call", L.NewFunction(s.luaRedisCallReadOnly(false)))
-		fn.library.redis.RawSetString("pcall", L.NewFunction(s.luaRedisCallReadOnly(true)))
+		fn.library.redis.RawSetString("call", L.NewFunction(s.luaRedisCallReadOnlyWithCluster(false, clusterScope)))
+		fn.library.redis.RawSetString("pcall", L.NewFunction(s.luaRedisCallReadOnlyWithCluster(true, clusterScope)))
 	} else {
-		fn.library.redis.RawSetString("call", L.NewFunction(s.luaRedisCallFunction(false)))
-		fn.library.redis.RawSetString("pcall", L.NewFunction(s.luaRedisCallFunction(true)))
+		fn.library.redis.RawSetString("call", L.NewFunction(s.luaRedisCallFunctionWithCluster(false, clusterScope)))
+		fn.library.redis.RawSetString("pcall", L.NewFunction(s.luaRedisCallFunctionWithCluster(true, clusterScope)))
 	}
 
 	ctx, cancel := context.WithTimeout(runningFunctionContext(s), scriptExecutionLimit)
