@@ -216,6 +216,9 @@ func (s *Server) executeEval(args [][]byte, bySHA bool) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if s.clusterEnabled && meta.flagged && meta.noCluster {
+		return nil, errors.New("ERR Can not run script on cluster, 'no-cluster' flag is set")
+	}
 	if err := s.rejectFlaggedScriptInvocationOOM(meta); err != nil {
 		return nil, err
 	}
@@ -223,10 +226,11 @@ func (s *Server) executeEval(args [][]byte, bySHA bool) ([]byte, error) {
 	return s.withFlaggedScriptMemoryAdmission(
 		meta,
 		func() ([]byte, error) {
+			allowCrossSlot := !meta.flagged || meta.allowCrossSlotKeys
 			if meta.noWrites {
-				return s.runLuaScriptReadOnly(meta.body, sha, keys, argv)
+				return s.runLuaScriptReadOnlyScoped(meta.body, sha, keys, argv, allowCrossSlot)
 			}
-			return s.runLuaScript(meta.body, sha, keys, argv, !meta.flagged)
+			return s.runLuaScriptScoped(meta.body, sha, keys, argv, !meta.flagged, allowCrossSlot)
 		},
 	)
 }
@@ -262,6 +266,10 @@ func luaBytesTable(L *lua.LState, values [][]byte) *lua.LTable {
 }
 
 func (s *Server) runLuaScript(source, sha string, keys, argv [][]byte, legacyOOM bool) ([]byte, error) {
+	return s.runLuaScriptScoped(source, sha, keys, argv, legacyOOM, true)
+}
+
+func (s *Server) runLuaScriptScoped(source, sha string, keys, argv [][]byte, legacyOOM bool, allowCrossSlot bool) ([]byte, error) {
 	L := newScriptLuaState()
 	defer L.Close()
 
@@ -271,13 +279,14 @@ func (s *Server) runLuaScript(source, sha string, keys, argv [][]byte, legacyOOM
 
 	L.SetGlobal("KEYS", luaBytesTable(L, keys))
 	L.SetGlobal("ARGV", luaBytesTable(L, argv))
+	clusterScope := s.newLuaClusterScope(allowCrossSlot)
 	var legacyState *legacyScriptOOMState
 	if legacyOOM {
 		legacyState = newLegacyScriptOOMState(s)
 		defer legacyState.restore(s)
-		L.SetGlobal("redis", s.luaRedisModuleWithLegacyState(L, legacyState))
+		L.SetGlobal("redis", s.luaRedisModuleWithClusterScope(L, legacyState, clusterScope))
 	} else {
-		L.SetGlobal("redis", s.luaRedisModule(L))
+		L.SetGlobal("redis", s.luaRedisModuleWithClusterScope(L, nil, clusterScope))
 	}
 
 	fn, err := L.LoadString(source)
@@ -300,14 +309,31 @@ func (s *Server) runLuaScript(source, sha string, keys, argv [][]byte, legacyOOM
 }
 
 func (s *Server) luaRedisModule(L *lua.LState) *lua.LTable {
-	return s.luaRedisModuleWithLegacyState(L, nil)
+	return s.luaRedisModuleWithClusterScope(L, nil, nil)
 }
 
 func (s *Server) luaRedisModuleWithLegacyState(
 	L *lua.LState,
 	state *legacyScriptOOMState,
 ) *lua.LTable {
-	return s.luaRedisModuleWithDebugger(L, state, nil)
+	return s.luaRedisModuleWithClusterScope(L, state, nil)
+}
+
+func (s *Server) luaRedisModuleWithClusterScope(
+	L *lua.LState,
+	state *legacyScriptOOMState,
+	clusterScope *luaClusterScope,
+) *lua.LTable {
+	module := L.NewTable()
+	funcs := map[string]lua.LGFunction{
+		"call":         s.luaRedisCallWithLegacyOOMAndCluster(false, state, clusterScope),
+		"pcall":        s.luaRedisCallWithLegacyOOMAndCluster(true, state, clusterScope),
+		"error_reply":  luaRedisErrorReply,
+		"status_reply": luaRedisStatusReply,
+		"sha1hex":      luaRedisSHA1Hex,
+	}
+	L.SetFuncs(module, funcs)
+	return module
 }
 
 func (s *Server) luaRedisModuleWithDebugger(
@@ -317,8 +343,8 @@ func (s *Server) luaRedisModuleWithDebugger(
 ) *lua.LTable {
 	module := L.NewTable()
 	funcs := map[string]lua.LGFunction{
-		"call":         s.luaRedisCallWithLegacyOOM(false, state),
-		"pcall":        s.luaRedisCallWithLegacyOOM(true, state),
+		"call":         s.luaRedisCallWithLegacyOOMAndCluster(false, state, nil),
+		"pcall":        s.luaRedisCallWithLegacyOOMAndCluster(true, state, nil),
 		"error_reply":  luaRedisErrorReply,
 		"status_reply": luaRedisStatusReply,
 		"sha1hex":      luaRedisSHA1Hex,
@@ -383,6 +409,14 @@ func (s *Server) luaRedisCallWithLegacyOOM(
 	protected bool,
 	state *legacyScriptOOMState,
 ) lua.LGFunction {
+	return s.luaRedisCallWithLegacyOOMAndCluster(protected, state, nil)
+}
+
+func (s *Server) luaRedisCallWithLegacyOOMAndCluster(
+	protected bool,
+	state *legacyScriptOOMState,
+	clusterScope *luaClusterScope,
+) lua.LGFunction {
 	return func(L *lua.LState) int {
 		if L.GetTop() < 1 {
 			return luaPushCommandError(L, protected, errors.New("ERR Please specify at least one argument for redis.call()"))
@@ -405,6 +439,9 @@ func (s *Server) luaRedisCallWithLegacyOOM(
 			return luaPushCommandError(L, protected, err)
 		}
 		if err := s.authorizeExecutionNestedCommand(args); err != nil {
+			return luaPushCommandError(L, protected, err)
+		}
+		if err := s.validateLuaClusterAccess(clusterScope, args); err != nil {
 			return luaPushCommandError(L, protected, err)
 		}
 

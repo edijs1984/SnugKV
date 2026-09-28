@@ -38,6 +38,9 @@ type transactionSession struct {
 	lastDurabilitySequence uint64
 	waitTargetOffset       int64
 	waitAOFSequence        uint64
+	clusterSlot            int
+	clusterSlotSet         bool
+	clusterCrossSlot       bool
 }
 
 type transactionWatchRegistry struct {
@@ -171,6 +174,9 @@ func (session *transactionSession) clearMultiLocked() {
 	session.multi = false
 	session.queueDirty = false
 	session.queue = nil
+	session.clusterSlot = 0
+	session.clusterSlotSet = false
+	session.clusterCrossSlot = false
 }
 
 func (session *transactionSession) close() {
@@ -183,6 +189,14 @@ func (session *transactionSession) close() {
 
 func (session *transactionSession) watch(keys [][]byte) ([]byte, error) {
 	s := session.server
+	if s.clusterEnabled {
+		args := make([][]byte, 0, len(keys)+1)
+		args = append(args, []byte("WATCH"))
+		args = append(args, keys...)
+		if err := s.enforceClusterRouting(args); err != nil {
+			return nil, err
+		}
+	}
 	s.durableMu.Lock()
 	defer s.durableMu.Unlock()
 	if session.multi {
@@ -247,6 +261,33 @@ func (session *transactionSession) queueCommand(args [][]byte) ([]byte, error) {
 		session.queueDirty = true
 		return nil, err
 	}
+
+	if session.server.clusterEnabled {
+		if err := session.server.enforceClusterRouting(args); err != nil {
+			session.queueDirty = true
+			return nil, err
+		}
+
+		keys, err := commandKeys(args)
+		if err != nil {
+			session.queueDirty = true
+			return nil, err
+		}
+		if len(keys) > 0 {
+			slot := clusterKeySlot(keys[0].value)
+			if session.clusterSlotSet && session.clusterSlot != slot {
+				// Redis Cluster still queues individually valid local commands in
+				// MULTI even when they target different slots. The transaction-wide
+				// slot constraint is enforced by EXEC.
+				session.clusterCrossSlot = true
+			}
+			if !session.clusterSlotSet {
+				session.clusterSlot = slot
+				session.clusterSlotSet = true
+			}
+		}
+	}
+
 	session.queue = append(session.queue, cloneCommand(args))
 	return []byte("+QUEUED\r\n"), nil
 }
@@ -380,6 +421,12 @@ func (session *transactionSession) exec() ([]byte, error) {
 		session.clearMultiLocked()
 		session.clearWatchLocked()
 		return nil, errors.New("EXECABORT Transaction discarded because of previous errors.")
+	}
+
+	if session.clusterCrossSlot {
+		session.clearMultiLocked()
+		session.clearWatchLocked()
+		return nil, errors.New("CROSSSLOT Keys in request don't hash to the same slot")
 	}
 
 	// Redis re-checks ACL rules at EXEC time. A command that was legal when it

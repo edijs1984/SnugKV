@@ -116,10 +116,14 @@ func (s *Server) executeEvalReadOnly(args [][]byte, bySHA bool) ([]byte, error) 
 		return nil, err
 	}
 
-	return s.runLuaScriptReadOnly(meta.body, sha, keys, argv)
+	return s.runLuaScriptReadOnlyScoped(meta.body, sha, keys, argv, !meta.flagged || meta.allowCrossSlotKeys)
 }
 
 func (s *Server) runLuaScriptReadOnly(source, sha string, keys, argv [][]byte) ([]byte, error) {
+	return s.runLuaScriptReadOnlyScoped(source, sha, keys, argv, true)
+}
+
+func (s *Server) runLuaScriptReadOnlyScoped(source, sha string, keys, argv [][]byte, allowCrossSlot bool) ([]byte, error) {
 	L := newScriptLuaState()
 	defer L.Close()
 
@@ -129,7 +133,8 @@ func (s *Server) runLuaScriptReadOnly(source, sha string, keys, argv [][]byte) (
 
 	L.SetGlobal("KEYS", luaBytesTable(L, keys))
 	L.SetGlobal("ARGV", luaBytesTable(L, argv))
-	L.SetGlobal("redis", s.luaRedisModuleReadOnly(L))
+	clusterScope := s.newLuaClusterScope(allowCrossSlot)
+	L.SetGlobal("redis", s.luaRedisModuleReadOnlyScoped(L, clusterScope))
 
 	fn, err := L.LoadString(source)
 	if err != nil {
@@ -151,10 +156,14 @@ func (s *Server) runLuaScriptReadOnly(source, sha string, keys, argv [][]byte) (
 }
 
 func (s *Server) luaRedisModuleReadOnly(L *lua.LState) *lua.LTable {
+	return s.luaRedisModuleReadOnlyScoped(L, nil)
+}
+
+func (s *Server) luaRedisModuleReadOnlyScoped(L *lua.LState, clusterScope *luaClusterScope) *lua.LTable {
 	module := L.NewTable()
 	L.SetFuncs(module, map[string]lua.LGFunction{
-		"call":         s.luaRedisCallReadOnly(false),
-		"pcall":        s.luaRedisCallReadOnly(true),
+		"call":         s.luaRedisCallReadOnlyWithCluster(false, clusterScope),
+		"pcall":        s.luaRedisCallReadOnlyWithCluster(true, clusterScope),
 		"error_reply":  luaRedisErrorReply,
 		"status_reply": luaRedisStatusReply,
 		"sha1hex":      luaRedisSHA1Hex,
@@ -184,6 +193,10 @@ func scriptCommandWritesOrReplicates(args [][]byte) bool {
 }
 
 func (s *Server) luaRedisCallReadOnly(protected bool) lua.LGFunction {
+	return s.luaRedisCallReadOnlyWithCluster(protected, nil)
+}
+
+func (s *Server) luaRedisCallReadOnlyWithCluster(protected bool, clusterScope *luaClusterScope) lua.LGFunction {
 	return func(L *lua.LState) int {
 		if L.GetTop() < 1 {
 			return luaPushCommandError(L, protected, errors.New("ERR Please specify at least one argument for redis.call()"))
@@ -209,6 +222,9 @@ func (s *Server) luaRedisCallReadOnly(protected bool) lua.LGFunction {
 			return luaPushCommandError(L, protected, errors.New("ERR Write commands are not allowed from read-only scripts."))
 		}
 		if err := s.authorizeExecutionNestedCommand(args); err != nil {
+			return luaPushCommandError(L, protected, err)
+		}
+		if err := s.validateLuaClusterAccess(clusterScope, args); err != nil {
 			return luaPushCommandError(L, protected, err)
 		}
 

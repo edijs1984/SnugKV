@@ -533,6 +533,9 @@ func (s *Server) executeFCall(args [][]byte, readOnly bool) ([]byte, error) {
 	if fn == nil {
 		return nil, errors.New("ERR Function not found")
 	}
+	if s.clusterEnabled && fn.noCluster {
+		return nil, errors.New("ERR Can not run script on cluster, 'no-cluster' flag is set")
+	}
 	if err := s.rejectFunctionInvocationOOM(fn); err != nil {
 		return nil, err
 	}
@@ -552,12 +555,13 @@ func (s *Server) executeFCall(args [][]byte, readOnly bool) ([]byte, error) {
 
 func (s *Server) runRegisteredFunction(fn *registeredFunction, keys, argv [][]byte, readOnly bool) ([]byte, error) {
 	L := fn.library.state
+	clusterScope := s.newLuaClusterScope(fn.allowCrossSlotKeys)
 	if readOnly {
-		fn.library.redis.RawSetString("call", L.NewFunction(s.luaRedisCallReadOnly(false)))
-		fn.library.redis.RawSetString("pcall", L.NewFunction(s.luaRedisCallReadOnly(true)))
+		fn.library.redis.RawSetString("call", L.NewFunction(s.luaRedisCallReadOnlyWithCluster(false, clusterScope)))
+		fn.library.redis.RawSetString("pcall", L.NewFunction(s.luaRedisCallReadOnlyWithCluster(true, clusterScope)))
 	} else {
-		fn.library.redis.RawSetString("call", L.NewFunction(s.luaRedisCall(false)))
-		fn.library.redis.RawSetString("pcall", L.NewFunction(s.luaRedisCall(true)))
+		fn.library.redis.RawSetString("call", L.NewFunction(s.luaRedisCallWithLegacyOOMAndCluster(false, nil, clusterScope)))
+		fn.library.redis.RawSetString("pcall", L.NewFunction(s.luaRedisCallWithLegacyOOMAndCluster(true, nil, clusterScope)))
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), scriptExecutionLimit)
