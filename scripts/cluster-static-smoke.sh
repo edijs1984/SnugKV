@@ -6,6 +6,12 @@ BIN=/tmp/snugkv-cluster-smoke-bin
 TMP=/tmp/snugkv-cluster-smoke
 
 cleanup() {
+  if [[ "${KEEP_CLUSTER:-0}" == "1" ]]; then
+    echo "cluster left running on ports 7000, 7001, 7002"
+    echo "logs: $TMP/node-7000.log $TMP/node-7001.log $TMP/node-7002.log"
+    return
+  fi
+
   for pidfile in "$TMP"/node*.pid; do
     [[ -f "$pidfile" ]] || continue
     pid="$(cat "$pidfile")"
