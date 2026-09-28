@@ -62,6 +62,8 @@ type clientSession struct {
 
 	scriptDebugMode    scriptDebugMode
 	scriptDebugRuntime *scriptDebugRuntime
+
+	clusterAsking bool
 }
 
 var (
@@ -171,6 +173,20 @@ func (c *clientSession) setNoTouch(value bool) {
 	c.mu.Lock()
 	c.noTouch = value
 	c.mu.Unlock()
+}
+
+func (c *clientSession) setClusterAsking(value bool) {
+	c.mu.Lock()
+	c.clusterAsking = value
+	c.mu.Unlock()
+}
+
+func (c *clientSession) consumeClusterAsking() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	value := c.clusterAsking
+	c.clusterAsking = false
+	return value
 }
 
 func (c *clientSession) setReplyMode(mode clientReplyMode) {
