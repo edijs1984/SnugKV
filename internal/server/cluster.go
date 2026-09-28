@@ -87,6 +87,7 @@ func parseClusterSlotRange(text string) (int, int, error) {
 type clusterStateSnapshot struct {
 	enabled   bool
 	nodeAddr  string
+	epoch     uint64
 	owners    [clusterSlotCount]string
 	migrating [clusterSlotCount]string
 	importing [clusterSlotCount]string
@@ -98,6 +99,7 @@ func (s *Server) clusterStateSnapshot() clusterStateSnapshot {
 	return clusterStateSnapshot{
 		enabled:   s.clusterEnabled,
 		nodeAddr:  s.clusterNodeAddr,
+		epoch:     s.clusterTopologyEpoch,
 		owners:    s.clusterSlotOwners,
 		migrating: s.clusterSlotMigrating,
 		importing: s.clusterSlotImporting,
@@ -128,6 +130,7 @@ func (s *Server) configureClusterSlots(enabled bool, nodeAddr string, ranges map
 	s.clusterMu.Lock()
 	s.clusterEnabled = enabled
 	s.clusterNodeAddr = nodeAddr
+	s.clusterTopologyEpoch = 0
 	s.clusterSlotOwners = owners
 	s.clusterSlotMigrating = [clusterSlotCount]string{}
 	s.clusterSlotImporting = [clusterSlotCount]string{}
@@ -438,8 +441,8 @@ func (s *Server) clusterInfoReply() []byte {
 			"cluster_slots_fail:0\r\n"+
 			"cluster_known_nodes:%d\r\n"+
 			"cluster_size:%d\r\n"+
-			"cluster_current_epoch:0\r\n"+
-			"cluster_my_epoch:0\r\n"+
+			"cluster_current_epoch:%d\r\n"+
+			"cluster_my_epoch:%d\r\n"+
 			"cluster_stats_messages_sent:0\r\n"+
 			"cluster_stats_messages_received:0\r\n"+
 			"total_cluster_links_buffer_limit_exceeded:0\r\n",
@@ -448,6 +451,8 @@ func (s *Server) clusterInfoReply() []byte {
 		assigned,
 		len(owners),
 		len(owners),
+		stateSnapshot.epoch,
+		stateSnapshot.epoch,
 	)
 	return formatBulkString([]byte(body))
 }
@@ -567,6 +572,7 @@ func (s *Server) executeClusterSetSlot(args [][]byte) ([]byte, error) {
 	state := clusterStateSnapshot{
 		enabled:   s.clusterEnabled,
 		nodeAddr:  s.clusterNodeAddr,
+		epoch:     s.clusterTopologyEpoch,
 		owners:    s.clusterSlotOwners,
 		migrating: s.clusterSlotMigrating,
 		importing: s.clusterSlotImporting,
@@ -574,8 +580,13 @@ func (s *Server) executeClusterSetSlot(args [][]byte) ([]byte, error) {
 
 	switch action {
 	case "STABLE":
-		s.clusterSlotMigrating[slot] = ""
-		s.clusterSlotImporting[slot] = ""
+		if err := s.mutateClusterTopologyLocked(func() error {
+			s.clusterSlotMigrating[slot] = ""
+			s.clusterSlotImporting[slot] = ""
+			return nil
+		}); err != nil {
+			return nil, err
+		}
 		return []byte("+OK\r\n"), nil
 
 	case "MIGRATING":
@@ -586,8 +597,13 @@ func (s *Server) executeClusterSetSlot(args [][]byte) ([]byte, error) {
 		if s.clusterSlotOwners[slot] != s.clusterNodeAddr {
 			return nil, errors.New("ERR I'm not the owner of hash slot")
 		}
-		s.clusterSlotMigrating[slot] = target
-		s.clusterSlotImporting[slot] = ""
+		if err := s.mutateClusterTopologyLocked(func() error {
+			s.clusterSlotMigrating[slot] = target
+			s.clusterSlotImporting[slot] = ""
+			return nil
+		}); err != nil {
+			return nil, err
+		}
 		return []byte("+OK\r\n"), nil
 
 	case "IMPORTING":
@@ -598,8 +614,13 @@ func (s *Server) executeClusterSetSlot(args [][]byte) ([]byte, error) {
 		if s.clusterSlotOwners[slot] == s.clusterNodeAddr {
 			return nil, errors.New("ERR I'm already the owner of hash slot")
 		}
-		s.clusterSlotImporting[slot] = source
-		s.clusterSlotMigrating[slot] = ""
+		if err := s.mutateClusterTopologyLocked(func() error {
+			s.clusterSlotImporting[slot] = source
+			s.clusterSlotMigrating[slot] = ""
+			return nil
+		}); err != nil {
+			return nil, err
+		}
 		return []byte("+OK\r\n"), nil
 
 	case "NODE":
@@ -615,9 +636,14 @@ func (s *Server) executeClusterSetSlot(args [][]byte) ([]byte, error) {
 				slot,
 			)
 		}
-		s.clusterSlotOwners[slot] = owner
-		s.clusterSlotMigrating[slot] = ""
-		s.clusterSlotImporting[slot] = ""
+		if err := s.mutateClusterTopologyLocked(func() error {
+			s.clusterSlotOwners[slot] = owner
+			s.clusterSlotMigrating[slot] = ""
+			s.clusterSlotImporting[slot] = ""
+			return nil
+		}); err != nil {
+			return nil, err
+		}
 		return []byte("+OK\r\n"), nil
 
 	default:
@@ -666,10 +692,15 @@ func (s *Server) executeClusterAddSlots(args [][]byte) ([]byte, error) {
 			return nil, fmt.Errorf("ERR Slot %d is already busy", slot)
 		}
 	}
-	for _, slot := range slots {
-		s.clusterSlotOwners[slot] = s.clusterNodeAddr
-		s.clusterSlotMigrating[slot] = ""
-		s.clusterSlotImporting[slot] = ""
+	if err := s.mutateClusterTopologyLocked(func() error {
+		for _, slot := range slots {
+			s.clusterSlotOwners[slot] = s.clusterNodeAddr
+			s.clusterSlotMigrating[slot] = ""
+			s.clusterSlotImporting[slot] = ""
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	return []byte("+OK\r\n"), nil
 }
@@ -697,10 +728,15 @@ func (s *Server) executeClusterDelSlots(args [][]byte) ([]byte, error) {
 			return nil, fmt.Errorf("ERR Slot %d is not owned by me", slot)
 		}
 	}
-	for _, slot := range slots {
-		s.clusterSlotOwners[slot] = ""
-		s.clusterSlotMigrating[slot] = ""
-		s.clusterSlotImporting[slot] = ""
+	if err := s.mutateClusterTopologyLocked(func() error {
+		for _, slot := range slots {
+			s.clusterSlotOwners[slot] = ""
+			s.clusterSlotMigrating[slot] = ""
+			s.clusterSlotImporting[slot] = ""
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	return []byte("+OK\r\n"), nil
 }
@@ -719,12 +755,17 @@ func (s *Server) executeClusterFlushSlots(args [][]byte) ([]byte, error) {
 		return nil, errors.New("ERR This instance has cluster support disabled")
 	}
 
-	for slot := 0; slot < clusterSlotCount; slot++ {
-		if s.clusterSlotOwners[slot] == s.clusterNodeAddr {
-			s.clusterSlotOwners[slot] = ""
+	if err := s.mutateClusterTopologyLocked(func() error {
+		for slot := 0; slot < clusterSlotCount; slot++ {
+			if s.clusterSlotOwners[slot] == s.clusterNodeAddr {
+				s.clusterSlotOwners[slot] = ""
+			}
+			s.clusterSlotMigrating[slot] = ""
+			s.clusterSlotImporting[slot] = ""
 		}
-		s.clusterSlotMigrating[slot] = ""
-		s.clusterSlotImporting[slot] = ""
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	return []byte("+OK\r\n"), nil
 }
@@ -751,6 +792,7 @@ type clusterRebalanceMove struct {
 func clusterRebalancePlanID(state clusterStateSnapshot, moves []clusterRebalanceMove) string {
 	h := sha1.New()
 	fmt.Fprintf(h, "node=%s\n", state.nodeAddr)
+	fmt.Fprintf(h, "epoch=%d\n", state.epoch)
 	for slot, owner := range state.owners {
 		fmt.Fprintf(h, "%d=%s\n", slot, owner)
 	}
