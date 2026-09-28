@@ -317,6 +317,10 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 				return nil, errors.New("ERR wrong number of arguments for 'cluster|keyslot' command")
 			}
 			return integer(int64(clusterKeySlot(args[2]))), nil
+		case "COUNTKEYSINSLOT":
+			return s.clusterCountKeysInSlot(args)
+		case "GETKEYSINSLOT":
+			return s.clusterGetKeysInSlot(args)
 		case "SLOTS":
 			if len(args) != 2 {
 				return nil, errors.New("ERR wrong number of arguments for 'cluster|slots' command")
