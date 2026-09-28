@@ -128,6 +128,35 @@ echo "[4/5] run command cases"
 run_cases "$REDIS_PORT" "$TMP/redis.out"
 run_cases "$SNUG_PORT" "$TMP/snug.out"
 
+echo "== SnugKV intentional FLUSHSLOTS safety divergence =="
+redis-cli --raw -p "$SNUG_PORT" CLUSTER ADDSLOTS 100 >/dev/null
+safety_key=""
+for i in $(seq 1 200000); do
+  candidate="safety-key-$i"
+  slot="$(redis-cli --raw -p "$SNUG_PORT" CLUSTER KEYSLOT "$candidate" | tr -d '\r\n')"
+  if [[ "$slot" == "100" ]]; then
+    safety_key="$candidate"
+    break
+  fi
+done
+if [[ -z "$safety_key" ]]; then
+  echo "failed to find key for slot 100" >&2
+  exit 1
+fi
+set_result="$(redis-cli --raw -p "$SNUG_PORT" SET "$safety_key" value 2>&1)"
+if [[ "$set_result" != "OK" ]]; then
+  echo "failed to seed SnugKV FLUSHSLOTS safety case: $set_result" >&2
+  exit 1
+fi
+flush_result="$(redis-cli --raw -p "$SNUG_PORT" CLUSTER FLUSHSLOTS 2>&1)"
+if [[ "$flush_result" != "ERR DB must be empty to perform CLUSTER FLUSHSLOTS." ]]; then
+  echo "unexpected SnugKV FLUSHSLOTS safety result: $flush_result" >&2
+  exit 1
+fi
+echo "$flush_result"
+redis-cli --raw -p "$SNUG_PORT" FLUSHDB >/dev/null
+redis-cli --raw -p "$SNUG_PORT" CLUSTER FLUSHSLOTS >/dev/null
+
 normalize() {
   sed -E \
     -e '/^[0-9a-f]{40}$/s/.*/NODEID/'
