@@ -81,7 +81,167 @@ for i in 0 1 2; do
     redis-cli -p "$port" PING >/dev/null 2>&1 && break
     sleep 0.05
   done
+  pong="$(redis-cli -p "$port" PING 2>/dev/null || true)"
+pong="${pong//
+done
+
+echo "[3/7] create Redis Cluster"
+redis-cli --cluster create \
+  "127.0.0.1:$REDIS_BASE" \
+  "127.0.0.1:$((REDIS_BASE+1))" \
+  "127.0.0.1:$((REDIS_BASE+2))" \
+  --cluster-replicas 0 \
+  --cluster-yes >/dev/null
+
+for _ in $(seq 1 100); do
+  state="$(redis-cli -p "$REDIS_BASE" CLUSTER INFO 2>/dev/null || true)"
+  if [[ "$state" == *"cluster_state:ok"* ]]; then
+    break
+  fi
+  sleep 0.05
+done
+
+start_snug_node() {
+  local port="$1"
+  local idx="$2"
+  local cfg="$TMP/snug-$port.json"
+  cat >"$cfg" <<EOF
+{
+  "listen": "127.0.0.1:$port",
+  "admin_listen": "",
+  "metrics_listen": "",
+  "cluster_enabled": true,
+  "cluster_node_addr": "127.0.0.1:$port",
+  "cluster_slots": {
+    "0-5460": "127.0.0.1:$SNUG_BASE",
+    "5461-10922": "127.0.0.1:$((SNUG_BASE+1))",
+    "10923-16383": "127.0.0.1:$((SNUG_BASE+2))"
+  }
+}
+EOF
+  "$SNUG_BIN" -config "$cfg" >"$TMP/snug-$port.log" 2>&1 &
+  echo $! >"$TMP/snug-$port.pid"
+}
+
+echo "[4/7] start SnugKV Cluster nodes"
+for i in 0 1 2; do
+  start_snug_node "$((SNUG_BASE+i))" "$i"
+done
+
+for i in 0 1 2; do
+  port="$((SNUG_BASE+i))"
+  for _ in $(seq 1 100); do
+    redis-cli -p "$port" PING >/dev/null 2>&1 && break
+    sleep 0.05
+  done
   [[ "$(redis-cli -p "$port" PING 2>/dev/null | tr -d '\r\n')" == "PONG" ]]
+done
+
+echo "[5/7] select slot fixtures"
+# Find one local key for node 0 and one remote key, avoiding assumptions about
+# exact CRC16 fixtures while keeping both systems on the same logical keys.
+find_key_in_range() {
+  local min="$1"
+  local max="$2"
+  local prefix="$3"
+  local k slot
+  for i in $(seq 1 10000); do
+    k="$prefix:$i"
+    slot="$(redis-cli -p "$REDIS_BASE" CLUSTER KEYSLOT "$k")"
+    if (( slot >= min && slot <= max )); then
+      printf '%s' "$k"
+      return
+    fi
+  done
+  echo "could not find key in slot range $min-$max" >&2
+  exit 1
+}
+
+LOCAL_KEY="$(find_key_in_range 0 5460 local)"
+REMOTE_KEY="$(find_key_in_range 10923 16383 remote)"
+TAG_A="acct:{42}:a"
+TAG_B="acct:{42}:b"
+
+run_cases() {
+  local port="$1"
+  local out="$2"
+
+  {
+    echo "== same-slot =="
+    redis-cli --raw -p "$port" <<EOF
+MULTI
+SET $TAG_A A
+SET $TAG_B B
+EXEC
+EOF
+
+    echo "== cross-slot =="
+    redis-cli --raw -p "$port" <<EOF
+MULTI
+SET $LOCAL_KEY 1
+SET $REMOTE_KEY 2
+EXEC
+EOF
+
+    echo "== moved-queue =="
+    redis-cli --raw -p "$port" <<EOF
+MULTI
+SET $REMOTE_KEY 2
+EXEC
+EOF
+
+    echo "== watch-local =="
+    redis-cli --raw -p "$port" <<EOF
+WATCH $LOCAL_KEY
+MULTI
+SET $LOCAL_KEY 3
+EXEC
+EOF
+
+    echo "== watch-remote =="
+    redis-cli --raw -p "$port" <<EOF
+WATCH $REMOTE_KEY
+EOF
+
+    echo "== discard-reset =="
+    redis-cli --raw -p "$port" <<EOF
+MULTI
+SET $LOCAL_KEY 4
+DISCARD
+MULTI
+SET $REMOTE_KEY 5
+EXEC
+EOF
+  } >"$out" 2>&1
+}
+
+echo "[6/7] run transaction cases"
+run_cases "$REDIS_BASE" "$TMP/redis.out"
+run_cases "$SNUG_BASE" "$TMP/snug.out"
+
+normalize() {
+  sed -E     -e "s/127\.0\.0\.1:$REDIS_BASE/NODE0/g"     -e "s/127\.0\.0\.1:$((REDIS_BASE+1))/NODE1/g"     -e "s/127\.0\.0\.1:$((REDIS_BASE+2))/NODE2/g"     -e "s/127\.0\.0\.1:$SNUG_BASE/NODE0/g"     -e "s/127\.0\.0\.1:$((SNUG_BASE+1))/NODE1/g"     -e "s/127\.0\.0\.1:$((SNUG_BASE+2))/NODE2/g"     "$1"
+}
+
+normalize "$TMP/redis.out" >"$TMP/redis.normalized"
+normalize "$TMP/snug.out" >"$TMP/snug.normalized"
+
+echo "[7/7] compare outputs"
+echo "===== Redis Cluster ====="
+cat "$TMP/redis.normalized"
+echo
+echo "===== SnugKV Cluster ====="
+cat "$TMP/snug.normalized"
+echo
+echo "===== Diff ====="
+if diff -u "$TMP/redis.normalized" "$TMP/snug.normalized"; then
+  echo "transaction cluster parity: PASS"
+else
+  echo "transaction cluster parity: DIFFERENCES FOUND"
+  exit 1
+fi
+\r'/}"
+pong="${pong//
 done
 
 yes yes | redis-cli --cluster create   "127.0.0.1:$REDIS_BASE"   "127.0.0.1:$((REDIS_BASE+1))"   "127.0.0.1:$((REDIS_BASE+2))"   --cluster-replicas 0 >/dev/null
@@ -128,6 +288,374 @@ for i in 0 1 2; do
     sleep 0.05
   done
   [[ "$(redis-cli -p "$port" PING 2>/dev/null | tr -d '\r\n')" == "PONG" ]]
+done
+
+echo "[5/7] select slot fixtures"
+# Find one local key for node 0 and one remote key, avoiding assumptions about
+# exact CRC16 fixtures while keeping both systems on the same logical keys.
+find_key_in_range() {
+  local min="$1"
+  local max="$2"
+  local prefix="$3"
+  local k slot
+  for i in $(seq 1 10000); do
+    k="$prefix:$i"
+    slot="$(redis-cli -p "$REDIS_BASE" CLUSTER KEYSLOT "$k")"
+    if (( slot >= min && slot <= max )); then
+      printf '%s' "$k"
+      return
+    fi
+  done
+  echo "could not find key in slot range $min-$max" >&2
+  exit 1
+}
+
+LOCAL_KEY="$(find_key_in_range 0 5460 local)"
+REMOTE_KEY="$(find_key_in_range 10923 16383 remote)"
+TAG_A="acct:{42}:a"
+TAG_B="acct:{42}:b"
+
+run_cases() {
+  local port="$1"
+  local out="$2"
+
+  {
+    echo "== same-slot =="
+    redis-cli --raw -p "$port" <<EOF
+MULTI
+SET $TAG_A A
+SET $TAG_B B
+EXEC
+EOF
+
+    echo "== cross-slot =="
+    redis-cli --raw -p "$port" <<EOF
+MULTI
+SET $LOCAL_KEY 1
+SET $REMOTE_KEY 2
+EXEC
+EOF
+
+    echo "== moved-queue =="
+    redis-cli --raw -p "$port" <<EOF
+MULTI
+SET $REMOTE_KEY 2
+EXEC
+EOF
+
+    echo "== watch-local =="
+    redis-cli --raw -p "$port" <<EOF
+WATCH $LOCAL_KEY
+MULTI
+SET $LOCAL_KEY 3
+EXEC
+EOF
+
+    echo "== watch-remote =="
+    redis-cli --raw -p "$port" <<EOF
+WATCH $REMOTE_KEY
+EOF
+
+    echo "== discard-reset =="
+    redis-cli --raw -p "$port" <<EOF
+MULTI
+SET $LOCAL_KEY 4
+DISCARD
+MULTI
+SET $REMOTE_KEY 5
+EXEC
+EOF
+  } >"$out" 2>&1
+}
+
+echo "[6/7] run transaction cases"
+run_cases "$REDIS_BASE" "$TMP/redis.out"
+run_cases "$SNUG_BASE" "$TMP/snug.out"
+
+normalize() {
+  sed -E     -e "s/127\.0\.0\.1:$REDIS_BASE/NODE0/g"     -e "s/127\.0\.0\.1:$((REDIS_BASE+1))/NODE1/g"     -e "s/127\.0\.0\.1:$((REDIS_BASE+2))/NODE2/g"     -e "s/127\.0\.0\.1:$SNUG_BASE/NODE0/g"     -e "s/127\.0\.0\.1:$((SNUG_BASE+1))/NODE1/g"     -e "s/127\.0\.0\.1:$((SNUG_BASE+2))/NODE2/g"     "$1"
+}
+
+normalize "$TMP/redis.out" >"$TMP/redis.normalized"
+normalize "$TMP/snug.out" >"$TMP/snug.normalized"
+
+echo "[7/7] compare outputs"
+echo "===== Redis Cluster ====="
+cat "$TMP/redis.normalized"
+echo
+echo "===== SnugKV Cluster ====="
+cat "$TMP/snug.normalized"
+echo
+echo "===== Diff ====="
+if diff -u "$TMP/redis.normalized" "$TMP/snug.normalized"; then
+  echo "transaction cluster parity: PASS"
+else
+  echo "transaction cluster parity: DIFFERENCES FOUND"
+  exit 1
+fi
+\n'/}"
+[[ "$pong" == "PONG" ]]
+done
+
+yes yes | redis-cli --cluster create   "127.0.0.1:$REDIS_BASE"   "127.0.0.1:$((REDIS_BASE+1))"   "127.0.0.1:$((REDIS_BASE+2))"   --cluster-replicas 0 >/dev/null
+
+for _ in $(seq 1 100); do
+  state="$(redis-cli -p "$REDIS_BASE" CLUSTER INFO 2>/dev/null || true)"
+  if [[ "$state" == *"cluster_state:ok"* ]]; then
+    break
+  fi
+  sleep 0.05
+done
+
+start_snug_node() {
+  local port="$1"
+  local idx="$2"
+  local cfg="$TMP/snug-$port.json"
+  cat >"$cfg" <<EOF
+{
+  "listen": "127.0.0.1:$port",
+  "admin_listen": "",
+  "metrics_listen": "",
+  "cluster_enabled": true,
+  "cluster_node_addr": "127.0.0.1:$port",
+  "cluster_slots": {
+    "0-5460": "127.0.0.1:$SNUG_BASE",
+    "5461-10922": "127.0.0.1:$((SNUG_BASE+1))",
+    "10923-16383": "127.0.0.1:$((SNUG_BASE+2))"
+  }
+}
+EOF
+  "$SNUG_BIN" -config "$cfg" >"$TMP/snug-$port.log" 2>&1 &
+  echo $! >"$TMP/snug-$port.pid"
+}
+
+echo "[4/7] start SnugKV Cluster nodes"
+for i in 0 1 2; do
+  start_snug_node "$((SNUG_BASE+i))" "$i"
+done
+
+for i in 0 1 2; do
+  port="$((SNUG_BASE+i))"
+  for _ in $(seq 1 100); do
+    redis-cli -p "$port" PING >/dev/null 2>&1 && break
+    sleep 0.05
+  done
+  pong="$(redis-cli -p "$port" PING 2>/dev/null || true)"
+pong="${pong//
+done
+
+echo "[5/7] select slot fixtures"
+# Find one local key for node 0 and one remote key, avoiding assumptions about
+# exact CRC16 fixtures while keeping both systems on the same logical keys.
+find_key_in_range() {
+  local min="$1"
+  local max="$2"
+  local prefix="$3"
+  local k slot
+  for i in $(seq 1 10000); do
+    k="$prefix:$i"
+    slot="$(redis-cli -p "$REDIS_BASE" CLUSTER KEYSLOT "$k")"
+    if (( slot >= min && slot <= max )); then
+      printf '%s' "$k"
+      return
+    fi
+  done
+  echo "could not find key in slot range $min-$max" >&2
+  exit 1
+}
+
+LOCAL_KEY="$(find_key_in_range 0 5460 local)"
+REMOTE_KEY="$(find_key_in_range 10923 16383 remote)"
+TAG_A="acct:{42}:a"
+TAG_B="acct:{42}:b"
+
+run_cases() {
+  local port="$1"
+  local out="$2"
+
+  {
+    echo "== same-slot =="
+    redis-cli --raw -p "$port" <<EOF
+MULTI
+SET $TAG_A A
+SET $TAG_B B
+EXEC
+EOF
+
+    echo "== cross-slot =="
+    redis-cli --raw -p "$port" <<EOF
+MULTI
+SET $LOCAL_KEY 1
+SET $REMOTE_KEY 2
+EXEC
+EOF
+
+    echo "== moved-queue =="
+    redis-cli --raw -p "$port" <<EOF
+MULTI
+SET $REMOTE_KEY 2
+EXEC
+EOF
+
+    echo "== watch-local =="
+    redis-cli --raw -p "$port" <<EOF
+WATCH $LOCAL_KEY
+MULTI
+SET $LOCAL_KEY 3
+EXEC
+EOF
+
+    echo "== watch-remote =="
+    redis-cli --raw -p "$port" <<EOF
+WATCH $REMOTE_KEY
+EOF
+
+    echo "== discard-reset =="
+    redis-cli --raw -p "$port" <<EOF
+MULTI
+SET $LOCAL_KEY 4
+DISCARD
+MULTI
+SET $REMOTE_KEY 5
+EXEC
+EOF
+  } >"$out" 2>&1
+}
+
+echo "[6/7] run transaction cases"
+run_cases "$REDIS_BASE" "$TMP/redis.out"
+run_cases "$SNUG_BASE" "$TMP/snug.out"
+
+normalize() {
+  sed -E     -e "s/127\.0\.0\.1:$REDIS_BASE/NODE0/g"     -e "s/127\.0\.0\.1:$((REDIS_BASE+1))/NODE1/g"     -e "s/127\.0\.0\.1:$((REDIS_BASE+2))/NODE2/g"     -e "s/127\.0\.0\.1:$SNUG_BASE/NODE0/g"     -e "s/127\.0\.0\.1:$((SNUG_BASE+1))/NODE1/g"     -e "s/127\.0\.0\.1:$((SNUG_BASE+2))/NODE2/g"     "$1"
+}
+
+normalize "$TMP/redis.out" >"$TMP/redis.normalized"
+normalize "$TMP/snug.out" >"$TMP/snug.normalized"
+
+echo "[7/7] compare outputs"
+echo "===== Redis Cluster ====="
+cat "$TMP/redis.normalized"
+echo
+echo "===== SnugKV Cluster ====="
+cat "$TMP/snug.normalized"
+echo
+echo "===== Diff ====="
+if diff -u "$TMP/redis.normalized" "$TMP/snug.normalized"; then
+  echo "transaction cluster parity: PASS"
+else
+  echo "transaction cluster parity: DIFFERENCES FOUND"
+  exit 1
+fi
+\r'/}"
+pong="${pong//
+done
+
+echo "[5/7] select slot fixtures"
+# Find one local key for node 0 and one remote key, avoiding assumptions about
+# exact CRC16 fixtures while keeping both systems on the same logical keys.
+find_key_in_range() {
+  local min="$1"
+  local max="$2"
+  local prefix="$3"
+  local k slot
+  for i in $(seq 1 10000); do
+    k="$prefix:$i"
+    slot="$(redis-cli -p "$REDIS_BASE" CLUSTER KEYSLOT "$k")"
+    if (( slot >= min && slot <= max )); then
+      printf '%s' "$k"
+      return
+    fi
+  done
+  echo "could not find key in slot range $min-$max" >&2
+  exit 1
+}
+
+LOCAL_KEY="$(find_key_in_range 0 5460 local)"
+REMOTE_KEY="$(find_key_in_range 10923 16383 remote)"
+TAG_A="acct:{42}:a"
+TAG_B="acct:{42}:b"
+
+run_cases() {
+  local port="$1"
+  local out="$2"
+
+  {
+    echo "== same-slot =="
+    redis-cli --raw -p "$port" <<EOF
+MULTI
+SET $TAG_A A
+SET $TAG_B B
+EXEC
+EOF
+
+    echo "== cross-slot =="
+    redis-cli --raw -p "$port" <<EOF
+MULTI
+SET $LOCAL_KEY 1
+SET $REMOTE_KEY 2
+EXEC
+EOF
+
+    echo "== moved-queue =="
+    redis-cli --raw -p "$port" <<EOF
+MULTI
+SET $REMOTE_KEY 2
+EXEC
+EOF
+
+    echo "== watch-local =="
+    redis-cli --raw -p "$port" <<EOF
+WATCH $LOCAL_KEY
+MULTI
+SET $LOCAL_KEY 3
+EXEC
+EOF
+
+    echo "== watch-remote =="
+    redis-cli --raw -p "$port" <<EOF
+WATCH $REMOTE_KEY
+EOF
+
+    echo "== discard-reset =="
+    redis-cli --raw -p "$port" <<EOF
+MULTI
+SET $LOCAL_KEY 4
+DISCARD
+MULTI
+SET $REMOTE_KEY 5
+EXEC
+EOF
+  } >"$out" 2>&1
+}
+
+echo "[6/7] run transaction cases"
+run_cases "$REDIS_BASE" "$TMP/redis.out"
+run_cases "$SNUG_BASE" "$TMP/snug.out"
+
+normalize() {
+  sed -E     -e "s/127\.0\.0\.1:$REDIS_BASE/NODE0/g"     -e "s/127\.0\.0\.1:$((REDIS_BASE+1))/NODE1/g"     -e "s/127\.0\.0\.1:$((REDIS_BASE+2))/NODE2/g"     -e "s/127\.0\.0\.1:$SNUG_BASE/NODE0/g"     -e "s/127\.0\.0\.1:$((SNUG_BASE+1))/NODE1/g"     -e "s/127\.0\.0\.1:$((SNUG_BASE+2))/NODE2/g"     "$1"
+}
+
+normalize "$TMP/redis.out" >"$TMP/redis.normalized"
+normalize "$TMP/snug.out" >"$TMP/snug.normalized"
+
+echo "[7/7] compare outputs"
+echo "===== Redis Cluster ====="
+cat "$TMP/redis.normalized"
+echo
+echo "===== SnugKV Cluster ====="
+cat "$TMP/snug.normalized"
+echo
+echo "===== Diff ====="
+if diff -u "$TMP/redis.normalized" "$TMP/snug.normalized"; then
+  echo "transaction cluster parity: PASS"
+else
+  echo "transaction cluster parity: DIFFERENCES FOUND"
+  exit 1
+fi
+\n'/}"
+[[ "$pong" == "PONG" ]]
 done
 
 echo "[5/7] select slot fixtures"
