@@ -120,6 +120,10 @@ func (s *Server) executeEvalReadOnly(args [][]byte, bySHA bool) ([]byte, error) 
 }
 
 func (s *Server) runLuaScriptReadOnly(source, sha string, keys, argv [][]byte) ([]byte, error) {
+	return s.runLuaScriptReadOnlyScoped(source, sha, keys, argv, true)
+}
+
+func (s *Server) runLuaScriptReadOnlyScoped(source, sha string, keys, argv [][]byte, allowCrossSlot bool) ([]byte, error) {
 	L := newScriptLuaState()
 	defer L.Close()
 
@@ -129,6 +133,7 @@ func (s *Server) runLuaScriptReadOnly(source, sha string, keys, argv [][]byte) (
 
 	L.SetGlobal("KEYS", luaBytesTable(L, keys))
 	L.SetGlobal("ARGV", luaBytesTable(L, argv))
+	s.prepareLuaClusterScope(L, allowCrossSlot)
 	L.SetGlobal("redis", s.luaRedisModuleReadOnly(L))
 
 	fn, err := L.LoadString(source)
@@ -209,6 +214,9 @@ func (s *Server) luaRedisCallReadOnly(protected bool) lua.LGFunction {
 			return luaPushCommandError(L, protected, errors.New("ERR Write commands are not allowed from read-only scripts."))
 		}
 		if err := s.authorizeExecutionNestedCommand(args); err != nil {
+			return luaPushCommandError(L, protected, err)
+		}
+		if err := s.validateLuaClusterAccess(L, args); err != nil {
 			return luaPushCommandError(L, protected, err)
 		}
 
