@@ -16,6 +16,48 @@ func newClusterScriptingServer(t *testing.T, ranges map[string]string) *Server {
 	return s
 }
 
+
+func TestClusterLuaScopeGuardDirect(t *testing.T) {
+	s := newClusterScriptingServer(t, map[string]string{
+		"0-8191":     "127.0.0.1:7000",
+		"8192-16383": "127.0.0.1:7001",
+	})
+
+	scope := s.newLuaClusterScope(false)
+	if scope == nil {
+		t.Fatal("cluster scope is nil")
+	}
+
+	local := []byte("hello")
+	remote := []byte("foo")
+	if clusterKeySlot(local) >= 8192 {
+		t.Fatalf("hello slot=%d, expected local range", clusterKeySlot(local))
+	}
+	if clusterKeySlot(remote) < 8192 {
+		t.Fatalf("foo slot=%d, expected remote range", clusterKeySlot(remote))
+	}
+
+	if err := s.validateLuaClusterAccess(scope, [][]byte{[]byte("GET"), local}); err != nil {
+		t.Fatalf("local access err=%v", err)
+	}
+	if err := s.validateLuaClusterAccess(scope, [][]byte{[]byte("GET"), remote}); err == nil ||
+		!strings.Contains(err.Error(), "non local key") {
+		t.Fatalf("remote access err=%v", err)
+	}
+
+	allLocal := newClusterScriptingServer(t, map[string]string{
+		"0-16383": "127.0.0.1:7000",
+	})
+	scope = allLocal.newLuaClusterScope(false)
+	if err := allLocal.validateLuaClusterAccess(scope, [][]byte{[]byte("GET"), []byte("hello")}); err != nil {
+		t.Fatalf("first slot err=%v", err)
+	}
+	if err := allLocal.validateLuaClusterAccess(scope, [][]byte{[]byte("GET"), []byte("foo")}); err == nil ||
+		!strings.Contains(err.Error(), "non local key") {
+		t.Fatalf("cross-slot access err=%v", err)
+	}
+}
+
 func TestClusterEvalDeclaredKeysRouteBeforeExecution(t *testing.T) {
 	s := newClusterScriptingServer(t, map[string]string{
 		"0-16383": "127.0.0.1:7000",
