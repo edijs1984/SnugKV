@@ -90,9 +90,11 @@ type Server struct {
 	failoverLeaderLeaseUntil time.Time
 	failoverLeaderFenced     bool
 
-	clusterEnabled    bool
-	clusterNodeAddr   string
-	clusterSlotOwners [clusterSlotCount]string
+	clusterEnabled        bool
+	clusterNodeAddr       string
+	clusterSlotOwners     [clusterSlotCount]string
+	clusterSlotMigrating  [clusterSlotCount]string
+	clusterSlotImporting  [clusterSlotCount]string
 
 	// executionACLUsername / executionACLArgs are valid only while durableMu is
 	// held. TCP and transaction execution populate them so dynamic command
@@ -203,6 +205,7 @@ var commandTable = map[string]commandInfo{
 	"CONFIG":      {2, 0, 0, 0, 0, false},
 	"CLIENT":      {2, 0, 0, 0, 0, false},
 	"CLUSTER":     {2, 0, 0, 0, 0, false},
+	"ASKING":      {1, 1, 0, 0, 0, false},
 	"SCAN":        {2, 0, 0, 0, 0, false},
 	"KEYS":        {2, 2, 0, 0, 0, false},
 	"RANDOMKEY":   {1, 1, 0, 0, 0, false},
@@ -297,6 +300,15 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		key = string(args[1])
 	}
 	switch cmd {
+	case "ASKING":
+		if !s.clusterEnabled {
+			return nil, errors.New("ERR This instance has cluster support disabled")
+		}
+		if s.executionClient != nil {
+			s.executionClient.setClusterAsking(true)
+		}
+		return []byte("+OK\r\n"), nil
+
 	case "CLUSTER":
 		subcommand := strings.ToUpper(string(args[1]))
 		switch subcommand {
@@ -325,6 +337,8 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 				return nil, errors.New("ERR wrong number of arguments for 'cluster|info' command")
 			}
 			return s.clusterInfoReply(), nil
+		case "SETSLOT":
+			return s.executeClusterSetSlot(args)
 		default:
 			return nil, errors.New("ERR unknown subcommand")
 		}
