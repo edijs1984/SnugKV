@@ -743,6 +743,18 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			continue
 		}
 
+		// Plain SET may be decoded through ReadBufferedSET and handled by one of
+		// the TCP write fast paths below. Enforce cluster ownership here before
+		// any such path can mutate the local store or acknowledge the command.
+		if borrowedSet {
+			if clusterErr := s.server.enforceClusterRouting(msg); clusterErr != nil {
+				if writeProtocol(msg, errorResponse(clusterErr)) != nil {
+					return
+				}
+				continue
+			}
+		}
+
 		monitorAuthorized = true
 		if !txSession.multi && monitorScriptCommand(msg) {
 			s.server.feedMonitor(clientSession, msg, nil)
