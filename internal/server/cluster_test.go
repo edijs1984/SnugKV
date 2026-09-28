@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"snugkv/internal/engine"
@@ -823,5 +824,74 @@ func TestClusterNodesIncludesMigrationMarkers(t *testing.T) {
 	wantImporting := fmt.Sprintf("[%d-<-%s]", slot, clusterNodeID(sourceAddr))
 	if !strings.Contains(targetNodes, wantImporting) {
 		t.Fatalf("CLUSTER NODES missing importing marker %q: %q", wantImporting, targetNodes)
+	}
+}
+
+
+func TestClusterTopologyStateConcurrentReadWrite(t *testing.T) {
+	s := New(engine.New())
+	local := "127.0.0.1:7000"
+	remote := "127.0.0.1:7001"
+	if err := s.configureClusterSlots(true, local, map[string]string{
+		"0-8191":     remote,
+		"8192-16383": local,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	slot := clusterKeySlot([]byte("foo"))
+	targetID := clusterNodeID(remote)
+	migrating := [][]byte{
+		[]byte("CLUSTER"), []byte("SETSLOT"), []byte(strconv.Itoa(slot)),
+		[]byte("MIGRATING"), []byte(targetID),
+	}
+	stable := [][]byte{
+		[]byte("CLUSTER"), []byte("SETSLOT"), []byte(strconv.Itoa(slot)),
+		[]byte("STABLE"),
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 32)
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 500; i++ {
+			if _, err := s.execute(migrating); err != nil {
+				errs <- fmt.Errorf("MIGRATING: %w", err)
+				return
+			}
+			if _, err := s.execute(stable); err != nil {
+				errs <- fmt.Errorf("STABLE: %w", err)
+				return
+			}
+		}
+	}()
+
+	for i := 0; i < 6; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 500; j++ {
+				_ = s.clusterNodesReply()
+				_ = s.clusterInfoReply()
+				if _, err := s.clusterSlotsReply(); err != nil {
+					errs <- fmt.Errorf("SLOTS: %w", err)
+					return
+				}
+				if _, err := s.clusterShardsReply(); err != nil {
+					errs <- fmt.Errorf("SHARDS: %w", err)
+					return
+				}
+				_ = s.clusterLocalKeysInSlot(slot, 10)
+				_ = s.enforceClusterRouting([][]byte{[]byte("GET"), []byte("missing{foo}")})
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
 	}
 }
