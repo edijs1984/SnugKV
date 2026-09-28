@@ -17,6 +17,7 @@ cleanup() {
   done
 }
 trap cleanup EXIT
+trap 'echo "slot-management differential failed at line $LINENO" >&2' ERR
 
 wait_for_pong() {
   local port="$1"
@@ -32,8 +33,10 @@ wait_for_pong() {
 rm -rf "$TMP"
 mkdir -p "$TMP"
 cd "$ROOT"
+echo "[1/5] build SnugKV"
 go build -o "$SNUG_BIN" ./cmd/snugkv
 
+echo "[2/5] start Redis cluster node"
 redis_dir="$TMP/redis"
 mkdir -p "$redis_dir"
 cat >"$redis_dir/redis.conf" <<EOF
@@ -53,6 +56,7 @@ redis-server "$redis_dir/redis.conf" >"$redis_dir/server.log" 2>&1 &
 echo $! >"$TMP/redis.pid"
 wait_for_pong "$REDIS_PORT"
 
+echo "[3/5] start SnugKV cluster node"
 snug_cfg="$TMP/snug.json"
 cat >"$snug_cfg" <<EOF
 {
@@ -61,12 +65,24 @@ cat >"$snug_cfg" <<EOF
   "metrics_listen": "",
   "cluster_enabled": true,
   "cluster_node_addr": "127.0.0.1:$SNUG_PORT",
-  "cluster_slots": {}
+  "cluster_slots": {
+    "0": "127.0.0.1:$SNUG_PORT"
+  }
 }
 EOF
 "$SNUG_BIN" -config "$snug_cfg" >"$TMP/snug.log" 2>&1 &
 echo $! >"$TMP/snug.pid"
-wait_for_pong "$SNUG_PORT"
+if ! wait_for_pong "$SNUG_PORT"; then
+  echo "SnugKV failed to start; log follows:" >&2
+  cat "$TMP/snug.log" >&2 || true
+  exit 1
+fi
+
+bootstrap="$(redis-cli --raw -p "$SNUG_PORT" CLUSTER FLUSHSLOTS 2>&1)"
+if [[ "$bootstrap" != "OK" ]]; then
+  echo "failed to bootstrap SnugKV to empty slot map: $bootstrap" >&2
+  exit 1
+fi
 
 run_cases() {
   local port="$1"
@@ -109,6 +125,7 @@ run_cases() {
   } >"$out" 2>&1
 }
 
+echo "[4/5] run command cases"
 run_cases "$REDIS_PORT" "$TMP/redis.out"
 run_cases "$SNUG_PORT" "$TMP/snug.out"
 
@@ -119,6 +136,7 @@ normalize() {
 normalize <"$TMP/redis.out" >"$TMP/redis.normalized"
 normalize <"$TMP/snug.out" >"$TMP/snug.normalized"
 
+echo "[5/5] compare outputs"
 echo "===== Redis ====="
 cat "$TMP/redis.normalized"
 echo
