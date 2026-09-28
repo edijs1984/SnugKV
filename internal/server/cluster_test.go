@@ -549,8 +549,8 @@ func TestClusterSetSlotMigrationRouting(t *testing.T) {
 	slot := clusterKeySlot(key)
 
 	if err := s.configureClusterSlots(true, local, map[string]string{
-		"0-16383": local,
-		fmt.Sprintf("%d", clusterKeySlot([]byte("remote-fixture"))): target,
+		"0-8191":     target,
+		"8192-16383": local,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -584,8 +584,8 @@ func TestClusterImportingRequiresOneShotAsking(t *testing.T) {
 	slot := clusterKeySlot(key)
 
 	if err := s.configureClusterSlots(true, local, map[string]string{
-		"0-16383": source,
-		fmt.Sprintf("%d", clusterKeySlot([]byte("local-fixture"))): local,
+		"0-8191":     local,
+		"8192-16383": source,
 	}); err != nil {
 		t.Fatal(err)
 	}
