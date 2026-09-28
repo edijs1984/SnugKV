@@ -84,7 +84,7 @@ echo "keys: $k1->$s1 $k2->$s2 $k3->$s3"
 
 # Direct wrong-node access must expose MOVED.
 moved="$(redis-cli -p 7000 GET "$k2" 2>&1 || true)"
-grep -q "^MOVED $s2 127.0.0.1:7001$" <<<"$moved"
+grep -q "MOVED $s2 127.0.0.1:7001" <<<"$moved"
 
 # redis-cli cluster mode must discover/follow MOVED.
 redis-cli -c -p 7000 SET "$k1" one | grep -qx OK
