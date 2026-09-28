@@ -86,6 +86,8 @@ func (s *Server) configureClusterSlots(enabled bool, nodeAddr string, ranges map
 	s.clusterNodeAddr = nodeAddr
 	for i := range s.clusterSlotOwners {
 		s.clusterSlotOwners[i] = ""
+		s.clusterSlotMigrating[i] = ""
+		s.clusterSlotImporting[i] = ""
 	}
 	for rangeText, owner := range ranges {
 		start, end, err := parseClusterSlotRange(rangeText)
@@ -104,10 +106,24 @@ func (s *Server) configureClusterSlots(enabled bool, nodeAddr string, ranges map
 
 
 func (s *Server) enforceClusterRouting(args [][]byte) error {
+	return s.enforceClusterRoutingForClientMode(args, s.executionClient, true)
+}
+
+func (s *Server) enforceClusterRoutingForClient(args [][]byte, client *clientSession) error {
+	return s.enforceClusterRoutingForClientMode(args, client, true)
+}
+
+func (s *Server) previewClusterRoutingForClient(args [][]byte, client *clientSession) error {
+	return s.enforceClusterRoutingForClientMode(args, client, false)
+}
+
+func (s *Server) enforceClusterRoutingForClientMode(args [][]byte, client *clientSession, consumeAsking bool) error {
 	if !s.clusterEnabled {
 		return nil
 	}
-	if len(args) == 0 || strings.EqualFold(string(args[0]), "CLUSTER") {
+	if len(args) == 0 ||
+		strings.EqualFold(string(args[0]), "CLUSTER") ||
+		strings.EqualFold(string(args[0]), "ASKING") {
 		return nil
 	}
 
@@ -126,14 +142,34 @@ func (s *Server) enforceClusterRouting(args [][]byte) error {
 		}
 	}
 
+	asking := false
+	if client != nil {
+		if consumeAsking {
+			asking = client.consumeClusterAsking()
+		} else {
+			asking = client.clusterAskingEnabled()
+		}
+	}
+
 	owner := s.clusterSlotOwners[slot]
 	if owner == "" {
 		return errors.New("CLUSTERDOWN Hash slot not served")
 	}
-	if owner != s.clusterNodeAddr {
-		return fmt.Errorf("MOVED %d %s", slot, owner)
+
+	if owner == s.clusterNodeAddr {
+		if target := s.clusterSlotMigrating[slot]; target != "" && len(keys) == 1 {
+			if s.store.Exists([]string{string(keys[0].value)}) == 0 {
+				return fmt.Errorf("ASK %d %s", slot, target)
+			}
+		}
+		return nil
 	}
-	return nil
+
+	if source := s.clusterSlotImporting[slot]; source != "" && asking {
+		return nil
+	}
+
+	return fmt.Errorf("MOVED %d %s", slot, owner)
 }
 
 
@@ -355,4 +391,105 @@ func (s *Server) clusterInfoReply() []byte {
 		len(owners),
 	)
 	return formatBulkString([]byte(body))
+}
+
+
+func (s *Server) clusterNodeAddressByID(id string) (string, bool) {
+	for _, owner := range s.clusterOwners() {
+		if clusterNodeID(owner) == id {
+			return owner, true
+		}
+	}
+	if s.clusterNodeAddr != "" && clusterNodeID(s.clusterNodeAddr) == id {
+		return s.clusterNodeAddr, true
+	}
+	return "", false
+}
+
+func (s *Server) clusterSlotHasKeys(slot int) bool {
+	for _, key := range s.store.Keys("*") {
+		if clusterKeySlot([]byte(key)) == slot {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) executeClusterSetSlot(args [][]byte) ([]byte, error) {
+	if !s.clusterEnabled {
+		return nil, errors.New("ERR This instance has cluster support disabled")
+	}
+	if len(args) < 4 {
+		return nil, errors.New("ERR wrong number of arguments for 'cluster|setslot' command")
+	}
+
+	slot, err := strconv.Atoi(string(args[2]))
+	if err != nil || slot < 0 || slot >= clusterSlotCount {
+		return nil, errors.New("ERR Invalid or out of range slot")
+	}
+
+	action := strings.ToUpper(string(args[3]))
+	switch action {
+	case "STABLE":
+		if len(args) != 4 {
+			return nil, errors.New("ERR wrong number of arguments for 'cluster|setslot' command")
+		}
+		s.clusterSlotMigrating[slot] = ""
+		s.clusterSlotImporting[slot] = ""
+		return []byte("+OK\r\n"), nil
+
+	case "MIGRATING":
+		if len(args) != 5 {
+			return nil, errors.New("ERR wrong number of arguments for 'cluster|setslot' command")
+		}
+		target, ok := s.clusterNodeAddressByID(string(args[4]))
+		if !ok {
+			return nil, errors.New("ERR I don't know about node specified")
+		}
+		if s.clusterSlotOwners[slot] != s.clusterNodeAddr {
+			return nil, errors.New("ERR I'm not the owner of hash slot")
+		}
+		s.clusterSlotMigrating[slot] = target
+		s.clusterSlotImporting[slot] = ""
+		return []byte("+OK\r\n"), nil
+
+	case "IMPORTING":
+		if len(args) != 5 {
+			return nil, errors.New("ERR wrong number of arguments for 'cluster|setslot' command")
+		}
+		source, ok := s.clusterNodeAddressByID(string(args[4]))
+		if !ok {
+			return nil, errors.New("ERR I don't know about node specified")
+		}
+		if s.clusterSlotOwners[slot] == s.clusterNodeAddr {
+			return nil, errors.New("ERR I'm already the owner of hash slot")
+		}
+		s.clusterSlotImporting[slot] = source
+		s.clusterSlotMigrating[slot] = ""
+		return []byte("+OK\r\n"), nil
+
+	case "NODE":
+		if len(args) != 5 {
+			return nil, errors.New("ERR wrong number of arguments for 'cluster|setslot' command")
+		}
+		owner, ok := s.clusterNodeAddressByID(string(args[4]))
+		if !ok {
+			return nil, errors.New("ERR I don't know about node specified")
+		}
+		if s.clusterSlotOwners[slot] == s.clusterNodeAddr &&
+			owner != s.clusterNodeAddr &&
+			s.clusterSlotHasKeys(slot) {
+			return nil, fmt.Errorf(
+				"ERR Can't assign hashslot %d to a different node while I still hold keys for this hash slot.",
+				slot,
+			)
+		}
+		s.clusterSlotOwners[slot] = owner
+		s.clusterSlotMigrating[slot] = ""
+		s.clusterSlotImporting[slot] = ""
+		return []byte("+OK\r\n"), nil
+
+	default:
+		return nil, errors.New("ERR Invalid CLUSTER SETSLOT action or number of arguments")
+	}
 }

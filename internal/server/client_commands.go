@@ -62,6 +62,8 @@ type clientSession struct {
 
 	scriptDebugMode    scriptDebugMode
 	scriptDebugRuntime *scriptDebugRuntime
+
+	clusterAsking bool
 }
 
 var (
@@ -171,6 +173,26 @@ func (c *clientSession) setNoTouch(value bool) {
 	c.mu.Lock()
 	c.noTouch = value
 	c.mu.Unlock()
+}
+
+func (c *clientSession) setClusterAsking(value bool) {
+	c.mu.Lock()
+	c.clusterAsking = value
+	c.mu.Unlock()
+}
+
+func (c *clientSession) clusterAskingEnabled() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.clusterAsking
+}
+
+func (c *clientSession) consumeClusterAsking() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	value := c.clusterAsking
+	c.clusterAsking = false
+	return value
 }
 
 func (c *clientSession) setReplyMode(mode clientReplyMode) {
@@ -342,7 +364,22 @@ func (s *TCPServer) executeClientConnectionCommand(
 	session *clientSession,
 	args [][]byte,
 ) (bool, []byte, error) {
-	if len(args) == 0 || !strings.EqualFold(string(args[0]), "CLIENT") {
+	if len(args) == 0 {
+		return false, nil, nil
+	}
+
+	if strings.EqualFold(string(args[0]), "ASKING") {
+		if len(args) != 1 {
+			return true, nil, errors.New("ERR wrong number of arguments for 'asking' command")
+		}
+		if !s.server.clusterEnabled {
+			return true, nil, errors.New("ERR This instance has cluster support disabled")
+		}
+		session.setClusterAsking(true)
+		return true, []byte("+OK\r\n"), nil
+	}
+
+	if !strings.EqualFold(string(args[0]), "CLIENT") {
 		return false, nil, nil
 	}
 

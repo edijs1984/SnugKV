@@ -88,7 +88,11 @@ func (s *Server) executeWithCancelSession(
 		defer func() { s.metrics.Observe(name, time.Since(start), resultErr != nil) }()
 	}
 
-	if err := s.enforceClusterRouting(args); err != nil {
+	var clusterClient *clientSession
+	if session != nil {
+		clusterClient = session.client
+	}
+	if err := s.previewClusterRoutingForClient(args, clusterClient); err != nil {
 		return nil, err
 	}
 
@@ -670,7 +674,11 @@ func (s *Server) executeDurableForSessionCaptureState(
 	replicationOffset *int64,
 	durabilitySequence *uint64,
 ) ([]byte, error) {
-	if err := s.enforceClusterRouting(args); err != nil {
+	var clusterClient *clientSession
+	if session != nil {
+		clusterClient = session.client
+	}
+	if err := s.enforceClusterRoutingForClient(args, clusterClient); err != nil {
 		return nil, err
 	}
 
@@ -684,7 +692,7 @@ func (s *Server) executeDurableForSessionCaptureState(
 	// concurrency-safe. When AOF is disabled and no WATCH session exists, they
 	// do not need the global exclusive command lock. An RLock still excludes
 	// MULTI/EXEC and every complex command, preserving transaction atomicity.
-	if s.journal == nil && !s.replication.primaryHasReplicas() && isConcurrentScalarCommand(args) {
+	if !s.clusterEnabled && s.journal == nil && !s.replication.primaryHasReplicas() && isConcurrentScalarCommand(args) {
 		s.durableMu.RLock()
 		if !s.hasWatchSessionsLocked() {
 			result, err := s.executePressure(args)
