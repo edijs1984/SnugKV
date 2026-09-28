@@ -148,6 +148,10 @@ func ListenWithJournal(c config.Config, store *engine.Store, journal Journal) (*
 		_ = ln.Close()
 		return nil, err
 	}
+	if err := s.ConfigureClusterPersistence(c.AOFPath, c.SnapshotPath); err != nil {
+		_ = ln.Close()
+		return nil, err
+	}
 
 	// Redis loads the configured ACL file during startup. A configured ACL
 	// file is authoritative: if it cannot be read or parsed, startup must fail
