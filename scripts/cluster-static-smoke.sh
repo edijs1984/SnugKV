@@ -82,26 +82,28 @@ s3="$(redis-cli -p 7000 CLUSTER KEYSLOT "$k3")"
 
 echo "keys: $k1->$s1 $k2->$s2 $k3->$s3"
 
-# Direct wrong-node access must expose MOVED.
-moved="$(redis-cli -p 7000 GET "$k2" 2>&1 || true)"
-grep -q "MOVED $s2 127.0.0.1:7001" <<<"$moved"
+echo "[1/4] direct MOVED"
+moved="$(redis-cli --raw -p 7000 GET "$k2" 2>&1 || true)"
+echo "MOVED reply: $moved"
+grep -Fq "MOVED $s2 127.0.0.1:7001" <<<"$moved"
 
-# redis-cli cluster mode must discover/follow MOVED.
-redis-cli -c -p 7000 SET "$k1" one | grep -qx OK
-redis-cli -c -p 7000 SET "$k2" two | grep -qx OK
-redis-cli -c -p 7000 SET "$k3" three | grep -qx OK
+echo "[2/4] redis-cli -c redirect routing"
+redis-cli --raw -c -p 7000 SET "$k1" one | grep -qx OK
+redis-cli --raw -c -p 7000 SET "$k2" two | grep -qx OK
+redis-cli --raw -c -p 7000 SET "$k3" three | grep -qx OK
 
 [[ "$(redis-cli -c -p 7000 GET "$k1")" == "one" ]]
 [[ "$(redis-cli -c -p 7000 GET "$k2")" == "two" ]]
 [[ "$(redis-cli -c -p 7000 GET "$k3")" == "three" ]]
 
-# Same hash-tag succeeds; different slots fail.
-redis-cli -c -p 7000 MSET "acct:{42}:a" A "acct:{42}:b" B | grep -qx OK
-cross="$(redis-cli -p 7000 MGET "$k1" "$k2" 2>&1 || true)"
-grep -q "^CROSSSLOT Keys in request don't hash to the same slot$" <<<"$cross"
+echo "[3/4] hash-tag and CROSSSLOT"
+redis-cli --raw -c -p 7000 MSET "acct:{42}:a" A "acct:{42}:b" B | grep -qx OK
+cross="$(redis-cli --raw -p 7000 MGET "$k1" "$k2" 2>&1 || true)"
+echo "CROSSSLOT reply: $cross"
+grep -Fq "CROSSSLOT Keys in request don't hash to the same slot" <<<"$cross"
 
-# Topology discovery surface.
-redis-cli -p 7000 CLUSTER INFO | grep -q "cluster_state:ok"
+echo "[4/4] topology discovery"
+redis-cli --raw -p 7000 CLUSTER INFO | grep -q "cluster_state:ok"
 [[ "$(redis-cli -p 7000 CLUSTER NODES | wc -l)" -eq 3 ]]
 redis-cli -p 7000 CLUSTER SLOTS >/dev/null
 redis-cli -p 7000 CLUSTER SHARDS >/dev/null
