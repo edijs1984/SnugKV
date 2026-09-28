@@ -674,7 +674,11 @@ func (s *Server) executeDurableForSessionCaptureState(
 	replicationOffset *int64,
 	durabilitySequence *uint64,
 ) ([]byte, error) {
-	if err := s.enforceClusterRouting(args); err != nil {
+	var clusterClient *clientSession
+	if session != nil {
+		clusterClient = session.client
+	}
+	if err := s.enforceClusterRoutingForClient(args, clusterClient); err != nil {
 		return nil, err
 	}
 
