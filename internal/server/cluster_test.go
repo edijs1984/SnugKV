@@ -710,3 +710,118 @@ func TestClusterSetSlotNodeAndStable(t *testing.T) {
 		t.Fatalf("STABLE did not clear migration state")
 	}
 }
+
+
+func TestClusterCountAndGetKeysInSlot(t *testing.T) {
+	s := New(engine.New())
+	local := "127.0.0.1:7000"
+	remote := "127.0.0.1:7001"
+	if err := s.configureClusterSlots(true, local, map[string]string{
+		"0-8191":     remote,
+		"8192-16383": local,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	keys := []string{"a{foo}", "b{foo}", "foo"}
+	slot := clusterKeySlot([]byte("foo"))
+	for _, key := range keys {
+		if got := clusterKeySlot([]byte(key)); got != slot {
+			t.Fatalf("slot(%q)=%d want=%d", key, got, slot)
+		}
+		if _, err := s.execute([][]byte{[]byte("SET"), []byte(key), []byte("v")}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	count, err := s.execute([][]byte{
+		[]byte("CLUSTER"), []byte("COUNTKEYSINSLOT"), []byte(strconv.Itoa(slot)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(count) != ":3\r\n" {
+		t.Fatalf("COUNTKEYSINSLOT=%q", count)
+	}
+
+	got, err := s.execute([][]byte{
+		[]byte("CLUSTER"), []byte("GETKEYSINSLOT"),
+		[]byte(strconv.Itoa(slot)), []byte("2"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "*2\r\n$6\r\na{foo}\r\n$6\r\nb{foo}\r\n"
+	if string(got) != want {
+		t.Fatalf("GETKEYSINSLOT=%q want=%q", got, want)
+	}
+
+	zero, err := s.execute([][]byte{
+		[]byte("CLUSTER"), []byte("GETKEYSINSLOT"),
+		[]byte(strconv.Itoa(slot)), []byte("0"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(zero) != "*0\r\n" {
+		t.Fatalf("GETKEYSINSLOT zero=%q", zero)
+	}
+
+	remoteSlot := clusterKeySlot([]byte("hello"))
+	if err := s.store.SetPlain("hello", []byte("remote-local-copy")); err != nil {
+		t.Fatal(err)
+	}
+	remoteCount, err := s.execute([][]byte{
+		[]byte("CLUSTER"), []byte("COUNTKEYSINSLOT"), []byte(strconv.Itoa(remoteSlot)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(remoteCount) != ":0\r\n" {
+		t.Fatalf("remote COUNTKEYSINSLOT=%q", remoteCount)
+	}
+}
+
+func TestClusterNodesIncludesMigrationMarkers(t *testing.T) {
+	sourceAddr := "127.0.0.1:7000"
+	targetAddr := "127.0.0.1:7001"
+	slot := clusterKeySlot([]byte("foo"))
+
+	source := New(engine.New())
+	if err := source.configureClusterSlots(true, sourceAddr, map[string]string{
+		"0-8191":     targetAddr,
+		"8192-16383": sourceAddr,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := source.execute([][]byte{
+		[]byte("CLUSTER"), []byte("SETSLOT"), []byte(strconv.Itoa(slot)),
+		[]byte("MIGRATING"), []byte(clusterNodeID(targetAddr)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sourceNodes := string(source.clusterNodesReply())
+	wantMigrating := fmt.Sprintf("[%d->-%s]", slot, clusterNodeID(targetAddr))
+	if !strings.Contains(sourceNodes, wantMigrating) {
+		t.Fatalf("CLUSTER NODES missing migrating marker %q: %q", wantMigrating, sourceNodes)
+	}
+
+	target := New(engine.New())
+	if err := target.configureClusterSlots(true, targetAddr, map[string]string{
+		"0-8191":     targetAddr,
+		"8192-16383": sourceAddr,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := target.execute([][]byte{
+		[]byte("CLUSTER"), []byte("SETSLOT"), []byte(strconv.Itoa(slot)),
+		[]byte("IMPORTING"), []byte(clusterNodeID(sourceAddr)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	targetNodes := string(target.clusterNodesReply())
+	wantImporting := fmt.Sprintf("[%d-<-%s]", slot, clusterNodeID(sourceAddr))
+	if !strings.Contains(targetNodes, wantImporting) {
+		t.Fatalf("CLUSTER NODES missing importing marker %q: %q", wantImporting, targetNodes)
+	}
+}
