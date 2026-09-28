@@ -251,7 +251,8 @@ func clusterNodeEndpointReply(addr string) ([]byte, error) {
 }
 
 func (s *Server) clusterSlotsReply() ([]byte, error) {
-	ranges := s.clusterSlotRanges()
+	state := s.clusterStateSnapshot()
+	ranges := clusterSlotRangesFromOwners(state.owners)
 	items := make([][]byte, 0, len(ranges))
 	for _, r := range ranges {
 		node, err := clusterNodeEndpointReply(r.Owner)
@@ -268,7 +269,8 @@ func (s *Server) clusterSlotsReply() ([]byte, error) {
 }
 
 func (s *Server) clusterShardsReply() ([]byte, error) {
-	owners := s.clusterOwners()
+	state := s.clusterStateSnapshot()
+	owners := clusterOwnersFromOwners(state.owners)
 	items := make([][]byte, 0, len(owners))
 
 	for _, owner := range owners {
@@ -282,7 +284,7 @@ func (s *Server) clusterShardsReply() ([]byte, error) {
 		}
 
 		slotItems := make([][]byte, 0)
-		for _, r := range s.clusterNodeSlotRanges(owner) {
+		for _, r := range clusterNodeSlotRangesFromOwners(state.owners, owner) {
 			slotItems = append(
 				slotItems,
 				integer(int64(r.Start)),
@@ -373,11 +375,12 @@ func clusterSlotRangeText(r clusterSlotRange) string {
 }
 
 func (s *Server) clusterNodesReply() []byte {
-	owners := s.clusterOwners()
+	state := s.clusterStateSnapshot()
+	owners := clusterOwnersFromOwners(state.owners)
 	lines := make([]string, 0, len(owners))
 	for _, owner := range owners {
 		flags := "master"
-		if owner == s.clusterNodeAddr {
+		if owner == state.nodeAddr {
 			flags = "myself,master"
 		}
 		parts := []string{
@@ -390,15 +393,15 @@ func (s *Server) clusterNodesReply() []byte {
 			"0",
 			"connected",
 		}
-		for _, r := range s.clusterNodeSlotRanges(owner) {
+		for _, r := range clusterNodeSlotRangesFromOwners(state.owners, owner) {
 			parts = append(parts, clusterSlotRangeText(r))
 		}
-		if owner == s.clusterNodeAddr {
+		if owner == state.nodeAddr {
 			for slot := 0; slot < clusterSlotCount; slot++ {
-				if target := s.clusterSlotMigrating[slot]; target != "" {
+				if target := state.migrating[slot]; target != "" {
 					parts = append(parts, fmt.Sprintf("[%d->-%s]", slot, clusterNodeID(target)))
 				}
-				if source := s.clusterSlotImporting[slot]; source != "" {
+				if source := state.importing[slot]; source != "" {
 					parts = append(parts, fmt.Sprintf("[%d-<-%s]", slot, clusterNodeID(source)))
 				}
 			}
@@ -412,8 +415,9 @@ func (s *Server) clusterNodesReply() []byte {
 }
 
 func (s *Server) clusterInfoReply() []byte {
+	stateSnapshot := s.clusterStateSnapshot()
 	assigned := 0
-	for _, owner := range s.clusterSlotOwners {
+	for _, owner := range stateSnapshot.owners {
 		if owner != "" {
 			assigned++
 		}
@@ -422,7 +426,7 @@ func (s *Server) clusterInfoReply() []byte {
 	if assigned == clusterSlotCount {
 		state = "ok"
 	}
-	owners := s.clusterOwners()
+	owners := clusterOwnersFromOwners(stateSnapshot.owners)
 	body := fmt.Sprintf(
 		"cluster_state:%s\r\n"+
 			"cluster_slots_assigned:%d\r\n"+
