@@ -895,3 +895,134 @@ func TestClusterTopologyStateConcurrentReadWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+
+func TestClusterAddAndDelSlots(t *testing.T) {
+	s := New(engine.New())
+	local := "127.0.0.1:7000"
+	if err := s.configureClusterSlots(true, local, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	response, err := s.execute([][]byte{
+		[]byte("CLUSTER"), []byte("ADDSLOTS"), []byte("1"), []byte("2"),
+	})
+	if err != nil || string(response) != "+OK\r\n" {
+		t.Fatalf("ADDSLOTS response=%q err=%v", response, err)
+	}
+	state := s.clusterStateSnapshot()
+	if state.owners[1] != local || state.owners[2] != local {
+		t.Fatalf("owners[1]=%q owners[2]=%q", state.owners[1], state.owners[2])
+	}
+
+	response, err = s.execute([][]byte{
+		[]byte("CLUSTER"), []byte("DELSLOTS"), []byte("1"),
+	})
+	if err != nil || string(response) != "+OK\r\n" {
+		t.Fatalf("DELSLOTS response=%q err=%v", response, err)
+	}
+	state = s.clusterStateSnapshot()
+	if state.owners[1] != "" || state.owners[2] != local {
+		t.Fatalf("owners after DELSLOTS: slot1=%q slot2=%q", state.owners[1], state.owners[2])
+	}
+}
+
+func TestClusterSlotManagementValidation(t *testing.T) {
+	s := New(engine.New())
+	local := "127.0.0.1:7000"
+	if err := s.configureClusterSlots(true, local, map[string]string{"1": local}); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name string
+		args [][]byte
+		want string
+	}{
+		{
+			name: "add busy",
+			args: [][]byte{[]byte("CLUSTER"), []byte("ADDSLOTS"), []byte("1")},
+			want: "ERR Slot 1 is already busy",
+		},
+		{
+			name: "add duplicate",
+			args: [][]byte{[]byte("CLUSTER"), []byte("ADDSLOTS"), []byte("2"), []byte("2")},
+			want: "ERR Slot 2 specified multiple times",
+		},
+		{
+			name: "delete unassigned",
+			args: [][]byte{[]byte("CLUSTER"), []byte("DELSLOTS"), []byte("3")},
+			want: "ERR Slot 3 is already unassigned",
+		},
+		{
+			name: "invalid slot",
+			args: [][]byte{[]byte("CLUSTER"), []byte("ADDSLOTS"), []byte("16384")},
+			want: "ERR Invalid or out of range slot",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := s.execute(tt.args)
+			if err == nil || err.Error() != tt.want {
+				t.Fatalf("err=%v want=%q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestClusterFlushSlotsRequiresEmptyDB(t *testing.T) {
+	s := New(engine.New())
+	local := "127.0.0.1:7000"
+	remote := "127.0.0.1:7001"
+	if err := s.configureClusterSlots(true, local, map[string]string{
+		"0-100": local,
+		"101-200": remote,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.store.SetPlain("local-data", []byte("v")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := s.execute([][]byte{[]byte("CLUSTER"), []byte("FLUSHSLOTS")})
+	if err == nil || err.Error() != "ERR DB must be empty to perform CLUSTER FLUSHSLOTS." {
+		t.Fatalf("FLUSHSLOTS with data err=%v", err)
+	}
+	if _, err := s.execute([][]byte{[]byte("DEL"), []byte("local-data")}); err != nil {
+		t.Fatal(err)
+	}
+
+	response, err := s.execute([][]byte{[]byte("CLUSTER"), []byte("FLUSHSLOTS")})
+	if err != nil || string(response) != "+OK\r\n" {
+		t.Fatalf("FLUSHSLOTS response=%q err=%v", response, err)
+	}
+	state := s.clusterStateSnapshot()
+	for slot := 0; slot <= 100; slot++ {
+		if state.owners[slot] != "" {
+			t.Fatalf("local slot %d still owned by %q", slot, state.owners[slot])
+		}
+	}
+	for slot := 101; slot <= 200; slot++ {
+		if state.owners[slot] != remote {
+			t.Fatalf("remote slot %d owner=%q", slot, state.owners[slot])
+		}
+	}
+}
+
+func TestClusterMyID(t *testing.T) {
+	s := New(engine.New())
+	local := "127.0.0.1:7000"
+	if err := s.configureClusterSlots(true, local, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.execute([][]byte{[]byte("CLUSTER"), []byte("MYID")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantID := clusterNodeID(local)
+	want := fmt.Sprintf("$%d\r\n%s\r\n", len(wantID), wantID)
+	if string(got) != want {
+		t.Fatalf("MYID=%q want=%q", got, want)
+	}
+}
