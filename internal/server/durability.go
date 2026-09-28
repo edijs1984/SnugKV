@@ -88,6 +88,10 @@ func (s *Server) executeWithCancelSession(
 		defer func() { s.metrics.Observe(name, time.Since(start), resultErr != nil) }()
 	}
 
+	if err := s.enforceClusterRouting(args); err != nil {
+		return nil, err
+	}
+
 	// Redis allows FUNCTION STATS while a function is busy. It therefore cannot
 	// wait on durableMu, which is intentionally held for the whole FCALL. HELP is
 	// also pure introspection and can use the same direct path.
