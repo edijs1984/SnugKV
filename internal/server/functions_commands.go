@@ -301,7 +301,6 @@ func (s *Server) loadFunctionLibrary(code string) (*functionLibrary, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), scriptExecutionLimit)
 	defer cancel()
 	L.SetContext(ctx)
-	s.prepareLuaClusterScope(L, fn.allowCrossSlotKeys)
 	if err := L.DoString(body); err != nil {
 		L.Close()
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -567,6 +566,7 @@ func (s *Server) runRegisteredFunction(fn *registeredFunction, keys, argv [][]by
 	ctx, cancel := context.WithTimeout(context.Background(), scriptExecutionLimit)
 	defer cancel()
 	L.SetContext(ctx)
+	s.prepareLuaClusterScope(L, fn.allowCrossSlotKeys)
 	if err := L.CallByParam(lua.P{Fn: fn.callback, NRet: 1, Protect: true}, luaBytesTable(L, keys), luaBytesTable(L, argv)); err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return nil, errors.New("ERR Function timed out")
