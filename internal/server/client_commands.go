@@ -181,6 +181,12 @@ func (c *clientSession) setClusterAsking(value bool) {
 	c.mu.Unlock()
 }
 
+func (c *clientSession) clusterAskingEnabled() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.clusterAsking
+}
+
 func (c *clientSession) consumeClusterAsking() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
