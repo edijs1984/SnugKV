@@ -91,6 +91,7 @@ type Server struct {
 	failoverLeaderFenced     bool
 
 	clusterMu             sync.RWMutex
+	clusterRebalanceMu    sync.Mutex
 	clusterEnabled        bool
 	clusterNodeAddr       string
 	clusterTopologyEpoch  uint64
