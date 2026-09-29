@@ -66,3 +66,22 @@ if [[ ! -d node_modules ]]; then
 fi
 
 node cluster-smoke.cjs
+
+cd "$ROOT"
+
+PY_VENV=/tmp/snugkv-cluster-client-venv
+PYTHON="$PY_VENV/bin/python"
+
+if [[ ! -x "$PYTHON" ]]; then
+  python3 -m venv "$PY_VENV"
+fi
+
+if ! "$PYTHON" -c 'import redis' >/dev/null 2>&1; then
+  "$PYTHON" -m pip install --disable-pip-version-check 'redis==6.4.0'
+fi
+
+REDIS_HOST=127.0.0.1 REDIS_PORT=7000 \
+  "$PYTHON" compat/python/cluster_smoke.py
+
+cd "$ROOT/compat/go"
+go run ./cluster
