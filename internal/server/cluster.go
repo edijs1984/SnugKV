@@ -1388,15 +1388,15 @@ func (s *Server) rebalanceMoveOneSlot(state clusterStateSnapshot, move clusterRe
 		remaining := int(s.store.Exists(keys))
 		moved += len(keys) - remaining
 		if err != nil {
-			if moved == 0 {
-				rollback()
-			}
+			// Once a MIGRATE request has been attempted, keep the slot in
+			// MIGRATING/IMPORTING state on failure. With batched migration the
+			// target may have durably restored part of the batch even when the
+			// source received no complete acknowledgement and deleted zero keys.
+			// Clearing the transition here would hide that recoverable
+			// at-least-once state from REBALANCE RECOVER.
 			return moved, err
 		}
 		if string(result) != "+OK\r\n" && string(result) != "+NOKEY\r\n" {
-			if moved == 0 {
-				rollback()
-			}
 			return moved, fmt.Errorf("ERR unexpected MIGRATE result %q", result)
 		}
 	}
