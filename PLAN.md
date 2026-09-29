@@ -418,7 +418,7 @@ lands.
   - [x] Build a real multi-process chaos harness for kill/restart and partition/heal cases during migration and failover.
   - [x] Validate ioredis Cluster, node-redis Cluster, redis-py Cluster, and go-redis Cluster against the static three-node cluster smoke; broader `redis-cli -c` routing remains covered by the existing static routing smoke.
   - [x] Execute the interrupted-migration/failover restart matrix, including persistence/disk failure injection. `scripts/cluster-recovery-matrix.sh` now gates source/target migration crashes, failover restart, repeated recovery, majority partition/heal, rewrite filesystem failure, and corrupted-replica fail-closed/rebuild recovery.
-  - [ ] Establish reproducible multi-node routing, reshard, TLS migration, failover-recovery, and topology-observation benchmarks.
+  - [x] Establish reproducible multi-node routing, reshard, TLS migration, failover-recovery, and topology-observation benchmarks.
   - [ ] Retain long-running distributed soak evidence and complete the final operator/release documentation audit.
 
 ## Release discipline
