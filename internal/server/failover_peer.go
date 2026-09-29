@@ -186,7 +186,7 @@ func readRESPBulk(reader *bufio.Reader) ([]byte, error) {
 	return payload, nil
 }
 
-func queryFailoverPeer(addr string, timeout time.Duration, username, password, controlSecret string) (failoverPeerState, error) {
+func queryFailoverPeer(addr string, timeout time.Duration, username, password string, controlSecrets ...string) (failoverPeerState, error) {
 	conn, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
 		return failoverPeerState{}, err
@@ -197,7 +197,7 @@ func queryFailoverPeer(addr string, timeout time.Duration, username, password, c
 	if err := authenticateReplicationUpstream(conn, reader, username, password); err != nil {
 		return failoverPeerState{}, err
 	}
-	if err := authenticateInternalControlUpstream(conn, reader, controlSecret); err != nil {
+	if err := authenticateInternalControlUpstream(conn, reader, optionalInternalControlSecret(controlSecrets)); err != nil {
 		return failoverPeerState{}, err
 	}
 	if err := writeReplicationRESPCommand(conn, "SNUG.FAILOVER", "STATE"); err != nil {
@@ -297,7 +297,7 @@ func (s *Server) requestFailoverVote(now time.Time, lineage string, term uint64,
 	return reply, nil
 }
 
-func queryFailoverVote(addr string, timeout time.Duration, username, password, controlSecret, lineage string, term uint64, candidateID string, offset int64, priority int) (failoverVoteReply, error) {
+func queryFailoverVote(addr string, timeout time.Duration, username, password, lineage string, term uint64, candidateID string, offset int64, priority int, controlSecrets ...string) (failoverVoteReply, error) {
 	conn, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
 		return failoverVoteReply{}, err
@@ -308,7 +308,7 @@ func queryFailoverVote(addr string, timeout time.Duration, username, password, c
 	if err := authenticateReplicationUpstream(conn, reader, username, password); err != nil {
 		return failoverVoteReply{}, err
 	}
-	if err := authenticateInternalControlUpstream(conn, reader, controlSecret); err != nil {
+	if err := authenticateInternalControlUpstream(conn, reader, optionalInternalControlSecret(controlSecrets)); err != nil {
 		return failoverVoteReply{}, err
 	}
 	if err := writeReplicationRESPCommand(
@@ -434,12 +434,12 @@ func (s *Server) runFailoverElectionRound(now time.Time) (failoverRoundResult, e
 			200*time.Millisecond,
 			s.replicationMasterUser,
 			s.replicationMasterAuth,
-			s.clusterControlAuth,
 			local.MasterRunID,
 			term,
 			local.NodeID,
 			local.Offset,
 			local.Priority,
+			s.clusterControlAuth,
 		)
 		if err != nil {
 			continue
@@ -521,7 +521,7 @@ func (s *Server) requestFailoverLease(now time.Time, lineage string, term uint64
 	return reply
 }
 
-func queryFailoverLease(addr string, timeout time.Duration, username, password, controlSecret, lineage string, term uint64, leaderID string, ttl time.Duration) (failoverLeaseReply, error) {
+func queryFailoverLease(addr string, timeout time.Duration, username, password, lineage string, term uint64, leaderID string, ttl time.Duration, controlSecrets ...string) (failoverLeaseReply, error) {
 	conn, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
 		return failoverLeaseReply{}, err
@@ -532,7 +532,7 @@ func queryFailoverLease(addr string, timeout time.Duration, username, password, 
 	if err := authenticateReplicationUpstream(conn, reader, username, password); err != nil {
 		return failoverLeaseReply{}, err
 	}
-	if err := authenticateInternalControlUpstream(conn, reader, controlSecret); err != nil {
+	if err := authenticateInternalControlUpstream(conn, reader, optionalInternalControlSecret(controlSecrets)); err != nil {
 		return failoverLeaseReply{}, err
 	}
 	if err := writeReplicationRESPCommand(
@@ -597,7 +597,7 @@ func (s *Server) acquireFailoverLeaseRound(now time.Time, lineage string, term u
 			continue
 		}
 		requestStart := now
-		reply, err := queryFailoverLease(addr, 200*time.Millisecond, s.replicationMasterUser, s.replicationMasterAuth, s.clusterControlAuth, lineage, term, leaderID, leaseTTL)
+		reply, err := queryFailoverLease(addr, 200*time.Millisecond, s.replicationMasterUser, s.replicationMasterAuth, lineage, term, leaderID, leaseTTL, s.clusterControlAuth)
 		if err != nil {
 			continue
 		}
@@ -862,7 +862,7 @@ func (s *Server) requestFailoverReparent(now time.Time, lineage string, term uin
 	return reply, nil
 }
 
-func queryFailoverReparent(addr string, timeout time.Duration, username, password, controlSecret, lineage string, term uint64, leaderID string) (failoverReparentReply, error) {
+func queryFailoverReparent(addr string, timeout time.Duration, username, password, lineage string, term uint64, leaderID string, controlSecrets ...string) (failoverReparentReply, error) {
 	conn, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
 		return failoverReparentReply{}, err
@@ -873,7 +873,7 @@ func queryFailoverReparent(addr string, timeout time.Duration, username, passwor
 	if err := authenticateReplicationUpstream(conn, reader, username, password); err != nil {
 		return failoverReparentReply{}, err
 	}
-	if err := authenticateInternalControlUpstream(conn, reader, controlSecret); err != nil {
+	if err := authenticateInternalControlUpstream(conn, reader, optionalInternalControlSecret(controlSecrets)); err != nil {
 		return failoverReparentReply{}, err
 	}
 	if err := writeReplicationRESPCommand(
@@ -920,10 +920,10 @@ func (s *Server) convergeFailoverReplicas(now time.Time) {
 				200*time.Millisecond,
 				s.replicationMasterUser,
 				s.replicationMasterAuth,
-				s.clusterControlAuth,
 				lineage,
 				term,
 				leaderID,
+				s.clusterControlAuth,
 			)
 			continue
 		}
@@ -934,10 +934,10 @@ func (s *Server) convergeFailoverReplicas(now time.Time) {
 				200*time.Millisecond,
 				s.replicationMasterUser,
 				s.replicationMasterAuth,
-				s.clusterControlAuth,
 				lineage,
 				term,
 				leaderID,
+				s.clusterControlAuth,
 			)
 		}
 	}
@@ -1019,7 +1019,7 @@ func (s *Server) requestFailoverDemote(now time.Time, lineage string, term uint6
 	return reply, nil
 }
 
-func queryFailoverDemote(addr string, timeout time.Duration, username, password, controlSecret, lineage string, term uint64, leaderID string) (failoverDemoteReply, error) {
+func queryFailoverDemote(addr string, timeout time.Duration, username, password, lineage string, term uint64, leaderID string, controlSecrets ...string) (failoverDemoteReply, error) {
 	conn, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
 		return failoverDemoteReply{}, err
@@ -1030,7 +1030,7 @@ func queryFailoverDemote(addr string, timeout time.Duration, username, password,
 	if err := authenticateReplicationUpstream(conn, reader, username, password); err != nil {
 		return failoverDemoteReply{}, err
 	}
-	if err := authenticateInternalControlUpstream(conn, reader, controlSecret); err != nil {
+	if err := authenticateInternalControlUpstream(conn, reader, optionalInternalControlSecret(controlSecrets)); err != nil {
 		return failoverDemoteReply{}, err
 	}
 	if err := writeReplicationRESPCommand(
@@ -1092,11 +1092,11 @@ func (s *Server) verifyFailoverLeaderQuorum(now time.Time, lineage string, term 
 			200*time.Millisecond,
 			s.replicationMasterUser,
 			s.replicationMasterAuth,
-			s.clusterControlAuth,
 			lineage,
 			term,
 			leaderID,
 			leaseTTL,
+			s.clusterControlAuth,
 		)
 		if err != nil {
 			continue
