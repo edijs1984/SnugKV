@@ -22,6 +22,7 @@ func TestFailoverDiscoverySeedValidation(t *testing.T) {
 func TestFailoverDiscoveryConfigValid(t *testing.T) {
 	c := Default()
 	c.MasterAuth = "secret"
+	c.ClusterControlAuth = "control-secret"
 	c.FailoverDiscoverySeeds = []string{"127.0.0.1:7001"}
 	c.FailoverDiscoveryIntervalMS = 250
 	if err := c.Validate(); err != nil {
