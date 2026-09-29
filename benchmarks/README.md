@@ -540,3 +540,24 @@ The local topology-rendering commands (`SLOTS`, `NODES`) were materially
 cheaper than the commands that perform shard/failover observation
 (`SHARDS`, `INFO`, `HEALTH`). This is a smoke result only; use repeated
 runs before treating it as a stable baseline.
+
+
+### Cluster topology observation repeated baseline — 2026-09-29
+
+Three repeated 100-operation runs over one persistent RESP2 connection produced
+the following median throughput and median p50 latency:
+
+| Command | Median ops/s | Median p50 |
+|---|---:|---:|
+| `CLUSTER SLOTS` | 473.90 | 1.73 ms |
+| `CLUSTER NODES` | 282.39 | 2.91 ms |
+| `CLUSTER SHARDS` | 152.69 | 6.18 ms |
+| `CLUSTER INFO` | 118.44 | 6.37 ms |
+| `CLUSTER HEALTH` | 159.97 | 5.97 ms |
+
+The local-rendering commands remained consistently cheaper than peer-observing
+commands. The peer-observing commands also showed intermittent long-tail events
+on this development machine: one `CLUSTER SHARDS` run reached ~209 ms max,
+`CLUSTER INFO` reached ~570 ms max, and `CLUSTER HEALTH` reached ~207 ms
+max, while their p50 values remained near 6 ms. Treat these as useful
+observability-path tail-latency evidence, not as data-path latency.
