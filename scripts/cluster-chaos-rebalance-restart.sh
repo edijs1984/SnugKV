@@ -158,16 +158,16 @@ apply_pid=$!
 
 echo "[4/7] wait for partial migration, then SIGKILL source"
 partial=0
-for _ in $(seq 1 400); do
+for _ in $(seq 1 1000); do
+  # Probe the target only. The source is busy executing the rebalance command,
+  # so source-side introspection can be delayed until migration completes.
   target_count="$(redis-cli --raw -p "$TARGET_PORT" DBSIZE 2>/dev/null || echo 0)"
-  nodes="$(redis-cli --raw -p "$SOURCE_PORT" CLUSTER NODES 2>/dev/null || true)"
   if [[ "$target_count" =~ ^[0-9]+$ ]] &&
-     (( target_count > 0 && target_count < KEY_COUNT )) &&
-     grep -q "\[$SLOT->-" <<<"$nodes"; then
+     (( target_count > 0 && target_count < KEY_COUNT )); then
     partial="$target_count"
     break
   fi
-  sleep 0.01
+  sleep 0.005
 done
 
 if (( partial == 0 )); then
