@@ -2,7 +2,7 @@
 
 SnugKV targets common Redis-compatible application workloads while staying
 explicit about protocol, command, and topology differences. This document tracks
-the public compatibility boundary; issue #55 tracks the implementation backlog.
+the public compatibility boundary; issue #55 tracks command-family compatibility work. For the canonical current distributed handoff, see `docs/PROJECT-STATE.md`.
 
 ## Current status
 
@@ -51,11 +51,11 @@ tracking/caching and optional RESP3 client-specific hardening also remain.
 
 | Client | Version tested | Protocol | Status |
 |---|---:|---:|---|
-| redis-cli | local Redis CLI | RESP2 | ✅ Pass |
-| ioredis | compatibility harness | RESP2 | ✅ Pass |
-| node-redis | compatibility harness | RESP2 | ✅ Pass |
-| redis-py | 8.1.0 | RESP2 | ✅ Pass |
-| go-redis | v9.22.0 | RESP2 | ✅ Pass |
+| redis-cli | local Redis CLI | RESP2/RESP3 | ✅ Pass |
+| ioredis | compatibility harness | RESP2/RESP3 | ✅ Pass (non-Cluster smoke) |
+| node-redis | compatibility harness | RESP2/RESP3 | ✅ Pass (non-Cluster smoke) |
+| redis-py | 8.1.0 | RESP2/RESP3 | ✅ Pass (non-Cluster smoke) |
+| go-redis | v9.22.0 | RESP2/RESP3 | ✅ Pass (non-Cluster smoke) |
 
 Passing these smoke tests does not mean every command exposed by each client
 library is implemented.
@@ -566,15 +566,16 @@ For queries without `SORTBY`, SnugKV does not promise Redis's incidental result 
 
 Prioritized backlog:
 
-1. Deeper dynamic SORT/script/Function ACL edge audits.
-2. `SCRIPT DEBUG`, exact `allow-oom`, and deeper scripting command-flag/OOM parity.
-3. Further distributed migration/cluster transfer behavior beyond standalone `MIGRATE`.
-4. Optional RESP3 client-library smoke coverage and attribute-frame support if required.
-5. Advanced CLIENT tracking/caching/redirection features where real clients require them.
-7. Deprecated `GEORADIUS*` aliases if legacy client compatibility justifies them.
-8. Replication/failover/cluster only after the single-node compatibility target is mature.
+1. Multi-process cluster/failover chaos and recovery matrices.
+2. ioredis/node-redis/redis-py/go-redis Cluster-mode smoke and broader `redis-cli -c` coverage.
+3. Long-running distributed soak and disk/persistence failure injection.
+4. Reproducible multi-node routing, resharding, TLS migration, and failover benchmarks.
+5. Optional RESP3 attribute-frame support if future supported commands require it.
+6. Advanced CLIENT tracking/caching/redirection features where real clients require them.
+7. Remaining command-family edge cases documented in focused compatibility audits.
+8. Optional fully automatic membership admission.
 
-See GitHub issue #55 and `PLAN.md` for the working roadmap.
+See `docs/PROJECT-STATE.md`, GitHub issue #55, and `PLAN.md` for the working roadmap.
 
 ## Compatibility philosophy
 

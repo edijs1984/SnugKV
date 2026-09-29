@@ -63,3 +63,35 @@ The audited ACL surface enforces command/category rules, key patterns, classic a
 sharded Pub/Sub channel patterns, and root-or-selector rule-set authorization.
 Deeper dynamic SORT/script/Function ACL edge auditing remains optional hardening;
 see [ACL compatibility](ACL-COMPATIBILITY.md).
+
+## Cluster and failover operations
+
+Configured cluster deployments require a dedicated internal-control credential:
+
+```json
+{
+  "cluster_enabled": true,
+  "cluster_control_auth": "replace-with-a-strong-secret"
+}
+```
+
+Equivalent environment/CLI forms are `SNUGKV_CLUSTER_CONTROL_AUTH` and
+`-cluster-control-auth`. The credential is separate from ordinary ACL access
+and replication authentication. Internal peers authenticate normally where
+configured, then establish a connection-scoped `SNUG.INTERNAL AUTH` identity
+for private cluster/failover RPCs.
+
+Do not expose or reuse `cluster_control_auth` as an application credential.
+`AUTH`, `HELLO`, and `RESET` revoke an already-established internal identity.
+
+For operator diagnosis use the normal ACL-protected surfaces such as
+`CLUSTER INFO`, `CLUSTER NODES`, `CLUSTER SHARDS`, `CLUSTER HEALTH`,
+`CLUSTER CONSISTENCY`, and failover topology/health commands.
+
+Internal rebalance migration can use the verified replication TLS transport when
+`mastertls` is enabled. Public Redis-compatible `MIGRATE` keeps its ordinary
+transport semantics.
+
+For distributed deployment status and remaining hardening gates, see
+[Project State](PROJECT-STATE.md) and
+[Cluster Production Hardening](CLUSTER-PRODUCTION-HARDENING.md).

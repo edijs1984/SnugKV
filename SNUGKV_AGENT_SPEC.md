@@ -2,7 +2,7 @@
 
 ## Foundational Product and Engineering Specification
 
-**Status:** Historical/foundational specification; current implementation status is tracked in `README.md`, `COMPATIBILITY.md`, `PLAN.md`, and `PROGRESS.md`  
+**Status:** Historical/foundational specification; canonical current status is `docs/PROJECT-STATE.md`, with `README.md`, `COMPATIBILITY.md`, `PLAN.md`, and `PROGRESS.md` as supporting sources  
 **Implementation language:** Go  
 **Product category:** Redis-compatible, memory-efficient in-memory data store  
 **Primary differentiator:** Transparent, reversible and workload-aware value encoding  
@@ -14,7 +14,7 @@
 
 This file records the original product constraints, storage invariants, and architectural direction that shaped SnugKV. It is no longer the authoritative command roadmap: the implementation has intentionally grown well beyond the original version-0.1 surface.
 
-Before editing code, use the current repository state plus `COMPATIBILITY.md`, `PLAN.md`, `PROGRESS.md`, and the focused documents under `docs/` as the source of truth for implemented commands, compatibility status, and next work. Where this historical specification conflicts with those current sources, the current sources win.
+Before editing code, read `docs/PROJECT-STATE.md` first, then use the current repository state plus `COMPATIBILITY.md`, `PLAN.md`, `PROGRESS.md`, and focused documents under `docs/` as the source of truth for implemented commands, compatibility status, and next work. Where this historical specification conflicts with those current sources, the current sources win.
 
 Agents must follow these rules:
 
@@ -35,7 +35,7 @@ Agents must follow these rules:
    ```
 
 9. Do not introduce an external dependency when the standard library is sufficient. When a dependency is justified, document the reason in an ADR.
-10. Do not add clustering, distributed consensus or broad Redis compatibility before the single-node engine satisfies its acceptance criteria.
+10. The original sequencing constraint against distributed work is historical: replication/failover/cluster now exist. Do not redesign distributed invariants without first reading `docs/PROJECT-STATE.md`, `docs/CLUSTER-PRODUCTION-HARDENING.md`, and the relevant failover/replication audits.
 11. Keep changes small enough to review. A milestone should be split into independently testable vertical slices.
 12. Record major technical decisions in `docs/decisions/` as Architecture Decision Records.
 13. Maintain `PROGRESS.md` with completed items, current work, known failures and the next recommended task.
@@ -58,7 +58,7 @@ A contribution is complete only when:
 
 ## 2. Executive summary
 
-SnugKV is a single-node in-memory key-value database written in Go. It exposes a deliberately small Redis-compatible interface while storing values in more compact representations whenever doing so is safe and beneficial.
+SnugKV began as a single-node in-memory key-value database written in Go, but the implementation has grown into a broad Redis-compatible datastore with replication, automatic failover, and cluster/sharding support. Its original memory-efficiency goal remains: store values in more compact representations whenever doing so is safe and beneficial.
 
 Applications frequently cache values in inefficient textual forms:
 
@@ -1791,18 +1791,20 @@ This sequence creates a trustworthy baseline. Compression work without a correct
 
 ## 33. Future roadmap
 
-Only consider these after version 1 acceptance:
+This section is no longer the active roadmap. RESP3, native HASH/LIST/SET/ZSET,
+typed JSON, replication, automatic failover, and cluster routing have already
+moved into the implementation.
 
-- RESP3;
-- hashes, lists, sets and sorted sets;
-- semantic typed JSON commands;
+Current distributed work is production hardening: multi-process chaos,
+client-library Cluster validation, failure/recovery matrices, long-running soak,
+and multi-node benchmarks. See `docs/PROJECT-STATE.md`.
+
+Longer-term optional ideas still include:
+
 - Zstandard trained dictionaries;
 - cross-shard schema sharing;
 - tenant-aware dictionaries and limits;
 - embedded Go API;
-- replication;
-- Raft-based high availability;
-- partitioning and cluster routing;
 - disk/NVMe cold tier;
 - S3 snapshot backup;
 - Kubernetes operator;

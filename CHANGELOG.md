@@ -58,6 +58,9 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Added
 
+- Distributed hardening now includes a dedicated internal cluster-control credential (`cluster_control_auth`), connection-scoped `SNUG.INTERNAL AUTH`, peer-only RPC gating, and revocation on AUTH/HELLO/RESET.
+- Cluster/sharding core includes Redis-compatible slot routing, MOVED/ASK/ASKING, guarded reshard/recovery, membership, replica-aware shard topology, failover ownership convergence, health/consistency views, and stale-coordinator/write-fencing protections.
+- Added `docs/PROJECT-STATE.md` as the canonical maintainer/agent handoff for current implementation status and remaining hardening work.
 - Redis 8.10-audited JSONPath support across member/index selectors, wildcards, recursive descent, slices/unions, scalar/logical/regex filters, membership/set operators, size/empty predicates, arithmetic and function expressions, multi-match updates/deletes, and AOF restart recovery. Object insertion order and exact error wording remain documented compatibility boundaries.
 - Redis-compatible legacy `GEORADIUS` and `GEORADIUSBYMEMBER` aliases, including COUNT/ANY, WITHDIST/WITHHASH/WITHCOORD, STORE/STOREDIST, Redis 8.2 error compatibility, and dynamic source/destination key discovery.
 - Redis-compatible `SCRIPT DEBUG YES|SYNC|NO` connection state with LDB continue/end-session wire framing, async debug execution on a disposable logical store clone, and SYNC persistence on the real dataset. Full line stepping/breakpoints remain explicitly deferred because GopherLua lacks debug hooks.

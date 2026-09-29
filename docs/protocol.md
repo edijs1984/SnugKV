@@ -1,4 +1,4 @@
-# RESP2 protocol
+# RESP protocol
 
 TCP requests are nonempty flat RESP2 arrays of non-null bulk strings. Binary and
 empty values, partial TCP frames, and pipelined commands are supported. Inline
@@ -56,8 +56,22 @@ when an infinitely blocked client disconnects is a remaining hardening item.
 
 ## RESP version
 
-`HELLO 2` is supported. RESP3 is not implemented and `HELLO 3` is rejected with
-`NOPROTO unsupported protocol version`.
+RESP2 remains the default wire protocol. `HELLO 3` negotiates RESP3 and
+`HELLO 2` switches a connection back to RESP2. The implemented RESP3 surface
+includes the null/map/set/double/verbatim reply forms used by current commands,
+nested COMMAND/ACL shapes, and Pub/Sub push frames. RESP2 behavior remains
+regression-covered; see `RESP3-COMPATIBILITY.md` for the audited boundaries.
+
+## Cluster routing
+
+In cluster mode SnugKV uses Redis-compatible 16,384 hash slots and hash tags.
+Requests can receive `MOVED`, `ASK`, `CROSSSLOT`, or
+`CLUSTERDOWN Hash slot not served` according to the current topology.
+`ASKING` is connection-scoped and one-shot.
+
+Peer-only distributed control uses a separate connection-scoped internal identity
+established with `SNUG.INTERNAL AUTH`; it is not equivalent to normal ACL admin
+access and is revoked by `RESET`, `AUTH`, or `HELLO`.
 
 ## Administration
 

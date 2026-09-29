@@ -1,8 +1,10 @@
 # SnugKV TODO
 
 > **Historical backlog:** this file preserves early planning material and many
-> checkboxes below no longer reflect the implemented repository. Current status
-> and next work are authoritative in `README.md`, `COMPATIBILITY.md`, `PLAN.md`,
+> checkboxes below no longer reflect the implemented repository. Do not use
+> unchecked items here to infer missing features. Current status and next work
+> are authoritative in `docs/PROJECT-STATE.md`, `README.md`,
+> `COMPATIBILITY.md`, `PLAN.md`,
 > `PROGRESS.md`, and GitHub issue #55. In particular, RESP3, AUTH/ACL, and the
 > documented Streams Redis 8.2 differential audit are complete for their current
 > scoped milestones.
@@ -21,9 +23,9 @@ Expand SnugKV from the current Redis-compatible string/TTL subset into a broadly
 ---
 
 
-# EXECUTION ROADMAP — Quality → Public Alpha → Revenue
+# HISTORICAL EXECUTION ROADMAP — Quality → Public Alpha → Revenue
 
-This section defines the current execution order.
+This section records an earlier execution order. The current engineering sequence is in `docs/PROJECT-STATE.md` and `PLAN.md`.
 
 The large Redis compatibility backlog below remains valid, but work should follow
 this roadmap unless a newly discovered correctness or security issue takes priority.
@@ -276,9 +278,10 @@ First commercial milestone:
 
 ---
 
-## Phase F — Compatibility expansion
+## Phase F — Compatibility expansion (historical)
 
-Only accelerate these after the alpha quality gate is credible.
+Most of the major families listed below have since been implemented. Keep this
+section as planning history; consult `COMPATIBILITY.md` for current coverage.
 
 Priority order:
 
@@ -793,9 +796,10 @@ Security:
 
 ---
 
-# P3 — Replication
+# P3 — Replication (historical plan; implemented core)
 
-Only begin after the single-node command/storage model is stable.
+This section predates the implemented replication/failover system. See
+`docs/PROJECT-STATE.md` and the replication audit documents for current status.
 
 - [ ] replication protocol design
 - [ ] primary/replica roles
@@ -814,9 +818,11 @@ Consider whether SnugKV should copy Redis replication semantics exactly or use a
 
 ---
 
-# P3 — Cluster / Distributed Mode
+# P3 — Cluster / Distributed Mode (historical plan; implemented core)
 
-Do not rush this.
+The foundational cluster work described here is now implemented. Remaining work
+is production hardening: chaos/recovery matrices, client-library validation,
+soak, and multi-node benchmarks.
 
 - [ ] partitioning strategy
 - [ ] consistent hashing vs Redis hash slots
@@ -1158,11 +1164,12 @@ Rare administrative, cluster, scripting, module, geospatial, probabilistic, and 
 
 ---
 
-# Immediate Next Tasks
+# Immediate Next Tasks (historical)
 
-Start here:
+This list is obsolete and retained for provenance. Current next work starts with
+the multi-process chaos harness described in `docs/PROJECT-STATE.md`.
 
-1. [ ] Implement `TYPE`
+1. [x] `TYPE` is implemented
 2. [ ] Implement cursor-based `SCAN`
 3. [ ] Implement `KEYS`
 4. [ ] Implement `FLUSHDB`
