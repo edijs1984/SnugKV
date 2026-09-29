@@ -1540,18 +1540,23 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			}
 			return formatBulkString(payload), nil
 		case "DEMOTE":
-			if len(args) != 5 {
+			if len(args) != 5 && len(args) != 6 {
 				return nil, errors.New("ERR wrong number of arguments for 'snug.failover|demote' command")
 			}
 			term, err := strconv.ParseUint(string(args[3]), 10, 64)
 			if err != nil {
 				return nil, errors.New("ERR invalid failover term")
 			}
+			targetAddr := ""
+			if len(args) == 6 {
+				targetAddr = string(args[5])
+			}
 			reply, err := s.requestFailoverDemote(
 				time.Now(),
 				string(args[2]),
 				term,
 				string(args[4]),
+				targetAddr,
 			)
 			if err != nil {
 				return nil, errors.New("ERR failover demote failed")
