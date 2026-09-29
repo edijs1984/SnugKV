@@ -469,8 +469,11 @@ func (s *Server) requestFailoverLease(now time.Time, lineage string, term uint64
 	}
 	localLineage := local.MasterRunID
 	if localLineage == "" && local.Role == "master" {
+		// The original primary uses its own replication run ID as the shard
+		// lineage. Promoted leaders retain the failed primary's lineage.
+		localLineage = local.NodeID
 		s.failoverLeaderMu.RLock()
-		if s.failoverLeaderActive {
+		if s.failoverLeaderActive && s.failoverLeaderLineage != "" {
 			localLineage = s.failoverLeaderLineage
 		}
 		s.failoverLeaderMu.RUnlock()
@@ -686,6 +689,44 @@ func (s *Server) deactivateFailoverLeader() {
 	s.failoverLeaderLeaseUntil = time.Time{}
 	s.failoverLeaderFenced = false
 	s.failoverLeaderMu.Unlock()
+}
+
+func (s *Server) establishPrimaryQuorumLease(now time.Time) error {
+	membership := s.failoverMembershipSnapshot()
+	if membership.Retired || membership.JointActive || membership.Quorum <= 0 || len(membership.Peers) == 0 {
+		return nil
+	}
+
+	local := s.localFailoverState(now)
+	if local.Role != "master" || local.NodeID == "" {
+		return nil
+	}
+
+	s.failoverVoteMu.Lock()
+	voteTerm := s.failoverTerm
+	s.failoverVoteMu.Unlock()
+	s.failoverLeaseMu.Lock()
+	leaseTerm := s.failoverLeaseTerm
+	s.failoverLeaseMu.Unlock()
+
+	term := voteTerm
+	if leaseTerm > term {
+		term = leaseTerm
+	}
+	term++
+
+	lease, err := s.acquireFailoverLeaseRound(now, local.NodeID, term, local.NodeID)
+	if err != nil {
+		return err
+	}
+	if !lease.QuorumReached || lease.ExpiresAt.IsZero() {
+		// Activate a fenced leader state so the primary cannot continue serving
+		// writes without quorum.
+		s.activateFailoverLeader(term, local.NodeID, local.NodeID, time.Time{})
+		return nil
+	}
+	s.activateFailoverLeader(term, local.NodeID, local.NodeID, lease.ExpiresAt)
+	return nil
 }
 
 func (s *Server) maintainFailoverLeaderLease(now time.Time) error {
