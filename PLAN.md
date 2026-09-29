@@ -408,8 +408,11 @@ lands.
 - [x] Authenticated failover peer discovery/gossip with stale-health observability, dry-run discovery planning, and explicit discovered-peer adoption through the dual-majority membership protocol. Audit: `docs/AUTOMATIC-FAILOVER-AUDIT.md`.
 - [x] Richer failover operator/topology controls: topology/health views, transition diagnosis, and explicit retry of already-durable commit-forward recovery. Audit: `docs/AUTOMATIC-FAILOVER-AUDIT.md`.
 - [ ] Optional fully automatic membership admission policy.
-- [ ] Cluster/sharding protocol.
-- [ ] Multi-node consistency and recovery model.
+- [x] Cluster/sharding protocol core: Redis-compatible hash-slot routing, MOVED/ASK/ASKING, CROSSSLOT enforcement, CLUSTER SLOTS/NODES/SHARDS/INFO, guarded resharding, deterministic rebalance planning/apply/recovery, dynamic zero-slot membership, safe node evacuation/removal, replica-aware shard topology, and operator health/consistency views.
+- [x] Multi-node consistency and recovery core: topology-digest stale-coordinator fencing, failover/rebalance serialization, majority-backed write leases for promoted and original primaries, foreign-lease write fencing, persisted topology/transition recovery, restart-safe rebalance resume, and target IMPORTING reassertion.
+- [x] Cluster production hardening: authenticated control-plane RPC, TLS-capable internal rebalance data migration, live TCP MOVED/ASK/CLUSTERDOWN routing coverage, and restart-during-reshard recovery. Audit: `docs/CLUSTER-PRODUCTION-HARDENING.md`.
+- [ ] Separate internal cluster-control authorization from ordinary public CLUSTER ACL access; current control RPCs are authenticated but internal subcommands are not yet cryptographically/session-distinguished from a sufficiently privileged client.
+- [ ] Broader multi-process chaos, client-library cluster smoke, long-running partition/recovery soak, and benchmark coverage before claiming production-complete distributed operation.
 
 ## Release discipline
 
