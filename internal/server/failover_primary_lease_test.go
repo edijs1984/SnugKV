@@ -152,3 +152,57 @@ func TestStandaloneMasterWithoutFailoverQuorumIsNotFenced(t *testing.T) {
 		t.Fatalf("standalone write: %v", err)
 	}
 }
+
+
+func TestPrimaryUnfencesAfterQuorumReturns(t *testing.T) {
+	now := time.Now()
+	primary := New(engine.New())
+
+	primary.replication.mu.RLock()
+	lineage := primary.replication.runID
+	primary.replication.mu.RUnlock()
+
+	peerA := newPrimaryLeaseReplica(t, lineage)
+	peerB := newPrimaryLeaseReplica(t, lineage)
+	addrA := peerA.listener.Addr().String()
+	addrB := peerB.listener.Addr().String()
+	primary.failoverPeers = []string{addrA, addrB}
+	primary.failoverQuorum = 2
+
+	if err := primary.maintainAutoFailover(now); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, _, expiresAt, _ := primary.failoverLeaderState()
+
+	_ = peerA.Close()
+	_ = peerB.Close()
+	if err := primary.maintainAutoFailover(expiresAt.Add(time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	if !primary.failoverWritesFenced(expiresAt.Add(time.Millisecond)) {
+		t.Fatal("primary should be fenced after quorum loss")
+	}
+
+	replacementA := newPrimaryLeaseReplica(t, lineage)
+	replacementB := newPrimaryLeaseReplica(t, lineage)
+	primary.failoverPeers = []string{
+		replacementA.listener.Addr().String(),
+		replacementB.listener.Addr().String(),
+	}
+
+	recoverAt := expiresAt.Add(2 * time.Second)
+	if err := primary.maintainAutoFailover(recoverAt); err != nil {
+		t.Fatal(err)
+	}
+	if primary.failoverWritesFenced(recoverAt) {
+		t.Fatal("primary remained fenced after quorum returned")
+	}
+	if _, err := primary.execute([][]byte{
+		[]byte("SET"), []byte("primary:recovered"), []byte("ok"),
+	}); err != nil {
+		t.Fatalf("write after quorum recovery: %v", err)
+	}
+
+	_ = addrA
+	_ = addrB
+}
