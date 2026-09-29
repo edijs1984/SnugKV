@@ -407,6 +407,27 @@ not a performance baseline.
 Do not use a single smoke run as a public performance claim. Use multiple clean
 repeats and preserve the raw JSONL output.
 
+
+### Cluster routing development snapshot — 2026-09-29
+
+On the 4-logical-CPU development machine with 100,000 keys, 500,000 GETs,
+4 workers, pipeline depth 256, 256-byte values, and three repeats:
+
+| Mode | GET ops/s runs | Median ops/s | p50 range | Redirects/run |
+|---|---:|---:|---:|---:|
+| Direct owner | 184,239 / 204,092 / 201,683 | 201,683 | 17.17–18.33 us | 0 |
+| Lazy slot cache | 176,279 / 176,996 / 180,385 | 176,996 | 19.49–19.93 us | ~42.5k |
+| Forced MOVED | 139,942 / 135,403 / 137,965 | 137,965 | 25.99–26.96 us | 333,500 |
+
+On this exact benchmark, lazy per-worker slot caching was about 12.2% below
+direct-owner throughput, while deliberately forcing every non-local operation
+through a `MOVED` round trip was about 31.6% below direct-owner throughput.
+These are development measurements of this harness and machine, not general
+cluster-performance claims.
+
+The initial distributed load completed at 127,077 SET/s with zero errors and
+distributed 100,000 keys approximately evenly across the three static owners.
+
 Example:
 
 ```sh
