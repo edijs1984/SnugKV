@@ -123,8 +123,11 @@ func (c Config) Validate() error {
 				owned[slot] = true
 			}
 		}
-	} else if c.ClusterNodeAddr != "" || len(c.ClusterSlots) > 0 {
-		return errors.New("cluster_node_addr and cluster_slots require cluster_enabled")
+		if c.ClusterControlAuth == "" {
+			return errors.New("cluster_enabled requires cluster_control_auth")
+		}
+	} else if c.ClusterNodeAddr != "" || c.ClusterControlAuth != "" || len(c.ClusterSlots) > 0 {
+		return errors.New("cluster_node_addr, cluster_control_auth and cluster_slots require cluster_enabled")
 	}
 
 	if c.FailoverAdvertiseAddr != "" {
