@@ -5,6 +5,7 @@ import "testing"
 func TestClusterConfigValid(t *testing.T) {
 	c := Default()
 	c.ClusterEnabled = true
+	c.ClusterControlAuth = "control-secret"
 	c.ClusterNodeAddr = "127.0.0.1:7000"
 	c.ClusterSlots = map[string]string{
 		"0-8191":     "127.0.0.1:7000",
