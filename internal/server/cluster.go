@@ -1214,6 +1214,21 @@ func (s *Server) sendClusterControlCommand(addr string, args ...string) error {
 	); err != nil {
 		return fmt.Errorf("ERR rebalance target authentication failed: %w", err)
 	}
+	if s.clusterControlAuth != "" {
+		if err := writeReplicationRESPCommand(conn, "SNUG.INTERNAL", "AUTH", s.clusterControlAuth); err != nil {
+			return fmt.Errorf("ERR cluster control authentication write failed: %w", err)
+		}
+		line, err := readMigrateLine(reader)
+		if err != nil {
+			return fmt.Errorf("ERR cluster control authentication read failed: %w", err)
+		}
+		if line != "+OK" {
+			if strings.HasPrefix(line, "-") {
+				return errors.New(strings.TrimPrefix(line, "-"))
+			}
+			return fmt.Errorf("ERR unexpected cluster control authentication response: %s", line)
+		}
+	}
 	if err := writeReplicationRESPCommand(conn, args...); err != nil {
 		return fmt.Errorf("ERR rebalance target write failed: %w", err)
 	}
