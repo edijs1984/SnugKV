@@ -25,6 +25,8 @@ func TestFailoverHealthReportsReachableQuorum(t *testing.T) {
 	peerAddr := peer.listener.Addr().String()
 	configureDynamicMembershipNode(t, local, group, 3, []string{peerAddr}, 2)
 	configureDynamicMembershipNode(t, peer, group, 3, []string{localAddr}, 2)
+	local.server.clusterControlAuth = "health-control-secret"
+	peer.server.clusterControlAuth = "health-control-secret"
 
 	health := local.server.failoverHealth(time.Now())
 	if health.Status != "healthy" {
