@@ -415,9 +415,9 @@ lands.
 - [x] Cluster production hardening: authenticated control-plane RPC, TLS-capable internal rebalance data migration, live TCP MOVED/ASK/CLUSTERDOWN routing coverage, and restart-during-reshard recovery. Audit: `docs/CLUSTER-PRODUCTION-HARDENING.md`.
 - [x] Separate internal cluster-control authorization from ordinary public ACL access: configured clusters require `cluster_control_auth`; peer connections establish a connection-scoped internal identity with `SNUG.INTERNAL AUTH`; private cluster/failover RPCs reject ordinary authenticated clients; RESET/AUTH/HELLO revoke the internal identity.
 - [ ] Broader multi-process chaos, client-library cluster smoke, long-running partition/recovery soak, and benchmark coverage before claiming production-complete distributed operation.
-  - [ ] Build a real multi-process chaos harness for kill/restart and partition/heal cases during migration and failover.
+  - [x] Build a real multi-process chaos harness for kill/restart and partition/heal cases during migration and failover.
   - [x] Validate ioredis Cluster, node-redis Cluster, redis-py Cluster, and go-redis Cluster against the static three-node cluster smoke; broader `redis-cli -c` routing remains covered by the existing static routing smoke.
-  - [ ] Execute the interrupted-migration/failover restart matrix, including persistence/disk failure injection.
+  - [ ] Execute the interrupted-migration/failover restart matrix, including persistence/disk failure injection. The combined runner is now available at `scripts/cluster-recovery-matrix.sh`; mark complete after the full matrix gate passes.
   - [ ] Establish reproducible multi-node routing, reshard, TLS migration, failover-recovery, and topology-observation benchmarks.
   - [ ] Retain long-running distributed soak evidence and complete the final operator/release documentation audit.
 
