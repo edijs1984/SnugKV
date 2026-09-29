@@ -1385,7 +1385,7 @@ func (s *Server) rebalanceMoveOneSlot(state clusterStateSnapshot, move clusterRe
 		result, err := s.executeClusterMigrateDurableLocked(
 			s.rebalanceMigrateKeysArgs(host, port, keys),
 		)
-		remaining := s.store.Exists(keys)
+		remaining := int(s.store.Exists(keys))
 		moved += len(keys) - remaining
 		if err != nil {
 			if moved == 0 {
@@ -1445,7 +1445,7 @@ func (s *Server) resumeRebalanceSlot(state clusterStateSnapshot, slot int) (int,
 		result, err := s.executeClusterMigrateDurableLocked(
 			s.rebalanceRecoveryMigrateKeysArgs(host, port, keys),
 		)
-		remaining := s.store.Exists(keys)
+		remaining := int(s.store.Exists(keys))
 		moved += len(keys) - remaining
 		if err != nil {
 			return moved, err
