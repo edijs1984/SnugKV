@@ -10,6 +10,7 @@ func TestFailoverElectionConfigValidation(t *testing.T) {
 	cfg.FailoverPeers = []string{"127.0.0.1:6381", "127.0.0.1:6382"}
 	cfg.FailoverQuorum = 2
 	cfg.MasterAuth = "failover-secret"
+	cfg.ClusterControlAuth = "control-secret"
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("valid failover config: %v", err)
 	}
