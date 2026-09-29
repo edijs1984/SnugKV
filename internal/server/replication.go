@@ -1717,25 +1717,30 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 		if err != nil {
 			return err
 		}
-		if s.journal == nil && s.store.MaxMemory() == 0 {
-			key, value, plainSet, decodeErr := decodePlainSetReplicationFrame(frame)
-			if decodeErr != nil {
-				return decodeErr
-			}
-			if plainSet {
-				s.durableMu.Lock()
+		key, value, plainSet, decodeErr := decodePlainSetReplicationFrame(frame)
+		if decodeErr != nil {
+			return decodeErr
+		}
+		if plainSet {
+			s.durableMu.Lock()
+			if s.journal == nil && s.store.MaxMemory() == 0 {
 				err = s.store.SetPlain(string(key), value)
 				if err == nil {
 					s.refreshWatchesLocked()
 				}
-				s.durableMu.Unlock()
-				if err != nil {
-					return err
-				}
-				replicatedOffset := s.forwardReplicatedSnugFrame(frame)
-				s.noteReplicaAOFOffset(replicatedOffset)
-				continue
+			} else {
+				err = s.applySnugReplicationRecordsLocked([]persistence.Record{{
+					Key:   append([]byte(nil), key...),
+					Value: append([]byte(nil), value...),
+				}})
 			}
+			s.durableMu.Unlock()
+			if err != nil {
+				return err
+			}
+			replicatedOffset := s.forwardReplicatedSnugFrame(frame)
+			s.noteReplicaAOFOffset(replicatedOffset)
+			continue
 		}
 
 		records, err := decodeReplicationFrame(frame)
