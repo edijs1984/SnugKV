@@ -124,6 +124,12 @@ func (s *Server) replaceClusterOwnerFenced(oldOwner, newOwner, expectedOwnership
 }
 
 func (s *Server) repairClusterFailoverMemberOwnership(newOwner string) error {
+	release, err := s.beginClusterRebalanceOperation()
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	state := s.clusterStateSnapshot()
 	if !state.enabled {
 		return nil
@@ -139,6 +145,12 @@ func (s *Server) repairClusterFailoverMemberOwnership(newOwner string) error {
 }
 
 func (s *Server) convergeClusterFailoverOwnership() error {
+	release, err := s.beginClusterRebalanceOperation()
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	state := s.clusterStateSnapshot()
 	if !state.enabled {
 		return nil
@@ -191,6 +203,11 @@ func (s *Server) executeClusterFailoverOwner(args [][]byte) ([]byte, error) {
 	if len(args) != 5 {
 		return nil, errors.New("ERR wrong number of arguments for 'cluster|failover-owner' command")
 	}
+	release, err := s.beginClusterRebalanceOperation()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	if err := s.replaceClusterOwnerFenced(string(args[2]), string(args[3]), string(args[4])); err != nil {
 		return nil, err
 	}
