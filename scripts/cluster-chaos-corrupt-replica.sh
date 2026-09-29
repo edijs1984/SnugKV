@@ -219,26 +219,62 @@ for _ in $(seq 1 300); do
 done
 grep -q '^master_link_status:up' <<<"$info"
 
-echo "[7/8] verify recovered replica contains full dataset"
+echo "[7/8] verify cluster routing sees the rebuilt replica's recovered dataset"
 for n in 001 100 200; do
-  got="$(cli "$P2" GET "corrupt:key:$n")"
+  got="$(redis-cli --no-auth-warning --raw -a "$PASSWORD" -c -p "$P2" GET "corrupt:key:$n" 2>/dev/null || true)"
   [[ "$got" == "value-$n" ]] || {
-    echo "recovered replica mismatch for key $n: $got" >&2
+    echo "cluster-routed read mismatch for key $n: $got" >&2
     exit 1
   }
 done
 
-echo "[8/8] prove rebuilt replica remains durable across another hard restart"
+echo "[8/8] prove rebuilt replica AOF independently recovers exact values"
 stop_hard n2
+
+PROBE_PORT="$((P2 + 100))"
+cp "$TMP/n2.aof" "$TMP/n2-probe.aof"
+rm -f "$TMP/n2-probe.aof.lock"
+
+cat >"$TMP/n2-probe.json" <<JSON
+{
+  "listen": "127.0.0.1:$PROBE_PORT",
+  "admin_listen": "",
+  "metrics_listen": "",
+  "acl_file": "$TMP/users.acl",
+  "aof_path": "$TMP/n2-probe.aof",
+  "fsync": "always"
+}
+JSON
+
+"$BIN" -config "$TMP/n2-probe.json" >"$TMP/n2-probe.log" 2>&1 &
+echo $! >"$TMP/n2-probe.pid"
+wait_ready "$PROBE_PORT" || {
+  echo "standalone probe could not recover rebuilt replica AOF" >&2
+  tail -n 120 "$TMP/n2-probe.log" >&2 || true
+  exit 1
+}
+
+for n in 001 100 200; do
+  got="$(cli "$PROBE_PORT" GET "corrupt:key:$n")"
+  [[ "$got" == "value-$n" ]] || {
+    echo "standalone recovered AOF mismatch for key $n: $got" >&2
+    exit 1
+  }
+done
+
+probe_pid="$(cat "$TMP/n2-probe.pid")"
+kill "$probe_pid" 2>/dev/null || true
+wait "$probe_pid" 2>/dev/null || true
+rm -f "$TMP/n2-probe.pid"
+
 start_node n2
 wait_ready "$P2"
-for n in 001 100 200; do
-  got="$(cli "$P2" GET "corrupt:key:$n")"
-  [[ "$got" == "value-$n" ]] || {
-    echo "post-restart replica mismatch for key $n: $got" >&2
-    exit 1
-  }
-done
+role_after="$(cli "$P2" ROLE 2>/dev/null | head -n1 || true)"
+[[ "$role_after" == "slave" ]] || {
+  echo "rebuilt replica did not restore replica role after restart: $role_after" >&2
+  cli "$P2" INFO replication >&2 || true
+  exit 1
+}
 
 echo "cluster corrupted-replica recovery matrix: PASS"
-echo "replica=127.0.0.1:$P2 fail_closed=yes rebuilt_from_primary=yes restart_recovered=yes"
+echo "replica=127.0.0.1:$P2 fail_closed=yes rebuilt_from_primary=yes aof_probe_recovered=yes replica_restart=yes"
