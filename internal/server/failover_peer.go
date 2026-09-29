@@ -435,7 +435,6 @@ func (s *Server) runFailoverElectionRound(now time.Time) (failoverRoundResult, e
 			s.replicationMasterUser,
 			s.replicationMasterAuth,
 			s.clusterControlAuth,
-			s.clusterControlAuth,
 			local.MasterRunID,
 			term,
 			local.NodeID,
@@ -791,7 +790,6 @@ func (s *Server) resolveFailoverLeaderAddr(leaderID string) (string, error) {
 			s.replicationMasterUser,
 			s.replicationMasterAuth,
 			s.clusterControlAuth,
-			s.clusterControlAuth,
 		)
 		if err != nil {
 			continue
@@ -911,7 +909,6 @@ func (s *Server) convergeFailoverReplicas(now time.Time) {
 			s.replicationMasterUser,
 			s.replicationMasterAuth,
 			s.clusterControlAuth,
-			s.clusterControlAuth,
 		)
 		if err != nil || !s.failoverPeerMembershipMatches(state) || state.Retired || state.NodeID == leaderID {
 			continue
@@ -923,6 +920,7 @@ func (s *Server) convergeFailoverReplicas(now time.Time) {
 				200*time.Millisecond,
 				s.replicationMasterUser,
 				s.replicationMasterAuth,
+				s.clusterControlAuth,
 				lineage,
 				term,
 				leaderID,
@@ -936,6 +934,7 @@ func (s *Server) convergeFailoverReplicas(now time.Time) {
 				200*time.Millisecond,
 				s.replicationMasterUser,
 				s.replicationMasterAuth,
+				s.clusterControlAuth,
 				lineage,
 				term,
 				leaderID,
@@ -1072,7 +1071,6 @@ func (s *Server) verifyFailoverLeaderQuorum(now time.Time, lineage string, term 
 			s.replicationMasterUser,
 			s.replicationMasterAuth,
 			s.clusterControlAuth,
-			s.clusterControlAuth,
 		)
 		if err != nil {
 			continue
@@ -1094,7 +1092,6 @@ func (s *Server) verifyFailoverLeaderQuorum(now time.Time, lineage string, term 
 			200*time.Millisecond,
 			s.replicationMasterUser,
 			s.replicationMasterAuth,
-			s.clusterControlAuth,
 			s.clusterControlAuth,
 			lineage,
 			term,
