@@ -177,6 +177,89 @@ func TestClusterRebalanceRecoverResumeCompletesSplitSlot(t *testing.T) {
 	}
 }
 
+
+func TestClusterRebalanceRecoverResumeReplacesDuplicateTargetKeyAfterCrash(t *testing.T) {
+	sourceTCP, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sourceTCP.Close()
+
+	targetTCP, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer targetTCP.Close()
+
+	sourceAddr := sourceTCP.listener.Addr().String()
+	targetAddr := targetTCP.listener.Addr().String()
+	ranges := map[string]string{
+		"0-9999":      sourceAddr,
+		"10000-16383": targetAddr,
+	}
+	if err := sourceTCP.server.configureClusterSlots(true, sourceAddr, ranges); err != nil {
+		t.Fatal(err)
+	}
+	if err := targetTCP.server.configureClusterSlots(true, targetAddr, ranges); err != nil {
+		t.Fatal(err)
+	}
+
+	slot := 9999
+	key := findClusterTestKeyForSlot(slot)
+	if key == "" {
+		t.Fatalf("failed to find key for slot %d", slot)
+	}
+
+	if _, err := sourceTCP.server.execute([][]byte{
+		[]byte("SET"), []byte(key), []byte("authoritative-source-value"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := targetTCP.server.store.SetPlain(key, []byte("stale-target-value")); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := targetTCP.server.executeClusterSetSlot([][]byte{
+		[]byte("CLUSTER"), []byte("SETSLOT"), []byte(strconv.Itoa(slot)),
+		[]byte("IMPORTING"), []byte(clusterNodeID(sourceAddr)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sourceTCP.server.executeClusterSetSlot([][]byte{
+		[]byte("CLUSTER"), []byte("SETSLOT"), []byte(strconv.Itoa(slot)),
+		[]byte("MIGRATING"), []byte(clusterNodeID(targetAddr)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	state := sourceTCP.server.clusterStateSnapshot()
+	moved, err := sourceTCP.server.resumeRebalanceSlot(state, slot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if moved != 1 {
+		t.Fatalf("moved=%d want=1", moved)
+	}
+	if sourceTCP.server.store.Exists([]string{key}) != 0 {
+		t.Fatalf("source retained duplicate key %q after recovery", key)
+	}
+	value, found, wrongType := targetTCP.server.store.GetString(key)
+	if wrongType || !found || string(value) != "authoritative-source-value" {
+		t.Fatalf("target value=%q found=%v wrongType=%v", value, found, wrongType)
+	}
+
+	sourceFinal := sourceTCP.server.clusterStateSnapshot()
+	targetFinal := targetTCP.server.clusterStateSnapshot()
+	if sourceFinal.owners[slot] != targetAddr || targetFinal.owners[slot] != targetAddr {
+		t.Fatalf("ownership not converged: source=%q target=%q want=%q",
+			sourceFinal.owners[slot], targetFinal.owners[slot], targetAddr)
+	}
+	if sourceFinal.migrating[slot] != "" || targetFinal.importing[slot] != "" {
+		t.Fatalf("transition markers remain: source=%q target=%q",
+			sourceFinal.migrating[slot], targetFinal.importing[slot])
+	}
+}
+
 func TestClusterRebalanceRecoverResumeRejectsNonMigratingSlot(t *testing.T) {
 	s := New(engine.New())
 	a := "127.0.0.1:7000"
