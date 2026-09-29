@@ -1090,13 +1090,15 @@ func (s *Server) verifyFailoverLeaderQuorum(now time.Time, lineage string, term 
 		}
 
 		// The elected leader no longer reports masterRunID after promotion, so
-		// identify it by node ID. Other voters must still report the original
-		// lineage.
+		// identify it by node ID. A surviving replica may already have been
+		// reparented to that leader, in which case masterRunID is leaderID rather
+		// than the failed-primary lineage.
 		if !s.failoverPeerMembershipMatches(state) {
 			continue
 		}
 		if state.NodeID != leaderID &&
-			(state.Role != "replica" || state.MasterRunID != lineage) {
+			(state.Role != "replica" ||
+				(state.MasterRunID != lineage && state.MasterRunID != leaderID)) {
 			continue
 		}
 
