@@ -373,3 +373,49 @@ database, record machine/configuration details, repeat runs to measure variance,
 and distinguish engine-accounted memory, Redis `used_memory`, and process RSS.
 Load-time comparisons from these harnesses are not product latency claims because
 SnugKV is loaded in-process while Redis is reached over TCP.
+
+
+## Cluster routing benchmark
+
+`benchmarks/run-cluster-routing-bench.sh` starts a deterministic three-node
+static SnugKV cluster and measures black-box RESP2/TCP routing behavior with the
+same worker and pipeline depth across modes:
+
+- `direct`: the benchmark computes the Redis Cluster hash slot and sends each
+  operation directly to the configured owner;
+- `redirect`: every operation starts at the seed node and follows `MOVED`
+  when the seed is not the owner;
+- `cache`: each worker starts at the seed, learns slot owners from `MOVED`,
+  and caches those destinations for subsequent operations.
+
+Results are emitted as JSONL, including throughput, amortized per-operation
+batch latency percentiles, redirect counts, errors, runtime metadata, and the
+benchmark parameters. The latency samples are batch time divided by operations
+in the batch, matching the interpretation used by the existing pipelined wire
+benchmarks; they are not independent single-request latency samples.
+
+During development of this benchmark, the first clustered smoke run exposed a
+routing hot-path regression: ordinary GET/SET routing called
+`clusterStateSnapshot()` for every command, copying the complete 16,384-slot
+owner, migrating, and importing arrays before routing one key. On the same
+10,000-key / 50,000-GET / 4-worker / pipeline-256 smoke workload, direct GET
+measured about 863 ops/s before the fix and about 186,725 ops/s after routing
+was changed to read only the current slot's owner/migration/import state under
+the cluster read lock. The pre-fix measurement is therefore diagnostic evidence,
+not a performance baseline.
+
+Do not use a single smoke run as a public performance claim. Use multiple clean
+repeats and preserve the raw JSONL output.
+
+Example:
+
+```sh
+KEYS=100000 \
+OPS=500000 \
+WORKERS=4 \
+PIPELINE=256 \
+REPEATS=3 \
+VALUE_BYTES=256 \
+bash benchmarks/run-cluster-routing-bench.sh
+```
+
