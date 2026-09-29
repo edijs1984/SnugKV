@@ -561,3 +561,28 @@ on this development machine: one `CLUSTER SHARDS` run reached ~209 ms max,
 `CLUSTER INFO` reached ~570 ms max, and `CLUSTER HEALTH` reached ~207 ms
 max, while their p50 values remained near 6 ms. Treat these as useful
 observability-path tail-latency evidence, not as data-path latency.
+
+
+### Cluster migration batching optimization — 2026-09-29
+
+The first TLS transport smoke exposed an implementation artifact rather than
+normal TLS encryption cost. The rebalance loop issued one internal `MIGRATE`
+per key, and each internal migration opened and closed a new TCP/TLS
+connection. With 500 keys this meant roughly 500 TLS handshakes.
+
+The rebalance path now uses multi-key `MIGRATE ... KEYS ...` batches of up to
+64 slot keys per connection. On the same 500-key, 2,048-byte smoke:
+
+| Transport | Before batching | After batching | Change |
+|---|---:|---:|---:|
+| Plain TCP | 214.58 keys/s | 338.17 keys/s | +57.6% |
+| TLS via local forwarding proxy | 21.63 keys/s | 292.68 keys/s | ~13.5x |
+
+After batching, TLS throughput was about 13.5% below the plain transport in
+this smoke instead of about 90% below. The pre-batching TLS number should be
+treated as diagnostic evidence of handshake-per-key behavior, not as a TLS
+transport baseline.
+
+Because batching changes the migration implementation itself, earlier repeated
+reshard throughput measurements are no longer the current baseline and must be
+re-run before final benchmark claims are recorded.
