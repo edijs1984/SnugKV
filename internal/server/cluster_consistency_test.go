@@ -165,3 +165,54 @@ func TestClusterConsistencyFailsOnIncompleteCoverage(t *testing.T) {
 		t.Fatalf("CONSISTENCY=%q", text)
 	}
 }
+
+
+func TestClusterFailoverOwnershipFailsFastDuringRebalance(t *testing.T) {
+	s := New(engine.New())
+	a := "127.0.0.1:7000"
+	b := "127.0.0.1:7001"
+	if err := s.configureClusterSlots(true, a, map[string]string{
+		"0-16383": b,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s.failoverAdvertiseAddr = a
+	s.failoverPeers = []string{b}
+
+	release, err := s.beginClusterRebalanceOperation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+
+	err = s.convergeClusterFailoverOwnership()
+	if err == nil || err.Error() != "ERR another cluster rebalance operation is already in progress" {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestClusterFailoverOwnerCommandFailsFastDuringRebalance(t *testing.T) {
+	s := New(engine.New())
+	oldOwner := "127.0.0.1:7000"
+	newOwner := "127.0.0.1:7001"
+	if err := s.configureClusterSlots(true, newOwner, map[string]string{
+		"0-16383": oldOwner,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	digest := clusterOwnershipDigest(s.clusterStateSnapshot())
+
+	release, err := s.beginClusterRebalanceOperation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+
+	_, err = s.executeClusterFailoverOwner([][]byte{
+		[]byte("CLUSTER"), []byte("FAILOVER-OWNER"),
+		[]byte(oldOwner), []byte(newOwner), []byte(digest),
+	})
+	if err == nil || err.Error() != "ERR another cluster rebalance operation is already in progress" {
+		t.Fatalf("err=%v", err)
+	}
+}
