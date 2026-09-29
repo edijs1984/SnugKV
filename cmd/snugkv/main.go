@@ -42,6 +42,7 @@ func main() {
 	flag.StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, "TCP listen address")
 	flag.StringVar(&cfg.MasterUser, "masteruser", cfg.MasterUser, "replication upstream ACL username (optional)")
 	flag.StringVar(&cfg.MasterAuth, "masterauth", cfg.MasterAuth, "replication upstream password (optional)")
+	flag.StringVar(&cfg.ClusterControlAuth, "cluster-control-auth", cfg.ClusterControlAuth, "dedicated internal cluster control credential")
 	flag.BoolVar(&cfg.MasterTLS, "mastertls", cfg.MasterTLS, "enable TLS for replication upstream")
 	flag.StringVar(&cfg.MasterTLSCACert, "mastertls-ca-cert", cfg.MasterTLSCACert, "CA certificate for replication upstream TLS")
 	flag.StringVar(&cfg.MasterTLSCert, "mastertls-cert", cfg.MasterTLSCert, "client certificate for replication upstream mTLS (optional)")
