@@ -220,7 +220,24 @@ if ! grep -q '^READONLY ' <<<"$old_rejection"; then
   exit 1
 fi
 echo "old primary rejection: $old_rejection"
-[[ "$(cli "$P0" GET partition:key:000001)" == "value-000001" ]]
+old_read="$(cli "$P0" GET partition:key:000001 2>&1 || true)"
+if [[ "$old_read" != "value-000001" ]]; then
+  echo "fenced old primary read check failed: GET=$old_read" >&2
+  echo "--- old primary INFO replication ---" >&2
+  cli "$P0" INFO replication >&2 || true
+  echo "--- old primary HEALTH ---" >&2
+  cli "$P0" SNUG.FAILOVER HEALTH >&2 || true
+  echo "--- old primary CLUSTER NODES ---" >&2
+  cli "$P0" CLUSTER NODES >&2 || true
+  echo "--- p0 proxy block list ---" >&2
+  cat "$TMP/p0.block" >&2 || true
+  echo "--- p0 proxy log ---" >&2
+  tail -n 100 "$TMP/p0-proxy.log" >&2 || true
+  echo "--- n0 log tail ---" >&2
+  tail -n 100 "$TMP/n0.log" >&2 || true
+  exit 1
+fi
+echo "fenced old primary read remains available"
 
 echo "[5/10] wait for majority side to elect one writable leader"
 leader_port=""
