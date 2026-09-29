@@ -92,6 +92,7 @@ type Server struct {
 
 	clusterMu             sync.RWMutex
 	clusterRebalanceMu    sync.Mutex
+	clusterControlAuth    string
 	clusterEnabled        bool
 	clusterNodeAddr       string
 	clusterTopologyEpoch  uint64
