@@ -70,45 +70,78 @@ def relay(client, target_host, target_port, block_file):
         upstream = socket.create_connection((target_host, target_port), timeout=2.0)
         client.setblocking(False)
         upstream.setblocking(False)
+
         identity = None
         sniff = bytearray()
+        to_upstream = bytearray()
+        to_client = bytearray()
 
         while True:
             if identity is not None and identity in blocked_users(block_file):
                 return
 
-            readable, _, exceptional = select.select([client, upstream], [], [client, upstream], 0.1)
+            read_list = []
+            write_list = []
+
+            # Bound queued data so a slow destination applies backpressure
+            # without dropping the connection.
+            if len(to_upstream) < 1024 * 1024:
+                read_list.append(client)
+            if len(to_client) < 1024 * 1024:
+                read_list.append(upstream)
+            if to_upstream:
+                write_list.append(upstream)
+            if to_client:
+                write_list.append(client)
+
+            readable, writable, exceptional = select.select(
+                read_list, write_list, [client, upstream], 0.1
+            )
             if exceptional:
                 return
-            if not readable:
-                continue
 
-            for src in readable:
-                dst = upstream if src is client else client
+            if client in readable:
                 try:
-                    data = src.recv(65536)
+                    data = client.recv(65536)
                 except BlockingIOError:
-                    continue
-                if not data:
+                    data = None
+                if data == b"":
                     return
-
-                if src is client and identity is None:
-                    sniff.extend(data)
-                    identity = classify_identity(bytes(sniff))
-                    if identity is not None and identity in blocked_users(block_file):
-                        return
-                    if len(sniff) > 65536 and identity is None:
-                        identity = "default"
-
-                view = memoryview(data)
-                while view:
-                    try:
-                        sent = dst.send(view)
-                        view = view[sent:]
-                    except BlockingIOError:
-                        _, writable, exceptional2 = select.select([], [dst], [dst], 0.1)
-                        if exceptional2 or not writable:
+                if data:
+                    if identity is None:
+                        sniff.extend(data)
+                        identity = classify_identity(bytes(sniff))
+                        if identity is not None and identity in blocked_users(block_file):
                             return
+                        if len(sniff) > 65536 and identity is None:
+                            identity = "default"
+                    to_upstream.extend(data)
+
+            if upstream in readable:
+                try:
+                    data = upstream.recv(65536)
+                except BlockingIOError:
+                    data = None
+                if data == b"":
+                    return
+                if data:
+                    to_client.extend(data)
+
+            if upstream in writable and to_upstream:
+                try:
+                    sent = upstream.send(to_upstream)
+                except BlockingIOError:
+                    sent = 0
+                if sent:
+                    del to_upstream[:sent]
+
+            if client in writable and to_client:
+                try:
+                    sent = client.send(to_client)
+                except BlockingIOError:
+                    sent = 0
+                if sent:
+                    del to_client[:sent]
     finally:
         try:
             client.close()
