@@ -178,6 +178,7 @@ wait_rewrite_done "$P0" || {
 }
 
 rewrite_status="$(persistence_field "$P0" aof_last_bgrewrite_status)"
+failed_rewrite_status="$rewrite_status"
 if [[ "$rewrite_status" != "err" ]]; then
   echo "expected failed rewrite, got aof_last_bgrewrite_status=$rewrite_status" >&2
   cli "$P0" INFO persistence >&2 || true
@@ -233,4 +234,4 @@ echo "[8/8] verify baseline and post-failure data survived restart"
 [[ "$(cli "$P0" GET persist:after-rewrite)" == "durable-after-rewrite" ]]
 
 echo "cluster persistence failure/restart matrix: PASS"
-echo "failed_rewrite=$rewrite_status recovered_primary=127.0.0.1:$P0"
+echo "failed_rewrite=$failed_rewrite_status recovered_rewrite=$rewrite_status recovered_primary=127.0.0.1:$P0"
