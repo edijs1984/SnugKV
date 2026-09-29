@@ -242,9 +242,9 @@ func TestReplicationPlainSetFrameWorksWithReplicaAOF(t *testing.T) {
 	}
 
 	journal.mu.Lock()
-	appends := journal.appends
+	appended := journal.appended
 	journal.mu.Unlock()
-	if appends == 0 {
+	if appended == 0 {
 		t.Fatal("optimized SET was not persisted to replica AOF")
 	}
 }
