@@ -292,11 +292,11 @@ replication hardening, automatic failover, and the core cluster/sharding protoco
 are implemented for their audited surfaces.
 
 Remaining work is primarily production/distributed hardening and optional client
-breadth: separating internal cluster-control authorization from ordinary public
-CLUSTER ACL access, broader multi-process partition/chaos and client-library
-cluster testing, optional fully automatic membership admission, advanced CLIENT
-tracking/caching, optional RESP3 attribute/client-library hardening, and measured
-cluster performance/soak work. SnugKV still intentionally exposes one logical
+breadth: broader multi-process partition/chaos and client-library cluster testing,
+optional fully automatic membership admission, advanced CLIENT tracking/caching,
+optional RESP3 attribute/client-library hardening, and measured cluster
+performance/soak work. Configured cluster deployments now require a dedicated
+`cluster_control_auth` credential for connection-scoped private peer RPCs. SnugKV still intentionally exposes one logical
 database. See [docs/CLUSTER-PRODUCTION-HARDENING.md](docs/CLUSTER-PRODUCTION-HARDENING.md),
 [COMPATIBILITY.md](COMPATIBILITY.md), and GitHub issue #55.
 
