@@ -114,6 +114,10 @@ func (s *Server) replaceClusterOwnerFenced(oldOwner, newOwner, expectedOwnership
 	}
 
 	return s.mutateClusterTopologyLocked(func() error {
+		if s.clusterKnownNodes == nil {
+			s.clusterKnownNodes = make(map[string]struct{})
+		}
+		s.clusterKnownNodes[newOwner] = struct{}{}
 		for slot := 0; slot < clusterSlotCount; slot++ {
 			if s.clusterSlotOwners[slot] == oldOwner {
 				s.clusterSlotOwners[slot] = newOwner

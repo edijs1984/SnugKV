@@ -196,6 +196,59 @@ func TestReplicationPlainSetDirectRecordClearsReplicaTTL(t *testing.T) {
 	}
 }
 
+func TestReplicationPlainSetFrameWorksWithReplicaAOF(t *testing.T) {
+	primary, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer primary.Close()
+
+	replica, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replica.Close()
+
+	journal := newWaitAOFJournal()
+	replica.server.SetJournal(journal)
+
+	addr := primary.listener.Addr().(*net.TCPAddr)
+	if _, err := replica.server.Execute([][]byte{
+		[]byte("REPLICAOF"), []byte("127.0.0.1"), []byte(strconv.Itoa(addr.Port)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	waitReplication(t, func() bool {
+		return replica.server.replication.snapshot().masterLinkStatus == "up"
+	})
+	waitReplication(t, func() bool {
+		return primary.server.replication.snapshot().connectedReplicas == 1
+	})
+
+	if _, err := primary.server.Execute([][]byte{
+		[]byte("SET"), []byte("aof-replica:set"), []byte("value"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	waitReplication(t, func() bool {
+		value, found, wrong := replica.server.store.GetString("aof-replica:set")
+		return found && !wrong && string(value) == "value"
+	})
+
+	if got := replica.server.replication.snapshot().masterLinkStatus; got != "up" {
+		t.Fatalf("replica link status=%q want=up", got)
+	}
+
+	journal.mu.Lock()
+	appended := journal.appended
+	journal.mu.Unlock()
+	if appended == 0 {
+		t.Fatal("optimized SET was not persisted to replica AOF")
+	}
+}
+
 func TestReplicationPublishDoesNotWaitForReplicaSocket(t *testing.T) {
 	s := New(engine.New())
 

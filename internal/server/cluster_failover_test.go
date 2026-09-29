@@ -87,6 +87,19 @@ func TestClusterFailoverMemberRepairUpdatesStaleReplicaView(t *testing.T) {
 	if state.owners[8192] != otherOwner {
 		t.Fatalf("unrelated shard changed: %q", state.owners[8192])
 	}
+	foundNewOwner := false
+	for _, addr := range state.knownNodes {
+		if addr == newOwner {
+			foundNewOwner = true
+			break
+		}
+	}
+	if !foundNewOwner {
+		t.Fatalf("promoted owner %q missing from known nodes: %v", newOwner, state.knownNodes)
+	}
+	if reply := string(s.clusterNodesReply()); !strings.Contains(reply, newOwner+"@0") {
+		t.Fatalf("CLUSTER NODES omitted promoted owner %q: %q", newOwner, reply)
+	}
 }
 
 func TestClusterFailoverOwnershipRejectsIdentityMismatch(t *testing.T) {

@@ -119,7 +119,7 @@ func (s *Server) failoverHealth(now time.Time) failoverHealthView {
 	}
 	for _, addr := range m.Peers {
 		entry := failoverHealthPeer{Address: addr}
-		peer, err := queryFailoverPeer(addr, 200*time.Millisecond, s.replicationMasterUser, s.replicationMasterAuth)
+		peer, err := queryFailoverPeer(addr, 200*time.Millisecond, s.replicationMasterUser, s.replicationMasterAuth, s.clusterControlAuth)
 		if err == nil && s.failoverPeerMembershipMatches(peer) {
 			entry.Reachable = true
 			entry.NodeID = peer.NodeID

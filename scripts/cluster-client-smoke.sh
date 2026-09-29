@@ -32,6 +32,7 @@ make_config() {
   "metrics_listen": "",
   "cluster_enabled": true,
   "cluster_node_addr": "127.0.0.1:$port",
+  "cluster_control_auth": "cluster-smoke-control-secret",
   "cluster_slots": {
     "0-5460": "127.0.0.1:7000",
     "5461-10922": "127.0.0.1:7001",
