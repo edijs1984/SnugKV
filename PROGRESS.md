@@ -134,6 +134,48 @@ Core RESP3 support has landed alongside RESP2. Redis 8.2 differential audits now
 cover HELLO negotiation/switching, protocol-dependent reply shapes, nested
 COMMAND/ACL structures, and classic/pattern/sharded Pub/Sub push semantics.
 
+## Cluster / failover production hardening — 2026-09-29
+
+SnugKV's distributed feature set has moved beyond the earlier replication-only milestone.
+
+Implemented cluster/sharding behavior now includes Redis-compatible hash-slot routing,
+MOVED/ASK/ASKING and CROSSSLOT handling, CLUSTER SLOTS/NODES/SHARDS/INFO, guarded
+SETSLOT transitions, deterministic rebalance planning/apply/recovery, dynamic zero-slot
+membership, safe evacuation/removal, replica-aware shard topology, and operator-facing
+CLUSTER HEALTH / CLUSTER CONSISTENCY views.
+
+Phase 20 added consistency fencing across resharding and failover:
+- remote rebalance execution and failover-owner convergence carry an expected
+  ownership digest so stale coordinators are rejected;
+- failover ownership and rebalance mutation are serialized locally;
+- promoted leaders and original primaries use majority-backed leases for write safety;
+- a node that has granted a live foreign leader lease fences writes;
+- quorum loss fences writes after lease expiry, while reads remain available;
+- quorum recovery can automatically re-establish a valid lease and un-fence writes.
+
+Phase 21 production hardening adds:
+- TLS-capable internal rebalance MIGRATE using the existing verified replication
+  upstream transport and AUTH/AUTH2 credentials;
+- public Redis-compatible MIGRATE remains on its ordinary TCP semantics;
+- source restart during an active MIGRATING transition preserves topology state and
+  ownership digest;
+- REBALANCE RECOVER RESUME reasserts target IMPORTING state before moving keys,
+  allowing recovery when the target lost its transient marker;
+- live TCP coverage for MOVED, ASK + one-shot ASKING, CLUSTERDOWN, and ownership
+  changes after failover.
+
+Current distributed-system boundary:
+- cluster control RPCs are authenticated, and can use TLS where the shared upstream
+  transport is configured;
+- internal CLUSTER subcommands are still reachable through the public command parser
+  by a sufficiently privileged authenticated client because there is not yet a
+  distinct internal-control session identity;
+- broader multi-process chaos, long-running partition/recovery soak, client-library
+  cluster smoke, and cluster performance benchmarks remain production-hardening work.
+
+Canonical details: `docs/CLUSTER-PRODUCTION-HARDENING.md`,
+`docs/AUTOMATIC-FAILOVER-AUDIT.md`, and `docs/REPLICATION-TLS-AUDIT.md`.
+
 # Progress
 
 ## Current milestone

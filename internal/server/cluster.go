@@ -1331,7 +1331,7 @@ func (s *Server) rebalanceMoveOneSlot(state clusterStateSnapshot, move clusterRe
 				rollback()
 				return moved, fmt.Errorf("ERR invalid rebalance target address: %w", err)
 			}
-			result, err := s.executeMigrateDurableLocked(
+			result, err := s.executeClusterMigrateDurableLocked(
 				s.rebalanceMigrateArgs(host, port, key),
 			)
 			if err != nil {
@@ -1376,6 +1376,17 @@ func (s *Server) resumeRebalanceSlot(state clusterStateSnapshot, slot int) (int,
 		return 0, fmt.Errorf("ERR invalid rebalance target address: %w", err)
 	}
 
+	// Recovery may resume after either node restarted or after an operator
+	// cleared an incomplete target-side transition. Reassert IMPORTING before
+	// moving data so RESTORE-ASKING remains valid and the split slot is
+	// explicitly represented on both sides.
+	if err := s.sendClusterControlCommand(
+		target,
+		"CLUSTER", "SETSLOT", strconv.Itoa(slot), "IMPORTING", clusterNodeID(state.nodeAddr),
+	); err != nil {
+		return 0, fmt.Errorf("ERR REBALANCE RECOVER RESUME could not re-establish target importing state: %w", err)
+	}
+
 	moved := 0
 	for {
 		keys := s.clusterLocalKeysInSlot(slot, 64)
@@ -1383,7 +1394,7 @@ func (s *Server) resumeRebalanceSlot(state clusterStateSnapshot, slot int) (int,
 			break
 		}
 		for _, key := range keys {
-			result, err := s.executeMigrateDurableLocked(
+			result, err := s.executeClusterMigrateDurableLocked(
 				s.rebalanceMigrateArgs(host, port, key),
 			)
 			if err != nil {

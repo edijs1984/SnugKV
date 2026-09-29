@@ -12,7 +12,7 @@ The implementation builds on the existing replication control plane and delibera
 2. quorum-backed leader election;
 3. fenced promotion with renewable majority leases.
 
-It includes static-topology convergence after promotion, plus durable membership identity, dual-majority reconfiguration, crash recovery, and safe member retirement/removal. Automatic peer discovery remains outside this phase.
+It includes static-topology convergence after promotion, durable membership identity, dual-majority reconfiguration, crash recovery, safe member retirement/removal, authenticated peer discovery/gossip, and operator topology/health controls. Fully automatic admission remains outside this phase.
 
 ## Configuration
 
@@ -116,11 +116,19 @@ Lease properties:
 
 After promotion, maintenance renews the majority lease before expiry.
 
-If lease quorum is lost and the current majority lease expires, the promoted leader fences writes with:
+The original primary now follows the same write-safety rule when a failover quorum
+is configured: it must hold a current majority-backed lease to remain writable.
+This removes the asymmetry where a promoted leader was lease-fenced but an
+isolated original primary could otherwise continue accepting writes.
+
+If lease quorum is lost and the current majority lease expires, the active master
+fences writes with:
 
 `READONLY failover leader lease is not valid`
 
-Reads remain available while fenced.
+Reads remain available while fenced. A live foreign-leader lease also fences the
+old primary, and quorum recovery allows the current primary to reacquire a valid
+lease and become writable again.
 
 The write fence exists both in generic command execution and the TCP fast-write path so optimized SET handling cannot bypass fencing.
 

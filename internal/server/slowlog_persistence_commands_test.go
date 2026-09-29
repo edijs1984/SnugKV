@@ -155,6 +155,10 @@ func TestSlowlogRedis810Errors(t *testing.T) {
 
 func TestSlowlogRedis810CountBounds(t *testing.T) {
 	s := New(engine.New())
+	// This fixture validates GET count bounds against a fixed synthetic log.
+	// Disable recording so a slow -race execution of SLOWLOG GET cannot append
+	// the command itself and make the expected entry count timing-dependent.
+	s.slowlogThresholdMicros = -1
 	s.slowlogEntries = []slowlogEntry{
 		{id: 2, args: [][]byte{[]byte("PING")}},
 		{id: 1, args: [][]byte{[]byte("GET"), []byte("k")}},

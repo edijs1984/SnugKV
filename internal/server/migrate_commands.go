@@ -200,6 +200,10 @@ func (s *Server) migrateRestoreCommand(host, port string, key []byte) []byte {
 }
 
 func (s *Server) executeMigrate(args [][]byte) ([]byte, error) {
+	return s.executeMigrateWithTransport(args, false)
+}
+
+func (s *Server) executeMigrateWithTransport(args [][]byte, clusterTransport bool) ([]byte, error) {
 	if len(args) < 6 {
 		return nil, errors.New("ERR wrong number of arguments for 'migrate' command")
 	}
@@ -236,7 +240,16 @@ func (s *Server) executeMigrate(args [][]byte) ([]byte, error) {
 		timeout = time.Duration(^uint64(0) >> 1)
 	}
 
-	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), timeout)
+	var conn net.Conn
+	if clusterTransport {
+		portNumber, parseErr := strconv.Atoi(port)
+		if parseErr != nil || portNumber <= 0 || portNumber > 65535 {
+			return nil, errors.New("IOERR error or timeout connecting to the client")
+		}
+		conn, err = s.dialReplicationUpstreamTimeout(host, portNumber, timeout)
+	} else {
+		conn, err = net.DialTimeout("tcp", net.JoinHostPort(host, port), timeout)
+	}
 	if err != nil {
 		return nil, errors.New("IOERR error or timeout connecting to the client")
 	}
@@ -337,17 +350,25 @@ func (s *Server) executeMigrate(args [][]byte) ([]byte, error) {
 }
 
 func (s *Server) executeMigrateDurableLocked(args [][]byte) ([]byte, error) {
+	return s.executeMigrateDurableLockedWithTransport(args, false)
+}
+
+func (s *Server) executeClusterMigrateDurableLocked(args [][]byte) ([]byte, error) {
+	return s.executeMigrateDurableLockedWithTransport(args, true)
+}
+
+func (s *Server) executeMigrateDurableLockedWithTransport(args [][]byte, clusterTransport bool) ([]byte, error) {
 	keys, options, parseErr := migrateSourceKeys(args)
 	if parseErr != nil {
-		return s.executeMigrate(args)
+		return s.executeMigrateWithTransport(args, clusterTransport)
 	}
 
 	if options.copy || s.journal == nil {
-		return s.executeMigrate(args)
+		return s.executeMigrateWithTransport(args, clusterTransport)
 	}
 
 	before := s.store.Export(keys)
-	result, runErr := s.executeMigrate(args)
+	result, runErr := s.executeMigrateWithTransport(args, clusterTransport)
 	after := s.store.Export(keys)
 
 	if recordsEqual(before, after) {

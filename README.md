@@ -286,15 +286,18 @@ optimizer.
 
 ## Major remaining compatibility work
 
-COMMAND metadata, common CONFIG tooling, the audited single-node AUTH/ACL milestone,
-and the core RESP3 protocol milestone are complete. Other significant gaps are
-`SCRIPT DEBUG`, exact `allow-oom` semantics, migration scope beyond DB0 COPY,
-advanced CLIENT tracking/caching, optional Redis-RDB Function payload compatibility,
-and optional RESP3 client-library/attribute hardening. Deprecated `GEORADIUS*`
-compatibility is not part of the modern GEO surface yet. The Redis 8.2 Streams
-differential edge-case audit is complete; the only documented implementation-
-specific differences are approximate `XTRIM ~` granularity and Redis-internal
-radix-tree diagnostic counts. See [docs/STREAMS-DIFFERENTIAL-AUDIT.md](docs/STREAMS-DIFFERENTIAL-AUDIT.md),
+COMMAND metadata, common CONFIG tooling, the audited AUTH/ACL milestone, core
+RESP3, read-only scripting/Functions, Redis-compatible DUMP/RESTORE, MIGRATE,
+replication hardening, automatic failover, and the core cluster/sharding protocol
+are implemented for their audited surfaces.
+
+Remaining work is primarily production/distributed hardening and optional client
+breadth: separating internal cluster-control authorization from ordinary public
+CLUSTER ACL access, broader multi-process partition/chaos and client-library
+cluster testing, optional fully automatic membership admission, advanced CLIENT
+tracking/caching, optional RESP3 attribute/client-library hardening, and measured
+cluster performance/soak work. SnugKV still intentionally exposes one logical
+database. See [docs/CLUSTER-PRODUCTION-HARDENING.md](docs/CLUSTER-PRODUCTION-HARDENING.md),
 [COMPATIBILITY.md](COMPATIBILITY.md), and GitHub issue #55.
 
 ## License
@@ -323,4 +326,4 @@ t-digest sketches are supported as native persistent probabilistic values with R
 
 TimeSeries values are supported as native persistent series with RedisTimeSeries-audited `TS.CREATE`, `TS.ADD`, `TS.GET`, `TS.RANGE`, `TS.REVRANGE`, `TS.INCRBY`, `TS.DECRBY`, `TS.DEL`, and `TS.INFO` behavior, including retention, labels, duplicate policies, NaN, and out-of-order samples.
 
-Replication Phase 1 supports SnugKV primary/replica topologies with `REPLICAOF`, `ROLE`, `INFO replication`, Redis-shaped `PSYNC` full-resync control flow, full logical snapshot transfer, live mutation propagation, TTL preservation, read-only replicas, and promotion via `REPLICAOF NO ONE`. The Phase-1 data stream is SnugKV logical-frame format; Redis RDB full-sync interoperability and partial resynchronization are deferred.
+SnugKV replication now includes primary/replica operation, bounded-backlog partial PSYNC continuation, ACK/lag observability, Redis RDB full-sync interoperability for the audited encoding surface, diskless EOF framing, authenticated/TLS upstream links, restart continuation, and automatic failover with quorum-backed leases. Cluster mode adds Redis-compatible hash-slot routing, MOVED/ASK redirects, guarded resharding/recovery, dynamic membership, replica-aware shard topology, failover ownership convergence, and operator health/consistency views. Internal rebalance migration reuses the authenticated TLS-capable upstream transport when `mastertls` is enabled; public Redis-compatible `MIGRATE` intentionally remains ordinary TCP unless its own protocol semantics change. See `PLAN.md`, `PROGRESS.md`, and `docs/CLUSTER-PRODUCTION-HARDENING.md`.
