@@ -56,6 +56,10 @@ func validateClusterOwnerAddress(addr string) error {
 }
 
 func (s *Server) replaceClusterOwner(oldOwner, newOwner string) error {
+	return s.replaceClusterOwnerFenced(oldOwner, newOwner, "")
+}
+
+func (s *Server) replaceClusterOwnerFenced(oldOwner, newOwner, expectedOwnershipDigest string) error {
 	if oldOwner == "" || newOwner == "" || oldOwner == newOwner {
 		return errors.New("ERR invalid cluster failover owner replacement")
 	}
@@ -74,6 +78,21 @@ func (s *Server) replaceClusterOwner(oldOwner, newOwner string) error {
 	for slot := 0; slot < clusterSlotCount; slot++ {
 		if s.clusterSlotMigrating[slot] != "" || s.clusterSlotImporting[slot] != "" {
 			return errors.New("ERR cluster failover ownership refused while slots are migrating or importing")
+		}
+	}
+
+	if expectedOwnershipDigest != "" {
+		state := clusterStateSnapshot{
+			enabled:    s.clusterEnabled,
+			nodeAddr:   s.clusterNodeAddr,
+			epoch:      s.clusterTopologyEpoch,
+			knownNodes: sortedClusterKnownNodes(s.clusterKnownNodes),
+			owners:     s.clusterSlotOwners,
+			migrating:  s.clusterSlotMigrating,
+			importing:  s.clusterSlotImporting,
+		}
+		if clusterOwnershipDigest(state) != expectedOwnershipDigest {
+			return errors.New("ERR cluster failover ownership fence rejected stale coordinator")
 		}
 	}
 
@@ -156,7 +175,7 @@ func (s *Server) convergeClusterFailoverOwnership() error {
 		}
 		if err := s.sendClusterControlCommand(
 			owner,
-			"CLUSTER", "FAILOVER-OWNER", oldOwner, state.nodeAddr,
+			"CLUSTER", "FAILOVER-OWNER", oldOwner, state.nodeAddr, clusterOwnershipDigest(state),
 		); err != nil {
 			return fmt.Errorf("ERR cluster failover ownership convergence failed for %s: %w", owner, err)
 		}
@@ -169,10 +188,10 @@ func (s *Server) convergeClusterFailoverOwnership() error {
 }
 
 func (s *Server) executeClusterFailoverOwner(args [][]byte) ([]byte, error) {
-	if len(args) != 4 {
+	if len(args) != 5 {
 		return nil, errors.New("ERR wrong number of arguments for 'cluster|failover-owner' command")
 	}
-	if err := s.replaceClusterOwner(string(args[2]), string(args[3])); err != nil {
+	if err := s.replaceClusterOwnerFenced(string(args[2]), string(args[3]), string(args[4])); err != nil {
 		return nil, err
 	}
 	return []byte("+OK\r\n"), nil
