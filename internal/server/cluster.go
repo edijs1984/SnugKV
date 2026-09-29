@@ -193,8 +193,11 @@ func (s *Server) previewClusterRoutingForClient(args [][]byte, client *clientSes
 }
 
 func (s *Server) enforceClusterRoutingForClientMode(args [][]byte, client *clientSession, consumeAsking bool) error {
-	state := s.clusterStateSnapshot()
-	if !state.enabled {
+	// Keep ordinary command routing off the full clusterStateSnapshot path.
+	// That snapshot intentionally copies all 16,384 slot-owner/migration arrays
+	// and derives topology metadata for operator commands. Single-slot routing
+	// only needs the local node plus the three entries for the command's slot.
+	if !s.clusterEnabledSnapshot() {
 		return nil
 	}
 	if len(args) == 0 ||
@@ -228,21 +231,31 @@ func (s *Server) enforceClusterRoutingForClientMode(args [][]byte, client *clien
 		}
 	}
 
-	owner := state.owners[slot]
+	s.clusterMu.RLock()
+	enabled := s.clusterEnabled
+	nodeAddr := s.clusterNodeAddr
+	owner := s.clusterSlotOwners[slot]
+	migrating := s.clusterSlotMigrating[slot]
+	importing := s.clusterSlotImporting[slot]
+	s.clusterMu.RUnlock()
+
+	if !enabled {
+		return nil
+	}
 	if owner == "" {
 		return errors.New("CLUSTERDOWN Hash slot not served")
 	}
 
-	if owner == state.nodeAddr {
-		if target := state.migrating[slot]; target != "" && len(keys) == 1 {
+	if owner == nodeAddr {
+		if migrating != "" && len(keys) == 1 {
 			if s.store.Exists([]string{string(keys[0].value)}) == 0 {
-				return fmt.Errorf("ASK %d %s", slot, target)
+				return fmt.Errorf("ASK %d %s", slot, migrating)
 			}
 		}
 		return nil
 	}
 
-	if source := state.importing[slot]; source != "" && asking {
+	if importing != "" && asking {
 		return nil
 	}
 
