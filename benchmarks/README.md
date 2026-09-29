@@ -586,3 +586,54 @@ transport baseline.
 Because batching changes the migration implementation itself, earlier repeated
 reshard throughput measurements are no longer the current baseline and must be
 re-run before final benchmark claims are recorded.
+
+
+### Cluster reshard repeated baseline after batching — 2026-09-29
+
+After changing the rebalance path to use multi-key `MIGRATE ... KEYS ...`
+batches of up to 64 keys per connection, the 5,000-key / 2,048-byte
+single-slot reshard benchmark was repeated three times.
+
+| Run | Convergence | Keys/s | Logical B/s |
+|---:|---:|---:|---:|
+| 1 | 12.954 s | 385.99 | 790,500 |
+| 2 | 11.429 s | 437.48 | 895,962 |
+| 3 | 11.572 s | 432.09 | 884,923 |
+
+Median:
+- convergence: 11.572 s
+- throughput: 432.09 keys/s
+- logical payload throughput: 884,923 B/s (~0.885 MB/s)
+
+The prior pre-batching repeated median was 254.83 keys/s, so the current
+batched migration path improves median reshard throughput by about 69.6%.
+The pre-batching repeated reshard numbers should therefore be treated as
+historical diagnostic data rather than the current baseline.
+
+### Cluster TLS migration transport repeated baseline — 2026-09-29
+
+The same batched 5,000-key / 2,048-byte migration path was measured three
+times over direct TCP and through a local TLS 1.2+ forwarding proxy.
+
+| Transport | Run | Convergence | Keys/s | Logical B/s |
+|---|---:|---:|---:|---:|
+| Plain | 1 | 11.891 s | 420.47 | 861,121 |
+| Plain | 2 | 11.605 s | 430.86 | 882,402 |
+| Plain | 3 | 11.139 s | 448.87 | 919,293 |
+| TLS | 1 | 13.397 s | 373.21 | 764,324 |
+| TLS | 2 | 11.749 s | 425.55 | 871,535 |
+| TLS | 3 | 12.271 s | 407.46 | 834,470 |
+
+Median throughput:
+- plain TCP: 430.86 keys/s
+- TLS transport: 407.46 keys/s
+
+Median convergence:
+- plain TCP: 11.605 s
+- TLS transport: 12.271 s
+
+On this development machine, the repeated median TLS throughput was about
+5.4% below plain TCP. This is the current transport comparison after removing
+the earlier handshake-per-key artifact. SnugKV still provides outbound
+internal TLS rather than a native inbound TLS listener, so the TLS side of this
+benchmark uses a local forwarding proxy and should be interpreted accordingly.
