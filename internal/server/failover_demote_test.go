@@ -144,18 +144,28 @@ func TestFailoverLeaderConvergenceDemotesReturningOldPrimary(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer oldPrimary.Close()
+	oldPrimaryAddr := oldPrimary.listener.Addr().String()
 	oldPrimary.server.replication.mu.Lock()
-	oldPrimary.server.replication.runID = lineage
+	// Simulate a restart: the old primary's process run ID no longer matches
+	// the historical failed-primary lineage.
+	oldPrimary.server.replication.runID = "dddddddddddddddddddddddddddddddddddddddd"
 	oldPrimary.server.replication.role = replicationMaster
 	oldPrimary.server.replication.mu.Unlock()
+	oldPrimary.server.failoverAdvertiseAddr = oldPrimaryAddr
 	oldPrimary.server.failoverQuorum = 2
 	oldPrimary.server.failoverPeers = []string{
 		leader.listener.Addr().String(),
 		voter.listener.Addr().String(),
 	}
+	oldPrimary.server.activateFailoverLeader(
+		1,
+		oldPrimary.server.replication.runID,
+		oldPrimary.server.replication.runID,
+		time.Time{},
+	)
 
 	leader.server.failoverPeers = []string{
-		oldPrimary.listener.Addr().String(),
+		oldPrimaryAddr,
 		voter.listener.Addr().String(),
 	}
 	leader.server.convergeFailoverReplicas(now)
@@ -167,5 +177,5 @@ func TestFailoverLeaderConvergenceDemotesReturningOldPrimary(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("returning old primary was not demoted: %+v", oldPrimary.server.replication.snapshot())
+	t.Fatalf("returning restarted old primary was not demoted: %+v", oldPrimary.server.replication.snapshot())
 }
