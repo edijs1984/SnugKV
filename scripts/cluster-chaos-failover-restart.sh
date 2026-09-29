@@ -126,9 +126,43 @@ wait_ready "$P0"
 wait_ready "$P1"
 wait_ready "$P2"
 
+attach_replica() {
+  local replica_port="$1"
+  local label="$2"
+  local reply=""
+
+  for _ in $(seq 1 100); do
+    reply="$(cli "$replica_port" REPLICAOF 127.0.0.1 "$P0" 2>&1 || true)"
+    if [[ "$reply" == "OK" ]]; then
+      return 0
+    fi
+    sleep 0.05
+  done
+
+  echo "$label failed to accept REPLICAOF after retries: $reply" >&2
+  echo "--- primary ROLE ---" >&2
+  cli "$P0" ROLE >&2 || true
+  echo "--- $label ROLE ---" >&2
+  cli "$replica_port" ROLE >&2 || true
+  echo "--- primary failover health ---" >&2
+  cli "$P0" SNUG.FAILOVER HEALTH >&2 || true
+  echo "--- $label failover health ---" >&2
+  cli "$replica_port" SNUG.FAILOVER HEALTH >&2 || true
+  echo "--- primary log tail ---" >&2
+  tail -n 120 "$TMP/n0.log" >&2 || true
+  if [[ "$replica_port" == "$P1" ]]; then
+    echo "--- n1 log tail ---" >&2
+    tail -n 120 "$TMP/n1.log" >&2 || true
+  else
+    echo "--- n2 log tail ---" >&2
+    tail -n 120 "$TMP/n2.log" >&2 || true
+  fi
+  return 1
+}
+
 echo "[1/9] attach two replicas to primary"
-cli "$P1" REPLICAOF 127.0.0.1 "$P0" | grep -qx OK
-cli "$P2" REPLICAOF 127.0.0.1 "$P0" | grep -qx OK
+attach_replica "$P1" n1
+attach_replica "$P2" n2
 
 for _ in $(seq 1 200); do
   r1="$(cli "$P1" INFO replication 2>/dev/null || true)"
