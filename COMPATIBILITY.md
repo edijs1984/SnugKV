@@ -40,9 +40,10 @@ failover leases, MOVED/ASK routing, reshard/recovery, membership changes,
 replica-aware shard topology, and operator health/consistency views.
 
 Remaining distributed boundaries are production hardening rather than absence of
-the feature family: internal CLUSTER control subcommands are authenticated through
-the shared ACL/control path but do not yet have a separate internal-session
-identity, fully automatic membership admission is optional/deferred, and broader
+the feature family. Configured clusters now require a dedicated
+`cluster_control_auth` secret; peer-only CLUSTER and SNUG.FAILOVER RPCs require a
+connection-scoped internal identity established after ordinary authentication.
+Fully automatic membership admission is optional/deferred, and broader
 multi-process chaos/client-library cluster testing remains. Advanced CLIENT
 tracking/caching and optional RESP3 client-specific hardening also remain.
 
