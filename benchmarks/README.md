@@ -481,3 +481,19 @@ The migration command itself accounted for nearly the entire convergence
 interval in each run, so post-command ownership convergence overhead was small
 relative to key movement time. This points future optimization work toward the
 per-key migration path rather than topology-finalization latency.
+
+
+### Cluster failover smoke snapshot — 2026-09-29
+
+A three-node failover smoke with 200 replicated keys and `fsync=always`
+completed successfully after a hard primary crash.
+
+Recorded intervals from successful SIGKILL of the primary:
+
+- elected leader: 594.98 ms
+- first successful write on promoted leader: 608.34 ms
+- cluster ownership convergence on leader and follower views: 645.64 ms
+- election-to-writable delay: 13.36 ms
+- writable-to-ownership-converged delay: 37.30 ms
+
+This is a functional smoke result, not yet the repeated failover baseline.
