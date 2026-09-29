@@ -610,6 +610,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 
 		if !borrowed && len(msg) > 0 &&
 			strings.EqualFold(string(msg[0]), "HELLO") {
+			clientSession.setInternalClusterControl(false)
 			response, helloErr :=
 				s.executeHelloConnectionCommand(
 					clientSession,
@@ -629,6 +630,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 		}
 
 		if !borrowed && len(msg) > 0 && strings.EqualFold(string(msg[0]), "AUTH") {
+			clientSession.setInternalClusterControl(false)
 			response, authErr := s.server.executeAUTH(authSession, msg)
 
 			if authErr != nil {
