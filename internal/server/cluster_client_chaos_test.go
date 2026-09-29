@@ -41,7 +41,10 @@ func TestClusterTCPMovedTracksFailoverOwnershipChange(t *testing.T) {
 	if err := oldTCP.server.configureClusterSlots(true, oldAddr, ranges); err != nil { t.Fatal(err) }
 	if err := newTCP.server.configureClusterSlots(true, newAddr, ranges); err != nil { t.Fatal(err) }
 
-	_, newReader := dialClusterClient(t, newAddr)
+	oldTCP.server.clusterMu.Lock()
+	oldTCP.server.clusterKnownNodes[newAddr] = struct{}{}
+	oldTCP.server.clusterMu.Unlock()
+
 	newConn, newReader := dialClusterClient(t, newAddr)
 	writeClusterRESPCommand(t, newConn, "GET", key)
 	wantOld := fmt.Sprintf("-MOVED %d %s\r\n", slot, oldAddr)
