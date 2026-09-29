@@ -69,14 +69,19 @@ node cluster-smoke.cjs
 
 cd "$ROOT"
 
-if ! python3 -c 'import redis' >/dev/null 2>&1; then
-  echo "python redis package is required for redis-py cluster smoke" >&2
-  echo "install it with: python3 -m pip install redis" >&2
-  exit 1
+PY_VENV=/tmp/snugkv-cluster-client-venv
+PYTHON="$PY_VENV/bin/python"
+
+if [[ ! -x "$PYTHON" ]]; then
+  python3 -m venv "$PY_VENV"
+fi
+
+if ! "$PYTHON" -c 'import redis' >/dev/null 2>&1; then
+  "$PYTHON" -m pip install --disable-pip-version-check 'redis==6.4.0'
 fi
 
 REDIS_HOST=127.0.0.1 REDIS_PORT=7000 \
-  python3 compat/python/cluster_smoke.py
+  "$PYTHON" compat/python/cluster_smoke.py
 
 cd "$ROOT/compat/go"
 go run ./cluster
