@@ -212,11 +212,39 @@ fi
 echo "recovered source still owns $source_remaining keys"
 
 echo "[6/7] resume migration and converge ownership"
-redis-cli --raw -p "$SOURCE_PORT" CLUSTER REBALANCE RECOVER RESUME "$SLOT"   >"$TMP/resume.out"
+if ! redis-cli --raw -p "$SOURCE_PORT" CLUSTER REBALANCE RECOVER RESUME "$SLOT" >"$TMP/resume.out" 2>"$TMP/resume.err"; then
+  echo "resume command failed" >&2
+  cat "$TMP/resume.out" >&2 || true
+  cat "$TMP/resume.err" >&2 || true
+  exit 1
+fi
+cat "$TMP/resume.out"
 
-[[ "$(redis-cli --raw -p "$TARGET_PORT" CLUSTER COUNTKEYSINSLOT "$SLOT")" == "$KEY_COUNT" ]]
-[[ "$(redis-cli --raw -p "$TARGET_PORT" DBSIZE)" == "$KEY_COUNT" ]]
-[[ "$(redis-cli --raw -p "$SOURCE_PORT" DBSIZE)" == "0" ]]
+target_slot_count="$(redis-cli --raw -p "$TARGET_PORT" CLUSTER COUNTKEYSINSLOT "$SLOT" 2>&1 || true)"
+target_dbsize="$(redis-cli --raw -p "$TARGET_PORT" DBSIZE 2>&1 || true)"
+source_dbsize="$(redis-cli --raw -p "$SOURCE_PORT" DBSIZE 2>&1 || true)"
+source_nodes="$(redis-cli --raw -p "$SOURCE_PORT" CLUSTER NODES 2>&1 || true)"
+target_nodes="$(redis-cli --raw -p "$TARGET_PORT" CLUSTER NODES 2>&1 || true)"
+
+printf 'post-resume target_slot_count=%s target_dbsize=%s source_dbsize=%s\n' \
+  "$target_slot_count" "$target_dbsize" "$source_dbsize"
+
+if [[ "$target_slot_count" != "$KEY_COUNT" ||
+      "$target_dbsize" != "$KEY_COUNT" ||
+      "$source_dbsize" != "0" ]]; then
+  echo "post-resume convergence assertion failed" >&2
+  echo "--- resume.out ---" >&2
+  cat "$TMP/resume.out" >&2 || true
+  echo "--- source CLUSTER NODES ---" >&2
+  printf '%s\n' "$source_nodes" >&2
+  echo "--- target CLUSTER NODES ---" >&2
+  printf '%s\n' "$target_nodes" >&2
+  echo "--- source log tail ---" >&2
+  tail -n 80 "$TMP/source.log" >&2 || true
+  echo "--- target log tail ---" >&2
+  tail -n 80 "$TMP/target.log" >&2 || true
+  exit 1
+fi
 
 post_recovery="$TMP/post-recovery.out"
 redis-cli --raw -p "$SOURCE_PORT" CLUSTER REBALANCE RECOVER PLAN >"$post_recovery"
