@@ -153,22 +153,31 @@ import sys
 
 path = sys.argv[1]
 size = os.path.getsize(path)
-if size < 32:
+if size < 17:
     raise SystemExit(f"AOF unexpectedly small: {size}")
 
-# Corrupt a byte well inside a persisted frame rather than truncating the tail.
-offset = max(16, size // 2)
+# AOF layout starts with:
+#   8 bytes magic ("MCLOG001")
+#   4 bytes payload length
+#   4 bytes CRC32
+#   payload...
+#
+# Corrupt the first frame's stored checksum deterministically. Do not mutate an
+# arbitrary tail/header byte: SnugKV intentionally tolerates a truncated final
+# frame, so damaging the final frame length can be interpreted as a safe
+# truncation rather than checksum corruption.
+offset = 8 + 4
 with open(path, "r+b") as f:
     f.seek(offset)
     b = f.read(1)
     if not b:
-        raise SystemExit("unable to read corruption byte")
+        raise SystemExit("unable to read checksum byte")
     f.seek(offset)
     f.write(bytes([b[0] ^ 0x5A]))
     f.flush()
     os.fsync(f.fileno())
 
-print(f"corrupted offset={offset} size={size}")
+print(f"corrupted first-frame checksum offset={offset} size={size}")
 PY
 
 echo "[4/8] require corrupted replica restart to fail closed"
