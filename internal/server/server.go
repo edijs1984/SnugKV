@@ -41,6 +41,7 @@ type Server struct {
 	replicaDurabilityKnown   bool
 	replicationMasterUser    string
 	replicationMasterAuth    string
+	clusterControlAuth       string
 	replicationMasterTLS     bool
 	replicationMasterTLSCA   string
 	replicationMasterTLSCert string
