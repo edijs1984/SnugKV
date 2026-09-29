@@ -479,15 +479,21 @@ func (s *Server) requestFailoverLease(now time.Time, lineage string, term uint64
 		}
 		s.failoverLeaderMu.RUnlock()
 	}
-	if localLineage == "" || localLineage != lineage {
-		return reply
-	}
 	if leaderID == "" {
 		return reply
 	}
 
 	s.failoverLeaseMu.Lock()
 	defer s.failoverLeaseMu.Unlock()
+
+	lineageMatches := localLineage != "" && localLineage == lineage
+	reparentedContinuation := local.Role == "replica" &&
+		local.MasterRunID == leaderID &&
+		s.failoverLeaseTerm == term &&
+		s.failoverLeaseHolder == leaderID
+	if !lineageMatches && !reparentedContinuation {
+		return reply
+	}
 
 	if term < s.failoverLeaseTerm {
 		reply.Term = s.failoverLeaseTerm
@@ -584,7 +590,9 @@ func (s *Server) acquireFailoverLeaseRound(now time.Time, lineage string, term u
 		if err != nil {
 			continue
 		}
-		if !s.failoverPeerMembershipMatches(peer) || peer.Role != "replica" || peer.MasterRunID != lineage {
+		if !s.failoverPeerMembershipMatches(peer) ||
+			peer.Role != "replica" ||
+			(peer.MasterRunID != lineage && peer.MasterRunID != leaderID) {
 			continue
 		}
 		requestStart := now
