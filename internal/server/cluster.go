@@ -1214,6 +1214,9 @@ func (s *Server) sendClusterControlCommand(addr string, args ...string) error {
 	); err != nil {
 		return fmt.Errorf("ERR rebalance target authentication failed: %w", err)
 	}
+	if err := authenticateInternalControlUpstream(conn, reader, s.clusterControlAuth); err != nil {
+		return fmt.Errorf("ERR internal cluster control authentication failed: %w", err)
+	}
 	if err := writeReplicationRESPCommand(conn, args...); err != nil {
 		return fmt.Errorf("ERR rebalance target write failed: %w", err)
 	}
