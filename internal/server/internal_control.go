@@ -53,7 +53,7 @@ func authenticateInternalControlUpstream(
 	secret string,
 ) error {
 	if secret == "" {
-		return errors.New("internal cluster control credential is not configured")
+		return nil
 	}
 	if err := writeReplicationRESPCommand(conn, "SNUG.INTERNAL", "AUTH", secret); err != nil {
 		return err
