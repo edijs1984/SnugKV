@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="${ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
-BIN="${BIN:-/tmp/snugkv-cluster-reshard-bench}"
+BIN="${BIN:-/tmp/snugkv-cluster-reshard-bench-bin}"
 TMP="${TMP:-/tmp/snugkv-cluster-reshard-bench}"
 OUT="${OUT:-/tmp/snugkv-cluster-reshard-bench.jsonl}"
 
