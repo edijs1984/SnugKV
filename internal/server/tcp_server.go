@@ -598,6 +598,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			clientSession.noEvict, clientSession.noTouch = false, false
 			clientSession.reply = clientReplyOn
 			clientSession.tracking = clientTrackingState{}
+			clientSession.internalClusterControl = false
 			clientSession.mu.Unlock()
 			clientSession.setProtocol(2)
 			*authSession = *newAuthSession(s.server.acl)
@@ -659,6 +660,21 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				return
 			}
 
+			continue
+		}
+
+		if !borrowed && len(msg) > 0 && strings.EqualFold(string(msg[0]), "SNUG.INTERNAL") {
+			response, internalErr := s.server.executeInternalClusterControlAuth(
+				clientSession,
+				authSession,
+				msg,
+			)
+			if internalErr != nil {
+				response = errorResponse(internalErr)
+			}
+			if writeProtocol(msg, response) != nil {
+				return
+			}
 			continue
 		}
 
