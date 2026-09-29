@@ -128,6 +128,7 @@ func ListenWithJournal(c config.Config, store *engine.Store, journal Journal) (*
 
 	s.server.configAppendFsync = c.Fsync
 	s.server.configACLFile = c.ACLFile
+	s.server.clusterControlAuth = c.ClusterControlAuth
 	s.server.replicationMasterUser = c.MasterUser
 	s.server.replicationMasterAuth = c.MasterAuth
 	s.server.replicationMasterTLS = c.MasterTLS
