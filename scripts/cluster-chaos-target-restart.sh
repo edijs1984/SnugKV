@@ -169,7 +169,7 @@ wait "$apply_pid" 2>/dev/null || true
 
 source_remaining="$(redis-cli --raw -p "$SOURCE_PORT" CLUSTER COUNTKEYSINSLOT "$SLOT" 2>/dev/null || true)"
 if [[ ! "$source_remaining" =~ ^[0-9]+$ ]] ||
-   (( source_remaining <= 0 || source_remaining >= KEY_COUNT )); then
+   (( source_remaining <= 0 || source_remaining > KEY_COUNT )); then
   echo "unexpected source key count after target crash: $source_remaining" >&2
   echo "--- apply.out ---" >&2
   cat "$TMP/apply.out" >&2 || true
@@ -177,6 +177,10 @@ if [[ ! "$source_remaining" =~ ^[0-9]+$ ]] ||
   cat "$TMP/apply.err" >&2 || true
   exit 1
 fi
+# Batched MIGRATE can restore several keys on the target before the source
+# receives the complete batch replies. If the target crashes in that window,
+# the source may still retain all KEY_COUNT keys. Recovery must tolerate that
+# at-least-once state and later converge with REPLACE.
 echo "source retained $source_remaining keys after target crash"
 
 echo "[5/8] verify source remains in recoverable MIGRATING state"
@@ -194,10 +198,13 @@ wait_ready "$TARGET_PORT"
 
 target_recovered="$(redis-cli --raw -p "$TARGET_PORT" DBSIZE)"
 if [[ ! "$target_recovered" =~ ^[0-9]+$ ]] ||
-   (( target_recovered <= 0 || target_recovered >= KEY_COUNT )); then
+   (( target_recovered < 0 || target_recovered > KEY_COUNT )); then
   echo "unexpected target recovered key count: $target_recovered" >&2
   exit 1
 fi
+# A hard target crash may lose an in-flight batch that had not reached durable
+# AOF state yet, so zero recovered target keys is also a valid recovery point.
+# The source-side MIGRATING marker plus RECOVER RESUME is the correctness gate.
 echo "target recovered $target_recovered keys"
 
 echo "[7/8] resume migration and converge ownership"
