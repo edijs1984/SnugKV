@@ -1404,8 +1404,11 @@ func (s *Server) resumeRebalanceSlot(state clusterStateSnapshot, slot int) (int,
 	return moved, nil
 }
 
-func (s *Server) executeRemoteRebalanceSlot(slot int, targetID string) error {
+func (s *Server) executeRemoteRebalanceSlot(slot int, targetID, expectedOwnershipDigest string) error {
 	state := s.clusterStateSnapshot()
+	if expectedOwnershipDigest == "" || clusterOwnershipDigest(state) != expectedOwnershipDigest {
+		return errors.New("ERR rebalance execute topology fence rejected stale coordinator")
+	}
 	if !state.enabled {
 		return errors.New("ERR This instance has cluster support disabled")
 	}
@@ -1445,7 +1448,7 @@ func (s *Server) executeClusterRebalance(args [][]byte) ([]byte, error) {
 
 	mode := strings.ToUpper(string(args[2]))
 	if mode == "EXECUTE" {
-		if len(args) != 5 {
+		if len(args) != 6 {
 			return nil, errors.New("ERR syntax error")
 		}
 		release, err := s.beginClusterRebalanceOperation()
@@ -1457,7 +1460,7 @@ func (s *Server) executeClusterRebalance(args [][]byte) ([]byte, error) {
 		if err != nil || slot < 0 || slot >= clusterSlotCount {
 			return nil, errors.New("ERR Invalid or out of range slot")
 		}
-		if err := s.executeRemoteRebalanceSlot(slot, string(args[4])); err != nil {
+		if err := s.executeRemoteRebalanceSlot(slot, string(args[4]), string(args[5])); err != nil {
 			return nil, err
 		}
 		return []byte("+OK\r\n"), nil
@@ -1598,6 +1601,7 @@ func (s *Server) executeClusterRebalance(args [][]byte) ([]byte, error) {
 							"CLUSTER", "REBALANCE", "EXECUTE",
 							strconv.Itoa(slot),
 							clusterNodeID(move.Target),
+							clusterOwnershipDigest(current),
 						)
 					}
 					if moveErr != nil {
