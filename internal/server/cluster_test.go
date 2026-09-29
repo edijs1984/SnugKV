@@ -1521,3 +1521,45 @@ func TestClusterRebalanceStatusTransitioning(t *testing.T) {
 		t.Fatalf("active_transition not set: %q", text)
 	}
 }
+
+
+func TestRebalanceMigrateKeysArgsBatchShape(t *testing.T) {
+	s := New(engine.New())
+	s.replicationMasterUser = "cluster-user"
+	s.replicationMasterAuth = "cluster-secret"
+
+	got := s.rebalanceMigrateKeysArgsWithReplace(
+		"127.0.0.1",
+		"7001",
+		[]string{"k1", "k2", "k3"},
+		true,
+	)
+
+	want := []string{
+		"MIGRATE", "127.0.0.1", "7001", "", "0", "5000",
+		"REPLACE", "AUTH2", "cluster-user", "cluster-secret",
+		"KEYS", "k1", "k2", "k3",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("args len=%d want=%d args=%q", len(got), len(want), got)
+	}
+	for i := range want {
+		if string(got[i]) != want[i] {
+			t.Fatalf("arg[%d]=%q want=%q", i, got[i], want[i])
+		}
+	}
+
+	keys, options, err := migrateSourceKeys(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !options.replace {
+		t.Fatal("REPLACE not parsed")
+	}
+	if string(options.username) != "cluster-user" || string(options.password) != "cluster-secret" {
+		t.Fatalf("auth user=%q password=%q", options.username, options.password)
+	}
+	if fmt.Sprint(keys) != "[k1 k2 k3]" {
+		t.Fatalf("keys=%v", keys)
+	}
+}
