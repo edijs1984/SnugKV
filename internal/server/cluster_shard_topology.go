@@ -1,8 +1,14 @@
 package server
 
 import (
+	"bufio"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"net"
 	"sort"
+	"strconv"
+	"time"
 )
 
 type clusterShardReplicaTopology struct {
@@ -112,4 +118,151 @@ func (s *Server) clusterTopologyNodes(state clusterStateSnapshot) ([]string, err
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+
+func clusterShardReplicaTopologyFromPeerState(state clusterStateSnapshot, peer failoverPeerState) (clusterShardReplicaTopology, error) {
+	if peer.AdvertiseAddr == "" || len(peer.Members) == 0 {
+		return clusterShardReplicaTopology{}, nil
+	}
+	memberSet := make(map[string]struct{}, len(peer.Members))
+	for _, member := range peer.Members {
+		if member != "" {
+			memberSet[member] = struct{}{}
+		}
+	}
+	owner := ""
+	for _, slotOwner := range state.owners {
+		if slotOwner == "" {
+			continue
+		}
+		if _, ok := memberSet[slotOwner]; !ok {
+			continue
+		}
+		if owner == "" {
+			owner = slotOwner
+			continue
+		}
+		if owner != slotOwner {
+			return clusterShardReplicaTopology{}, errors.New("ERR cluster shard topology is ambiguous across multiple owners")
+		}
+	}
+	if owner == "" {
+		return clusterShardReplicaTopology{}, nil
+	}
+
+	replicas := make([]string, 0, len(memberSet)-1)
+	for member := range memberSet {
+		if member == owner {
+			continue
+		}
+		replicas = append(replicas, member)
+	}
+	sort.Strings(replicas)
+	return clusterShardReplicaTopology{
+		Owner:    owner,
+		Replicas: replicas,
+		GroupID:  peer.GroupID,
+	}, nil
+}
+
+func (s *Server) queryClusterFailoverState(addr string) (failoverPeerState, error) {
+	host, portText, err := net.SplitHostPort(addr)
+	if err != nil {
+		return failoverPeerState{}, fmt.Errorf("invalid shard owner address: %w", err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port <= 0 || port > 65535 {
+		return failoverPeerState{}, errors.New("invalid shard owner port")
+	}
+
+	conn, err := s.dialReplicationUpstream(host, port)
+	if err != nil {
+		return failoverPeerState{}, err
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(750 * time.Millisecond))
+
+	reader := bufio.NewReader(conn)
+	if err := authenticateReplicationUpstream(
+		conn,
+		reader,
+		s.replicationMasterUser,
+		s.replicationMasterAuth,
+	); err != nil {
+		return failoverPeerState{}, err
+	}
+	if err := writeReplicationRESPCommand(conn, "SNUG.FAILOVER", "STATE"); err != nil {
+		return failoverPeerState{}, err
+	}
+	payload, err := readRESPBulk(reader)
+	if err != nil {
+		return failoverPeerState{}, err
+	}
+	var peer failoverPeerState
+	if err := json.Unmarshal(payload, &peer); err != nil {
+		return failoverPeerState{}, err
+	}
+	if peer.AdvertiseAddr == "" || (peer.Role != "master" && peer.Role != "replica") {
+		return failoverPeerState{}, errors.New("invalid failover topology state")
+	}
+	return peer, nil
+}
+
+func (s *Server) clusterShardReplicaTopologies(state clusterStateSnapshot) map[string]clusterShardReplicaTopology {
+	out := make(map[string]clusterShardReplicaTopology)
+
+	local, err := s.localClusterShardReplicaTopology(state)
+	if err == nil && local.Owner != "" {
+		out[local.Owner] = local
+	}
+
+	for _, owner := range clusterOwnersFromOwners(state.owners) {
+		if _, exists := out[owner]; exists {
+			continue
+		}
+		peer, err := s.queryClusterFailoverState(owner)
+		if err != nil {
+			continue
+		}
+		topology, err := clusterShardReplicaTopologyFromPeerState(state, peer)
+		if err != nil || topology.Owner == "" || topology.Owner != owner {
+			continue
+		}
+		out[owner] = topology
+	}
+	return out
+}
+
+func clusterReplicaMasterMapFromTopologies(topologies map[string]clusterShardReplicaTopology) map[string]string {
+	out := make(map[string]string)
+	for owner, topology := range topologies {
+		for _, replica := range topology.Replicas {
+			if replica == owner {
+				continue
+			}
+			if _, exists := out[replica]; !exists {
+				out[replica] = owner
+			}
+		}
+	}
+	return out
+}
+
+func clusterTopologyNodesFromTopologies(state clusterStateSnapshot, topologies map[string]clusterShardReplicaTopology) []string {
+	seen := make(map[string]struct{})
+	for _, node := range clusterKnownNodesFromState(state) {
+		seen[node] = struct{}{}
+	}
+	for _, topology := range topologies {
+		for _, replica := range topology.Replicas {
+			seen[replica] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for node := range seen {
+		out = append(out, node)
+	}
+	sort.Strings(out)
+	return out
 }

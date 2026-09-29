@@ -318,10 +318,7 @@ func (s *Server) clusterSlotsReply() ([]byte, error) {
 func (s *Server) clusterShardsReply() ([]byte, error) {
 	state := s.clusterStateSnapshot()
 	masters := clusterSlotCapableNodesFromState(state)
-	replicaTopology, err := s.localClusterShardReplicaTopology(state)
-	if err != nil {
-		return nil, err
-	}
+	topologies := s.clusterShardReplicaTopologies(state)
 	items := make([][]byte, 0, len(masters))
 
 	renderNode := func(addr, role, health string) ([]byte, error) {
@@ -359,7 +356,8 @@ func (s *Server) clusterShardsReply() ([]byte, error) {
 			)
 		}
 
-		nodeItems := make([][]byte, 0, 1+len(replicaTopology.Replicas))
+		topology := topologies[owner]
+		nodeItems := make([][]byte, 0, 1+len(topology.Replicas))
 		masterHealth := "online"
 		if owner != state.nodeAddr {
 			masterHealth = "unknown"
@@ -370,8 +368,8 @@ func (s *Server) clusterShardsReply() ([]byte, error) {
 		}
 		nodeItems = append(nodeItems, masterNode)
 
-		if replicaTopology.Owner == owner {
-			for _, replica := range replicaTopology.Replicas {
+		if topology.Owner == owner {
+			for _, replica := range topology.Replicas {
 				replicaNode, err := renderNode(
 					replica,
 					"replica",
@@ -477,14 +475,9 @@ func clusterSlotRangeText(r clusterSlotRange) string {
 
 func (s *Server) clusterNodesReply() []byte {
 	state := s.clusterStateSnapshot()
-	nodes, err := s.clusterTopologyNodes(state)
-	if err != nil {
-		return formatBulkString(nil)
-	}
-	replicaMaster, err := s.clusterReplicaMasterMap(state)
-	if err != nil {
-		return formatBulkString(nil)
-	}
+	topologies := s.clusterShardReplicaTopologies(state)
+	nodes := clusterTopologyNodesFromTopologies(state, topologies)
+	replicaMaster := clusterReplicaMasterMapFromTopologies(topologies)
 
 	lines := make([]string, 0, len(nodes))
 	for _, node := range nodes {
@@ -549,10 +542,8 @@ func (s *Server) clusterInfoReply() []byte {
 		state = "ok"
 	}
 	owners := clusterOwnersFromOwners(stateSnapshot.owners)
-	knownNodes, err := s.clusterTopologyNodes(stateSnapshot)
-	if err != nil {
-		knownNodes = clusterKnownNodesFromState(stateSnapshot)
-	}
+	topologies := s.clusterShardReplicaTopologies(stateSnapshot)
+	knownNodes := clusterTopologyNodesFromTopologies(stateSnapshot, topologies)
 	body := fmt.Sprintf(
 		"cluster_state:%s\r\n"+
 			"cluster_slots_assigned:%d\r\n"+
