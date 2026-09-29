@@ -377,7 +377,7 @@ func main() {
 			client := newWorkerClient()
 			defer client.close()
 
-			local := make([]int64, 0, (*opsCount/(*workers**pipeline))+2)
+			local := make([]int64, 0, (*opsCount/((*workers)*(*pipeline)))+2)
 			batch := make([]batchOp, 0, *pipeline)
 
 			for {
