@@ -551,6 +551,7 @@ func (s *Server) retryFailoverMembershipCommit(now time.Time) error {
 				membership.GroupID,
 				membership.CommitOldEpoch,
 				membership.CommitEpoch,
+				s.clusterControlAuth,
 			)
 			if prepErr != nil || !reply.Accepted {
 				return nil
@@ -564,6 +565,7 @@ func (s *Server) retryFailoverMembershipCommit(now time.Time) error {
 			membership.GroupID,
 			membership.CommitOldEpoch,
 			membership.CommitEpoch,
+			s.clusterControlAuth,
 		)
 		if retireErr != nil || !reply.Accepted || !reply.Retired {
 			return nil
@@ -619,6 +621,7 @@ func (s *Server) retryFailoverMembershipCommit(now time.Time) error {
 				membership.CommitEpoch,
 				membership.CommitMembers,
 				membership.CommitQuorum,
+				s.clusterControlAuth,
 			)
 			if prepErr != nil || !reply.Accepted {
 				allConverged = false
@@ -633,6 +636,7 @@ func (s *Server) retryFailoverMembershipCommit(now time.Time) error {
 			s.replicationMasterAuth,
 			membership.GroupID,
 			membership.CommitEpoch,
+			s.clusterControlAuth,
 		)
 		if commitErr != nil ||
 			commitReply.ConfigEpoch < membership.CommitEpoch ||
@@ -728,6 +732,7 @@ func (s *Server) coordinateFailoverMembershipChange(newEpoch uint64, newMembers 
 			newEpoch,
 			newMembers,
 			newQuorum,
+			s.clusterControlAuth,
 		)
 		if err != nil || !reply.Accepted || !reply.Joint || reply.PendingEpoch != newEpoch {
 			continue
@@ -755,6 +760,7 @@ func (s *Server) coordinateFailoverMembershipChange(newEpoch uint64, newMembers 
 				s.replicationMasterAuth,
 				membership.GroupID,
 				newEpoch,
+				s.clusterControlAuth,
 			)
 		}
 		_, _ = s.abortFailoverMembership(membership.GroupID, newEpoch)
@@ -771,6 +777,7 @@ func (s *Server) coordinateFailoverMembershipChange(newEpoch uint64, newMembers 
 			membership.GroupID,
 			membership.ConfigEpoch,
 			newEpoch,
+			s.clusterControlAuth,
 		)
 		if err != nil || !reply.Accepted {
 			continue
@@ -791,6 +798,7 @@ func (s *Server) coordinateFailoverMembershipChange(newEpoch uint64, newMembers 
 				s.replicationMasterAuth,
 				membership.GroupID,
 				newEpoch,
+				s.clusterControlAuth,
 			)
 		}
 		_, _ = s.abortFailoverMembership(membership.GroupID, newEpoch)
