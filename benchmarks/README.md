@@ -440,3 +440,22 @@ VALUE_BYTES=256 \
 bash benchmarks/run-cluster-routing-bench.sh
 ```
 
+
+
+### Cluster reshard smoke snapshot — 2026-09-29
+
+A two-node single-slot smoke migration with 1,000 keys and 2,048-byte values
+completed successfully with full ownership convergence and post-migration
+`MOVED` correctness.
+
+Recorded result:
+
+- migration command duration: 5.281 s
+- convergence duration: 5.296 s
+- throughput: 188.8 keys/s
+- logical payload throughput: 386,728 B/s (~0.39 MB/s)
+
+This is a functional smoke measurement, not yet the repeated reshard baseline.
+The migration implementation currently moves keys individually through the
+cluster migration path, so larger repeated runs are needed before interpreting
+the result as a stable throughput characteristic.
