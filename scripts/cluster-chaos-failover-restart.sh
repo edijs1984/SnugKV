@@ -170,7 +170,25 @@ if (( seed_lines != KEY_COUNT + 1 )); then
   exit 1
 fi
 
-if head -n "$KEY_COUNT" "$TMP/seed.out" | grep -v '^OK
+if head -n "$KEY_COUNT" "$TMP/seed.out" | grep -v '^OK$' | grep -q .; then
+  echo "seed produced unexpected SET replies" >&2
+  exit 1
+fi
+
+wait_reply="$(tail -n 1 "$TMP/seed.out")"
+if [[ ! "$wait_reply" =~ ^[0-9]+$ ]] || (( wait_reply < 2 )); then
+  echo "replicas did not acknowledge seed: WAIT=$wait_reply" >&2
+  echo "--- primary INFO replication ---" >&2
+  cli "$P0" INFO replication >&2 || true
+  echo "--- replica n1 INFO replication ---" >&2
+  cli "$P1" INFO replication >&2 || true
+  echo "--- replica n2 INFO replication ---" >&2
+  cli "$P2" INFO replication >&2 || true
+  exit 1
+fi
+echo "replication acknowledgements: WAIT=$wait_reply"
+
+echo "[3/9] SIGKILL primary"
 stop_hard n0
 
 echo "[4/9] wait for exactly one replica to become writable leader"
