@@ -40,6 +40,13 @@ func internalControlCommand(args [][]byte) bool {
 	return false
 }
 
+func optionalInternalControlSecret(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
+}
+
 func internalControlCredentialMatches(configured string, supplied []byte) bool {
 	if configured == "" || len(configured) != len(supplied) {
 		return false
