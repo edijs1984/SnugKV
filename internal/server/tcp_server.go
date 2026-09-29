@@ -680,7 +680,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			continue
 		}
 
-		if internalControlCommand(msg) && !clientSession.internalControlEnabled() {
+		if s.server.clusterControlAuth != "" && internalControlCommand(msg) && !clientSession.internalControlEnabled() {
 			if writeProtocol(msg, errorResponse(errors.New("NOPERM internal cluster control authentication required"))) != nil { return }
 			continue
 		}
