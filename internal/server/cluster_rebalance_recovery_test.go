@@ -196,3 +196,80 @@ func TestClusterRebalanceRecoverResumeRejectsNonMigratingSlot(t *testing.T) {
 		t.Fatalf("err=%v want=%q", err, want)
 	}
 }
+
+
+func TestClusterRebalanceRecoverResumeReassertsTargetImporting(t *testing.T) {
+	sourceTCP, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sourceTCP.Close()
+
+	targetTCP, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer targetTCP.Close()
+
+	sourceAddr := sourceTCP.listener.Addr().String()
+	targetAddr := targetTCP.listener.Addr().String()
+	ranges := map[string]string{
+		"0-9999":      sourceAddr,
+		"10000-16383": targetAddr,
+	}
+	if err := sourceTCP.server.configureClusterSlots(true, sourceAddr, ranges); err != nil {
+		t.Fatal(err)
+	}
+	if err := targetTCP.server.configureClusterSlots(true, targetAddr, ranges); err != nil {
+		t.Fatal(err)
+	}
+
+	slot := 9999
+	key := findClusterTestKeyForSlot(slot)
+	if key == "" {
+		t.Fatalf("failed to find key for slot %d", slot)
+	}
+	if _, err := sourceTCP.server.execute([][]byte{
+		[]byte("SET"), []byte(key), []byte("resume-value"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := sourceTCP.server.executeClusterSetSlot([][]byte{
+		[]byte("CLUSTER"), []byte("SETSLOT"), []byte(strconv.Itoa(slot)),
+		[]byte("MIGRATING"), []byte(clusterNodeID(targetAddr)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Model target restart/state loss: the source still has the durable
+	// MIGRATING marker but target-side IMPORTING is absent.
+	targetTCP.server.clusterMu.Lock()
+	targetTCP.server.clusterSlotImporting[slot] = ""
+	targetTCP.server.clusterSlotMigrating[slot] = ""
+	targetTCP.server.clusterMu.Unlock()
+
+	state := sourceTCP.server.clusterStateSnapshot()
+	moved, err := sourceTCP.server.resumeRebalanceSlot(state, slot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if moved != 1 {
+		t.Fatalf("moved=%d want=1", moved)
+	}
+
+	sourceFinal := sourceTCP.server.clusterStateSnapshot()
+	targetFinal := targetTCP.server.clusterStateSnapshot()
+	if sourceFinal.owners[slot] != targetAddr || targetFinal.owners[slot] != targetAddr {
+		t.Fatalf("ownership not converged: source=%q target=%q",
+			sourceFinal.owners[slot], targetFinal.owners[slot])
+	}
+	if sourceFinal.migrating[slot] != "" || targetFinal.importing[slot] != "" {
+		t.Fatalf("transition markers remain: source=%q target=%q",
+			sourceFinal.migrating[slot], targetFinal.importing[slot])
+	}
+	value, found, wrongType := targetTCP.server.store.GetString(key)
+	if wrongType || !found || string(value) != "resume-value" {
+		t.Fatalf("target value=%q found=%v wrongType=%v", value, found, wrongType)
+	}
+}
