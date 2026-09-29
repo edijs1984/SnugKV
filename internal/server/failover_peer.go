@@ -186,7 +186,7 @@ func readRESPBulk(reader *bufio.Reader) ([]byte, error) {
 	return payload, nil
 }
 
-func queryFailoverPeer(addr string, timeout time.Duration, username, password string) (failoverPeerState, error) {
+func queryFailoverPeer(addr string, timeout time.Duration, username, password string, controlAuth ...string) (failoverPeerState, error) {
 	conn, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
 		return failoverPeerState{}, err
@@ -194,7 +194,7 @@ func queryFailoverPeer(addr string, timeout time.Duration, username, password st
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(timeout))
 	reader := bufio.NewReader(conn)
-	if err := authenticateReplicationUpstream(conn, reader, username, password); err != nil {
+	if err := authenticateInternalControlUpstream(conn, reader, username, password, internalControlSecret(controlAuth)); err != nil {
 		return failoverPeerState{}, err
 	}
 	if err := writeReplicationRESPCommand(conn, "SNUG.FAILOVER", "STATE"); err != nil {
@@ -294,7 +294,7 @@ func (s *Server) requestFailoverVote(now time.Time, lineage string, term uint64,
 	return reply, nil
 }
 
-func queryFailoverVote(addr string, timeout time.Duration, username, password, lineage string, term uint64, candidateID string, offset int64, priority int) (failoverVoteReply, error) {
+func queryFailoverVote(addr string, timeout time.Duration, username, password, lineage string, term uint64, candidateID string, offset int64, priority int, controlAuth ...string) (failoverVoteReply, error) {
 	conn, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
 		return failoverVoteReply{}, err
@@ -302,7 +302,7 @@ func queryFailoverVote(addr string, timeout time.Duration, username, password, l
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(timeout))
 	reader := bufio.NewReader(conn)
-	if err := authenticateReplicationUpstream(conn, reader, username, password); err != nil {
+	if err := authenticateInternalControlUpstream(conn, reader, username, password, internalControlSecret(controlAuth)); err != nil {
 		return failoverVoteReply{}, err
 	}
 	if err := writeReplicationRESPCommand(
@@ -514,7 +514,7 @@ func (s *Server) requestFailoverLease(now time.Time, lineage string, term uint64
 	return reply
 }
 
-func queryFailoverLease(addr string, timeout time.Duration, username, password, lineage string, term uint64, leaderID string, ttl time.Duration) (failoverLeaseReply, error) {
+func queryFailoverLease(addr string, timeout time.Duration, username, password, lineage string, term uint64, leaderID string, ttl time.Duration, controlAuth ...string) (failoverLeaseReply, error) {
 	conn, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
 		return failoverLeaseReply{}, err
@@ -522,7 +522,7 @@ func queryFailoverLease(addr string, timeout time.Duration, username, password, 
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(timeout))
 	reader := bufio.NewReader(conn)
-	if err := authenticateReplicationUpstream(conn, reader, username, password); err != nil {
+	if err := authenticateInternalControlUpstream(conn, reader, username, password, internalControlSecret(controlAuth)); err != nil {
 		return failoverLeaseReply{}, err
 	}
 	if err := writeReplicationRESPCommand(
@@ -851,7 +851,7 @@ func (s *Server) requestFailoverReparent(now time.Time, lineage string, term uin
 	return reply, nil
 }
 
-func queryFailoverReparent(addr string, timeout time.Duration, username, password, lineage string, term uint64, leaderID string) (failoverReparentReply, error) {
+func queryFailoverReparent(addr string, timeout time.Duration, username, password, lineage string, term uint64, leaderID string, controlAuth ...string) (failoverReparentReply, error) {
 	conn, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
 		return failoverReparentReply{}, err
@@ -859,7 +859,7 @@ func queryFailoverReparent(addr string, timeout time.Duration, username, passwor
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(timeout))
 	reader := bufio.NewReader(conn)
-	if err := authenticateReplicationUpstream(conn, reader, username, password); err != nil {
+	if err := authenticateInternalControlUpstream(conn, reader, username, password, internalControlSecret(controlAuth)); err != nil {
 		return failoverReparentReply{}, err
 	}
 	if err := writeReplicationRESPCommand(
@@ -1002,7 +1002,7 @@ func (s *Server) requestFailoverDemote(now time.Time, lineage string, term uint6
 	return reply, nil
 }
 
-func queryFailoverDemote(addr string, timeout time.Duration, username, password, lineage string, term uint64, leaderID string) (failoverDemoteReply, error) {
+func queryFailoverDemote(addr string, timeout time.Duration, username, password, lineage string, term uint64, leaderID string, controlAuth ...string) (failoverDemoteReply, error) {
 	conn, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
 		return failoverDemoteReply{}, err
@@ -1010,7 +1010,7 @@ func queryFailoverDemote(addr string, timeout time.Duration, username, password,
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(timeout))
 	reader := bufio.NewReader(conn)
-	if err := authenticateReplicationUpstream(conn, reader, username, password); err != nil {
+	if err := authenticateInternalControlUpstream(conn, reader, username, password, internalControlSecret(controlAuth)); err != nil {
 		return failoverDemoteReply{}, err
 	}
 	if err := writeReplicationRESPCommand(
