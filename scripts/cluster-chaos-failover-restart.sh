@@ -144,6 +144,32 @@ done
 grep -q 'master_link_status:up' <<<"$(cli "$P1" INFO replication)"
 grep -q 'master_link_status:up' <<<"$(cli "$P2" INFO replication)"
 
+# Full sync completion and master_link_status=up can be observed immediately
+# before the replica has settled into steady-state streaming on a busy machine.
+# Require both links to remain up for a short consecutive window before the
+# fsync=always seed burst.
+stable=0
+for _ in $(seq 1 100); do
+  r1="$(cli "$P1" INFO replication 2>/dev/null || true)"
+  r2="$(cli "$P2" INFO replication 2>/dev/null || true)"
+  if grep -q 'master_link_status:up' <<<"$r1" &&
+     grep -q 'master_link_status:up' <<<"$r2"; then
+    stable=$((stable + 1))
+    if (( stable >= 5 )); then
+      break
+    fi
+  else
+    stable=0
+  fi
+  sleep 0.05
+done
+if (( stable < 5 )); then
+  echo "replication links did not stabilize before seed" >&2
+  cli "$P1" INFO replication >&2 || true
+  cli "$P2" INFO replication >&2 || true
+  exit 1
+fi
+
 echo "[2/9] wait for primary quorum lease, then seed replicated data"
 for _ in $(seq 1 200); do
   out="$(cli "$P0" SET failover:lease-ready yes 2>&1 || true)"
@@ -160,7 +186,11 @@ done
 # WAIT is scoped to the connection's last successful write offset. Keep it on
 # the same redis-cli session as the seed writes so we wait for these writes,
 # not for offset zero from a fresh connection.
-printf 'WAIT 2 5000\n' >>"$seed"
+# fsync=always intentionally exercises the slow durability path. In the full
+# recovery matrix, allow enough time for a transient replica reconnect and
+# partial resynchronization instead of treating a slow workstation as a
+# replication correctness failure.
+printf 'WAIT 2 15000\n' >>"$seed"
 redis-cli --no-auth-warning --raw -a "$PASSWORD" -p "$P0" <"$seed" >"$TMP/seed.out"
 
 seed_lines="$(wc -l <"$TMP/seed.out")"

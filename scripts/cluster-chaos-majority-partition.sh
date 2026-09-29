@@ -175,6 +175,30 @@ done
 grep -q '^master_link_status:up' <<<"$s1"
 grep -q '^master_link_status:up' <<<"$s2"
 
+# The proxy-backed topology can report both replica links up immediately before
+# one connection is fully settled. Require a short consecutive stable window
+# before beginning the fsync=always seed burst.
+stable=0
+for _ in $(seq 1 120); do
+  s1="$(cli "$P1" INFO replication 2>/dev/null || true)"
+  s2="$(cli "$P2" INFO replication 2>/dev/null || true)"
+  if grep -q '^master_link_status:up' <<<"$s1" &&
+     grep -q '^master_link_status:up' <<<"$s2"; then
+    stable=$((stable + 1))
+    if (( stable >= 5 )); then
+      break
+    fi
+  else
+    stable=0
+  fi
+  sleep 0.05
+done
+if (( stable < 5 )); then
+  echo "replica links did not stabilize before partition seed" >&2
+  dump_all
+  exit 1
+fi
+
 echo "[2/10] wait for primary quorum lease and seed replicated data"
 for _ in $(seq 1 200); do
   if cli "$P0" SET partition:lease-ready yes 2>/dev/null | grep -qx OK; then
@@ -189,7 +213,9 @@ seed="$TMP/seed.commands"
 for i in $(seq 1 "$KEY_COUNT"); do
   printf 'SET partition:key:%06d value-%06d\n' "$i" "$i" >>"$seed"
 done
-printf 'WAIT 2 5000\n' >>"$seed"
+# Allow a transient proxy/replica reconnect to complete partial resync on
+# slower hosts while still requiring both replicas to acknowledge the seed.
+printf 'WAIT 2 15000\n' >>"$seed"
 redis-cli --no-auth-warning --raw -a "$PASSWORD" -p "$P0" <"$seed" >"$TMP/seed.out"
 wait_reply="$(tail -n 1 "$TMP/seed.out")"
 if [[ "$wait_reply" != "2" ]]; then
