@@ -188,12 +188,31 @@ JSON
     wait_ready "$TARGET_BACKEND_PORT"
     python3 "$TMP/tls_proxy.py"       127.0.0.1 "$TARGET_PORT"       127.0.0.1 "$TARGET_BACKEND_PORT"       "$TMP/server.crt" "$TMP/server.key"       >"$TMP/proxy.log" 2>&1 &
     PIDS+=("$!")
+    tls_ready=0
     for _ in $(seq 1 100); do
-      if openssl s_client -quiet -connect "$TARGET_ADDR" -servername localhost           -CAfile "$TMP/server.crt" </dev/null >/dev/null 2>&1; then
+      if python3 - "$TARGET_PORT" "$TMP/server.crt" <<'PY' >/dev/null 2>&1
+import socket
+import ssl
+import sys
+
+port = int(sys.argv[1])
+cafile = sys.argv[2]
+ctx = ssl.create_default_context(cafile=cafile)
+with socket.create_connection(("127.0.0.1", port), timeout=0.5) as raw:
+    with ctx.wrap_socket(raw, server_hostname="localhost"):
+        pass
+PY
+      then
+        tls_ready=1
         break
       fi
       sleep 0.05
     done
+    if (( tls_ready == 0 )); then
+      echo "TLS proxy on $TARGET_ADDR did not become ready" >&2
+      tail -n 80 "$TMP/proxy.log" >&2 || true
+      exit 1
+    fi
   fi
 
   tag="$(find_tag)"
