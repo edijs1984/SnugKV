@@ -497,3 +497,27 @@ Recorded intervals from successful SIGKILL of the primary:
 - writable-to-ownership-converged delay: 37.30 ms
 
 This is a functional smoke result, not yet the repeated failover baseline.
+
+
+### Cluster failover repeated baseline — 2026-09-29
+
+Three clean three-node failover runs used 200 replicated keys with `fsync=always`
+and a hard primary crash.
+
+| Run | Election | Writable | Ownership converged |
+|---:|---:|---:|---:|
+| 1 | 569.50 ms | 583.09 ms | 622.18 ms |
+| 2 | 569.34 ms | 582.42 ms | 623.24 ms |
+| 3 | 624.01 ms | 634.78 ms | 671.95 ms |
+
+Median intervals from successful primary SIGKILL:
+
+- elected leader: 569.50 ms
+- first successful write: 583.09 ms
+- cluster ownership convergence: 623.24 ms
+- election-to-writable delay: 13.08 ms
+- writable-to-ownership-converged delay: 39.09 ms
+
+All three runs elected the same configured-priority replica and preserved the
+replicated dataset. These are development measurements for the current
+400 ms failover timeout and 50 ms maintenance cadence, not general SLA claims.
