@@ -1331,7 +1331,7 @@ func (s *Server) rebalanceMoveOneSlot(state clusterStateSnapshot, move clusterRe
 				rollback()
 				return moved, fmt.Errorf("ERR invalid rebalance target address: %w", err)
 			}
-			result, err := s.executeMigrateDurableLocked(
+			result, err := s.executeClusterMigrateDurableLocked(
 				s.rebalanceMigrateArgs(host, port, key),
 			)
 			if err != nil {
@@ -1383,7 +1383,7 @@ func (s *Server) resumeRebalanceSlot(state clusterStateSnapshot, slot int) (int,
 			break
 		}
 		for _, key := range keys {
-			result, err := s.executeMigrateDurableLocked(
+			result, err := s.executeClusterMigrateDurableLocked(
 				s.rebalanceMigrateArgs(host, port, key),
 			)
 			if err != nil {
