@@ -567,7 +567,7 @@ func (s *Server) acquireFailoverLeaseRound(now time.Time, lineage string, term u
 
 	const leaseTTL = 3 * time.Second
 
-	localRequestStart := time.Now()
+	localRequestStart := now
 	local := s.requestFailoverLease(localRequestStart, lineage, term, leaderID, leaseTTL)
 	if local.Term > term {
 		result.Term = local.Term
@@ -586,7 +586,7 @@ func (s *Server) acquireFailoverLeaseRound(now time.Time, lineage string, term u
 		if !s.failoverPeerMembershipMatches(peer) || peer.Role != "replica" || peer.MasterRunID != lineage {
 			continue
 		}
-		requestStart := time.Now()
+		requestStart := now
 		reply, err := queryFailoverLease(addr, 200*time.Millisecond, s.replicationMasterUser, s.replicationMasterAuth, lineage, term, leaderID, leaseTTL)
 		if err != nil {
 			continue
