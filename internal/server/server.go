@@ -363,6 +363,12 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 				return nil, errors.New("ERR wrong number of arguments for 'cluster|info' command")
 			}
 			return s.clusterInfoReply(), nil
+		case "HEALTH":
+			if len(args) != 2 {
+				return nil, errors.New("ERR wrong number of arguments for 'cluster|health' command")
+			}
+			state := s.clusterStateSnapshot()
+			return clusterShardHealthReply(state, s.clusterShardTopologyObservation(state)), nil
 		case "SETSLOT":
 			return s.executeClusterSetSlot(args)
 		default:
