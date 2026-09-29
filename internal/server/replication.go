@@ -1269,9 +1269,13 @@ func (s *Server) stopReplicaFollow() {
 }
 
 func (s *Server) dialReplicationUpstream(host string, port int) (net.Conn, error) {
+	return s.dialReplicationUpstreamTimeout(host, port, 2*time.Second)
+}
+
+func (s *Server) dialReplicationUpstreamTimeout(host string, port int, timeout time.Duration) (net.Conn, error) {
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	if !s.replicationMasterTLS {
-		return net.DialTimeout("tcp", addr, 2*time.Second)
+		return net.DialTimeout("tcp", addr, timeout)
 	}
 
 	caPEM, err := os.ReadFile(s.replicationMasterTLSCA)
@@ -1301,7 +1305,7 @@ func (s *Server) dialReplicationUpstream(host string, port int) (net.Conn, error
 		tlsConfig.Certificates = []tls.Certificate{cert}
 	}
 
-	dialer := &net.Dialer{Timeout: 2 * time.Second}
+	dialer := &net.Dialer{Timeout: timeout}
 	conn, err := tls.DialWithDialer(dialer, "tcp", addr, tlsConfig)
 	if err != nil {
 		return nil, fmt.Errorf("replication TLS handshake failed: %w", err)
