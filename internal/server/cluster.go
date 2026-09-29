@@ -318,7 +318,8 @@ func (s *Server) clusterSlotsReply() ([]byte, error) {
 func (s *Server) clusterShardsReply() ([]byte, error) {
 	state := s.clusterStateSnapshot()
 	masters := clusterSlotCapableNodesFromState(state)
-	topologies := s.clusterShardReplicaTopologies(state)
+	observation := s.clusterShardTopologyObservation(state)
+	topologies := observation.Topologies
 	items := make([][]byte, 0, len(masters))
 
 	renderNode := func(addr, role, health string) ([]byte, error) {
@@ -358,10 +359,7 @@ func (s *Server) clusterShardsReply() ([]byte, error) {
 
 		topology := topologies[owner]
 		nodeItems := make([][]byte, 0, 1+len(topology.Replicas))
-		masterHealth := "online"
-		if owner != state.nodeAddr {
-			masterHealth = "unknown"
-		}
+		masterHealth := clusterObservedNodeHealth(observation, owner)
 		masterNode, err := renderNode(owner, "master", masterHealth)
 		if err != nil {
 			return nil, err
@@ -373,7 +371,7 @@ func (s *Server) clusterShardsReply() ([]byte, error) {
 				replicaNode, err := renderNode(
 					replica,
 					"replica",
-					clusterTopologyNodeHealth(state.nodeAddr, replica),
+					clusterObservedNodeHealth(observation, replica),
 				)
 				if err != nil {
 					return nil, err
