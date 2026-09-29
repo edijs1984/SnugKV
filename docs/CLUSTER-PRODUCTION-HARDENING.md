@@ -227,26 +227,40 @@ migration.
 
 ## Known boundaries
 
-The following are still open production-hardening items:
+The remaining production-hardening boundary is long-duration soak evidence and
+the final release/operator documentation audit.
 
-1. Broader chaos/soak
-   - More multi-process partition matrices;
-   - repeated kill/restart during migration/failover;
-   - long-running partition/heal soak;
-   - disk/persistence failure injection across distributed transitions.
+Completed hardening evidence now includes:
 
-2. Client-library cluster validation
-   - redis-cli cluster routing is covered;
-   - broader ioredis/node-redis/redis-py/go-redis Cluster-mode smoke remains.
+1. Multi-process chaos and recovery
+   - source and target crash during migration;
+   - repeated interrupted migration recovery;
+   - failover restart and returning-primary recovery;
+   - majority partition/heal with write fencing;
+   - AOF rewrite filesystem failure;
+   - corrupted-replica fail-closed/rebuild recovery.
 
-3. Distributed membership policy
+2. Cluster client-library validation
+   - ioredis Cluster;
+   - node-redis Cluster;
+   - redis-py Cluster;
+   - go-redis Cluster;
+   - redis-cli cluster routing.
+
+3. Distributed performance baselines
+   - direct/redirect/cache routing;
+   - reshard throughput;
+   - TLS migration transport overhead;
+   - failover recovery timing;
+   - topology/health observation cost.
+
+4. Distributed membership policy
    - fully automatic admission remains optional/deferred;
    - current membership changes are explicit and guarded.
 
-4. Performance
-   - cluster routing, resharding, TLS migration, failover recovery, and topology
-     observation need reproducible multi-node benchmark baselines before product
-     performance claims.
+The one-cycle distributed soak smoke passes all seven failure/recovery cases.
+A longer retained soak run is still required before closing the production-
+candidate hardening gate.
 
 ## Validation
 
