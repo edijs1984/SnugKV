@@ -63,7 +63,8 @@ type clientSession struct {
 	scriptDebugMode    scriptDebugMode
 	scriptDebugRuntime *scriptDebugRuntime
 
-	clusterAsking bool
+	clusterAsking   bool
+	internalControl bool
 }
 
 var (
@@ -193,6 +194,18 @@ func (c *clientSession) consumeClusterAsking() bool {
 	value := c.clusterAsking
 	c.clusterAsking = false
 	return value
+}
+
+func (c *clientSession) setInternalControl(value bool) {
+	c.mu.Lock()
+	c.internalControl = value
+	c.mu.Unlock()
+}
+
+func (c *clientSession) internalControlEnabled() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.internalControl
 }
 
 func (c *clientSession) setReplyMode(mode clientReplyMode) {
