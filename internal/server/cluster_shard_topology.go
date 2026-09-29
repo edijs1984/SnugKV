@@ -266,3 +266,166 @@ func clusterTopologyNodesFromTopologies(state clusterStateSnapshot, topologies m
 	sort.Strings(out)
 	return out
 }
+
+
+type clusterShardTopologyObservation struct {
+	Topologies map[string]clusterShardReplicaTopology
+	Health     map[string]string
+}
+
+func (s *Server) clusterShardTopologyObservation(state clusterStateSnapshot) clusterShardTopologyObservation {
+	obs := clusterShardTopologyObservation{
+		Topologies: make(map[string]clusterShardReplicaTopology),
+		Health:     make(map[string]string),
+	}
+	if state.nodeAddr != "" {
+		obs.Health[state.nodeAddr] = "online"
+	}
+
+	local, err := s.localClusterShardReplicaTopology(state)
+	if err == nil && local.Owner != "" {
+		obs.Topologies[local.Owner] = local
+		if local.Owner == state.nodeAddr {
+			obs.Health[local.Owner] = "online"
+		}
+	}
+
+	for _, owner := range clusterOwnersFromOwners(state.owners) {
+		if owner == state.nodeAddr {
+			if _, ok := obs.Health[owner]; !ok {
+				obs.Health[owner] = "online"
+			}
+		}
+
+		if _, exists := obs.Topologies[owner]; !exists {
+			peer, err := s.queryClusterFailoverState(owner)
+			if err == nil {
+				topology, topoErr := clusterShardReplicaTopologyFromPeerState(state, peer)
+				if topoErr == nil && topology.Owner == owner {
+					obs.Topologies[owner] = topology
+					obs.Health[owner] = "online"
+				}
+			}
+		}
+
+		topology := obs.Topologies[owner]
+		for _, replica := range topology.Replicas {
+			if replica == state.nodeAddr {
+				obs.Health[replica] = "online"
+				continue
+			}
+			peer, err := s.queryClusterFailoverState(replica)
+			if err != nil {
+				continue
+			}
+			if topology.GroupID != "" && peer.GroupID != topology.GroupID {
+				continue
+			}
+			memberFound := false
+			for _, member := range peer.Members {
+				if member == replica {
+					memberFound = true
+					break
+				}
+			}
+			if !memberFound {
+				continue
+			}
+			obs.Health[replica] = "online"
+		}
+	}
+
+	return obs
+}
+
+func clusterObservedNodeHealth(observation clusterShardTopologyObservation, addr string) string {
+	if health, ok := observation.Health[addr]; ok {
+		return health
+	}
+	return "unknown"
+}
+
+
+func clusterShardHealthReply(state clusterStateSnapshot, observation clusterShardTopologyObservation) []byte {
+	owners := clusterOwnersFromOwners(state.owners)
+	shardItems := make([][]byte, 0, len(owners))
+	overall := "healthy"
+
+	for _, owner := range owners {
+		topology := observation.Topologies[owner]
+		ownerHealth := clusterObservedNodeHealth(observation, owner)
+		replicasTotal := len(topology.Replicas)
+		replicasOnline := 0
+		replicasUnknown := 0
+		for _, replica := range topology.Replicas {
+			switch clusterObservedNodeHealth(observation, replica) {
+			case "online":
+				replicasOnline++
+			default:
+				replicasUnknown++
+			}
+		}
+
+		status := "healthy"
+		if ownerHealth != "online" || replicasUnknown > 0 {
+			status = "unknown"
+			if overall == "healthy" {
+				overall = "unknown"
+			}
+		}
+
+		shardItems = append(shardItems, array(
+			formatBulkString([]byte("owner")),
+			formatBulkString([]byte(owner)),
+			formatBulkString([]byte("owner_health")),
+			formatBulkString([]byte(ownerHealth)),
+			formatBulkString([]byte("replicas_total")),
+			integer(int64(replicasTotal)),
+			formatBulkString([]byte("replicas_online")),
+			integer(int64(replicasOnline)),
+			formatBulkString([]byte("replicas_unknown")),
+			integer(int64(replicasUnknown)),
+			formatBulkString([]byte("status")),
+			formatBulkString([]byte(status)),
+		))
+	}
+
+	assigned := 0
+	for _, owner := range state.owners {
+		if owner != "" {
+			assigned++
+		}
+	}
+	coverageOK := assigned == clusterSlotCount
+	if !coverageOK {
+		overall = "fail"
+	}
+
+	return array(
+		formatBulkString([]byte("status")),
+		formatBulkString([]byte(overall)),
+		formatBulkString([]byte("coverage_ok")),
+		integer(boolToInt64(coverageOK)),
+		formatBulkString([]byte("assigned_slots")),
+		integer(int64(assigned)),
+		formatBulkString([]byte("shards")),
+		array(shardItems...),
+	)
+}
+
+func clusterShardHealthCounters(state clusterStateSnapshot, observation clusterShardTopologyObservation) (shards, replicas, online, unknown int) {
+	owners := clusterOwnersFromOwners(state.owners)
+	shards = len(owners)
+	for _, owner := range owners {
+		topology := observation.Topologies[owner]
+		for _, replica := range topology.Replicas {
+			replicas++
+			if clusterObservedNodeHealth(observation, replica) == "online" {
+				online++
+			} else {
+				unknown++
+			}
+		}
+	}
+	return
+}

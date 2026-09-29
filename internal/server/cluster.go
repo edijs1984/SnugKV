@@ -318,7 +318,8 @@ func (s *Server) clusterSlotsReply() ([]byte, error) {
 func (s *Server) clusterShardsReply() ([]byte, error) {
 	state := s.clusterStateSnapshot()
 	masters := clusterSlotCapableNodesFromState(state)
-	topologies := s.clusterShardReplicaTopologies(state)
+	observation := s.clusterShardTopologyObservation(state)
+	topologies := observation.Topologies
 	items := make([][]byte, 0, len(masters))
 
 	renderNode := func(addr, role, health string) ([]byte, error) {
@@ -358,10 +359,7 @@ func (s *Server) clusterShardsReply() ([]byte, error) {
 
 		topology := topologies[owner]
 		nodeItems := make([][]byte, 0, 1+len(topology.Replicas))
-		masterHealth := "online"
-		if owner != state.nodeAddr {
-			masterHealth = "unknown"
-		}
+		masterHealth := clusterObservedNodeHealth(observation, owner)
 		masterNode, err := renderNode(owner, "master", masterHealth)
 		if err != nil {
 			return nil, err
@@ -373,7 +371,7 @@ func (s *Server) clusterShardsReply() ([]byte, error) {
 				replicaNode, err := renderNode(
 					replica,
 					"replica",
-					clusterTopologyNodeHealth(state.nodeAddr, replica),
+					clusterObservedNodeHealth(observation, replica),
 				)
 				if err != nil {
 					return nil, err
@@ -542,8 +540,9 @@ func (s *Server) clusterInfoReply() []byte {
 		state = "ok"
 	}
 	owners := clusterOwnersFromOwners(stateSnapshot.owners)
-	topologies := s.clusterShardReplicaTopologies(stateSnapshot)
-	knownNodes := clusterTopologyNodesFromTopologies(stateSnapshot, topologies)
+	observation := s.clusterShardTopologyObservation(stateSnapshot)
+	knownNodes := clusterTopologyNodesFromTopologies(stateSnapshot, observation.Topologies)
+	shardsTotal, replicasTotal, replicasOnline, replicasUnknown := clusterShardHealthCounters(stateSnapshot, observation)
 	body := fmt.Sprintf(
 		"cluster_state:%s\r\n"+
 			"cluster_slots_assigned:%d\r\n"+
@@ -552,6 +551,10 @@ func (s *Server) clusterInfoReply() []byte {
 			"cluster_slots_fail:0\r\n"+
 			"cluster_known_nodes:%d\r\n"+
 			"cluster_size:%d\r\n"+
+			"cluster_shards_total:%d\r\n"+
+			"cluster_replicas_total:%d\r\n"+
+			"cluster_replicas_online:%d\r\n"+
+			"cluster_replicas_unknown:%d\r\n"+
 			"cluster_current_epoch:%d\r\n"+
 			"cluster_my_epoch:%d\r\n"+
 			"cluster_stats_messages_sent:0\r\n"+
@@ -562,6 +565,10 @@ func (s *Server) clusterInfoReply() []byte {
 		assigned,
 		len(knownNodes),
 		len(owners),
+		shardsTotal,
+		replicasTotal,
+		replicasOnline,
+		replicasUnknown,
 		stateSnapshot.epoch,
 		stateSnapshot.epoch,
 	)
