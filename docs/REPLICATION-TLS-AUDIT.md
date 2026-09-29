@@ -106,6 +106,26 @@ Observed:
 - live writes propagated
 - replica remained READONLY
 
+## Cluster control/data-plane reuse
+
+The verified upstream TLS transport is also reused by SnugKV's internal cluster
+rebalance data migration path.
+
+When `mastertls` is enabled, internal rebalance/recovery MIGRATE connections use:
+
+- the configured CA and server-name verification;
+- TLS 1.2 or newer;
+- optional client certificates;
+- existing `masteruser` / `masterauth` credentials through MIGRATE AUTH/AUTH2.
+
+This closes the earlier split where cluster control commands could use the secure
+upstream dialer while the actual rebalance MIGRATE data connection always used
+raw TCP.
+
+Public Redis-compatible `MIGRATE` intentionally keeps its normal TCP behavior
+and does not silently inherit `mastertls`; the TLS-capable transport is an
+internal cluster orchestration policy.
+
 ## Automated tests
 
 Coverage includes:
@@ -117,6 +137,8 @@ Coverage includes:
 - existing replication authentication tests
 - existing replication phase tests
 - EOF-framed full-sync tests
+- TLS-only internal cluster MIGRATE with CA verification and AUTH
+- regression proving public MIGRATE does not implicitly inherit cluster TLS settings
 
 ## Validation gates
 
