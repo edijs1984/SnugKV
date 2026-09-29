@@ -266,18 +266,47 @@ done
 [[ "$got" == "leader-write" ]]
 
 echo "[6/9] verify cluster ownership converged to elected leader"
+ownership_converged=0
 for _ in $(seq 1 100); do
   nodes_leader="$(cli "$leader_port" CLUSTER NODES 2>/dev/null || true)"
   nodes_follower="$(cli "$follower_port" CLUSTER NODES 2>/dev/null || true)"
-  if grep -Fq "$leader_addr@0" <<<"$nodes_leader" &&
-     grep -F "$leader_addr@0" <<<"$nodes_leader" | grep -q '0-16383' &&
+  if grep -F "$leader_addr@0" <<<"$nodes_leader" | grep -q '0-16383' &&
      grep -F "$leader_addr@0" <<<"$nodes_follower" | grep -q '0-16383'; then
+    ownership_converged=1
     break
   fi
   sleep 0.05
 done
-grep -F "$leader_addr@0" <<<"$nodes_leader" | grep -q '0-16383'
-grep -F "$leader_addr@0" <<<"$nodes_follower" | grep -q '0-16383'
+
+if (( ownership_converged == 0 )); then
+  echo "cluster ownership did not converge to elected leader $leader_addr" >&2
+  echo "--- leader CLUSTER NODES ---" >&2
+  printf '%s\n' "$nodes_leader" >&2
+  echo "--- follower CLUSTER NODES ---" >&2
+  printf '%s\n' "$nodes_follower" >&2
+  echo "--- leader failover topology ---" >&2
+  cli "$leader_port" SNUG.FAILOVER TOPOLOGY >&2 || true
+  echo "--- follower failover topology ---" >&2
+  cli "$follower_port" SNUG.FAILOVER TOPOLOGY >&2 || true
+  echo "--- leader health ---" >&2
+  cli "$leader_port" SNUG.FAILOVER HEALTH >&2 || true
+  echo "--- follower health ---" >&2
+  cli "$follower_port" SNUG.FAILOVER HEALTH >&2 || true
+  echo "--- leader log tail ---" >&2
+  if [[ "$leader_port" == "$P1" ]]; then
+    tail -n 120 "$TMP/n1.log" >&2 || true
+  else
+    tail -n 120 "$TMP/n2.log" >&2 || true
+  fi
+  echo "--- follower log tail ---" >&2
+  if [[ "$follower_port" == "$P1" ]]; then
+    tail -n 120 "$TMP/n1.log" >&2 || true
+  else
+    tail -n 120 "$TMP/n2.log" >&2 || true
+  fi
+  exit 1
+fi
+echo "cluster ownership converged to $leader_addr"
 
 echo "[7/9] restart old primary"
 start_node n0
