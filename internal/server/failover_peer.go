@@ -641,13 +641,31 @@ func (s *Server) updateFailoverLeaderLease(expiresAt time.Time, fenced bool) {
 
 func (s *Server) failoverWritesFenced(now time.Time) bool {
 	s.failoverLeaderMu.RLock()
-	defer s.failoverLeaderMu.RUnlock()
-	if !s.failoverLeaderActive {
+	leaderActive := s.failoverLeaderActive
+	leaderFenced := s.failoverLeaderFenced
+	leaderLeaseUntil := s.failoverLeaderLeaseUntil
+	s.failoverLeaderMu.RUnlock()
+
+	if leaderActive && (leaderFenced ||
+		leaderLeaseUntil.IsZero() ||
+		!now.Before(leaderLeaseUntil)) {
+		return true
+	}
+
+	s.failoverLeaseMu.Lock()
+	leaseHolder := s.failoverLeaseHolder
+	leaseUntil := s.failoverLeaseUntil
+	s.failoverLeaseMu.Unlock()
+
+	if leaseHolder == "" || leaseUntil.IsZero() || !now.Before(leaseUntil) {
 		return false
 	}
-	return s.failoverLeaderFenced ||
-		s.failoverLeaderLeaseUntil.IsZero() ||
-		!now.Before(s.failoverLeaderLeaseUntil)
+
+	s.replication.mu.RLock()
+	localID := s.replication.runID
+	s.replication.mu.RUnlock()
+
+	return localID != "" && leaseHolder != localID
 }
 
 
