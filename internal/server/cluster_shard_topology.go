@@ -192,6 +192,9 @@ func (s *Server) queryClusterFailoverState(addr string) (failoverPeerState, erro
 	); err != nil {
 		return failoverPeerState{}, err
 	}
+	if err := authenticateInternalControlUpstream(conn, reader, s.clusterControlAuth); err != nil {
+		return failoverPeerState{}, err
+	}
 	if err := writeReplicationRESPCommand(conn, "SNUG.FAILOVER", "STATE"); err != nil {
 		return failoverPeerState{}, err
 	}
