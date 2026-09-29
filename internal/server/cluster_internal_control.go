@@ -1,8 +1,10 @@
 package server
 
 import (
+	"bufio"
 	"crypto/subtle"
 	"errors"
+	"net"
 	"strings"
 )
 
@@ -47,4 +49,57 @@ func (s *Server) requireInternalClusterControl() error {
 		return errors.New("NOPERM internal cluster control authentication required")
 	}
 	return nil
+}
+
+
+func internalControlSecret(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
+}
+
+func authenticateInternalControlUpstream(
+	conn net.Conn,
+	reader *bufio.Reader,
+	username, password, controlSecret string,
+) error {
+	if err := authenticateReplicationUpstream(conn, reader, username, password); err != nil {
+		return err
+	}
+	if controlSecret == "" {
+		return nil
+	}
+	if err := writeReplicationRESPCommand(conn, "SNUG.INTERNAL", "AUTH", controlSecret); err != nil {
+		return err
+	}
+	line, err := readMigrateLine(reader)
+	if err != nil {
+		return err
+	}
+	if line == "+OK" {
+		return nil
+	}
+	if strings.HasPrefix(line, "-") {
+		return errors.New(strings.TrimPrefix(line, "-"))
+	}
+	return errors.New("invalid internal cluster control authentication response")
+}
+
+func failoverSubcommandRequiresInternalControl(subcommand string) bool {
+	switch subcommand {
+	case "STATE",
+		"REQUESTVOTE",
+		"LEASE",
+		"REPARENT",
+		"DEMOTE",
+		"MEMBERSHIPPREPARE",
+		"MEMBERSHIPCOMMIT",
+		"MEMBERSHIPABORT",
+		"RETIREPREPARE",
+		"RETIRE":
+		return true
+	default:
+		return false
+	}
 }
