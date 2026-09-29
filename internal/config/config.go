@@ -88,6 +88,9 @@ func (c Config) Validate() error {
 		}
 	}
 	if c.ClusterEnabled {
+		if c.ClusterControlAuth == "" {
+			return errors.New("cluster_enabled requires cluster_control_auth")
+		}
 		if c.ClusterNodeAddr == "" {
 			return errors.New("cluster_enabled requires cluster_node_addr")
 		}
@@ -162,6 +165,9 @@ func (c Config) Validate() error {
 	if len(c.FailoverDiscoverySeeds) > 0 && c.MasterAuth == "" {
 		return errors.New("failover_discovery_seeds requires masterauth for authenticated peer RPC")
 	}
+	if len(c.FailoverDiscoverySeeds) > 0 && c.ClusterControlAuth == "" {
+		return errors.New("failover_discovery_seeds requires cluster_control_auth")
+	}
 	if c.FailoverDiscoveryIntervalMS < 100 || c.FailoverDiscoveryIntervalMS > int64((24*time.Hour)/time.Millisecond) {
 		return errors.New("failover_discovery_interval_ms must be between 100ms and 24h")
 	}
@@ -180,6 +186,9 @@ func (c Config) Validate() error {
 	}
 	if len(c.FailoverPeers) > 0 && c.MasterAuth == "" {
 		return errors.New("failover_peers requires masterauth for authenticated peer RPC")
+	}
+	if len(c.FailoverPeers) > 0 && c.ClusterControlAuth == "" {
+		return errors.New("failover_peers requires cluster_control_auth")
 	}
 	if len(c.FailoverPeers) > 0 {
 		totalNodes := len(c.FailoverPeers) + 1
