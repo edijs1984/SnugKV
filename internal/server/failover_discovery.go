@@ -99,6 +99,7 @@ func (s *Server) refreshFailoverDiscovery(now time.Time) {
 			300*time.Millisecond,
 			s.replicationMasterUser,
 			s.replicationMasterAuth,
+			s.clusterControlAuth,
 		)
 		if err != nil {
 			continue

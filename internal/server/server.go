@@ -92,6 +92,7 @@ type Server struct {
 
 	clusterMu             sync.RWMutex
 	clusterRebalanceMu    sync.Mutex
+	clusterControlAuth    string
 	clusterEnabled        bool
 	clusterNodeAddr       string
 	clusterTopologyEpoch  uint64
@@ -334,14 +335,30 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		case "MYID":
 			return s.executeClusterMyID(args)
 		case "REBALANCE":
+			if len(args) >= 3 && strings.EqualFold(string(args[2]), "EXECUTE") {
+				if err := s.requireInternalClusterControl(); err != nil {
+					return nil, err
+				}
+			}
 			return s.executeClusterRebalance(args)
 		case "JOIN":
 			return s.executeClusterJoin(args)
 		case "REMOVE":
 			return s.executeClusterRemove(args)
 		case "MEMBERSHIP":
+			if len(args) >= 3 {
+				mode := strings.ToUpper(string(args[2]))
+				if mode == "VIEW" || mode == "CHECK" || mode == "ADD" || mode == "REMOVE" {
+					if err := s.requireInternalClusterControl(); err != nil {
+						return nil, err
+					}
+				}
+			}
 			return s.executeClusterMembership(args)
 		case "FAILOVER-OWNER":
+			if err := s.requireInternalClusterControl(); err != nil {
+				return nil, err
+			}
 			return s.executeClusterFailoverOwner(args)
 		case "SLOTS":
 			if len(args) != 2 {
@@ -1288,7 +1305,13 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		return formatBulkString([]byte(b.String())), nil
 
 	case "SNUG.FAILOVER":
-		switch strings.ToUpper(string(args[1])) {
+		failoverSubcommand := strings.ToUpper(string(args[1]))
+		if failoverSubcommandRequiresInternalControl(failoverSubcommand) {
+			if err := s.requireInternalClusterControl(); err != nil {
+				return nil, err
+			}
+		}
+		switch failoverSubcommand {
 		case "RETIREPREPARE":
 			if len(args) != 5 {
 				return nil, errors.New("ERR wrong number of arguments for 'snug.failover|retireprepare' command")

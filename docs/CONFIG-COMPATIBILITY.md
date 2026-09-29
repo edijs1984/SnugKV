@@ -114,3 +114,22 @@ go build ./cmd/snugkv
 ```
 
 Live Redis 8.2 differential testing covered CONFIG HELP, GET exact/pattern/multiple, SET valid/invalid values, arity, RESETSTAT, REWRITE, unknown subcommands, COMMAND INFO, and COMMAND DOCS.
+
+
+## Cluster control authentication
+
+Configured cluster mode requires a dedicated internal-control credential:
+
+- JSON: `cluster_control_auth`
+- environment: `SNUGKV_CLUSTER_CONTROL_AUTH`
+- CLI: `-cluster-control-auth`
+
+When `cluster_enabled` is true, startup fails if this credential is empty.
+
+The credential is not a replacement for ordinary ACL/replication authentication.
+Peer connections authenticate normally first, then establish a connection-scoped
+internal identity with `SNUG.INTERNAL AUTH`. Private cluster/failover peer RPCs
+require that identity. `RESET`, `AUTH`, and `HELLO` revoke it.
+
+`cluster_control_auth` is a startup configuration value; it is not exposed as a
+runtime `CONFIG SET` mutation.

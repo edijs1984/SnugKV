@@ -184,11 +184,12 @@ func (s *Server) queryClusterFailoverState(addr string) (failoverPeerState, erro
 	_ = conn.SetDeadline(time.Now().Add(750 * time.Millisecond))
 
 	reader := bufio.NewReader(conn)
-	if err := authenticateReplicationUpstream(
+	if err := authenticateInternalControlUpstream(
 		conn,
 		reader,
 		s.replicationMasterUser,
 		s.replicationMasterAuth,
+		s.clusterControlAuth,
 	); err != nil {
 		return failoverPeerState{}, err
 	}

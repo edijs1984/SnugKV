@@ -164,12 +164,14 @@ Phase 21 production hardening adds:
 - live TCP coverage for MOVED, ASK + one-shot ASKING, CLUSTERDOWN, and ownership
   changes after failover.
 
-Current distributed-system boundary:
-- cluster control RPCs are authenticated, and can use TLS where the shared upstream
-  transport is configured;
-- internal CLUSTER subcommands are still reachable through the public command parser
-  by a sufficiently privileged authenticated client because there is not yet a
-  distinct internal-control session identity;
+Phase 22 adds a dedicated internal-control identity:
+- configured cluster startup now requires `cluster_control_auth`;
+- peer connections first use ordinary ACL/replication authentication, then establish
+  a connection-scoped internal identity with `SNUG.INTERNAL AUTH <secret>`;
+- private CLUSTER mutation RPCs and peer-only SNUG.FAILOVER RPCs require that identity;
+- wrong secrets fail closed, while RESET, AUTH, and HELLO revoke the internal identity;
+- operator-facing cluster/failover health and topology commands remain on the normal
+  ACL surface;
 - broader multi-process chaos, long-running partition/recovery soak, client-library
   cluster smoke, and cluster performance benchmarks remain production-hardening work.
 

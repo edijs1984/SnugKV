@@ -190,9 +190,24 @@ consensus protocol for arbitrary cluster metadata.
 
 ## Authentication and TLS
 
-Cluster control RPCs reuse the replication authentication credentials.
+Configured cluster mode requires a dedicated `cluster_control_auth` secret.
 
-The internal rebalance data path now also reuses the TLS-capable upstream dialer.
+Internal peer connections use two authentication layers:
+
+1. ordinary ACL / replication authentication where configured;
+2. `SNUG.INTERNAL AUTH <cluster_control_auth>`, which marks only that TCP
+   connection as an internal-control session.
+
+Private CLUSTER mutation RPCs and peer-only `SNUG.FAILOVER` RPCs require the
+internal-control session identity. Ordinary authenticated clients are rejected
+with `NOPERM`. A wrong internal secret fails closed. `RESET`, `AUTH`, and
+`HELLO` revoke the internal identity so privilege cannot survive a connection
+identity change.
+
+Operator-facing health/topology/discovery commands remain on the normal ACL
+surface; the internal identity is reserved for peer coordination.
+
+The internal rebalance data path also reuses the TLS-capable upstream dialer.
 
 When `mastertls` is enabled, internal rebalance/recovery MIGRATE traffic uses:
 
@@ -205,37 +220,29 @@ When `mastertls` is enabled, internal rebalance/recovery MIGRATE traffic uses:
 Public Redis-compatible `MIGRATE` intentionally remains on its normal TCP
 semantics and does not silently inherit `mastertls`.
 
-Automated tests include a TLS-only target that accepts internal cluster migration
-with CA verification and AUTH.
+Automated tests cover the internal-control handshake, wrong-secret rejection,
+session revocation, peer negotiation, and a TLS-only target for internal cluster
+migration.
 
 ## Known boundaries
 
 The following are still open production-hardening items:
 
-1. Internal-control authorization identity
-   - Internal CLUSTER subcommands such as rebalance execution, failover-owner
-     convergence, and membership control are carried over authenticated RESP.
-   - They are still parsed by the public CLUSTER command surface.
-   - A sufficiently privileged authenticated client is not yet distinguished by
-     a dedicated internal-control session identity.
-   - This should be fixed with an explicit internal control-channel/session
-     mechanism rather than source-IP or username heuristics.
-
-2. Broader chaos/soak
+1. Broader chaos/soak
    - More multi-process partition matrices;
    - repeated kill/restart during migration/failover;
    - long-running partition/heal soak;
    - disk/persistence failure injection across distributed transitions.
 
-3. Client-library cluster validation
+2. Client-library cluster validation
    - redis-cli cluster routing is covered;
    - broader ioredis/node-redis/redis-py/go-redis Cluster-mode smoke remains.
 
-4. Distributed membership policy
+3. Distributed membership policy
    - fully automatic admission remains optional/deferred;
    - current membership changes are explicit and guarded.
 
-5. Performance
+4. Performance
    - cluster routing, resharding, TLS migration, failover recovery, and topology
      observation need reproducible multi-node benchmark baselines before product
      performance claims.

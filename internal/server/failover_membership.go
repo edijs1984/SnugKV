@@ -322,7 +322,7 @@ type failoverMembershipChangeResult struct {
 	PreparedPeers []string
 }
 
-func queryFailoverMembershipPrepare(addr string, timeout time.Duration, username, password, groupID string, currentEpoch, newEpoch uint64, members []string, quorum int) (failoverMembershipReply, error) {
+func queryFailoverMembershipPrepare(addr string, timeout time.Duration, username, password, groupID string, currentEpoch, newEpoch uint64, members []string, quorum int, controlAuth ...string) (failoverMembershipReply, error) {
 	conn, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
 		return failoverMembershipReply{}, err
@@ -330,7 +330,7 @@ func queryFailoverMembershipPrepare(addr string, timeout time.Duration, username
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(timeout))
 	reader := bufio.NewReader(conn)
-	if err := authenticateReplicationUpstream(conn, reader, username, password); err != nil {
+	if err := authenticateInternalControlUpstream(conn, reader, username, password, internalControlSecret(controlAuth)); err != nil {
 		return failoverMembershipReply{}, err
 	}
 	if err := writeReplicationRESPCommand(
@@ -355,7 +355,7 @@ func queryFailoverMembershipPrepare(addr string, timeout time.Duration, username
 	return reply, nil
 }
 
-func queryFailoverMembershipCommit(addr string, timeout time.Duration, username, password, groupID string, epoch uint64) (failoverMembershipReply, error) {
+func queryFailoverMembershipCommit(addr string, timeout time.Duration, username, password, groupID string, epoch uint64, controlAuth ...string) (failoverMembershipReply, error) {
 	conn, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
 		return failoverMembershipReply{}, err
@@ -363,7 +363,7 @@ func queryFailoverMembershipCommit(addr string, timeout time.Duration, username,
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(timeout))
 	reader := bufio.NewReader(conn)
-	if err := authenticateReplicationUpstream(conn, reader, username, password); err != nil {
+	if err := authenticateInternalControlUpstream(conn, reader, username, password, internalControlSecret(controlAuth)); err != nil {
 		return failoverMembershipReply{}, err
 	}
 	if err := writeReplicationRESPCommand(
@@ -385,7 +385,7 @@ func queryFailoverMembershipCommit(addr string, timeout time.Duration, username,
 	return reply, nil
 }
 
-func queryFailoverMembershipAbort(addr string, timeout time.Duration, username, password, groupID string, epoch uint64) (failoverMembershipReply, error) {
+func queryFailoverMembershipAbort(addr string, timeout time.Duration, username, password, groupID string, epoch uint64, controlAuth ...string) (failoverMembershipReply, error) {
 	conn, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
 		return failoverMembershipReply{}, err
@@ -393,7 +393,7 @@ func queryFailoverMembershipAbort(addr string, timeout time.Duration, username, 
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(timeout))
 	reader := bufio.NewReader(conn)
-	if err := authenticateReplicationUpstream(conn, reader, username, password); err != nil {
+	if err := authenticateInternalControlUpstream(conn, reader, username, password, internalControlSecret(controlAuth)); err != nil {
 		return failoverMembershipReply{}, err
 	}
 	if err := writeReplicationRESPCommand(
@@ -519,6 +519,7 @@ func (s *Server) retryFailoverMembershipCommit(now time.Time) error {
 			300*time.Millisecond,
 			s.replicationMasterUser,
 			s.replicationMasterAuth,
+			s.clusterControlAuth,
 		)
 		if err != nil {
 			return nil
@@ -541,6 +542,7 @@ func (s *Server) retryFailoverMembershipCommit(now time.Time) error {
 				membership.GroupID,
 				membership.CommitOldEpoch,
 				membership.CommitEpoch,
+				s.clusterControlAuth,
 			)
 			if prepErr != nil || !reply.Accepted {
 				return nil
@@ -554,6 +556,7 @@ func (s *Server) retryFailoverMembershipCommit(now time.Time) error {
 			membership.GroupID,
 			membership.CommitOldEpoch,
 			membership.CommitEpoch,
+			s.clusterControlAuth,
 		)
 		if retireErr != nil || !reply.Accepted || !reply.Retired {
 			return nil
@@ -586,6 +589,7 @@ func (s *Server) retryFailoverMembershipCommit(now time.Time) error {
 			300*time.Millisecond,
 			s.replicationMasterUser,
 			s.replicationMasterAuth,
+			s.clusterControlAuth,
 		)
 		if err == nil &&
 			state.GroupID == membership.GroupID &&
@@ -608,6 +612,7 @@ func (s *Server) retryFailoverMembershipCommit(now time.Time) error {
 				membership.CommitEpoch,
 				membership.CommitMembers,
 				membership.CommitQuorum,
+				s.clusterControlAuth,
 			)
 			if prepErr != nil || !reply.Accepted {
 				allConverged = false
@@ -622,6 +627,7 @@ func (s *Server) retryFailoverMembershipCommit(now time.Time) error {
 			s.replicationMasterAuth,
 			membership.GroupID,
 			membership.CommitEpoch,
+			s.clusterControlAuth,
 		)
 		if commitErr != nil ||
 			commitReply.ConfigEpoch < membership.CommitEpoch ||
@@ -717,6 +723,7 @@ func (s *Server) coordinateFailoverMembershipChange(newEpoch uint64, newMembers 
 			newEpoch,
 			newMembers,
 			newQuorum,
+			s.clusterControlAuth,
 		)
 		if err != nil || !reply.Accepted || !reply.Joint || reply.PendingEpoch != newEpoch {
 			continue
@@ -744,6 +751,7 @@ func (s *Server) coordinateFailoverMembershipChange(newEpoch uint64, newMembers 
 				s.replicationMasterAuth,
 				membership.GroupID,
 				newEpoch,
+				s.clusterControlAuth,
 			)
 		}
 		_, _ = s.abortFailoverMembership(membership.GroupID, newEpoch)
@@ -760,6 +768,7 @@ func (s *Server) coordinateFailoverMembershipChange(newEpoch uint64, newMembers 
 			membership.GroupID,
 			membership.ConfigEpoch,
 			newEpoch,
+			s.clusterControlAuth,
 		)
 		if err != nil || !reply.Accepted {
 			continue
@@ -780,6 +789,7 @@ func (s *Server) coordinateFailoverMembershipChange(newEpoch uint64, newMembers 
 				s.replicationMasterAuth,
 				membership.GroupID,
 				newEpoch,
+				s.clusterControlAuth,
 			)
 		}
 		_, _ = s.abortFailoverMembership(membership.GroupID, newEpoch)
@@ -933,7 +943,7 @@ func (s *Server) retireFailoverMember(groupID string, currentEpoch, retireAtEpoc
 	}, nil
 }
 
-func queryFailoverRetire(addr string, timeout time.Duration, username, password, groupID string, currentEpoch, retireAtEpoch uint64) (failoverRetireReply, error) {
+func queryFailoverRetire(addr string, timeout time.Duration, username, password, groupID string, currentEpoch, retireAtEpoch uint64, controlAuth ...string) (failoverRetireReply, error) {
 	conn, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
 		return failoverRetireReply{}, err
@@ -941,7 +951,7 @@ func queryFailoverRetire(addr string, timeout time.Duration, username, password,
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(timeout))
 	reader := bufio.NewReader(conn)
-	if err := authenticateReplicationUpstream(conn, reader, username, password); err != nil {
+	if err := authenticateInternalControlUpstream(conn, reader, username, password, internalControlSecret(controlAuth)); err != nil {
 		return failoverRetireReply{}, err
 	}
 	if err := writeReplicationRESPCommand(
@@ -965,7 +975,7 @@ func queryFailoverRetire(addr string, timeout time.Duration, username, password,
 }
 
 
-func queryFailoverRetirePrepare(addr string, timeout time.Duration, username, password, groupID string, currentEpoch, retireAtEpoch uint64) (failoverRetireReply, error) {
+func queryFailoverRetirePrepare(addr string, timeout time.Duration, username, password, groupID string, currentEpoch, retireAtEpoch uint64, controlAuth ...string) (failoverRetireReply, error) {
 	conn, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
 		return failoverRetireReply{}, err
@@ -973,7 +983,7 @@ func queryFailoverRetirePrepare(addr string, timeout time.Duration, username, pa
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(timeout))
 	reader := bufio.NewReader(conn)
-	if err := authenticateReplicationUpstream(conn, reader, username, password); err != nil {
+	if err := authenticateInternalControlUpstream(conn, reader, username, password, internalControlSecret(controlAuth)); err != nil {
 		return failoverRetireReply{}, err
 	}
 	if err := writeReplicationRESPCommand(
