@@ -231,7 +231,7 @@ func (s *Server) evaluatePeerFailover(now time.Time) (failoverElectionResult, er
 	}}
 
 	for _, addr := range membership.Peers {
-		peer, err := queryFailoverPeer(addr, 200*time.Millisecond, s.replicationMasterUser, s.replicationMasterAuth)
+		peer, err := queryFailoverPeer(addr, 200*time.Millisecond, s.replicationMasterUser, s.replicationMasterAuth, s.clusterControlAuth)
 		if err != nil {
 			continue
 		}
@@ -346,7 +346,7 @@ func (s *Server) collectFailoverPeers(now time.Time) (failoverPeerState, []obser
 	local := s.localFailoverState(now)
 	peers := make([]observedFailoverPeer, 0, len(membership.Peers))
 	for _, addr := range membership.Peers {
-		peer, err := queryFailoverPeer(addr, 200*time.Millisecond, s.replicationMasterUser, s.replicationMasterAuth)
+		peer, err := queryFailoverPeer(addr, 200*time.Millisecond, s.replicationMasterUser, s.replicationMasterAuth, s.clusterControlAuth)
 		if err != nil {
 			continue
 		}
@@ -433,6 +433,7 @@ func (s *Server) runFailoverElectionRound(now time.Time) (failoverRoundResult, e
 			local.NodeID,
 			local.Offset,
 			local.Priority,
+			s.clusterControlAuth,
 		)
 		if err != nil {
 			continue
@@ -579,7 +580,7 @@ func (s *Server) acquireFailoverLeaseRound(now time.Time, lineage string, term u
 	}
 
 	for _, addr := range membership.Peers {
-		peer, err := queryFailoverPeer(addr, 200*time.Millisecond, s.replicationMasterUser, s.replicationMasterAuth)
+		peer, err := queryFailoverPeer(addr, 200*time.Millisecond, s.replicationMasterUser, s.replicationMasterAuth, s.clusterControlAuth)
 		if err != nil {
 			continue
 		}
@@ -587,7 +588,7 @@ func (s *Server) acquireFailoverLeaseRound(now time.Time, lineage string, term u
 			continue
 		}
 		requestStart := now
-		reply, err := queryFailoverLease(addr, 200*time.Millisecond, s.replicationMasterUser, s.replicationMasterAuth, lineage, term, leaderID, leaseTTL)
+		reply, err := queryFailoverLease(addr, 200*time.Millisecond, s.replicationMasterUser, s.replicationMasterAuth, lineage, term, leaderID, leaseTTL, s.clusterControlAuth)
 		if err != nil {
 			continue
 		}
@@ -779,6 +780,7 @@ func (s *Server) resolveFailoverLeaderAddr(leaderID string) (string, error) {
 			200*time.Millisecond,
 			s.replicationMasterUser,
 			s.replicationMasterAuth,
+			s.clusterControlAuth,
 		)
 		if err != nil {
 			continue
@@ -894,6 +896,7 @@ func (s *Server) convergeFailoverReplicas(now time.Time) {
 			200*time.Millisecond,
 			s.replicationMasterUser,
 			s.replicationMasterAuth,
+			s.clusterControlAuth,
 		)
 		if err != nil || !s.failoverPeerMembershipMatches(state) || state.Retired || state.NodeID == leaderID {
 			continue
@@ -908,6 +911,7 @@ func (s *Server) convergeFailoverReplicas(now time.Time) {
 				lineage,
 				term,
 				leaderID,
+				s.clusterControlAuth,
 			)
 			continue
 		}
@@ -921,6 +925,7 @@ func (s *Server) convergeFailoverReplicas(now time.Time) {
 				lineage,
 				term,
 				leaderID,
+				s.clusterControlAuth,
 			)
 		}
 	}
@@ -1050,6 +1055,7 @@ func (s *Server) verifyFailoverLeaderQuorum(now time.Time, lineage string, term 
 			200*time.Millisecond,
 			s.replicationMasterUser,
 			s.replicationMasterAuth,
+			s.clusterControlAuth,
 		)
 		if err != nil {
 			continue
@@ -1075,6 +1081,7 @@ func (s *Server) verifyFailoverLeaderQuorum(now time.Time, lineage string, term 
 			term,
 			leaderID,
 			leaseTTL,
+			s.clusterControlAuth,
 		)
 		if err != nil {
 			continue
