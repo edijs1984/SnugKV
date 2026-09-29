@@ -1273,6 +1273,14 @@ func (s *Server) finalizeRebalanceSlotOwners(state clusterStateSnapshot, slot in
 }
 
 func (s *Server) rebalanceMigrateArgs(host, port, key string) [][]byte {
+	return s.rebalanceMigrateArgsWithReplace(host, port, key, false)
+}
+
+func (s *Server) rebalanceRecoveryMigrateArgs(host, port, key string) [][]byte {
+	return s.rebalanceMigrateArgsWithReplace(host, port, key, true)
+}
+
+func (s *Server) rebalanceMigrateArgsWithReplace(host, port, key string, replace bool) [][]byte {
 	args := [][]byte{
 		[]byte("MIGRATE"),
 		[]byte(host),
@@ -1280,6 +1288,9 @@ func (s *Server) rebalanceMigrateArgs(host, port, key string) [][]byte {
 		[]byte(key),
 		[]byte("0"),
 		[]byte("5000"),
+	}
+	if replace {
+		args = append(args, []byte("REPLACE"))
 	}
 	if s.replicationMasterAuth == "" {
 		return args
@@ -1410,7 +1421,7 @@ func (s *Server) resumeRebalanceSlot(state clusterStateSnapshot, slot int) (int,
 		}
 		for _, key := range keys {
 			result, err := s.executeClusterMigrateDurableLocked(
-				s.rebalanceMigrateArgs(host, port, key),
+				s.rebalanceRecoveryMigrateArgs(host, port, key),
 			)
 			if err != nil {
 				return moved, err
