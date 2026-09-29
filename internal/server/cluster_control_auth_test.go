@@ -142,3 +142,135 @@ func TestRebalanceMigrateArgsUsesConfiguredCredentials(t *testing.T) {
 		t.Fatalf("AUTH2 args=%q", args)
 	}
 }
+
+
+func TestInternalClusterControlRejectsPublicClient(t *testing.T) {
+	targetTCP, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer targetTCP.Close()
+
+	targetAddr := targetTCP.listener.Addr().String()
+	if err := targetTCP.server.configureClusterSlots(true, targetAddr, map[string]string{
+		"0-16383": targetAddr,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	targetTCP.server.clusterControlAuth = "control-secret"
+	digest := clusterOwnershipDigest(targetTCP.server.clusterStateSnapshot())
+
+	conn, reader := dialClusterClient(t, targetAddr)
+	writeClusterRESPCommand(t, conn, "CLUSTER", "MEMBERSHIP", "CHECK", targetAddr, digest)
+	if got := readRESPLine(t, reader); got != "-NOPERM internal cluster control authentication required\r\n" {
+		t.Fatalf("public internal CLUSTER command=%q", got)
+	}
+
+	writeClusterRESPCommand(t, conn, "SNUG.FAILOVER", "STATE")
+	if got := readRESPLine(t, reader); got != "-NOPERM internal cluster control authentication required\r\n" {
+		t.Fatalf("public failover peer RPC=%q", got)
+	}
+}
+
+func TestInternalClusterControlHandshakeAllowsPrivateRPC(t *testing.T) {
+	targetTCP, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer targetTCP.Close()
+
+	targetAddr := targetTCP.listener.Addr().String()
+	if err := targetTCP.server.configureClusterSlots(true, targetAddr, map[string]string{
+		"0-16383": targetAddr,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	targetTCP.server.clusterControlAuth = "control-secret"
+	digest := clusterOwnershipDigest(targetTCP.server.clusterStateSnapshot())
+
+	conn, reader := dialClusterClient(t, targetAddr)
+	writeClusterRESPCommand(t, conn, "SNUG.INTERNAL", "AUTH", "control-secret")
+	if got := readRESPLine(t, reader); got != "+OK\r\n" {
+		t.Fatalf("internal auth=%q", got)
+	}
+
+	writeClusterRESPCommand(t, conn, "CLUSTER", "MEMBERSHIP", "CHECK", targetAddr, digest)
+	if got := readRESPLine(t, reader); got != "+OK\r\n" {
+		t.Fatalf("private cluster RPC=%q", got)
+	}
+}
+
+func TestInternalClusterControlWrongSecretAndResetClearElevation(t *testing.T) {
+	targetTCP, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer targetTCP.Close()
+
+	targetAddr := targetTCP.listener.Addr().String()
+	if err := targetTCP.server.configureClusterSlots(true, targetAddr, map[string]string{
+		"0-16383": targetAddr,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	targetTCP.server.clusterControlAuth = "control-secret"
+	digest := clusterOwnershipDigest(targetTCP.server.clusterStateSnapshot())
+
+	conn, reader := dialClusterClient(t, targetAddr)
+	writeClusterRESPCommand(t, conn, "SNUG.INTERNAL", "AUTH", "wrong-secret")
+	if got := readRESPLine(t, reader); got != "-WRONGPASS invalid internal cluster control credential\r\n" {
+		t.Fatalf("wrong internal auth=%q", got)
+	}
+
+	writeClusterRESPCommand(t, conn, "SNUG.INTERNAL", "AUTH", "control-secret")
+	if got := readRESPLine(t, reader); got != "+OK\r\n" {
+		t.Fatalf("internal auth=%q", got)
+	}
+	writeClusterRESPCommand(t, conn, "RESET")
+	if got := readRESPLine(t, reader); got != "+RESET\r\n" {
+		t.Fatalf("RESET=%q", got)
+	}
+	writeClusterRESPCommand(t, conn, "CLUSTER", "MEMBERSHIP", "CHECK", targetAddr, digest)
+	if got := readRESPLine(t, reader); got != "-NOPERM internal cluster control authentication required\r\n" {
+		t.Fatalf("internal elevation survived RESET: %q", got)
+	}
+}
+
+func TestClusterControlSenderPerformsInternalHandshake(t *testing.T) {
+	sourceTCP, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sourceTCP.Close()
+	targetTCP, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer targetTCP.Close()
+
+	targetAddr := targetTCP.listener.Addr().String()
+	if err := targetTCP.server.configureClusterSlots(true, targetAddr, map[string]string{
+		"0-16383": targetAddr,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	targetTCP.server.clusterControlAuth = "control-secret"
+	sourceTCP.server.clusterControlAuth = "control-secret"
+	digest := clusterOwnershipDigest(targetTCP.server.clusterStateSnapshot())
+
+	if err := sourceTCP.server.sendClusterControlCommand(
+		targetAddr,
+		"CLUSTER", "MEMBERSHIP", "CHECK", targetAddr, digest,
+	); err != nil {
+		t.Fatalf("internal control sender failed: %v", err)
+	}
+
+	sourceTCP.server.clusterControlAuth = "wrong-secret"
+	err = sourceTCP.server.sendClusterControlCommand(
+		targetAddr,
+		"CLUSTER", "MEMBERSHIP", "CHECK", targetAddr, digest,
+	)
+	if err == nil || !strings.Contains(err.Error(), "internal cluster control authentication failed") {
+		t.Fatalf("wrong internal control secret err=%v", err)
+	}
+}
