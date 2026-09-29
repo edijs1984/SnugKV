@@ -459,3 +459,25 @@ This is a functional smoke measurement, not yet the repeated reshard baseline.
 The migration implementation currently moves keys individually through the
 cluster migration path, so larger repeated runs are needed before interpreting
 the result as a stable throughput characteristic.
+
+
+### Cluster reshard repeated baseline — 2026-09-29
+
+Three clean two-node single-slot migrations used 5,000 keys with 2,048-byte
+values (10,240,000 logical bytes per run).
+
+| Run | Convergence | Keys/s | Logical B/s |
+|---:|---:|---:|---:|
+| 1 | 19.373 s | 258.09 | 528,567 |
+| 2 | 20.193 s | 247.61 | 507,108 |
+| 3 | 19.621 s | 254.83 | 521,901 |
+
+The median convergence was approximately 19.621 s, corresponding to 254.83
+keys/s and 521,901 logical B/s (~0.522 MB/s). The three runs were close enough
+to treat this as a useful development baseline for the current single-key
+migration implementation.
+
+The migration command itself accounted for nearly the entire convergence
+interval in each run, so post-command ownership convergence overhead was small
+relative to key movement time. This points future optimization work toward the
+per-key migration path rather than topology-finalization latency.
