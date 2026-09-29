@@ -521,3 +521,22 @@ Median intervals from successful primary SIGKILL:
 All three runs elected the same configured-priority replica and preserved the
 replicated dataset. These are development measurements for the current
 400 ms failover timeout and 50 ms maintenance cadence, not general SLA claims.
+
+
+### Cluster topology observation smoke snapshot — 2026-09-29
+
+A persistent-connection smoke benchmark against a healthy three-node cluster
+measured 20 synchronous observations per command.
+
+| Command | Ops/s | p50 | p95 | p99 |
+|---|---:|---:|---:|---:|
+| `CLUSTER SLOTS` | 364.94 | 1.77 ms | 6.49 ms | 6.49 ms |
+| `CLUSTER NODES` | 265.70 | 2.71 ms | 7.37 ms | 7.37 ms |
+| `CLUSTER SHARDS` | 137.19 | 5.93 ms | 14.96 ms | 14.96 ms |
+| `CLUSTER INFO` | 135.41 | 6.85 ms | 9.51 ms | 9.51 ms |
+| `CLUSTER HEALTH` | 159.92 | 5.90 ms | 7.94 ms | 7.94 ms |
+
+The local topology-rendering commands (`SLOTS`, `NODES`) were materially
+cheaper than the commands that perform shard/failover observation
+(`SHARDS`, `INFO`, `HEALTH`). This is a smoke result only; use repeated
+runs before treating it as a stable baseline.
