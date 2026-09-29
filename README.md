@@ -1,11 +1,15 @@
 # SnugKV
 
-SnugKV is a single-node RESP2/RESP3 in-memory datastore written in Go. It focuses on
+SnugKV is a RESP2/RESP3 in-memory datastore written in Go. It focuses on
 Redis-compatible application workloads, memory-efficient native containers,
 exact byte round trips, bounded protocol handling, sharded concurrency,
-expiration, memory limits, eviction, logical persistence, a bounded Lua
-scripting core, Redis-shaped command/config tooling, and Redis-style
-authentication/ACL enforcement for the implemented single-node surface.
+expiration, memory limits, eviction, logical persistence, Lua/Functions,
+Redis-shaped command/config tooling, authentication/ACL enforcement, and an
+implemented distributed core covering replication, automatic failover, hash-slot
+routing, resharding, membership, recovery, and write fencing.
+
+SnugKV is still alpha-stage. The distributed core is in production-hardening,
+not yet production-complete; see [Project State](docs/PROJECT-STATE.md).
 
 Use Go 1.27 or newer:
 
@@ -36,11 +40,12 @@ redis-cli -p 6380 set example hello
 redis-cli -p 6380 get example
 ```
 
-See [operations](docs/operations.md) for configuration, persistence, metrics,
-and administration details. See [COMPATIBILITY.md](COMPATIBILITY.md) for the
-current Redis command/type matrix, [KNOWN-LIMITATIONS.md](KNOWN-LIMITATIONS.md)
-for current boundaries, [PLAN.md](PLAN.md) for the remaining roadmap, and
-[PROGRESS.md](PROGRESS.md) for implementation evidence. Benchmark details are in
+See [Project State](docs/PROJECT-STATE.md) for the canonical current handoff,
+[operations](docs/operations.md) for configuration/persistence/cluster
+operations, [COMPATIBILITY.md](COMPATIBILITY.md) for the Redis command/type
+matrix, [KNOWN-LIMITATIONS.md](KNOWN-LIMITATIONS.md) for current boundaries,
+[PLAN.md](PLAN.md) for the active roadmap, and [PROGRESS.md](PROGRESS.md) for
+chronological implementation evidence. Benchmark details are in
 [benchmarks/README.md](benchmarks/README.md).
 
 ## Supported command surface
@@ -197,8 +202,7 @@ fields (`user:*->score`).
 
 SnugKV uses bytewise comparison for `ALPHA`. Redis can use locale-aware collation
 for non-STORE ALPHA replies, so locale-sensitive/non-ASCII order is not claimed
-to be byte-for-byte identical yet. Redis Cluster slot restrictions and some dynamic external-key ACL nuances remain
-outside the current single-node compatibility scope.
+to be byte-for-byte identical yet. Redis Cluster slot restrictions are enforced for the implemented cluster-aware surface; some command-family-specific edge cases and dynamic external-key ACL nuances remain under hardening.
 
 ## COPY compatibility
 
@@ -212,8 +216,7 @@ MULTI/EXEC, WATCH invalidation, max-memory admission, and blocking container
 wakeups.
 
 SnugKV intentionally exposes only database 0, so `COPY ... DB 0` is accepted and
-other destination DB indexes return `ERR DB index is out of range`. Cross-database
-copy and Redis migration/transfer commands are not implemented.
+other destination DB indexes return `ERR DB index is out of range`. Cross-database copy remains unsupported because SnugKV intentionally exposes only database 0. Redis-compatible `MIGRATE` is implemented for the audited standalone transfer surface, while cluster-internal migration has additional guarded control-plane behavior.
 
 ## Native container storage
 
