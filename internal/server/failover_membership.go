@@ -548,6 +548,7 @@ func (s *Server) retryFailoverMembershipCommit(now time.Time) error {
 				300*time.Millisecond,
 				s.replicationMasterUser,
 				s.replicationMasterAuth,
+				s.clusterControlAuth,
 				membership.GroupID,
 				membership.CommitOldEpoch,
 				membership.CommitEpoch,
@@ -615,6 +616,7 @@ func (s *Server) retryFailoverMembershipCommit(now time.Time) error {
 				300*time.Millisecond,
 				s.replicationMasterUser,
 				s.replicationMasterAuth,
+				s.clusterControlAuth,
 				membership.GroupID,
 				membership.CommitOldEpoch,
 				membership.CommitEpoch,
@@ -756,6 +758,7 @@ func (s *Server) coordinateFailoverMembershipChange(newEpoch uint64, newMembers 
 				300*time.Millisecond,
 				s.replicationMasterUser,
 				s.replicationMasterAuth,
+				s.clusterControlAuth,
 				membership.GroupID,
 				newEpoch,
 			)
@@ -793,6 +796,7 @@ func (s *Server) coordinateFailoverMembershipChange(newEpoch uint64, newMembers 
 				300*time.Millisecond,
 				s.replicationMasterUser,
 				s.replicationMasterAuth,
+				s.clusterControlAuth,
 				membership.GroupID,
 				newEpoch,
 			)
