@@ -1286,39 +1286,52 @@ func (s *Server) finalizeRebalanceSlotOwners(state clusterStateSnapshot, slot in
 }
 
 func (s *Server) rebalanceMigrateArgs(host, port, key string) [][]byte {
-	return s.rebalanceMigrateArgsWithReplace(host, port, key, false)
+	return s.rebalanceMigrateKeysArgsWithReplace(host, port, []string{key}, false)
 }
 
 func (s *Server) rebalanceRecoveryMigrateArgs(host, port, key string) [][]byte {
-	return s.rebalanceMigrateArgsWithReplace(host, port, key, true)
+	return s.rebalanceMigrateKeysArgsWithReplace(host, port, []string{key}, true)
 }
 
-func (s *Server) rebalanceMigrateArgsWithReplace(host, port, key string, replace bool) [][]byte {
+func (s *Server) rebalanceMigrateKeysArgs(host, port string, keys []string) [][]byte {
+	return s.rebalanceMigrateKeysArgsWithReplace(host, port, keys, false)
+}
+
+func (s *Server) rebalanceRecoveryMigrateKeysArgs(host, port string, keys []string) [][]byte {
+	return s.rebalanceMigrateKeysArgsWithReplace(host, port, keys, true)
+}
+
+func (s *Server) rebalanceMigrateKeysArgsWithReplace(host, port string, keys []string, replace bool) [][]byte {
 	args := [][]byte{
 		[]byte("MIGRATE"),
 		[]byte(host),
 		[]byte(port),
-		[]byte(key),
+		[]byte{},
 		[]byte("0"),
 		[]byte("5000"),
 	}
 	if replace {
 		args = append(args, []byte("REPLACE"))
 	}
-	if s.replicationMasterAuth == "" {
-		return args
+	if s.replicationMasterAuth != "" {
+		if s.replicationMasterUser != "" {
+			args = append(args,
+				[]byte("AUTH2"),
+				[]byte(s.replicationMasterUser),
+				[]byte(s.replicationMasterAuth),
+			)
+		} else {
+			args = append(args,
+				[]byte("AUTH"),
+				[]byte(s.replicationMasterAuth),
+			)
+		}
 	}
-	if s.replicationMasterUser != "" {
-		return append(args,
-			[]byte("AUTH2"),
-			[]byte(s.replicationMasterUser),
-			[]byte(s.replicationMasterAuth),
-		)
+	args = append(args, []byte("KEYS"))
+	for _, key := range keys {
+		args = append(args, []byte(key))
 	}
-	return append(args,
-		[]byte("AUTH"),
-		[]byte(s.replicationMasterAuth),
-	)
+	return args
 }
 
 func (s *Server) rebalanceMoveOneSlot(state clusterStateSnapshot, move clusterRebalanceMove) (int, error) {
@@ -1358,36 +1371,33 @@ func (s *Server) rebalanceMoveOneSlot(state clusterStateSnapshot, move clusterRe
 	}
 
 	moved := 0
+	host, port, err := net.SplitHostPort(move.Target)
+	if err != nil {
+		rollback()
+		return moved, fmt.Errorf("ERR invalid rebalance target address: %w", err)
+	}
 	for {
 		keys := s.clusterLocalKeysInSlot(slot, 64)
 		if len(keys) == 0 {
 			break
 		}
 
-		for _, key := range keys {
-			host, port, err := net.SplitHostPort(move.Target)
-			if err != nil {
+		result, err := s.executeClusterMigrateDurableLocked(
+			s.rebalanceMigrateKeysArgs(host, port, keys),
+		)
+		remaining := s.store.Exists(keys)
+		moved += len(keys) - remaining
+		if err != nil {
+			if moved == 0 {
 				rollback()
-				return moved, fmt.Errorf("ERR invalid rebalance target address: %w", err)
 			}
-			result, err := s.executeClusterMigrateDurableLocked(
-				s.rebalanceMigrateArgs(host, port, key),
-			)
-			if err != nil {
-				if moved == 0 {
-					rollback()
-				}
-				return moved, err
+			return moved, err
+		}
+		if string(result) != "+OK\r\n" && string(result) != "+NOKEY\r\n" {
+			if moved == 0 {
+				rollback()
 			}
-			if string(result) != "+OK\r\n" && string(result) != "+NOKEY\r\n" {
-				if moved == 0 {
-					rollback()
-				}
-				return moved, fmt.Errorf("ERR unexpected MIGRATE result %q", result)
-			}
-			if string(result) == "+OK\r\n" {
-				moved++
-			}
+			return moved, fmt.Errorf("ERR unexpected MIGRATE result %q", result)
 		}
 	}
 
@@ -1432,19 +1442,16 @@ func (s *Server) resumeRebalanceSlot(state clusterStateSnapshot, slot int) (int,
 		if len(keys) == 0 {
 			break
 		}
-		for _, key := range keys {
-			result, err := s.executeClusterMigrateDurableLocked(
-				s.rebalanceRecoveryMigrateArgs(host, port, key),
-			)
-			if err != nil {
-				return moved, err
-			}
-			if string(result) != "+OK\r\n" && string(result) != "+NOKEY\r\n" {
-				return moved, fmt.Errorf("ERR unexpected MIGRATE result %q", result)
-			}
-			if string(result) == "+OK\r\n" {
-				moved++
-			}
+		result, err := s.executeClusterMigrateDurableLocked(
+			s.rebalanceRecoveryMigrateKeysArgs(host, port, keys),
+		)
+		remaining := s.store.Exists(keys)
+		moved += len(keys) - remaining
+		if err != nil {
+			return moved, err
+		}
+		if string(result) != "+OK\r\n" && string(result) != "+NOKEY\r\n" {
+			return moved, fmt.Errorf("ERR unexpected MIGRATE result %q", result)
 		}
 	}
 
