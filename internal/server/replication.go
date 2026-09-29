@@ -1364,6 +1364,29 @@ func (s *Server) applySnugReplicationRecordsLocked(records []persistence.Record)
 	return nil
 }
 
+func (s *Server) persistSnugFullSyncCheckpointLocked(masterRunID string, checkpointOffset int64) error {
+	if s.journal == nil {
+		return nil
+	}
+	s.replication.mu.RLock()
+	masterHost := s.replication.masterHost
+	masterPort := s.replication.masterPort
+	s.replication.mu.RUnlock()
+
+	checkpoint := &persistence.ReplicationCheckpoint{
+		MasterHost:  masterHost,
+		MasterPort:  masterPort,
+		MasterRunID: masterRunID,
+		Offset:      checkpointOffset,
+		RedisStream: false,
+	}
+	if err := s.journal.Append([]persistence.Record{{Replication: checkpoint}}); err != nil {
+		s.durabilityFailed = true
+		return errors.New("replication full-sync checkpoint append failed")
+	}
+	return nil
+}
+
 func (s *Server) persistRedisFullSyncLocked(checkpointOffset int64) error {
 	s.replication.mu.RLock()
 	masterRunID := s.replication.masterRunID
@@ -1531,6 +1554,9 @@ func (s *Server) consumeReplicationConnection(conn net.Conn, cancel <-chan struc
 			}
 		} else {
 			err = s.applySnugReplicationRecordsLocked(records)
+			if err == nil {
+				err = s.persistSnugFullSyncCheckpointLocked(fullResyncRunID, off)
+			}
 			if err == nil {
 				s.noteReplicaAOFOffset(off)
 			}
