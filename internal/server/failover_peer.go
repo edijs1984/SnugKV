@@ -639,35 +639,43 @@ func (s *Server) updateFailoverLeaderLease(expiresAt time.Time, fenced bool) {
 	s.failoverLeaderMu.Unlock()
 }
 
-func (s *Server) failoverWritesFenced(now time.Time) bool {
+func (s *Server) failoverWriteFenceStatus(now time.Time) (fenced bool, reason, leaseHolder string, leaseUntil time.Time) {
 	s.failoverLeaderMu.RLock()
 	leaderActive := s.failoverLeaderActive
 	leaderFenced := s.failoverLeaderFenced
 	leaderLeaseUntil := s.failoverLeaderLeaseUntil
+	leaderID := s.failoverLeaderID
 	s.failoverLeaderMu.RUnlock()
 
 	if leaderActive && (leaderFenced ||
 		leaderLeaseUntil.IsZero() ||
 		!now.Before(leaderLeaseUntil)) {
-		return true
+		return true, "leader_lease_invalid", leaderID, leaderLeaseUntil
 	}
 
 	s.failoverLeaseMu.Lock()
-	leaseHolder := s.failoverLeaseHolder
-	leaseUntil := s.failoverLeaseUntil
+	leaseHolder = s.failoverLeaseHolder
+	leaseUntil = s.failoverLeaseUntil
 	s.failoverLeaseMu.Unlock()
 
 	if leaseHolder == "" || leaseUntil.IsZero() || !now.Before(leaseUntil) {
-		return false
+		return false, "", leaseHolder, leaseUntil
 	}
 
 	s.replication.mu.RLock()
 	localID := s.replication.runID
 	s.replication.mu.RUnlock()
 
-	return localID != "" && leaseHolder != localID
+	if localID != "" && leaseHolder != localID {
+		return true, "foreign_leader_lease", leaseHolder, leaseUntil
+	}
+	return false, "", leaseHolder, leaseUntil
 }
 
+func (s *Server) failoverWritesFenced(now time.Time) bool {
+	fenced, _, _, _ := s.failoverWriteFenceStatus(now)
+	return fenced
+}
 
 func (s *Server) deactivateFailoverLeader() {
 	s.failoverLeaderMu.Lock()
