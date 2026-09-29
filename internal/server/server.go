@@ -1305,7 +1305,13 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		return formatBulkString([]byte(b.String())), nil
 
 	case "SNUG.FAILOVER":
-		switch strings.ToUpper(string(args[1])) {
+		failoverSubcommand := strings.ToUpper(string(args[1]))
+		if failoverSubcommandRequiresInternalControl(failoverSubcommand) {
+			if err := s.requireInternalClusterControl(); err != nil {
+				return nil, err
+			}
+		}
+		switch failoverSubcommand {
 		case "RETIREPREPARE":
 			if len(args) != 5 {
 				return nil, errors.New("ERR wrong number of arguments for 'snug.failover|retireprepare' command")
