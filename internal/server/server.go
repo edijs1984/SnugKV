@@ -369,6 +369,11 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			}
 			state := s.clusterStateSnapshot()
 			return clusterShardHealthReply(state, s.clusterShardTopologyObservation(state)), nil
+		case "CONSISTENCY":
+			if len(args) != 2 {
+				return nil, errors.New("ERR wrong number of arguments for 'cluster|consistency' command")
+			}
+			return s.clusterConsistencyReply(), nil
 		case "SETSLOT":
 			return s.executeClusterSetSlot(args)
 		default:
