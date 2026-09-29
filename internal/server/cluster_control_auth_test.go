@@ -124,21 +124,34 @@ func TestRebalanceMigrateArgsUsesConfiguredCredentials(t *testing.T) {
 	s := New(engine.New())
 
 	args := s.rebalanceMigrateArgs("127.0.0.1", "7001", "key")
-	if len(args) != 6 {
-		t.Fatalf("unauthenticated args=%d want=6", len(args))
+	want := []string{"MIGRATE", "127.0.0.1", "7001", "", "0", "5000", "KEYS", "key"}
+	if len(args) != len(want) {
+		t.Fatalf("unauthenticated args=%d want=%d args=%q", len(args), len(want), args)
+	}
+	for i := range want {
+		if string(args[i]) != want[i] {
+			t.Fatalf("unauthenticated arg[%d]=%q want=%q args=%q", i, args[i], want[i], args)
+		}
 	}
 
 	s.replicationMasterAuth = "secret"
 	args = s.rebalanceMigrateArgs("127.0.0.1", "7001", "key")
-	if got := string(args[6]); got != "AUTH" || string(args[7]) != "secret" {
+	if len(args) != 10 ||
+		string(args[6]) != "AUTH" ||
+		string(args[7]) != "secret" ||
+		string(args[8]) != "KEYS" ||
+		string(args[9]) != "key" {
 		t.Fatalf("AUTH args=%q", args)
 	}
 
 	s.replicationMasterUser = "cluster"
 	args = s.rebalanceMigrateArgs("127.0.0.1", "7001", "key")
-	if got := string(args[6]); got != "AUTH2" ||
+	if len(args) != 11 ||
+		string(args[6]) != "AUTH2" ||
 		string(args[7]) != "cluster" ||
-		string(args[8]) != "secret" {
+		string(args[8]) != "secret" ||
+		string(args[9]) != "KEYS" ||
+		string(args[10]) != "key" {
 		t.Fatalf("AUTH2 args=%q", args)
 	}
 }
