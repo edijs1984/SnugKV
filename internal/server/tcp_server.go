@@ -130,6 +130,7 @@ func ListenWithJournal(c config.Config, store *engine.Store, journal Journal) (*
 	s.server.configACLFile = c.ACLFile
 	s.server.replicationMasterUser = c.MasterUser
 	s.server.replicationMasterAuth = c.MasterAuth
+	s.server.clusterControlAuth = c.ClusterControlAuth
 	s.server.replicationMasterTLS = c.MasterTLS
 	s.server.replicationMasterTLSCA = c.MasterTLSCACert
 	s.server.replicationMasterTLSCert = c.MasterTLSCert
@@ -597,6 +598,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			clientSession.noEvict, clientSession.noTouch = false, false
 			clientSession.reply = clientReplyOn
 			clientSession.tracking = clientTrackingState{}
+			clientSession.internalControl = false
 			clientSession.mu.Unlock()
 			clientSession.setProtocol(2)
 			*authSession = *newAuthSession(s.server.acl)
@@ -608,6 +610,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 
 		if !borrowed && len(msg) > 0 &&
 			strings.EqualFold(string(msg[0]), "HELLO") {
+			clientSession.setInternalControl(false)
 			response, helloErr :=
 				s.executeHelloConnectionCommand(
 					clientSession,
@@ -627,6 +630,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 		}
 
 		if !borrowed && len(msg) > 0 && strings.EqualFold(string(msg[0]), "AUTH") {
+			clientSession.setInternalControl(false)
 			response, authErr := s.server.executeAUTH(authSession, msg)
 
 			if authErr != nil {
@@ -658,6 +662,26 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				return
 			}
 
+			continue
+		}
+
+		if !borrowed && len(msg) > 0 && strings.EqualFold(string(msg[0]), "SNUG.INTERNAL") {
+			if len(msg) != 3 || !strings.EqualFold(string(msg[1]), "AUTH") {
+				if writeProtocol(msg, errorResponse(errors.New("ERR syntax error"))) != nil { return }
+				continue
+			}
+			if !internalControlCredentialMatches(s.server.clusterControlAuth, msg[2]) {
+				clientSession.setInternalControl(false)
+				if writeProtocol(msg, errorResponse(errors.New("WRONGPASS invalid internal cluster control credential"))) != nil { return }
+				continue
+			}
+			clientSession.setInternalControl(true)
+			if writeProtocol(msg, []byte("+OK\r\n")) != nil { return }
+			continue
+		}
+
+		if internalControlCommand(msg) && !clientSession.internalControlEnabled() {
+			if writeProtocol(msg, errorResponse(errors.New("NOPERM internal cluster control authentication required"))) != nil { return }
 			continue
 		}
 
