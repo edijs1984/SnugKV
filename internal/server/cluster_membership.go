@@ -730,6 +730,7 @@ func (s *Server) executeClusterRemove(args [][]byte) ([]byte, error) {
 					"CLUSTER", "REBALANCE", "EXECUTE",
 					strconv.Itoa(slot),
 					clusterNodeID(move.Target),
+					clusterOwnershipDigest(current),
 				)
 			}
 			keysMoved += moved
