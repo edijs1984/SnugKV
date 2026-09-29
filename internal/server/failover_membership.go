@@ -529,7 +529,6 @@ func (s *Server) retryFailoverMembershipCommit(now time.Time) error {
 			s.replicationMasterUser,
 			s.replicationMasterAuth,
 			s.clusterControlAuth,
-			s.clusterControlAuth,
 		)
 		if err != nil {
 			return nil
@@ -562,7 +561,6 @@ func (s *Server) retryFailoverMembershipCommit(now time.Time) error {
 			300*time.Millisecond,
 			s.replicationMasterUser,
 			s.replicationMasterAuth,
-			s.clusterControlAuth,
 			s.clusterControlAuth,
 			membership.GroupID,
 			membership.CommitOldEpoch,
@@ -600,7 +598,6 @@ func (s *Server) retryFailoverMembershipCommit(now time.Time) error {
 			s.replicationMasterUser,
 			s.replicationMasterAuth,
 			s.clusterControlAuth,
-			s.clusterControlAuth,
 		)
 		if err == nil &&
 			state.GroupID == membership.GroupID &&
@@ -635,7 +632,6 @@ func (s *Server) retryFailoverMembershipCommit(now time.Time) error {
 			300*time.Millisecond,
 			s.replicationMasterUser,
 			s.replicationMasterAuth,
-			s.clusterControlAuth,
 			s.clusterControlAuth,
 			membership.GroupID,
 			membership.CommitEpoch,
@@ -730,7 +726,6 @@ func (s *Server) coordinateFailoverMembershipChange(newEpoch uint64, newMembers 
 			s.replicationMasterUser,
 			s.replicationMasterAuth,
 			s.clusterControlAuth,
-			s.clusterControlAuth,
 			membership.GroupID,
 			membership.ConfigEpoch,
 			newEpoch,
@@ -776,7 +771,6 @@ func (s *Server) coordinateFailoverMembershipChange(newEpoch uint64, newMembers 
 			300*time.Millisecond,
 			s.replicationMasterUser,
 			s.replicationMasterAuth,
-			s.clusterControlAuth,
 			s.clusterControlAuth,
 			membership.GroupID,
 			membership.ConfigEpoch,
