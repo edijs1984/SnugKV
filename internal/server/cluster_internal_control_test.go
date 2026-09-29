@@ -2,7 +2,6 @@ package server
 
 import (
 	"bufio"
-	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -136,5 +135,74 @@ func TestClusterPrivateControlRPCCompatibilityModeWithoutSecret(t *testing.T) {
 		t.Fatalf("compatibility mode reply=%q err=%v", got, err)
 	}
 
-	_ = fmt.Sprintf("%p", client)
+}
+
+
+func TestFailoverPeerRPCRequiresInternalControlSession(t *testing.T) {
+	target, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+
+	target.server.clusterControlAuth = "failover-control-secret"
+
+	conn, err := net.DialTimeout("tcp", target.listener.Addr().String(), 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(conn)
+
+	writeClusterRESPCommand(t, conn, "SNUG.FAILOVER", "STATE")
+	if got := readRESPLine(t, reader); got != "-NOPERM internal cluster control authentication required\r\n" {
+		t.Fatalf("public failover STATE=%q", got)
+	}
+
+	writeClusterRESPCommand(t, conn, "SNUG.INTERNAL", "AUTH", "failover-control-secret")
+	if got := readRESPLine(t, reader); got != "+OK\r\n" {
+		t.Fatalf("internal auth=%q", got)
+	}
+
+	writeClusterRESPCommand(t, conn, "SNUG.FAILOVER", "STATE")
+	header := readRESPLine(t, reader)
+	if len(header) < 4 || header[0] != '$' {
+		t.Fatalf("authenticated failover STATE header=%q", header)
+	}
+}
+
+func TestFailoverPeerQueryNegotiatesInternalControlSession(t *testing.T) {
+	target, err := Listen("127.0.0.1:0", engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	target.server.clusterControlAuth = "failover-peer-secret"
+
+	state, err := queryFailoverPeer(
+		target.listener.Addr().String(),
+		time.Second,
+		"",
+		"",
+		"failover-peer-secret",
+	)
+	if err != nil {
+		t.Fatalf("secure failover peer query: %v", err)
+	}
+	if state.NodeID == "" {
+		t.Fatal("secure failover peer query returned empty node id")
+	}
+
+	if _, err := queryFailoverPeer(
+		target.listener.Addr().String(),
+		time.Second,
+		"",
+		"",
+		"wrong-secret",
+	); err == nil {
+		t.Fatal("wrong failover peer control secret was accepted")
+	}
 }
