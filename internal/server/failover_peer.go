@@ -910,7 +910,7 @@ func (s *Server) convergeFailoverReplicas(now time.Time) {
 			continue
 		}
 
-		if state.Role == "master" && state.NodeID == lineage {
+		if state.Role == "master" {
 			_, _ = queryFailoverDemote(
 				addr,
 				200*time.Millisecond,
@@ -945,7 +945,7 @@ type failoverDemoteReply struct {
 	Accepted bool   `json:"accepted"`
 }
 
-func (s *Server) requestFailoverDemote(now time.Time, lineage string, term uint64, leaderID string) (failoverDemoteReply, error) {
+func (s *Server) requestFailoverDemote(now time.Time, lineage string, term uint64, leaderID string, expectedTargetAddr ...string) (failoverDemoteReply, error) {
 	if s.failoverMembershipSnapshot().Retired {
 		return failoverDemoteReply{}, nil
 	}
@@ -963,13 +963,22 @@ func (s *Server) requestFailoverDemote(now time.Time, lineage string, term uint6
 		return reply, nil
 	}
 
-	// A returning old primary may have been offline for the entire election and
-	// therefore may not hold a local lease record. Prove that this node is the
-	// failed lineage itself, then independently verify the elected leader still
-	// controls lease quorum before demoting.
-	if local.NodeID != lineage {
+	// A returning old primary may have restarted and therefore have a new
+	// replication run ID. Network demotion requests carry the exact membership
+	// address the leader intended to demote; direct in-process callers retain
+	// the historical lineage identity check.
+	targetAddr := ""
+	if len(expectedTargetAddr) > 0 {
+		targetAddr = expectedTargetAddr[0]
+	}
+	if targetAddr != "" {
+		if s.failoverAdvertiseAddr == "" || s.failoverAdvertiseAddr != targetAddr {
+			return reply, nil
+		}
+	} else if local.NodeID != lineage {
 		return reply, nil
 	}
+
 	verified, higherTerm := s.verifyFailoverLeaderQuorum(now, lineage, term, leaderID)
 	if higherTerm > term {
 		reply.Term = higherTerm
@@ -995,9 +1004,19 @@ func (s *Server) requestFailoverDemote(now time.Time, lineage string, term uint6
 	s.failoverLeaderMu.RLock()
 	activeLocalLeader := s.failoverLeaderActive
 	localLeaderLineage := s.failoverLeaderLineage
+	localLeaderLeaseUntil := s.failoverLeaderLeaseUntil
+	localLeaderFenced := s.failoverLeaderFenced
 	s.failoverLeaderMu.RUnlock()
 	if activeLocalLeader && localLeaderLineage != "" && localLeaderLineage != lineage {
-		return reply, nil
+		// A restarted old primary can create a fenced self-leader record using
+		// its new run ID. Permit recovery only when the address proof above was
+		// supplied and that local leader state is already fenced or expired.
+		activeLease := !localLeaderFenced &&
+			!localLeaderLeaseUntil.IsZero() &&
+			now.Before(localLeaderLeaseUntil)
+		if targetAddr == "" || activeLease {
+			return reply, nil
+		}
 	}
 
 	if err := s.persistReplicationCheckpointClearLocked(host, port); err != nil {
@@ -1032,6 +1051,7 @@ func queryFailoverDemote(addr string, timeout time.Duration, username, password,
 		lineage,
 		strconv.FormatUint(term, 10),
 		leaderID,
+		addr,
 	); err != nil {
 		return failoverDemoteReply{}, err
 	}
