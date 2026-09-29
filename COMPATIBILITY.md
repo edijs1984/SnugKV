@@ -6,7 +6,7 @@ the public compatibility boundary; issue #55 tracks the implementation backlog.
 
 ## Current status
 
-SnugKV is a single-node RESP2/RESP3 datastore with native STRING-style scalar storage,
+SnugKV supports standalone and distributed RESP2/RESP3 operation with native STRING-style scalar storage,
 HASH, SET, LIST, ZSET, and STREAM semantics. The broad Streams and consumer-group
 surface is implemented, including blocking reads, pending-entry management,
 claiming, XINFO introspection, lifetime stream metadata, MAXLEN/MINID trimming,
@@ -33,10 +33,18 @@ per-connection protocol state, `HELLO 3`, protocol switching, the RESP3 reply
 shapes required by the audited surface, and RESP3 Pub/Sub pushes/subscribed-mode
 semantics. The broad Redis 8.2 command-shape differential sweep is complete; remaining
 RESP3 work is optional client-library smoke coverage and attribute/unused-type
-support only where required. The largest remaining compatibility areas include
-`SCRIPT DEBUG`, exact `allow-oom` behavior, migration/transfer scope, and advanced
-CLIENT tracking/caching features. Replication, Sentinel-style failover, and Cluster
-remain outside the current single-node scope.
+support only where required. Replication, automatic failover, and the core Cluster/sharding surface are now
+implemented for the audited SnugKV distributed model. This includes PSYNC
+continuation, Redis RDB full sync, authenticated/TLS replication, majority-backed
+failover leases, MOVED/ASK routing, reshard/recovery, membership changes,
+replica-aware shard topology, and operator health/consistency views.
+
+Remaining distributed boundaries are production hardening rather than absence of
+the feature family: internal CLUSTER control subcommands are authenticated through
+the shared ACL/control path but do not yet have a separate internal-session
+identity, fully automatic membership admission is optional/deferred, and broader
+multi-process chaos/client-library cluster testing remains. Advanced CLIENT
+tracking/caching and optional RESP3 client-specific hardening also remain.
 
 ## Client compatibility
 
@@ -88,7 +96,7 @@ client-library-specific parity are not yet claimed.
 | COMMAND metadata | Supported for implemented surface | Redis-shaped INFO/DOCS/GETKEYS/GETKEYSANDFLAGS, parent/subcommand metadata, dynamic key extraction, differential audit complete |
 | RESP3 | Broad audited support | `HELLO 3`, protocol switching, audited null/map/set/double/verbatim reply shapes, Streams/tooling maps, GEO/ZSET numeric forms, and Pub/Sub push semantics; optional client/attribute hardening remains |
 | Key migration / transfer | Supported | Redis 8.2-compatible `DUMP` / `RESTORE` plus `MIGRATE` with COPY/REPLACE/KEYS/AUTH/AUTH2 and live two-way interoperability; STREAM tombstone byte-for-byte re-emission after XDEL remains a documented storage-model boundary |
-| Replication / Sentinel / Cluster | Not implemented | Outside current single-node scope |
+| Replication / Failover / Cluster | Broad audited core | Primary/replica sync, partial PSYNC, Redis RDB full sync, TLS/auth, quorum-leased failover, hash-slot routing, MOVED/ASK, guarded reshard/recovery, dynamic membership, replica-aware shard topology, and health/consistency views; broader chaos/client-library hardening remains |
 
 ## JSON compatibility
 
@@ -185,8 +193,10 @@ locale-aware collation for non-STORE ALPHA replies, so locale-sensitive/non-ASCI
 ordering is not claimed as exact parity. SET native iteration order under `BY`
 without a wildcard is implementation-defined; STORE uses deterministic ordering.
 Core command/key ACL enforcement is implemented. Deeper Redis parity for
-dynamically resolved external SORT keys is still being audited, while Cluster
-slot restrictions remain outside SnugKV's single-node scope.
+dynamically resolved external SORT keys is still being audited. In Cluster mode,
+ordinary command routing is subject to SnugKV's implemented hash-slot and
+CROSSSLOT rules; command-family-specific Redis Cluster edge cases remain part of
+ongoing compatibility hardening.
 
 ## COPY
 
