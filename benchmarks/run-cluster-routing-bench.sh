@@ -18,6 +18,7 @@ NODES="$A0,$A1,$A2"
 KEYS="${KEYS:-100000}"
 OPS="${OPS:-500000}"
 WORKERS="${WORKERS:-4}"
+PIPELINE="${PIPELINE:-256}"
 VALUE_BYTES="${VALUE_BYTES:-256}"
 REPEATS="${REPEATS:-3}"
 CONTROL_SECRET="${CONTROL_SECRET:-cluster-bench-control-secret}"
@@ -105,7 +106,7 @@ wait_ready "$P1"
 wait_ready "$P2"
 
 echo "SnugKV cluster routing benchmark"
-echo "nodes=$NODES keys=$KEYS ops=$OPS workers=$WORKERS value_bytes=$VALUE_BYTES repeats=$REPEATS"
+echo "nodes=$NODES keys=$KEYS ops=$OPS workers=$WORKERS pipeline=$PIPELINE value_bytes=$VALUE_BYTES repeats=$REPEATS"
 echo "output=$OUT"
 
 echo
