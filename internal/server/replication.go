@@ -1166,6 +1166,19 @@ func (s *Server) maintainAutoFailover(now time.Time) error {
 	if active, _, _, _, _, _ := s.failoverLeaderState(); active {
 		return s.maintainFailoverLeaderLease(now)
 	}
+
+	s.replication.mu.RLock()
+	role := s.replication.role
+	s.replication.mu.RUnlock()
+	if role == replicationMaster && !membership.JointActive {
+		if err := s.establishPrimaryQuorumLease(now); err != nil {
+			return err
+		}
+		if active, _, _, _, _, _ := s.failoverLeaderState(); active {
+			return nil
+		}
+	}
+
 	if membership.JointActive {
 		return nil
 	}

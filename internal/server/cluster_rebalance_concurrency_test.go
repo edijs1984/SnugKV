@@ -78,7 +78,7 @@ func TestClusterRebalanceMutationsFailFastWhenOperationBusy(t *testing.T) {
 		},
 		{
 			[]byte("CLUSTER"), []byte("REBALANCE"), []byte("EXECUTE"),
-			[]byte("1"), []byte(clusterNodeID(b)),
+			[]byte("1"), []byte(clusterNodeID(b)), []byte(clusterOwnershipDigest(state)),
 		},
 		{
 			[]byte("CLUSTER"), []byte("REBALANCE"), []byte("RECOVER"),

@@ -124,9 +124,10 @@ func TestClusterRebalanceExecuteRejectsWrongOwnerAndTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	digest := clusterOwnershipDigest(s.clusterStateSnapshot())
 	_, err := s.execute([][]byte{
 		[]byte("CLUSTER"), []byte("REBALANCE"), []byte("EXECUTE"),
-		[]byte("9000"), []byte(clusterNodeID(a)),
+		[]byte("9000"), []byte(clusterNodeID(a)), []byte(digest),
 	})
 	if err == nil || err.Error() != "ERR rebalance execute slot is not owned by this node" {
 		t.Fatalf("wrong-owner err=%v", err)
@@ -134,7 +135,7 @@ func TestClusterRebalanceExecuteRejectsWrongOwnerAndTarget(t *testing.T) {
 
 	_, err = s.execute([][]byte{
 		[]byte("CLUSTER"), []byte("REBALANCE"), []byte("EXECUTE"),
-		[]byte("100"), []byte(clusterNodeID(a)),
+		[]byte("100"), []byte(clusterNodeID(a)), []byte(digest),
 	})
 	if err == nil || err.Error() != "ERR rebalance execute target is invalid" {
 		t.Fatalf("invalid-target err=%v", err)

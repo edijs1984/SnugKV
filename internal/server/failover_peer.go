@@ -469,8 +469,11 @@ func (s *Server) requestFailoverLease(now time.Time, lineage string, term uint64
 	}
 	localLineage := local.MasterRunID
 	if localLineage == "" && local.Role == "master" {
+		// The original primary uses its own replication run ID as the shard
+		// lineage. Promoted leaders retain the failed primary's lineage.
+		localLineage = local.NodeID
 		s.failoverLeaderMu.RLock()
-		if s.failoverLeaderActive {
+		if s.failoverLeaderActive && s.failoverLeaderLineage != "" {
 			localLineage = s.failoverLeaderLineage
 		}
 		s.failoverLeaderMu.RUnlock()
@@ -564,7 +567,7 @@ func (s *Server) acquireFailoverLeaseRound(now time.Time, lineage string, term u
 
 	const leaseTTL = 3 * time.Second
 
-	localRequestStart := time.Now()
+	localRequestStart := now
 	local := s.requestFailoverLease(localRequestStart, lineage, term, leaderID, leaseTTL)
 	if local.Term > term {
 		result.Term = local.Term
@@ -583,7 +586,7 @@ func (s *Server) acquireFailoverLeaseRound(now time.Time, lineage string, term u
 		if !s.failoverPeerMembershipMatches(peer) || peer.Role != "replica" || peer.MasterRunID != lineage {
 			continue
 		}
-		requestStart := time.Now()
+		requestStart := now
 		reply, err := queryFailoverLease(addr, 200*time.Millisecond, s.replicationMasterUser, s.replicationMasterAuth, lineage, term, leaderID, leaseTTL)
 		if err != nil {
 			continue
@@ -639,17 +642,43 @@ func (s *Server) updateFailoverLeaderLease(expiresAt time.Time, fenced bool) {
 	s.failoverLeaderMu.Unlock()
 }
 
-func (s *Server) failoverWritesFenced(now time.Time) bool {
+func (s *Server) failoverWriteFenceStatus(now time.Time) (fenced bool, reason, leaseHolder string, leaseUntil time.Time) {
 	s.failoverLeaderMu.RLock()
-	defer s.failoverLeaderMu.RUnlock()
-	if !s.failoverLeaderActive {
-		return false
+	leaderActive := s.failoverLeaderActive
+	leaderFenced := s.failoverLeaderFenced
+	leaderLeaseUntil := s.failoverLeaderLeaseUntil
+	leaderID := s.failoverLeaderID
+	s.failoverLeaderMu.RUnlock()
+
+	if leaderActive && (leaderFenced ||
+		leaderLeaseUntil.IsZero() ||
+		!now.Before(leaderLeaseUntil)) {
+		return true, "leader_lease_invalid", leaderID, leaderLeaseUntil
 	}
-	return s.failoverLeaderFenced ||
-		s.failoverLeaderLeaseUntil.IsZero() ||
-		!now.Before(s.failoverLeaderLeaseUntil)
+
+	s.failoverLeaseMu.Lock()
+	leaseHolder = s.failoverLeaseHolder
+	leaseUntil = s.failoverLeaseUntil
+	s.failoverLeaseMu.Unlock()
+
+	if leaseHolder == "" || leaseUntil.IsZero() || !now.Before(leaseUntil) {
+		return false, "", leaseHolder, leaseUntil
+	}
+
+	s.replication.mu.RLock()
+	localID := s.replication.runID
+	s.replication.mu.RUnlock()
+
+	if localID != "" && leaseHolder != localID {
+		return true, "foreign_leader_lease", leaseHolder, leaseUntil
+	}
+	return false, "", leaseHolder, leaseUntil
 }
 
+func (s *Server) failoverWritesFenced(now time.Time) bool {
+	fenced, _, _, _ := s.failoverWriteFenceStatus(now)
+	return fenced
+}
 
 func (s *Server) deactivateFailoverLeader() {
 	s.failoverLeaderMu.Lock()
@@ -660,6 +689,44 @@ func (s *Server) deactivateFailoverLeader() {
 	s.failoverLeaderLeaseUntil = time.Time{}
 	s.failoverLeaderFenced = false
 	s.failoverLeaderMu.Unlock()
+}
+
+func (s *Server) establishPrimaryQuorumLease(now time.Time) error {
+	membership := s.failoverMembershipSnapshot()
+	if membership.Retired || membership.JointActive || membership.Quorum <= 0 || len(membership.Peers) == 0 {
+		return nil
+	}
+
+	local := s.localFailoverState(now)
+	if local.Role != "master" || local.NodeID == "" {
+		return nil
+	}
+
+	s.failoverVoteMu.Lock()
+	voteTerm := s.failoverTerm
+	s.failoverVoteMu.Unlock()
+	s.failoverLeaseMu.Lock()
+	leaseTerm := s.failoverLeaseTerm
+	s.failoverLeaseMu.Unlock()
+
+	term := voteTerm
+	if leaseTerm > term {
+		term = leaseTerm
+	}
+	term++
+
+	lease, err := s.acquireFailoverLeaseRound(now, local.NodeID, term, local.NodeID)
+	if err != nil {
+		return err
+	}
+	if !lease.QuorumReached || lease.ExpiresAt.IsZero() {
+		// Activate a fenced leader state so the primary cannot continue serving
+		// writes without quorum.
+		s.activateFailoverLeader(term, local.NodeID, local.NodeID, time.Time{})
+		return nil
+	}
+	s.activateFailoverLeader(term, local.NodeID, local.NodeID, lease.ExpiresAt)
+	return nil
 }
 
 func (s *Server) maintainFailoverLeaderLease(now time.Time) error {
