@@ -421,6 +421,103 @@ lands.
   - [ ] Establish reproducible multi-node routing, reshard, TLS migration, failover-recovery, and topology-observation benchmarks.
   - [ ] Retain long-running distributed soak evidence and complete the final operator/release documentation audit.
 
+## Post-v1 product differentiators
+
+These are **post-first-release candidates**, not blockers for the initial production
+release. Revisit them only after the current distributed hardening, client
+compatibility, benchmark, soak, and release-audit work is complete.
+
+The goal of this backlog is to identify capabilities that could differentiate
+SnugKV as a product rather than only as a Redis-compatible implementation.
+
+### Data model and indexing
+
+1. **Native secondary indexes**
+   - Query by fields such as `email`, `phone`, `status`, `user_id`, and other
+     document properties without requiring hand-maintained sorted sets.
+   - Maintain indexes automatically on writes, updates, deletes, TTL expiry, and
+     replication/recovery.
+   - Preserve memory accounting and predictable write amplification.
+
+2. **Cluster-native secondary queries**
+   - Make secondary-index queries work cleanly across shards.
+   - Define distributed query planning, shard fan-out, result merge/order/limit,
+     timeout, partial-failure, and consistency semantics.
+   - Avoid forcing applications to co-locate documents solely for queryability.
+
+3. **First-class multi-value and nested-field indexing**
+   - Index nested document fields and arrays/multi-value fields directly.
+   - Define deterministic indexing semantics for missing/null values, duplicate
+     array members, mixed types, and nested updates.
+
+4. **Schema-friendly index evolution**
+   - Add, remove, or modify indexed fields online.
+   - Build new index generations without blocking normal reads/writes.
+   - Support backfill progress, cutover, rollback/failure visibility, and safe
+     removal of obsolete index generations.
+
+5. **Memory-efficient index storage**
+   - Design compact TAG/inverted/numeric index representations with explicit
+     memory accounting.
+   - Optimize posting-list representation, field masks, deduplication, and sparse
+     structures before considering more expensive acceleration structures.
+
+6. **Index and hot-key observability**
+   - Expose per-index memory, document/posting counts, build state, query latency,
+     slow queries, hot keys, mutation pressure, and index-health diagnostics.
+   - Make index cost and operational risk visible before it becomes a production
+     incident.
+
+### New native data structures
+
+7. **True random-access arrays**
+   - Add sparse, index-addressable arrays with efficient direct access by numeric
+     position rather than LIST-style sequential traversal.
+   - Evaluate use cases such as line-addressable documents/logs, time buckets,
+     game state, sparse numeric state, and fixed-position records.
+   - Define sparse-hole semantics, bounds, TTL/persistence behavior, and memory
+     representation before implementation.
+
+8. **Unified document + key-value model**
+   - Keep classic Redis-style keys and native scalar/container types while making
+     richer documents and secondary indexing first-class in the same database.
+   - Preserve simple key-value access for hot paths without forcing every workload
+     into a document/search abstraction.
+
+### Application primitives
+
+9. **Built-in high-performance rate limiter**
+   - Provide native fixed-window/sliding-window/token-bucket style counters with a
+     small, atomic API.
+   - Avoid requiring Lua scripts or multi-command client coordination for common
+     rate-limiting workloads.
+   - Include TTL, cluster routing, persistence, replication, observability, and
+     bounded-memory semantics.
+
+10. **Reliable work queues with ACK + consumer groups**
+    - Explore a simpler queue-focused abstraction on top of or alongside Streams.
+    - Prioritize explicit delivery state, ACK/retry, visibility timeout or lease,
+      consumer groups, dead-letter handling, backlog metrics, and operational
+      observability.
+    - Keep delivery guarantees and crash/restart semantics explicit and testable.
+
+### Post-v1 evaluation order
+
+When the first production release is complete, evaluate these ideas in roughly
+this dependency order rather than implementing all of them at once:
+
+- strengthen the existing JSON/Search index core into truly native secondary
+  indexing;
+- make secondary queries and index maintenance cluster-aware;
+- add online schema/index evolution and index observability;
+- validate compact index-memory economics under realistic workloads;
+- then evaluate new structures/primitives such as random-access arrays, native
+  rate limiting, and a queue-focused API.
+
+Each capability should get its own design/audit document, benchmark plan,
+persistence/recovery tests, cluster semantics, and explicit compatibility
+boundary before implementation.
+
 ## Release discipline
 
 Before treating a feature as complete:
