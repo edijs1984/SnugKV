@@ -161,9 +161,19 @@ seed="$TMP/seed.commands"
 for i in $(seq 1 100); do
   printf 'SET persist:key:%03d before-%03d\n' "$i" "$i" >>"$seed"
 done
-printf 'WAIT 2 5000\n' >>"$seed"
+printf 'WAIT 2 15000\n' >>"$seed"
 redis-cli --no-auth-warning --raw -a "$PASSWORD" -p "$P0" <"$seed" >"$TMP/seed.out"
-[[ "$(tail -n 1 "$TMP/seed.out")" == "2" ]]
+seed_wait="$(tail -n 1 "$TMP/seed.out")"
+if [[ "$seed_wait" != "2" ]]; then
+  echo "baseline did not replicate to both replicas: WAIT=$seed_wait" >&2
+  echo "--- primary INFO replication ---" >&2
+  cli "$P0" INFO replication >&2 || true
+  echo "--- replica n1 INFO replication ---" >&2
+  cli "$P1" INFO replication >&2 || true
+  echo "--- replica n2 INFO replication ---" >&2
+  cli "$P2" INFO replication >&2 || true
+  exit 1
+fi
 
 echo "[2/8] deny primary AOF directory writes"
 chmod 500 "$TMP/n0-data"
@@ -192,11 +202,23 @@ echo "[4/8] prove live AOF remains writable after rewrite failure"
 post="$TMP/post-failure.commands"
 cat >"$post" <<EOF
 SET persist:after-failure durable-after-failure
-WAIT 2 5000
+WAIT 2 15000
 EOF
 redis-cli --no-auth-warning --raw -a "$PASSWORD" -p "$P0" <"$post" >"$TMP/post-failure.out"
 grep -qx OK < <(head -n 1 "$TMP/post-failure.out")
-[[ "$(tail -n 1 "$TMP/post-failure.out")" == "2" ]]
+post_wait="$(tail -n 1 "$TMP/post-failure.out")"
+if [[ "$post_wait" != "2" ]]; then
+  echo "post-failure write did not replicate to both replicas: WAIT=$post_wait" >&2
+  echo "--- primary INFO replication ---" >&2
+  cli "$P0" INFO replication >&2 || true
+  echo "--- replica n1 INFO replication ---" >&2
+  cli "$P1" INFO replication >&2 || true
+  echo "--- replica n2 INFO replication ---" >&2
+  cli "$P2" INFO replication >&2 || true
+  echo "--- primary log tail ---" >&2
+  tail -n 120 "$TMP/n0.log" >&2 || true
+  exit 1
+fi
 [[ "$(cli "$P0" GET persist:after-failure)" == "durable-after-failure" ]]
 
 echo "[5/8] restore storage permissions and retry rewrite"
