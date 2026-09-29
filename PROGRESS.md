@@ -175,31 +175,33 @@ Phase 22 adds a dedicated internal-control identity:
 - broader multi-process chaos, long-running partition/recovery soak, client-library
   cluster smoke, and cluster performance benchmarks remain production-hardening work.
 
-Canonical details: `docs/CLUSTER-PRODUCTION-HARDENING.md`,
-`docs/AUTOMATIC-FAILOVER-AUDIT.md`, and `docs/REPLICATION-TLS-AUDIT.md`.
+Canonical current handoff: `docs/PROJECT-STATE.md`. Detailed evidence: `docs/CLUSTER-PRODUCTION-HARDENING.md`, `docs/AUTOMATIC-FAILOVER-AUDIT.md`, and `docs/REPLICATION-TLS-AUDIT.md`.
 
 # Progress
 
 ## Current milestone
 
-SnugKV now has a broad single-node RESP2/RESP3 command surface with native HASH, SET,
-LIST, ZSET, and STREAM types, logical durability, memory accounting, adaptive
-scalar encoding, observability, operational tooling, classic/sharded Pub/Sub,
-Redis-style transactions with optimistic locking, HyperLogLog, modern GEO,
-read/write Lua scripting including `SCRIPT KILL`, Redis Functions through
-`FUNCTION KILL` plus the standalone-safe Function flag subset, `SORT` /
-`SORT_RO`, single-database `COPY`, and the current CLIENT management/tooling
-slice.
+SnugKV now has a broad RESP2/RESP3 command surface plus an implemented distributed
+core: replication/partial resync, Redis RDB full sync, TLS/auth, automatic
+failover with majority-backed write leases, Redis-compatible cluster slot routing,
+guarded resharding/recovery, explicit membership, replica-aware shard topology,
+operator health/consistency views, stale-coordinator fencing, restart recovery,
+and dedicated internal control-plane authentication.
+
+The current milestone is **distributed production hardening**: real multi-process
+chaos, client-library Cluster validation, failure/recovery matrices, long-running
+soak, and reproducible multi-node benchmarks.
 
 COMMAND metadata/tooling and the common CONFIG compatibility milestone are
 complete. Core AUTH/ACL support is also implemented through command/category/key
 authorization, transaction enforcement, ACL LOG, SAVE/LOAD, and startup ACL-file
 persistence. The audited ACL core and broad RESP3 command-shape milestone are
 complete. The Redis 8.2 Streams differential edge-case audit is also complete.
-The current compatibility focus is optional RESP3 client-library/attribute
-hardening, exact `allow-oom` semantics, `SCRIPT DEBUG`, migration/transfer scope
-beyond COPY, deeper dynamic SORT/script/Function ACL audits, and advanced CLIENT
-tracking/caching only where real clients require it.
+Most previously listed scripting/OOM/debug/migration/ACL items have since been
+implemented or audited. Remaining compatibility work is narrower: optional RESP3
+attribute support where required, advanced CLIENT tracking/caching/redirection,
+command-family edge cases, and distributed client/chaos/performance hardening.
+See `docs/PROJECT-STATE.md` for the authoritative next sequence.
 
 ## Recently completed
 

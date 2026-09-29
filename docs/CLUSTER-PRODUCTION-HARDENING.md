@@ -5,12 +5,13 @@ Date: 2026-09-29
 ## Scope
 
 This document records the current SnugKV cluster/sharding production-hardening
-state after Phases 19-21.
+state after Phases 19-22.
 
 It complements:
 
 - `docs/AUTOMATIC-FAILOVER-AUDIT.md`
 - `docs/REPLICATION-TLS-AUDIT.md`
+- `docs/PROJECT-STATE.md`
 - `PLAN.md`
 - `PROGRESS.md`
 - `COMPATIBILITY.md`
