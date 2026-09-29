@@ -66,3 +66,17 @@ if [[ ! -d node_modules ]]; then
 fi
 
 node cluster-smoke.cjs
+
+cd "$ROOT"
+
+if ! python3 -c 'import redis' >/dev/null 2>&1; then
+  echo "python redis package is required for redis-py cluster smoke" >&2
+  echo "install it with: python3 -m pip install redis" >&2
+  exit 1
+fi
+
+REDIS_HOST=127.0.0.1 REDIS_PORT=7000 \
+  python3 compat/python/cluster_smoke.py
+
+cd "$ROOT/compat/go"
+go run ./cluster
