@@ -31,12 +31,29 @@ Major Redis-compatible features still not implemented or incomplete:
 - optional RESP3 client-library smoke coverage and unused RESP3 types/attributes if required;
 - deeper dynamic SORT/script/Function ACL-policy edge auditing;
 - advanced CLIENT tracking/caching/redirection features;
-- replication;
-- Sentinel-style failover;
-- cluster mode;
+- broader multi-process distributed chaos/recovery testing;
+- Cluster client-library validation and multi-node performance/soak baselines;
+- optional fully automatic membership admission;
 - modules.
 
 The current JSON commands are not a complete RedisJSON implementation.
+
+## Distributed-system boundaries
+
+Replication, quorum-backed automatic failover, hash-slot routing,
+`MOVED`/`ASK`, guarded resharding/recovery, explicit membership, replica-aware
+shard topology, stale-coordinator fencing, restart recovery, and dedicated
+internal control-plane authentication are implemented.
+
+Remaining distributed limitations are primarily validation/hardening:
+multi-process partition/kill matrices, failure/recovery combinations around
+resharding and failover, ioredis/node-redis/redis-py/go-redis Cluster smoke,
+long-running soak, disk/persistence fault injection, and reproducible multi-node
+benchmarks. Fully automatic membership admission remains optional/deferred.
+
+Configured clusters require a separate `cluster_control_auth` credential.
+Private peer RPCs establish a connection-scoped `SNUG.INTERNAL AUTH` identity;
+ordinary highly privileged ACL clients do not inherit that internal identity.
 
 ## Lua scripting and Functions boundaries
 
