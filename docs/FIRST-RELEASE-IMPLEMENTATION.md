@@ -555,7 +555,7 @@ Status: **ACTIVE**
 - [x] `go test -race ./... -count=1`
 - [x] `go vet ./...`
 - [x] RESP fuzz gate (`FuzzReadCommand`, 60s)
-- [ ] Redis 8.2 differential release harness
+- [x] Redis 8.2 differential release harness
 
 Retained operator validation on the frozen first-release baseline:
 
@@ -573,6 +573,20 @@ bash scripts/release/run-redis82-differential-gates.sh
 The harness runs self-checking Redis 8.2 interoperability gates for scalar/native/
 STREAM DUMP/RESTORE, Function RDB cross-restore, MIGRATE, authenticated MIGRATE,
 and real-client RESP3 against both Redis and SnugKV.
+
+Validation result:
+
+- scalar DUMP/RESTORE cross-restore: **PASS**
+- native HASH/SET/LIST/ZSET/HLL cross-restore: **PASS**
+- STREAM RDB cross-restore: **PASS**
+- Function RDB cross-restore: **PASS**
+- MIGRATE COPY/REPLACE/TTL/KEYS: **PASS**
+- MIGRATE AUTH / AUTH2: **PASS**
+- SnugKV RESP3 clients (ioredis, node-redis, redis-py, go-redis): **PASS**
+- Redis 8.2 RESP3 control run: **PASS**
+- final differential harness: **PASS**
+
+Status: **G1 COMPLETE**
 
 ## G2. Durability
 
