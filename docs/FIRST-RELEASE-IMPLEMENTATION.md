@@ -129,7 +129,22 @@ Acceptance:
 - every candidate gap has an explicit reason;
 - no gap is promoted to REQUIRED solely because Redis implements it.
 
-Status: **TODO**
+Status: **IN PROGRESS**
+
+Implementation branch: `release/a2-redis82-command-gap-audit`
+
+Oracle/generator:
+
+```sh
+bash scripts/release/generate-redis82-gap-audit.sh
+```
+
+This starts an isolated Redis 8.2 container, captures its live `COMMAND` metadata,
+and compares top-level commands and structured subcommands against the retained
+SnugKV A1 inventory.
+
+Initial Redis-only entries remain `UNCLASSIFIED`; the generated list must then
+be reviewed as REQUIRED / USEFUL / DEFER / IRRELEVANT before A2 is complete.
 
 ---
 
