@@ -8,8 +8,9 @@ Redis-shaped command/config tooling, authentication/ACL enforcement, and an
 implemented distributed core covering replication, automatic failover, hash-slot
 routing, resharding, membership, recovery, and write fencing.
 
-SnugKV is still alpha-stage. The distributed core is in production-hardening,
-not yet production-complete; see [Project State](docs/PROJECT-STATE.md).
+SnugKV is still alpha-stage. The distributed core has completed the current
+production-candidate hardening gates for its audited scope, but is not
+production-complete; see [Project State](docs/PROJECT-STATE.md).
 
 Use Go 1.27 or newer:
 
@@ -110,16 +111,16 @@ Redis Functions core support includes Lua libraries loaded with `FUNCTION LOAD`,
 global function-name lookup through `FCALL`/`FCALL_RO`, library replacement,
 listing/deletion/flushing, persistent library-local Lua state while the process
 is running, and table-form `redis.register_function()` metadata. The current
-standalone-safe flag set is `no-writes`, `allow-stale`, `no-cluster`, and
-`allow-cross-slot-keys`; `allow-oom` is intentionally deferred until exact scoped
-memory-admission semantics are implemented. `FCALL_RO` and `no-writes` functions
+audited flag set includes `no-writes`, `allow-stale`, `no-cluster`,
+`allow-cross-slot-keys`, and Redis 8.2-compatible `allow-oom` admission
+semantics for the audited standalone surface. `FCALL_RO` and `no-writes` functions
 use the same write/replication barrier as `EVAL_RO`.
 
 `FUNCTION DUMP` and `FUNCTION RESTORE` support checksum-protected library export
 and import with Redis-style default `APPEND` plus `REPLACE` and `FLUSH` policies.
-SnugKV currently uses its own versioned `SNUGF001` payload rather than Redis's RDB
-Function payload bytes, so payloads are not cross-restorable between Redis and
-SnugKV yet. See [docs/FUNCTION-DUMP-RESTORE.md](docs/FUNCTION-DUMP-RESTORE.md).
+SnugKV uses Redis 8.2-compatible Function RDB payloads, including the version/
+CRC64 trailer and Redis LZF string encoding; the audited fixtures cross-restore
+between Redis and SnugKV. See [docs/FUNCTION-DUMP-RESTORE.md](docs/FUNCTION-DUMP-RESTORE.md).
 
 `FUNCTION STATS` returns Redis-shaped RESP2 metadata for the currently running
 FCALL plus Lua engine library/function counts. It remains available while an
@@ -143,11 +144,13 @@ configured persistence file. Function-local Lua VM variables are reconstructed
 from source and therefore reset after restore/restart; arbitrary live VM state is
 not serialized.
 
-Remaining scripting/function management gaps include `SCRIPT DEBUG`, exact
-`allow-oom` scoped admission, exact Redis RDB byte compatibility for Function
-DUMP/RESTORE payloads, and deeper Redis Lua/command-flag/OOM parity. ACL command,
-key, channel, and selector authorization is implemented; deeper dynamic
-SORT/script/Function ACL edge auditing remains optional hardening.
+`SCRIPT DEBUG` implements the audited Redis-compatible LDB session, including
+step/next, breakpoints, listing, stack/variable inspection, `redis.debug()`,
+`redis.breakpoint()`, and debugger protocol/error behavior. Function
+`allow-oom`, Redis Function RDB payload interoperability, dynamic
+SORT/script/Function ACL behavior, and the audited Redis 8.2 command/OOM policy
+surface are implemented. Exact Redis Lua VM internals and every scripting edge
+case are not claimed.
 
 ## CLIENT compatibility
 
@@ -160,7 +163,10 @@ multiple persistent connections, targeted kill/unblock behavior, self-kill,
 connection survival, invalid IDs/reasons, and tested arity/error semantics. See
 [docs/CLIENT-COMPATIBILITY.md](docs/CLIENT-COMPATIBILITY.md).
 
-Advanced CLIENT tracking/caching/redirection features are not implemented yet.
+`CLIENT TRACKING`, `CLIENT CACHING`, `CLIENT GETREDIR`, BCAST/PREFIX,
+OPTIN/OPTOUT, NOLOOP, REDIRECT, RESP3 invalidation pushes, and broken-redirect
+notification are implemented and Redis 8.2-audited. Additional CLIENT connection
+classes remain outside the supported surface until corresponding modes exist.
 
 ## Authentication and ACL compatibility
 
@@ -296,11 +302,12 @@ RESP3, read-only scripting/Functions, Redis-compatible DUMP/RESTORE, MIGRATE,
 replication hardening, automatic failover, and the core cluster/sharding protocol
 are implemented for their audited surfaces.
 
-Remaining work is primarily production/distributed hardening and optional client
-breadth: broader multi-process partition/chaos and client-library cluster testing,
-optional fully automatic membership admission, advanced CLIENT tracking/caching,
-optional RESP3 attribute/client-library hardening, and measured cluster
-performance/soak work. Configured cluster deployments now require a dedicated
+Remaining work is primarily post-feature-freeze validation, packaging, and
+measured optimization. The audited distributed core has multi-process
+chaos/recovery, four-client Cluster/failover coverage, bounded soak evidence, and
+a bounded three-node bootstrap helper. Optional fully automatic membership
+admission beyond that bounded bootstrap, RESP3 attributes not required by the
+supported surface, and broader client breadth remain deferred. Configured cluster deployments now require a dedicated
 `cluster_control_auth` credential for connection-scoped private peer RPCs. SnugKV still intentionally exposes one logical
 database. See [docs/CLUSTER-PRODUCTION-HARDENING.md](docs/CLUSTER-PRODUCTION-HARDENING.md),
 [COMPATIBILITY.md](COMPATIBILITY.md), and GitHub issue #55.

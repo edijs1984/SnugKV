@@ -198,7 +198,10 @@ Broad tooling exists, including:
 - COMMAND GETKEYS / GETKEYSANDFLAGS
 - CONFIG GET / SET / RESETSTAT / REWRITE / HELP
 
-Some advanced Redis CLIENT behavior remains a compatibility boundary.
+`CLIENT TRACKING`, `CLIENT CACHING`, `CLIENT GETREDIR`, BCAST/PREFIX,
+OPTIN/OPTOUT, NOLOOP, REDIRECT, RESP3 invalidation pushes, and broken-redirect
+notification are implemented and audited. Additional CLIENT connection classes
+remain a compatibility boundary.
 
 ### Lua scripting
 
@@ -235,8 +238,9 @@ Implemented broad management/execution support:
 - FCALL
 - FCALL_RO
 
-SnugKV Function dump payloads use SnugKV's own versioned format rather than Redis
-RDB Function bytes, so cross-restoring those payloads is a documented boundary.
+SnugKV Function dump/restore uses Redis 8.2-compatible Function RDB payloads for
+the audited surface, including LZF strings plus version/CRC validation and
+cross-restore fixtures.
 
 ### JSON
 
@@ -708,10 +712,12 @@ Examples of boundaries that agents should understand:
 - exhaustive Redis Cluster parity is not claimed;
 - one logical database only;
 - fully automatic cluster membership admission is optional/deferred;
-- some Redis CLIENT features remain outside the audited surface;
+- additional Redis CLIENT connection classes remain outside the audited surface;
 - RESP3 attributes/exotic client-specific behavior are not fully claimed;
 - Lua runs in an embedded Lua 5.1-compatible runtime, not Redis's exact VM;
-- Function DUMP/RESTORE bytes are not Redis-RDB-compatible;
+- Function DUMP/RESTORE is Redis 8.2-compatible for the audited Function RDB
+  payload surface, but exhaustive historical/pre-GA payload compatibility is not
+  claimed;
 - some exact Redis internal representations/diagnostics are intentionally not cloned;
 - RedisJSON/Search parity is broad but not exhaustive;
 - benchmark results are workload/machine specific;
@@ -845,15 +851,21 @@ Docker Compose is also supported for local startup.
 
 ## 20. Project status in one paragraph
 
+**First-release feature freeze is active.** New functionality should not be added
+unless it fixes a release-blocking compatibility defect; current work is
+validation, durability/failure injection, soak, profiling, packaging, security
+review, quickstart, and release-candidate preparation.
+
 SnugKV is an ambitious Go-based Redis-compatible datastore with a broad
 single-node command surface, compact native container storage, JSON/Search,
 scripting/functions, persistence, ACL/security, replication, quorum-backed
 automatic failover and Redis-style Cluster routing/resharding. The project has
 moved well beyond a prototype: many surfaces have live Redis differential audits,
 the distributed system has multi-process chaos/recovery tests, four major Cluster
-client-library smokes, reproducible distributed benchmarks, 5/5 repeated-recovery
-stress runs, 10/10 failover-restart stress runs and a 42/42 bounded distributed
-soak. It is still alpha-stage and should not be represented as exhaustive Redis
+client-library smokes plus persistent failover recovery for all four clients, a
+bounded three-node bootstrap helper, reproducible distributed benchmarks, 5/5
+repeated-recovery stress runs, 10/10 failover-restart stress runs and a 42/42
+bounded distributed soak. It is still alpha-stage and should not be represented as exhaustive Redis
 parity or as having mature long-term production history. The main engineering
 principle is to make compatibility and durability claims only where the
 implementation, tests and retained evidence justify them.
