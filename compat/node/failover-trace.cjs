@@ -4,6 +4,8 @@ const Redis = require("ioredis");
 const { createCluster } = require("redis");
 
 const p0 = Number(process.env.P0 || 7120);
+const p1 = Number(process.env.P1 || 7121);
+const p2 = Number(process.env.P2 || 7122);
 const password = process.env.PASSWORD || "cluster-failover-secret";
 const stateDir = process.env.CLIENT_STATE_DIR || "/tmp/snugkv-a3-failover-client";
 fs.mkdirSync(stateDir, { recursive: true });
@@ -64,7 +66,11 @@ async function main() {
   io.on("error", () => {});
 
   const nr = createCluster({
-    rootNodes: [{ url: `redis://default:${encodeURIComponent(password)}@127.0.0.1:${p0}` }],
+    // node-redis uses rootNodes as topology-discovery fallbacks. Keep all
+    // failover members here so discovery survives loss of the original master.
+    rootNodes: [p0, p1, p2].map((port) => ({
+      url: `redis://default:${encodeURIComponent(password)}@127.0.0.1:${port}`,
+    })),
     defaults: {
       username: "default",
       password,
