@@ -1,0 +1,316 @@
+{
+  "source": {
+    "candidate_total": 58,
+    "a3_observed": 0
+  },
+  "required_non_candidate": [
+    {
+      "gap": "structured-command-subcommand-metadata",
+      "classification": "REQUIRED",
+      "status": "TODO",
+      "count": 49
+    },
+    {
+      "gap": "cluster-slots-replica-advertisement",
+      "classification": "REQUIRED",
+      "status": "COMPLETE_IN_A3"
+    }
+  ],
+  "candidate_counts": {
+    "REQUIRED": 0,
+    "USEFUL": 9,
+    "DEFER": 49
+  },
+  "candidates": [
+    {
+      "name": "CF.COMPACT",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "CLIENT|NO-EVICT",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "CLIENT|NO-TOUCH",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "CLIENT|PAUSE",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "CLIENT|REPLY",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "CLIENT|TRACKINGINFO",
+      "classification": "USEFUL",
+      "evidence": "Complements the already-supported CLIENT TRACKING/CACHING feature with low-risk observability."
+    },
+    {
+      "name": "CLIENT|UNPAUSE",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "CLUSTER|ADDSLOTSRANGE",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "CLUSTER|BUMPEPOCH",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "CLUSTER|COUNT-FAILURE-REPORTS",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "CLUSTER|DELSLOTSRANGE",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "CLUSTER|FAILOVER",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "CLUSTER|FORGET",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "CLUSTER|HELP",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "CLUSTER|LINKS",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "CLUSTER|MEET",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "CLUSTER|MYSHARDID",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "CLUSTER|REPLICAS",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "CLUSTER|REPLICATE",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "CLUSTER|RESET",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "CLUSTER|SAVECONFIG",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "CLUSTER|SET-CONFIG-EPOCH",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "CLUSTER|SLAVES",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "CLUSTER|SLOT-STATS",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "COMMAND|HELP",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "FAILOVER",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "FT.ADD",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "FT.DEL",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "FT.DROP",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "FT.GET",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "FT.MGET",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "FT.SYNADD",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "GEORADIUSBYMEMBER_RO",
+      "classification": "USEFUL",
+      "evidence": "Low-risk read-only alias that improves drop-in compatibility for GEO users."
+    },
+    {
+      "name": "GEORADIUS_RO",
+      "classification": "USEFUL",
+      "evidence": "Low-risk read-only alias that improves drop-in compatibility for GEO users."
+    },
+    {
+      "name": "JSON.NUMPOWBY",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "LATENCY",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "LATENCY|DOCTOR",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "LATENCY|GRAPH",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "LATENCY|HELP",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "LATENCY|HISTOGRAM",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "LATENCY|HISTORY",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "LATENCY|LATEST",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "LATENCY|RESET",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "MEMORY|DOCTOR",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "MEMORY|HELP",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "MEMORY|MALLOC-STATS",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "MEMORY|PURGE",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "MEMORY|STATS",
+      "classification": "USEFUL",
+      "evidence": "Materially improves runtime/memory operability without changing data semantics."
+    },
+    {
+      "name": "READONLY",
+      "classification": "USEFUL",
+      "evidence": "Useful for explicit replica-read Cluster workflows; not required by the tested default clients."
+    },
+    {
+      "name": "READWRITE",
+      "classification": "USEFUL",
+      "evidence": "Companion mode reset for READONLY; useful if replica-read mode is supported."
+    },
+    {
+      "name": "REPLCONF",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "SCRIPT|HELP",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "SHUTDOWN",
+      "classification": "USEFUL",
+      "evidence": "Operationally useful graceful-stop compatibility; not exercised automatically by clients."
+    },
+    {
+      "name": "SLAVEOF",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "SUBSTR",
+      "classification": "USEFUL",
+      "evidence": "Trivial legacy alias for GETRANGE; low-risk compatibility win."
+    },
+    {
+      "name": "SYNC",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "XGROUP|HELP",
+      "classification": "DEFER",
+      "evidence": "Not observed by the supported A3 client/workflow matrix, with no first-release blocker demonstrated."
+    },
+    {
+      "name": "XSETID",
+      "classification": "USEFUL",
+      "evidence": "Useful stream-recovery/admin primitive for advanced Streams users."
+    }
+  ]
+}
