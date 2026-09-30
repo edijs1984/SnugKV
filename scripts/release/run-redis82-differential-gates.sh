@@ -98,8 +98,13 @@ for port in "$REDIS_PORT" "$REDIS_DST_PORT" "$REDIS_AUTH_PORT"; do
 done
 
 echo "[2b/8] configure authenticated Redis destination"
-redis-cli -p "$REDIS_AUTH_PORT" ACL SETUSER migrator on '>secret' '~*' '+@all' >/dev/null
-redis-cli -p "$REDIS_AUTH_PORT" ACL SETUSER default off >/dev/null
+# MIGRATE AUTH uses password-only AUTH against the default user, while
+# MIGRATE AUTH2 uses an explicit username. Keep both identities enabled so the
+# fixture exercises both Redis forms against the same destination.
+redis-cli -p "$REDIS_AUTH_PORT" ACL SETUSER default on '>secret' '~*' '+@all' >/dev/null
+redis-cli -p "$REDIS_AUTH_PORT" -a secret --no-auth-warning \
+  ACL SETUSER migrator on '>secret' '~*' '+@all' >/dev/null
+wait_redis_user "$REDIS_AUTH_PORT" default secret
 wait_redis_user "$REDIS_AUTH_PORT" migrator secret
 
 echo "[3/8] scalar DUMP/RESTORE cross-restore"
