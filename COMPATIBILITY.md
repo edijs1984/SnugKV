@@ -91,11 +91,11 @@ client-library-specific parity are not yet claimed.
 | Pub/Sub | Broad support | Classic and sharded Pub/Sub, pattern subscriptions, introspection, RESP2 subscribed-mode behavior |
 | Transactions | Broad support | `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH`, queue/runtime error semantics, AOF transaction frames |
 | HyperLogLog | Supported | `PFADD`, `PFCOUNT`, `PFMERGE`; Redis-compatible serialized HLL strings |
-| GEO | Modern surface supported | `GEOADD`, `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH`, `GEOSEARCHSTORE`; deprecated `GEORADIUS*` commands are not implemented |
-| Lua scripting / Functions | Partial | `EVAL*`, read-only EVAL, SCRIPT load/exists/flush/kill, Functions core/management, restart persistence and standalone-safe flags; SCRIPT DEBUG, allow-oom and deeper command-flag/OOM parity remain |
+| GEO | Broad audited support | Modern GEO commands plus Redis 8.2-audited legacy `GEORADIUS` / `GEORADIUSBYMEMBER` aliases, including read-only variants and STORE/STOREDIST behavior |
+| Lua scripting / Functions | Broad audited support | `EVAL*`, read-only EVAL, SCRIPT management/debugger, Functions core/management, Redis 8.2 Function RDB dump/restore interoperability, restart persistence, audited flags/OOM behavior; exact Redis VM internals and every edge case are not claimed |
 | AUTH / ACL | Audited single-node support | Named authentication, command/category/key/channel rules, selectors, transaction enforcement, CAT/DRYRUN/GENPASS/LOG, SAVE/LOAD, startup ACL-file restore, and Redis 8.2 differential coverage |
 | CONFIG | Broad tooling support | GET/SET/RESETSTAT/REWRITE/HELP for supported SnugKV settings with runtime mutation and restart persistence |
-| CLIENT | Partial | ID/name/setinfo/info/list/list filters/kill/unblock/help implemented and differentially tested; tracking/caching/redirection not implemented |
+| CLIENT | Broad audited support | ID/name/setinfo/info/list/filter/kill/unblock/help plus TRACKING/CACHING/GETREDIR, BCAST/PREFIX, OPTIN/OPTOUT, NOLOOP, REDIRECT and RESP3 invalidation pushes; additional connection TYPE classes remain deferred |
 | COMMAND metadata | Supported for implemented surface | Redis-shaped INFO/DOCS/GETKEYS/GETKEYSANDFLAGS, parent/subcommand metadata, dynamic key extraction, differential audit complete |
 | RESP3 | Broad audited support | `HELLO 3`, protocol switching, audited null/map/set/double/verbatim reply shapes, Streams/tooling maps, GEO/ZSET numeric forms, and Pub/Sub push semantics; optional client/attribute hardening remains |
 | Key migration / transfer | Supported | Redis 8.2-compatible `DUMP` / `RESTORE` plus `MIGRATE` with COPY/REPLACE/KEYS/AUTH/AUTH2 and live two-way interoperability; STREAM tombstone byte-for-byte re-emission after XDEL remains a documented storage-model boundary |
@@ -283,8 +283,9 @@ Supported GEOSEARCH forms include `FROMMEMBER` / `FROMLONLAT`, `BYRADIUS` /
 Current implementation note: Redis uses geohash score ranges to prune radius
 searches. SnugKV currently scans and decodes the packed source ZSET, so GEOSEARCH
 is O(source cardinality). This avoids another permanent index but may be slower on
-very large geospatial sets. Deprecated `GEORADIUS`, `GEORADIUSBYMEMBER`, and their
-read-only variants are not currently implemented.
+very large geospatial sets. Legacy `GEORADIUS`, `GEORADIUSBYMEMBER`, and
+their read-only variants are implemented with the audited COUNT/ANY, WITH*,
+STORE/STOREDIST, key-metadata, and Redis 8.2 error/behavior surface.
 
 ## STREAM
 
@@ -523,9 +524,11 @@ self-kill behavior, targeted TIMEOUT/ERROR unblock behavior, connection survival
 nonexistent/invalid IDs, invalid unblock reasons, and tested arity/error replies.
 See `docs/CLIENT-COMPATIBILITY.md`.
 
-Advanced tracking/caching/redirection features are not implemented, and additional
-LIST TYPE classes should only be added when their corresponding connection modes
-or topology exist.
+`CLIENT TRACKING`, `CLIENT CACHING`, `CLIENT GETREDIR`, BCAST/PREFIX,
+OPTIN/OPTOUT, NOLOOP, REDIRECT, RESP3 invalidation pushes, and broken-redirect
+notification are implemented and differentially audited. Additional LIST TYPE
+classes should only be added when their corresponding connection modes or
+topology exist.
 
 ## SCAN family
 
@@ -548,13 +551,11 @@ waiters, but equivalent proactive peer-disconnect detection is not yet implement
 
 ## JSON
 
-The current JSON surface is intentionally small:
-
-```text
-JSON.SET JSON.GET JSON.TYPE JSON.DEL
-```
-
-It is not a complete RedisJSON implementation.
+SnugKV implements a broad first-class JSON command family with audited JSONPath
+selectors, filters, arithmetic, membership/set operators, functions, and
+multi-match mutation/delete behavior. It does not claim exhaustive RedisJSON
+parity; see the JSON compatibility section above and
+`docs/JSONPATH-COMPATIBILITY.md` for exact boundaries.
 
 ## Search
 
