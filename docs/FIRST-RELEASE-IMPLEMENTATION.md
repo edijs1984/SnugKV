@@ -480,13 +480,13 @@ periodic topology reload is 60 seconds.
 
 Audit these against current source/tests:
 
-- [ ] README.md
-- [ ] COMPATIBILITY.md
-- [ ] KNOWN-LIMITATIONS.md
-- [ ] docs/PROJECT-STATE.md
-- [ ] PLAN.md
-- [ ] AI_AGENT_CONTEXT.md
-- [ ] issue #55 / active compatibility tracker
+- [x] README.md
+- [x] COMPATIBILITY.md
+- [x] KNOWN-LIMITATIONS.md
+- [x] docs/PROJECT-STATE.md
+- [x] PLAN.md
+- [x] AI_AGENT_CONTEXT.md
+- [x] issue #55 / active compatibility tracker
 
 Known stale areas to verify:
 
@@ -504,7 +504,21 @@ Acceptance:
 - no known contradiction between canonical docs;
 - release boundary is stated consistently.
 
-Status: **TODO**
+Status: **COMPLETE**
+
+Implementation branch: `release/e-documentation-convergence`
+
+Evidence:
+
+- canonical-doc contradiction scan is clean for the known stale claims;
+- CLIENT tracking/caching/redirection status converged;
+- SCRIPT DEBUG, Function allow-oom, Function RDB dump/restore, dynamic ACL, and
+  legacy GEO status converged with current source/tests;
+- obsolete single-node/no-failover claims removed;
+- distributed production-candidate boundary preserved;
+- issue #55 synchronized with current implementation;
+- A4 USEFUL-gap freeze disposition recorded in
+  `docs/release/FIRST-RELEASE-GAPS.md`.
 
 ---
 
@@ -512,21 +526,24 @@ Status: **TODO**
 
 Feature freeze is declared only after:
 
-- [ ] Phase A complete
-- [ ] all REQUIRED Phase B items complete
-- [ ] approved USEFUL Phase B items resolved
-- [ ] Phase C complete
-- [ ] Phase D green
-- [ ] Phase E complete
+- [x] Phase A complete
+- [x] all REQUIRED Phase B items complete
+- [x] approved USEFUL Phase B items resolved
+- [x] Phase C complete
+- [x] Phase D green
+- [x] Phase E complete
 
-Once checked:
+> **FIRST RELEASE FEATURE FREEZE IS ACTIVE**
 
-> FIRST RELEASE FEATURE FREEZE IS ACTIVE
+The nine A4 USEFUL candidates are resolved for freeze: `CLIENT TRACKINGINFO`
+behavior exists; the remaining eight are explicitly deferred to the post-release
+compatibility backlog. No USEFUL candidate is approved as additional pre-freeze
+feature work.
 
 After this point, new functionality requires evidence that it fixes a
 release-blocking compatibility defect.
 
-Status: **NOT ACTIVE**
+Status: **ACTIVE**
 
 ---
 

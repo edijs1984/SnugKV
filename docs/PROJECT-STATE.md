@@ -13,8 +13,11 @@ log.
 SnugKV is an alpha-stage Redis-compatible datastore in Go with a broad
 single-node command surface and a substantial distributed implementation.
 
-The distributed core is feature-complete enough that current work is primarily
-**production hardening**, not foundational cluster implementation.
+The distributed core has completed the current production-candidate hardening
+gates for its audited scope. **First-release feature freeze is active.** Current
+work is release validation, durability/failure injection, soak, profiling,
+packaging, security review, and first-user/release-candidate preparation rather
+than new product feature implementation.
 
 Implemented distributed capabilities include:
 
@@ -51,7 +54,8 @@ Completed evidence includes:
 - real multi-process crash/restart and partition/heal harnesses;
 - interrupted source/target migration recovery, repeated recovery, persistence
   failure, and corrupted-replica recovery;
-- ioredis, node-redis, redis-py, and go-redis Cluster-mode smoke;
+- ioredis, node-redis, redis-py, and go-redis Cluster-mode smoke plus persistent
+  automatic-failover recovery for all four supported clients;
 - reproducible routing, reshard, TLS migration, failover-recovery, and
   topology-observation benchmarks;
 - repeated-recovery stress passed 5/5 focused runs with 2,000 durable keys;
@@ -61,7 +65,10 @@ Completed evidence includes:
 - an earlier extended soak completed 70 consecutive chaos cases before exposing
   the MIGRATE pipelined-read timeout bug that is now regression-covered.
 
-The distributed production-candidate release gate is complete.
+The distributed production-candidate release gate is complete. The bounded
+first-release bootstrap helper also generates and verifies the documented
+three-node sharded and one-primary/two-replica HA layouts from one concise
+topology declaration.
 
 Final project-wide validation was operator-reported green on `main` after PR #249:
 
@@ -72,8 +79,8 @@ Final project-wide validation was operator-reported green on `main` after PR #24
 The retained distributed hardening evidence and documentation audit are therefore
 closed for this milestone.
 
-Optional/deferred: fully automatic membership admission policy and richer
-per-node health/TLS-SNI ergonomics.
+Optional/deferred: fully automatic membership admission beyond the bounded
+three-node bootstrap helper, and richer per-node health/TLS-SNI ergonomics.
 
 ## Production claim boundary
 
