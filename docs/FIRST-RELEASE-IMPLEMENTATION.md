@@ -630,6 +630,14 @@ Retained smoke evidence:
 - distributed smoke cases passed: **29**
 - distributed smoke failures: **0**
 - distributed smoke timeouts: **0**
+- standalone mixed workload smoke: **PASS**
+- standalone smoke duration: **600 seconds**
+- standalone smoke operations: **519,201,576**
+- standalone smoke mismatches: **0**
+- standalone start accounted memory: **61,911,009 bytes**
+- standalone peak accounted memory: **70,130,613 bytes**
+- standalone end accounted memory: **41,329,589 bytes**
+- standalone end-vs-start accounted memory: **-20,581,420 bytes**
 
 The distributed smoke covers rebalance restart, target restart, failover restart,
 repeated recovery, majority partition, persistence failure, and corrupted-replica
