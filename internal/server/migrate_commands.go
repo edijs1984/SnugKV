@@ -135,6 +135,13 @@ func migrateTargetError(line string) error {
 	return errors.New("ERR Target instance replied with error: " + line)
 }
 
+func isMigrateTransportError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.HasPrefix(err.Error(), "IOERR error or timeout ")
+}
+
 func recordsEqual(a, b []persistence.Record) bool {
 	return reflect.DeepEqual(a, b)
 }
