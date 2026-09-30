@@ -50,6 +50,7 @@ make_config() {
   local port="$2"
   local peer1="$3"
   local peer2="$4"
+
   cat >"$TMP/$name.json" <<JSON
 {
   "listen": "127.0.0.1:$port",
@@ -126,17 +127,18 @@ for _ in $(seq 1 200); do
   i1="$(cli "$P1" INFO replication 2>/dev/null || true)"
   i2="$(cli "$P2" INFO replication 2>/dev/null || true)"
   if grep -q '^master_link_status:up' <<<"$i1" &&
-     grep -q '^master_link_status:up' <<<"$i2"; then
+     grep -q '^master_sync_in_progress:0' <<<"$i1" &&
+     grep -q '^master_link_status:up' <<<"$i2" &&
+     grep -q '^master_sync_in_progress:0' <<<"$i2"; then
     break
   fi
   sleep 0.05
 done
 grep -q '^master_link_status:up' <<<"$i1"
+grep -q '^master_sync_in_progress:0' <<<"$i1"
 grep -q '^master_link_status:up' <<<"$i2"
+grep -q '^master_sync_in_progress:0' <<<"$i2"
 
-# The failover-enabled primary is write-fenced until it has established a
-# quorum-backed lease. Replication links can become healthy before that lease
-# is ready, so wait for one confirmed write before seeding the recovery corpus.
 lease_ready=""
 for _ in $(seq 1 200); do
   lease_ready="$(cli "$P0" SET corrupt:lease-ready yes 2>&1 || true)"
@@ -164,7 +166,19 @@ if (( seed_lines != 201 )); then
   cat "$TMP/seed.out" >&2
   exit 1
 fi
-if head -n 200 "$TMP/seed.out" | grep -v '^OK
+if head -n 200 "$TMP/seed.out" | grep -v '^OK$' | grep -q .; then
+  echo "seed produced non-OK write replies" >&2
+  nl -ba "$TMP/seed.out" | head -n 205 >&2
+  exit 1
+fi
+[[ "$(tail -n 1 "$TMP/seed.out")" == "2" ]]
+
+for n in 001 100 200; do
+  [[ "$(cli "$P0" GET "corrupt:key:$n")" == "value-$n" ]] || {
+    echo "primary seed verification failed for key $n" >&2
+    exit 1
+  }
+done
 
 echo "[2/8] hard-stop replica n2"
 stop_hard n2
@@ -179,16 +193,6 @@ size = os.path.getsize(path)
 if size < 17:
     raise SystemExit(f"AOF unexpectedly small: {size}")
 
-# AOF layout starts with:
-#   8 bytes magic ("MCLOG001")
-#   4 bytes payload length
-#   4 bytes CRC32
-#   payload...
-#
-# Corrupt the first frame's stored checksum deterministically. Do not mutate an
-# arbitrary tail/header byte: SnugKV intentionally tolerates a truncated final
-# frame, so damaging the final frame length can be interpreted as a safe
-# truncation rather than checksum corruption.
 offset = 8 + 4
 with open(path, "r+b") as f:
     f.seek(offset)
@@ -242,10 +246,6 @@ wait_ready "$P2" || {
 echo "[6/8] reattach n2 and require full recovery from healthy primary"
 cli "$P2" REPLICAOF 127.0.0.1 "$P0" | grep -qx OK
 
-# A live replication TCP link is not sufficient after rebuilding an empty
-# replica: master_link_status can become "up" while a full snapshot is still
-# being applied. Require the replica to report sync completion for a
-# consecutive stabilization window before validating recovered data.
 stable=0
 info=""
 for _ in $(seq 1 600); do
@@ -343,166 +343,7 @@ rm -f "$TMP/n2-probe.pid"
 
 start_node n2
 wait_ready "$P2"
-role_after="$(cli "$P2" ROLE 2>/dev/null | head -n1 || true)"
-[[ "$role_after" == "slave" ]] || {
-  echo "rebuilt replica did not restore replica role after restart: $role_after" >&2
-  cli "$P2" INFO replication >&2 || true
-  exit 1
-}
 
-echo "cluster corrupted-replica recovery matrix: PASS"
-echo "replica=127.0.0.1:$P2 fail_closed=yes rebuilt_from_primary=yes aof_probe_recovered=yes replica_restart=yes"
- | grep -q .; then
-  echo "seed produced non-OK write replies" >&2
-  nl -ba "$TMP/seed.out" | head -n 205 >&2
-  exit 1
-fi
-[[ "$(tail -n 1 "$TMP/seed.out")" == "2" ]]
-
-# Prove the exact sentinel keys exist before corrupting the replica. This
-# distinguishes a recovery defect from an invalid seed premise.
-for n in 001 100 200; do
-  [[ "$(cli "$P0" GET "corrupt:key:$n")" == "value-$n" ]] || {
-    echo "primary seed verification failed for key $n" >&2
-    exit 1
-  }
-done
-
-echo "[2/8] hard-stop replica n2"
-stop_hard n2
-
-echo "[3/8] corrupt a durable byte inside n2 AOF"
-python3 - "$TMP/n2.aof" <<'PY'
-import os
-import sys
-
-path = sys.argv[1]
-size = os.path.getsize(path)
-if size < 17:
-    raise SystemExit(f"AOF unexpectedly small: {size}")
-
-# AOF layout starts with:
-#   8 bytes magic ("MCLOG001")
-#   4 bytes payload length
-#   4 bytes CRC32
-#   payload...
-#
-# Corrupt the first frame's stored checksum deterministically. Do not mutate an
-# arbitrary tail/header byte: SnugKV intentionally tolerates a truncated final
-# frame, so damaging the final frame length can be interpreted as a safe
-# truncation rather than checksum corruption.
-offset = 8 + 4
-with open(path, "r+b") as f:
-    f.seek(offset)
-    b = f.read(1)
-    if not b:
-        raise SystemExit("unable to read checksum byte")
-    f.seek(offset)
-    f.write(bytes([b[0] ^ 0x5A]))
-    f.flush()
-    os.fsync(f.fileno())
-
-print(f"corrupted first-frame checksum offset={offset} size={size}")
-PY
-
-echo "[4/8] require corrupted replica restart to fail closed"
-start_node n2
-if wait_ready "$P2"; then
-  echo "corrupted replica unexpectedly started" >&2
-  cli "$P2" INFO persistence >&2 || true
-  tail -n 120 "$TMP/n2.log" >&2 || true
-  exit 1
-fi
-
-pid="$(cat "$TMP/n2.pid")"
-if kill -0 "$pid" 2>/dev/null; then
-  echo "corrupted replica process remained alive without becoming ready" >&2
-  tail -n 120 "$TMP/n2.log" >&2 || true
-  kill "$pid" 2>/dev/null || true
-  wait "$pid" 2>/dev/null || true
-else
-  wait "$pid" 2>/dev/null || true
-fi
-rm -f "$TMP/n2.pid"
-
-if ! grep -Ei 'checksum|corrupt|persistence|replay|invalid' "$TMP/n2.log" >/dev/null; then
-  echo "replica failed as expected, but log lacked a persistence-corruption diagnostic" >&2
-  tail -n 120 "$TMP/n2.log" >&2 || true
-  exit 1
-fi
-echo "corrupted replica failed closed as expected"
-
-echo "[5/8] remove damaged local AOF and restart empty replica"
-rm -f "$TMP/n2.aof" "$TMP/n2.aof.lock"
-start_node n2
-wait_ready "$P2" || {
-  echo "clean replica restart failed" >&2
-  tail -n 120 "$TMP/n2.log" >&2 || true
-  exit 1
-}
-
-echo "[6/8] reattach n2 and require full recovery from healthy primary"
-cli "$P2" REPLICAOF 127.0.0.1 "$P0" | grep -qx OK
-for _ in $(seq 1 300); do
-  info="$(cli "$P2" INFO replication 2>/dev/null || true)"
-  if grep -q '^role:slave' <<<"$info" &&
-     grep -q '^master_link_status:up' <<<"$info"; then
-    break
-  fi
-  sleep 0.05
-done
-grep -q '^master_link_status:up' <<<"$info"
-
-echo "[7/8] verify cluster routing sees the rebuilt replica's recovered dataset"
-for n in 001 100 200; do
-  got="$(redis-cli --no-auth-warning --raw -a "$PASSWORD" -c -p "$P2" GET "corrupt:key:$n" 2>/dev/null || true)"
-  [[ "$got" == "value-$n" ]] || {
-    echo "cluster-routed read mismatch for key $n: $got" >&2
-    exit 1
-  }
-done
-
-echo "[8/8] prove rebuilt replica AOF independently recovers exact values"
-stop_hard n2
-
-PROBE_PORT="$((P2 + 100))"
-cp "$TMP/n2.aof" "$TMP/n2-probe.aof"
-rm -f "$TMP/n2-probe.aof.lock"
-
-cat >"$TMP/n2-probe.json" <<JSON
-{
-  "listen": "127.0.0.1:$PROBE_PORT",
-  "admin_listen": "",
-  "metrics_listen": "",
-  "acl_file": "$TMP/users.acl",
-  "aof_path": "$TMP/n2-probe.aof",
-  "fsync": "always"
-}
-JSON
-
-"$BIN" -config "$TMP/n2-probe.json" >"$TMP/n2-probe.log" 2>&1 &
-echo $! >"$TMP/n2-probe.pid"
-wait_ready "$PROBE_PORT" || {
-  echo "standalone probe could not recover rebuilt replica AOF" >&2
-  tail -n 120 "$TMP/n2-probe.log" >&2 || true
-  exit 1
-}
-
-for n in 001 100 200; do
-  got="$(cli "$PROBE_PORT" GET "corrupt:key:$n")"
-  [[ "$got" == "value-$n" ]] || {
-    echo "standalone recovered AOF mismatch for key $n: $got" >&2
-    exit 1
-  }
-done
-
-probe_pid="$(cat "$TMP/n2-probe.pid")"
-kill "$probe_pid" 2>/dev/null || true
-wait "$probe_pid" 2>/dev/null || true
-rm -f "$TMP/n2-probe.pid"
-
-start_node n2
-wait_ready "$P2"
 role_after="$(cli "$P2" ROLE 2>/dev/null | head -n1 || true)"
 [[ "$role_after" == "slave" ]] || {
   echo "rebuilt replica did not restore replica role after restart: $role_after" >&2
