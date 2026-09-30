@@ -75,7 +75,21 @@ Acceptance:
 - command count matches `COMMAND COUNT`;
 - parent/subcommand treatment is deterministic.
 
-Status: **TODO**
+Status: **IN PROGRESS**
+
+Implementation branch: `release/a1-command-inventory`
+
+Generator:
+
+```sh
+bash scripts/release/generate-command-inventory.sh
+```
+
+The generator is backed by `CommandInventorySnapshot()`; tests assert that its
+top-level command count matches the same `commandTable` used by `COMMAND COUNT`.
+
+Remaining A1 gate: generate and retain the Markdown/JSON artifacts from a clean
+checkout, then run the focused test and project build gate.
 
 ---
 
