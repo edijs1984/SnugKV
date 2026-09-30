@@ -24,6 +24,7 @@ WORKERS="${WORKERS:-8}"
 PIPELINE="${PIPELINE:-256}"
 RUNS="${RUNS:-1}"
 SETTLE_MS="${SETTLE_MS:-10000}"
+SNUG_CONVERGE_MS="${SNUG_CONVERGE_MS:-0}"
 SERVERS="${SERVERS:-redis snug-raw snug-opt}"
 WORKLOADS="${WORKLOADS:-load get}"
 ROOT_OUT="${ROOT_OUT:-benchmark-results/realistic-$(date +%Y%m%d-%H%M%S)}"
@@ -167,6 +168,9 @@ run_workload() {
 
   if [[ "$workload" == "load" ]]; then
     args+=( -reset -settle-ms "$SETTLE_MS" )
+    if [[ "$server" == "snug-opt" && "$SNUG_CONVERGE_MS" != "0" ]]; then
+      args+=( -converge-ms "$SNUG_CONVERGE_MS" )
+    fi
   else
     args+=( -ops "$ops" )
   fi
@@ -191,6 +195,7 @@ echo "  get_ops:   $GET_OPS"
 echo "  mixed_ops: $MIXED_OPS"
 echo "  ttl_ops:   $TTL_OPS"
 echo "  settle_ms: $SETTLE_MS"
+echo "  snug_converge_ms: $SNUG_CONVERGE_MS"
 echo "  output:    $ROOT_OUT"
 echo "  build_image: $BUILD_IMAGE"
 
