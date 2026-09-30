@@ -6,6 +6,12 @@ BIN=/tmp/snugkv-cluster-client-smoke-bin
 TMP=/tmp/snugkv-cluster-client-smoke
 
 cleanup() {
+  for pidfile in "$TMP"/monitor*.pid; do
+    [[ -f "$pidfile" ]] || continue
+    pid="$(cat "$pidfile")"
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+  done
   for pidfile in "$TMP"/node*.pid; do
     [[ -f "$pidfile" ]] || continue
     pid="$(cat "$pidfile")"
@@ -58,6 +64,15 @@ for port in 7000 7001 7002; do
   done
   redis-cli -h 127.0.0.1 -p "$port" PING | grep -qx PONG
 done
+
+if [[ -n "${TRACE_DIR:-}" ]]; then
+  mkdir -p "$TRACE_DIR"
+  for port in 7000 7001 7002; do
+    redis-cli -h 127.0.0.1 -p "$port" MONITOR >"$TRACE_DIR/cluster-$port.monitor" 2>&1 &
+    echo $! >"$TMP/monitor-$port.pid"
+  done
+  sleep 0.2
+fi
 
 cd "$ROOT/compat/node"
 

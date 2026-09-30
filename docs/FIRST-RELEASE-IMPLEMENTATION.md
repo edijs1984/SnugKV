@@ -129,7 +129,21 @@ Acceptance:
 - every candidate gap has an explicit reason;
 - no gap is promoted to REQUIRED solely because Redis implements it.
 
-Status: **TODO**
+Status: **COMPLETE**
+
+Implementation branch: `release/a2-redis82-command-gap-audit`
+
+Oracle/generator:
+
+```sh
+bash scripts/release/generate-redis82-gap-audit.sh
+```
+
+This starts an isolated Redis 8.2 container, captures its live `COMMAND` metadata,
+and compares top-level commands and structured subcommands against the retained
+SnugKV A1 inventory.
+
+Classification result: **49 IMPLEMENTED**, **10 INTENTIONALLY_UNSUPPORTED**, **58 CANDIDATE_GAP**, **72 IRRELEVANT**. IMPLEMENTED entries represent structured COMMAND metadata gaps rather than missing behavior. Final REQUIRED / USEFUL / DEFER decisions happen in Phase A4 after client/workflow evidence.
 
 ---
 
@@ -166,7 +180,38 @@ Output:
 
 - `docs/release/CLIENT-COMMAND-TRACE.md`
 
-Status: **TODO**
+Status: **COMPLETE**
+
+Implementation branch: `release/a3-client-command-tracing`
+
+Trace coverage:
+
+- ioredis
+- node-redis
+- redis-py
+- go-redis
+- RESP2
+- RESP3
+- reconnect
+- transactions
+- Pub/Sub
+- client-side tracking/caching
+- Cluster routing
+- Cluster client startup/refresh commands
+
+Standalone capture uses a transparent RESP proxy against Redis 8.2. Cluster capture
+reuses the existing SnugKV client smoke and records each node with MONITOR.
+
+The A3 output is `docs/release/CLIENT-COMMAND-TRACE.md`.
+
+Retained result:
+
+- **58** A2 candidate commands tested against supported workflows
+- **0** candidate commands observed
+- ioredis, node-redis, redis-py, and go-redis standalone/Cluster smoke passed
+- persistent ioredis and node-redis clients survived automatic primary failover
+- A3 uncovered and fixed `CLUSTER SLOTS` replica advertisement, which was a
+  genuine Cluster client failover compatibility defect
 
 ---
 

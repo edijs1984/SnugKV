@@ -178,3 +178,39 @@ func TestClusterInfoCountsReplicaTopologyNode(t *testing.T) {
 		t.Fatalf("INFO=%q", info)
 	}
 }
+
+
+func TestClusterSlotsReportsFailoverReplicas(t *testing.T) {
+	s := New(engine.New())
+	master := "127.0.0.1:7000"
+	replica := "127.0.0.1:7001"
+
+	if err := s.configureClusterSlots(true, replica, map[string]string{
+		"0-16383": master,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s.failoverAdvertiseAddr = replica
+	s.failoverPeers = []string{master}
+	s.failoverGroupID = "shard-a"
+
+	reply, err := s.clusterSlotsReply()
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(reply)
+
+	for _, want := range []string{
+		":0\r\n",
+		":16383\r\n",
+		":7000\r\n",
+		":7001\r\n",
+		clusterNodeID(master),
+		clusterNodeID(replica),
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("CLUSTER SLOTS missing %q: %q", want, text)
+		}
+	}
+}
+

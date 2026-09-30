@@ -313,17 +313,33 @@ func clusterNodeEndpointReply(addr string) ([]byte, error) {
 func (s *Server) clusterSlotsReply() ([]byte, error) {
 	state := s.clusterStateSnapshot()
 	ranges := clusterSlotRangesFromOwners(state.owners)
+	observation := s.clusterShardTopologyObservation(state)
 	items := make([][]byte, 0, len(ranges))
 	for _, r := range ranges {
-		node, err := clusterNodeEndpointReply(r.Owner)
+		ownerNode, err := clusterNodeEndpointReply(r.Owner)
 		if err != nil {
 			return nil, err
 		}
-		items = append(items, array(
+
+		rangeItems := make([][]byte, 0, 3)
+		rangeItems = append(
+			rangeItems,
 			integer(int64(r.Start)),
 			integer(int64(r.End)),
-			node,
-		))
+			ownerNode,
+		)
+
+		if topology, ok := observation.Topologies[r.Owner]; ok {
+			for _, replica := range topology.Replicas {
+				replicaNode, err := clusterNodeEndpointReply(replica)
+				if err != nil {
+					return nil, err
+				}
+				rangeItems = append(rangeItems, replicaNode)
+			}
+		}
+
+		items = append(items, array(rangeItems...))
 	}
 	return array(items...), nil
 }
