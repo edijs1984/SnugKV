@@ -1,6 +1,6 @@
 # Cluster Production Hardening Audit
 
-Date: 2026-09-29
+Date: 2026-09-30
 
 ## Scope
 
@@ -227,8 +227,9 @@ migration.
 
 ## Known boundaries
 
-The remaining production-hardening boundary is long-duration soak evidence and
-the final release/operator documentation audit.
+The planned distributed production-hardening matrix is complete. The remaining
+gate for this branch is final project-wide release validation and keeping
+operator/compatibility documentation synchronized with the implemented behavior.
 
 Completed hardening evidence now includes:
 
@@ -258,9 +259,23 @@ Completed hardening evidence now includes:
    - fully automatic admission remains optional/deferred;
    - current membership changes are explicit and guarded.
 
-The one-cycle distributed soak smoke passes all seven failure/recovery cases.
-A longer retained soak run is still required before closing the production-
-candidate hardening gate.
+Retained distributed validation now includes:
+
+- an earlier extended soak that completed 70 consecutive chaos cases before
+  exposing the MIGRATE pipelined-read timeout bug;
+- deterministic regression coverage for sliding MIGRATE read deadlines and
+  durable acknowledged partial deletions;
+- 5/5 repeated crash/recovery stress runs with 2,000 durable keys;
+- 10/10 dedicated failover-restart stress runs after removing a startup
+  stabilization race from the harness, including an alternate elected leader;
+- a final bounded soak of 3 cycles / 21 cases with zero failures and zero
+  timeouts.
+
+The MIGRATE timeout fix refreshes the read deadline before each expected
+pipelined reply, so the timeout measures inactivity rather than imposing one
+absolute wall-clock deadline across SELECT plus a batch of RESTORE replies.
+Recovery retries transient transport failures only on the REPLACE-based recovery
+path, where retrying an ambiguously completed batch is idempotent.
 
 ## Validation
 
