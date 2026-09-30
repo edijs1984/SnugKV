@@ -276,7 +276,7 @@ Do not pre-fill speculative commands here.
 **Evidence:** A2 found 49 Redis subcommands whose behavior already exists in SnugKV
 but is absent from structured command metadata.  
 **Branch:** `release/b1-command-subcommand-metadata`  
-**PR:** TBD
+**PR:** #257
 
 Scope:
 
