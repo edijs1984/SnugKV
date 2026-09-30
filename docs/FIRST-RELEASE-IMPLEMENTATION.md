@@ -617,9 +617,27 @@ Status: **G2 COMPLETE**
 
 - [ ] 24-hour mixed workload soak
 - [ ] retained error/leak/memory-growth evidence
-- [ ] distributed soak
-- [ ] failover repetition
-- [ ] reshard/recovery repetition
+- [x] distributed smoke soak
+- [x] failover repetition smoke
+- [x] reshard/recovery repetition smoke
+
+Retained smoke evidence:
+
+- corrupt-replica recovery: **3/3 focused PASS**
+- persistence-failure recovery: **3/3 focused PASS**
+- distributed cluster soak: **PASS**
+- distributed smoke duration: **612 seconds**
+- distributed smoke cases passed: **29**
+- distributed smoke failures: **0**
+- distributed smoke timeouts: **0**
+
+The distributed smoke covers rebalance restart, target restart, failover restart,
+repeated recovery, majority partition, persistence failure, and corrupted-replica
+recovery.
+
+The 24-hour mixed workload soak remains the long-duration release gate and G3 is
+not complete until that retained result is reviewed for correctness and memory
+growth.
 
 ## G4. Compatibility
 
