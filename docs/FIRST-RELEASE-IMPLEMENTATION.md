@@ -180,7 +180,29 @@ Output:
 
 - `docs/release/CLIENT-COMMAND-TRACE.md`
 
-Status: **TODO**
+Status: **IN PROGRESS**
+
+Implementation branch: `release/a3-client-command-tracing`
+
+Trace coverage:
+
+- ioredis
+- node-redis
+- redis-py
+- go-redis
+- RESP2
+- RESP3
+- reconnect
+- transactions
+- Pub/Sub
+- client-side tracking/caching
+- Cluster routing
+- Cluster client startup/refresh commands
+
+Standalone capture uses a transparent RESP proxy against Redis 8.2. Cluster capture
+reuses the existing SnugKV client smoke and records each node with MONITOR.
+
+The A3 output is `docs/release/CLIENT-COMMAND-TRACE.md`.
 
 ---
 
