@@ -399,11 +399,34 @@ topology easy to bootstrap.
 
 Do not build a general service-discovery platform.
 
-Status: **READY**
+Status: **COMPLETE**
 
-C1 recommends Option 2. Bound the implementation to the documented small
-first-release topology and generate/apply the existing configuration,
-replication attachment, and health verification steps automatically.
+Implementation branch: `release/c2-bounded-cluster-bootstrap`
+
+Selected: **Option 2 — bounded automatic admission/bootstrap**.
+
+Implemented scope:
+
+- exactly three-node first-release layouts;
+- deterministic sharded slot generation;
+- one-primary/two-replica HA configuration generation;
+- generated peer lists, quorum, group/epoch, ACL, control-auth and persistence settings;
+- automatic replica attachment through existing `REPLICAOF`;
+- cluster coverage/transition validation;
+- replication/failover health validation;
+- redirected routing smoke;
+- no SSH, remote process management, service discovery, or new consensus logic.
+
+Retained operator doc: `docs/release/CLUSTER-BOOTSTRAP.md`.
+
+Validation:
+
+- `python3 scripts/release/test_snug_cluster_bootstrap.py`: **PASS** (4 tests)
+- sharded three-process bootstrap: **PASS**
+- sharded independent verification: **PASS**
+- HA three-process bootstrap: **PASS**
+- HA independent verification: **PASS**
+- `bash scripts/release/run-cluster-bootstrap-smoke.sh`: **PASS**
 
 ---
 
