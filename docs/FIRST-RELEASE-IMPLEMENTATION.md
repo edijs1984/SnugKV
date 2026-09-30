@@ -143,8 +143,7 @@ This starts an isolated Redis 8.2 container, captures its live `COMMAND` metadat
 and compares top-level commands and structured subcommands against the retained
 SnugKV A1 inventory.
 
-Initial Redis-only entries remain `UNCLASSIFIED`; the generated list must then
-be reviewed as REQUIRED / USEFUL / DEFER / IRRELEVANT before A2 is complete.
+Initial Redis-only entries are then classified as IMPLEMENTED, INTENTIONALLY_UNSUPPORTED, CANDIDATE_GAP, or IRRELEVANT using the A2 classifier. IMPLEMENTED entries represent structured COMMAND metadata gaps rather than missing behavior. Final REQUIRED / USEFUL / DEFER decisions happen in Phase A4 after client/workflow evidence.
 
 ---
 
