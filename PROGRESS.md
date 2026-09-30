@@ -134,6 +134,27 @@ Core RESP3 support has landed alongside RESP2. Redis 8.2 differential audits now
 cover HELLO negotiation/switching, protocol-dependent reply shapes, nested
 COMMAND/ACL structures, and classic/pattern/sharded Pub/Sub push semantics.
 
+## Cluster / failover final hardening — 2026-09-30
+
+Final retained evidence after the migration/failover fixes:
+
+- an extended distributed soak completed 70 consecutive chaos cases before
+  exposing the batched MIGRATE read-deadline bug;
+- MIGRATE now refreshes its read deadline for every expected pipelined reply,
+  with deterministic coverage for sliding timeouts and durable acknowledged
+  partial deletions;
+- recovery retries transient MIGRATE transport failures only on the REPLACE-based
+  recovery path and preserves correct moved-key accounting;
+- repeated crash/recovery stress passed 5/5 runs with 2,000 durable keys;
+- the failover-restart harness stabilization race was removed and the scenario
+  then passed 10/10 focused runs, including an alternate elected leader;
+- the bounded distributed soak passed 3/3 cycles, 21/21 cases, with zero failures
+  and zero timeouts.
+
+The distributed hardening roadmap item is therefore closed for the audited
+production-candidate scope; final project-wide release validation remains before
+merge.
+
 ## Cluster / failover production hardening — 2026-09-29
 
 SnugKV's distributed feature set has moved beyond the earlier replication-only milestone.
@@ -172,8 +193,10 @@ Phase 22 adds a dedicated internal-control identity:
 - wrong secrets fail closed, while RESET, AUTH, and HELLO revoke the internal identity;
 - operator-facing cluster/failover health and topology commands remain on the normal
   ACL surface;
-- broader multi-process chaos, long-running partition/recovery soak, client-library
-  cluster smoke, and cluster performance benchmarks remain production-hardening work.
+- the planned distributed hardening matrix is now complete: multi-process chaos,
+  Cluster client smoke, recovery/fault matrices, distributed benchmarks, repeated
+  recovery stress, dedicated failover stress, and retained bounded soak evidence
+  are all recorded.
 
 Canonical current handoff: `docs/PROJECT-STATE.md`. Detailed evidence: `docs/CLUSTER-PRODUCTION-HARDENING.md`, `docs/AUTOMATIC-FAILOVER-AUDIT.md`, and `docs/REPLICATION-TLS-AUDIT.md`.
 
@@ -188,9 +211,9 @@ guarded resharding/recovery, explicit membership, replica-aware shard topology,
 operator health/consistency views, stale-coordinator fencing, restart recovery,
 and dedicated internal control-plane authentication.
 
-The current milestone is **distributed production hardening**: real multi-process
-chaos, client-library Cluster validation, failure/recovery matrices, long-running
-soak, and reproducible multi-node benchmarks.
+The distributed production-hardening milestone is complete for the audited
+production-candidate scope. The remaining branch gate is project-wide release
+validation plus maintenance of accurate operator/compatibility documentation.
 
 COMMAND metadata/tooling and the common CONFIG compatibility milestone are
 complete. Core AUTH/ACL support is also implemented through command/category/key
@@ -200,7 +223,7 @@ complete. The Redis 8.2 Streams differential edge-case audit is also complete.
 Most previously listed scripting/OOM/debug/migration/ACL items have since been
 implemented or audited. Remaining compatibility work is narrower: optional RESP3
 attribute support where required, advanced CLIENT tracking/caching/redirection,
-command-family edge cases, and distributed client/chaos/performance hardening.
+command-family edge cases, and longer-term distributed production history.
 See `docs/PROJECT-STATE.md` for the authoritative next sequence.
 
 ## Recently completed
