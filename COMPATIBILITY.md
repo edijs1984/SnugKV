@@ -39,13 +39,15 @@ continuation, Redis RDB full sync, authenticated/TLS replication, majority-backe
 failover leases, MOVED/ASK routing, reshard/recovery, membership changes,
 replica-aware shard topology, and operator health/consistency views.
 
-Remaining distributed boundaries are production hardening rather than absence of
-the feature family. Configured clusters now require a dedicated
+The audited distributed hardening milestone now includes multi-process
+crash/restart and partition/heal coverage, interrupted and repeated reshard
+recovery, persistence/disk fault injection, ioredis/node-redis/redis-py/go-redis
+Cluster smoke, reproducible multi-node benchmarks, dedicated failover stress, and
+retained bounded soak validation. Configured clusters require a dedicated
 `cluster_control_auth` secret; peer-only CLUSTER and SNUG.FAILOVER RPCs require a
 connection-scoped internal identity established after ordinary authentication.
-Fully automatic membership admission is optional/deferred, and broader
-multi-process chaos/client-library cluster testing remains. Advanced CLIENT
-tracking/caching and optional RESP3 client-specific hardening also remain.
+Fully automatic membership admission remains optional/deferred. Exhaustive Redis
+Cluster parity and long-term large-scale production history are not claimed.
 
 ## Client compatibility
 
@@ -97,7 +99,7 @@ client-library-specific parity are not yet claimed.
 | COMMAND metadata | Supported for implemented surface | Redis-shaped INFO/DOCS/GETKEYS/GETKEYSANDFLAGS, parent/subcommand metadata, dynamic key extraction, differential audit complete |
 | RESP3 | Broad audited support | `HELLO 3`, protocol switching, audited null/map/set/double/verbatim reply shapes, Streams/tooling maps, GEO/ZSET numeric forms, and Pub/Sub push semantics; optional client/attribute hardening remains |
 | Key migration / transfer | Supported | Redis 8.2-compatible `DUMP` / `RESTORE` plus `MIGRATE` with COPY/REPLACE/KEYS/AUTH/AUTH2 and live two-way interoperability; STREAM tombstone byte-for-byte re-emission after XDEL remains a documented storage-model boundary |
-| Replication / Failover / Cluster | Broad audited core | Primary/replica sync, partial PSYNC, Redis RDB full sync, TLS/auth, quorum-leased failover, hash-slot routing, MOVED/ASK, guarded reshard/recovery, dynamic membership, replica-aware shard topology, and health/consistency views; broader chaos/client-library hardening remains |
+| Replication / Failover / Cluster | Broad audited core | Primary/replica sync, partial PSYNC, Redis RDB full sync, TLS/auth, quorum-leased failover, hash-slot routing, MOVED/ASK, guarded reshard/recovery, dynamic membership, replica-aware shard topology, health/consistency views, Cluster client smoke, multi-process chaos/recovery, benchmarks, and bounded soak validation |
 
 ## JSON compatibility
 
