@@ -48,7 +48,7 @@ async function dumpIORedisTopology(io, label) {
 
 async function dumpNodeRedisTopology(nr, label) {
   try {
-    const slots = await nr.sendCommand(["CLUSTER", "SLOTS"]);
+    const slots = await nr.sendCommand(undefined, true, ["CLUSTER", "SLOTS"]);
     console.log(`[${label}] node-redis CLUSTER SLOTS=${JSON.stringify(slots)}`);
   } catch (e) {
     console.log(`[${label}] node-redis topology query failed: ${e && e.message || e}`);
@@ -65,7 +65,11 @@ async function main() {
 
   const nr = createCluster({
     rootNodes: [{ url: `redis://default:${encodeURIComponent(password)}@127.0.0.1:${p0}` }],
-    defaults: { socket: { connectTimeout: 2000, reconnectStrategy: () => 100 } },
+    defaults: {
+      username: "default",
+      password,
+      socket: { connectTimeout: 2000, reconnectStrategy: () => 100 },
+    },
   });
   nr.on("error", () => {});
 
