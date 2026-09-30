@@ -60,12 +60,16 @@ Completed evidence includes:
 - an earlier extended soak completed 70 consecutive chaos cases before exposing
   the MIGRATE pipelined-read timeout bug that is now regression-covered.
 
-The remaining release gate is:
+The distributed production-candidate release gate is complete.
 
-1. **Final release validation**
-   - keep operator/configuration/compatibility documentation aligned with the
-     implemented distributed behavior;
-   - run the full release validation suite before merge.
+Final project-wide validation was operator-reported green on `main` after PR #249:
+
+- `go test ./... -count=1`
+- `go test -race ./... -count=1`
+- `go vet ./...`
+
+The retained distributed hardening evidence and documentation audit are therefore
+closed for this milestone.
 
 Optional/deferred: fully automatic membership admission policy and richer
 per-node health/TLS-SNI ergonomics.
@@ -79,8 +83,8 @@ multi-process failure matrix, Cluster client-library smoke, distributed benchmar
 baselines, repeated recovery stress, and retained bounded soak validation.
 
 Do not interpret this as a claim of exhaustive Redis Cluster parity or mature
-large-scale production history. "Production-candidate" is the appropriate
-distributed-system claim once the final release validation suite is green.
+large-scale production history. The appropriate current distributed-system claim
+is **production-candidate** for the audited scope.
 
 ## Documentation authority
 
