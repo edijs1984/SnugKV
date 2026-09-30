@@ -851,6 +851,11 @@ Docker Compose is also supported for local startup.
 
 ## 20. Project status in one paragraph
 
+**First-release feature freeze is active.** New functionality should not be added
+unless it fixes a release-blocking compatibility defect; current work is
+validation, durability/failure injection, soak, profiling, packaging, security
+review, quickstart, and release-candidate preparation.
+
 SnugKV is an ambitious Go-based Redis-compatible datastore with a broad
 single-node command surface, compact native container storage, JSON/Search,
 scripting/functions, persistence, ACL/security, replication, quorum-backed
