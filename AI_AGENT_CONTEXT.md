@@ -34,10 +34,10 @@ parity.
 SnugKV intentionally exposes **one logical database**.
 
 The current distributed implementation has completed the planned
-production-hardening matrix for the audited production-candidate scope, but the
-project should still be described as **alpha / production-candidate work**, not as
-a mature drop-in replacement with exhaustive Redis parity or years of production
-history.
+production-hardening matrix and the post-merge project-wide release validation for
+the audited production-candidate scope. The project should still be described as
+**alpha / production-candidate work**, not as a mature drop-in replacement with
+exhaustive Redis parity or years of production history.
 
 ---
 
@@ -671,7 +671,10 @@ go test -race ./... -count=1
 go vet ./...
 ```
 
-RESP fuzz and branch-specific compatibility checks should also remain green.
+These project-wide checks were operator-reported green on `main` after PR #249,
+closing the distributed production-candidate milestone. RESP fuzz and
+branch-specific compatibility checks should continue to remain green for future
+changes.
 
 ---
 
