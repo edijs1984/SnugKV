@@ -1,0 +1,7196 @@
+{
+  "entries": [
+    {
+      "name": "ACL",
+      "kind": "command",
+      "arity": -1,
+      "min_args": 1,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "APPEND",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "write",
+        "denyoom"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ASKING",
+      "kind": "command",
+      "arity": 1,
+      "min_args": 1,
+      "max_args": 1,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "AUTH",
+      "kind": "command",
+      "arity": -1,
+      "min_args": 1,
+      "max_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "BF.ADD",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "write",
+        "denyoom",
+        "fast"
+      ],
+      "acl_categories": [
+        "@write",
+        "@bloom",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "BF.CARD",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read",
+        "@bloom",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "BF.EXISTS",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read",
+        "@bloom",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "BF.INFO",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "max_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read",
+        "@bloom",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "BF.INSERT",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "write",
+        "denyoom",
+        "fast"
+      ],
+      "acl_categories": [
+        "@write",
+        "@bloom",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "BF.LOADCHUNK",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "BF.MADD",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "write",
+        "denyoom",
+        "fast"
+      ],
+      "acl_categories": [
+        "@write",
+        "@bloom",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "BF.MEXISTS",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read",
+        "@bloom",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "BF.RESERVE",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "max_args": 6,
+      "flags": [
+        "write",
+        "denyoom",
+        "fast"
+      ],
+      "acl_categories": [
+        "@write",
+        "@bloom",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "BF.SCANDUMP",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "BGREWRITEAOF",
+      "kind": "command",
+      "arity": 1,
+      "min_args": 1,
+      "max_args": 1,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "BGSAVE",
+      "kind": "command",
+      "arity": -1,
+      "min_args": 1,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "BITCOUNT",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "max_args": 5,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "BITFIELD",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "flags": [
+        "write",
+        "denyoom"
+      ],
+      "acl_categories": [
+        "@write",
+        "@bitmap",
+        "@slow"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "BITFIELD_RO",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "flags": [
+        "readonly",
+        "fast"
+      ],
+      "acl_categories": [
+        "@read",
+        "@bitmap",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "BITOP",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "write",
+        "denyoom"
+      ],
+      "acl_categories": [
+        "@write",
+        "@bitmap",
+        "@slow"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "BITPOS",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "max_args": 6,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "BLMOVE",
+      "kind": "command",
+      "arity": 6,
+      "min_args": 6,
+      "max_args": 6,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "BLMPOP",
+      "kind": "command",
+      "arity": -5,
+      "min_args": 5,
+      "flags": [
+        "write",
+        "blocking",
+        "movablekeys"
+      ],
+      "acl_categories": [
+        "@write",
+        "@list",
+        "@slow",
+        "@blocking"
+      ],
+      "key_mode": "dynamic",
+      "write": true,
+      "cluster_routing": "same-slot-dynamic",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "BLPOP",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "BRPOP",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "BRPOPLPUSH",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "BZMPOP",
+      "kind": "command",
+      "arity": -5,
+      "min_args": 5,
+      "flags": [
+        "write",
+        "blocking",
+        "movablekeys"
+      ],
+      "acl_categories": [
+        "@write",
+        "@sortedset",
+        "@slow",
+        "@blocking"
+      ],
+      "key_mode": "dynamic",
+      "write": true,
+      "cluster_routing": "same-slot-dynamic",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "BZPOPMAX",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "BZPOPMIN",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "CF.ADD",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "write",
+        "denyoom",
+        "fast"
+      ],
+      "acl_categories": [
+        "@write",
+        "@cuckoo",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "CF.ADDNX",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "write",
+        "denyoom",
+        "fast"
+      ],
+      "acl_categories": [
+        "@write",
+        "@cuckoo",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "CF.COUNT",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read",
+        "@cuckoo",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "CF.DEL",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "write",
+        "denyoom",
+        "fast"
+      ],
+      "acl_categories": [
+        "@write",
+        "@cuckoo",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "CF.EXISTS",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read",
+        "@cuckoo",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "CF.INFO",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read",
+        "@cuckoo",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "CF.INSERT",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "write",
+        "denyoom",
+        "fast"
+      ],
+      "acl_categories": [
+        "@write",
+        "@cuckoo",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "CF.INSERTNX",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "write",
+        "denyoom",
+        "fast"
+      ],
+      "acl_categories": [
+        "@write",
+        "@cuckoo",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "CF.LOADCHUNK",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "CF.MEXISTS",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read",
+        "@cuckoo",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "CF.RESERVE",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "write",
+        "denyoom",
+        "fast"
+      ],
+      "acl_categories": [
+        "@write",
+        "@cuckoo",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "CF.SCANDUMP",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "CLIENT",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "CLUSTER",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "CMS.INCRBY",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "write",
+        "denyoom"
+      ],
+      "acl_categories": [
+        "@write",
+        "@cms",
+        "@slow"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "CMS.INFO",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read",
+        "@cms",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "CMS.INITBYDIM",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "write",
+        "denyoom",
+        "fast"
+      ],
+      "acl_categories": [
+        "@write",
+        "@cms",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "CMS.INITBYPROB",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "write",
+        "denyoom",
+        "fast"
+      ],
+      "acl_categories": [
+        "@write",
+        "@cms",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "CMS.MERGE",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "write",
+        "denyoom"
+      ],
+      "acl_categories": [
+        "@write",
+        "@cms",
+        "@slow"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "CMS.QUERY",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read",
+        "@cms",
+        "@slow"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "COMMAND",
+      "kind": "command",
+      "arity": -1,
+      "min_args": 1,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "CONFIG",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "COPY",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "write",
+        "denyoom"
+      ],
+      "acl_categories": [
+        "@keyspace",
+        "@write",
+        "@slow"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "DBSIZE",
+      "kind": "command",
+      "arity": 1,
+      "min_args": 1,
+      "max_args": 1,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "DECR",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "write",
+        "denyoom"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "DECRBY",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "write",
+        "denyoom"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "DEL",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@keyspace",
+        "@write",
+        "@slow"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "DISCARD",
+      "kind": "command",
+      "arity": 1,
+      "min_args": 1,
+      "max_args": 1,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "DUMP",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ECHO",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "EVAL",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "noscript",
+        "stale",
+        "skip_monitor",
+        "no_mandatory_keys",
+        "movablekeys"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@scripting"
+      ],
+      "key_mode": "dynamic",
+      "write": true,
+      "cluster_routing": "same-slot-dynamic",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "EVALSHA",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "noscript",
+        "stale",
+        "skip_monitor",
+        "no_mandatory_keys",
+        "movablekeys"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@scripting"
+      ],
+      "key_mode": "dynamic",
+      "write": true,
+      "cluster_routing": "same-slot-dynamic",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "EVALSHA_RO",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly",
+        "noscript",
+        "stale",
+        "skip_monitor",
+        "no_mandatory_keys",
+        "movablekeys"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@scripting"
+      ],
+      "key_mode": "dynamic",
+      "write": false,
+      "cluster_routing": "same-slot-dynamic",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "EVAL_RO",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly",
+        "noscript",
+        "stale",
+        "skip_monitor",
+        "no_mandatory_keys",
+        "movablekeys"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@scripting"
+      ],
+      "key_mode": "dynamic",
+      "write": false,
+      "cluster_routing": "same-slot-dynamic",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "EXEC",
+      "kind": "command",
+      "arity": 1,
+      "min_args": 1,
+      "max_args": 1,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "EXISTS",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "EXPIRE",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "max_args": 4,
+      "flags": [
+        "write",
+        "fast"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "EXPIREAT",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "max_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "EXPIRETIME",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "FCALL",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "noscript",
+        "stale",
+        "skip_monitor",
+        "no_mandatory_keys",
+        "movablekeys"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@scripting"
+      ],
+      "key_mode": "dynamic",
+      "write": true,
+      "cluster_routing": "same-slot-dynamic",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "FCALL_RO",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly",
+        "noscript",
+        "stale",
+        "skip_monitor",
+        "no_mandatory_keys",
+        "movablekeys"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@scripting"
+      ],
+      "key_mode": "dynamic",
+      "write": false,
+      "cluster_routing": "same-slot-dynamic",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "FLUSHALL",
+      "kind": "command",
+      "arity": -1,
+      "min_args": 1,
+      "max_args": 2,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "none",
+      "write": true,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "FLUSHDB",
+      "kind": "command",
+      "arity": -1,
+      "min_args": 1,
+      "max_args": 2,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "none",
+      "write": true,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "FT.AGGREGATE",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "FT.ALIASADD",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "none",
+      "write": true,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "FT.ALIASDEL",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "none",
+      "write": true,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "FT.ALIASUPDATE",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "none",
+      "write": true,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "FT.ALTER",
+      "kind": "command",
+      "arity": -6,
+      "min_args": 6,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "none",
+      "write": true,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "FT.CONFIG",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "max_args": 4,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "FT.CREATE",
+      "kind": "command",
+      "arity": -6,
+      "min_args": 6,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "none",
+      "write": true,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "FT.CURSOR",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "max_args": 6,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "FT.DICTADD",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "none",
+      "write": true,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "FT.DICTDEL",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "none",
+      "write": true,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "FT.DICTDUMP",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "FT.DROPINDEX",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "none",
+      "write": true,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "FT.EXPLAIN",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "max_args": 5,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "FT.EXPLAINCLI",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "max_args": 5,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "FT.INFO",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "FT.PROFILE",
+      "kind": "command",
+      "arity": -5,
+      "min_args": 5,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "FT.SEARCH",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "FT.SPELLCHECK",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "FT.SUGADD",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "none",
+      "write": true,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "FT.SUGDEL",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "none",
+      "write": true,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "FT.SUGGET",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "FT.SUGLEN",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "FT.SYNDUMP",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "FT.SYNUPDATE",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "none",
+      "write": true,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "FT.TAGVALS",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "FT._LIST",
+      "kind": "command",
+      "arity": 1,
+      "min_args": 1,
+      "max_args": 1,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "FUNCTION",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "GEOADD",
+      "kind": "command",
+      "arity": -5,
+      "min_args": 5,
+      "flags": [
+        "write",
+        "denyoom"
+      ],
+      "acl_categories": [
+        "@write",
+        "@geo",
+        "@slow"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "GEODIST",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "max_args": 5,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "GEOHASH",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "GEOPOS",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "GEORADIUS",
+      "kind": "command",
+      "arity": -6,
+      "min_args": 6,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "GEORADIUSBYMEMBER",
+      "kind": "command",
+      "arity": -5,
+      "min_args": 5,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "GEOSEARCH",
+      "kind": "command",
+      "arity": -7,
+      "min_args": 7,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "GEOSEARCHSTORE",
+      "kind": "command",
+      "arity": -8,
+      "min_args": 8,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "GET",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly",
+        "fast"
+      ],
+      "acl_categories": [
+        "@read",
+        "@string",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "GETBIT",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "GETDEL",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "GETEX",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "max_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "GETRANGE",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "GETSET",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "write",
+        "denyoom"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "HDEL",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "write",
+        "fast"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "HELLO",
+      "kind": "command",
+      "arity": -1,
+      "min_args": 1,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "HEXISTS",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "HEXPIRE",
+      "kind": "command",
+      "arity": -6,
+      "min_args": 6,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "HEXPIREAT",
+      "kind": "command",
+      "arity": -6,
+      "min_args": 6,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "HEXPIRETIME",
+      "kind": "command",
+      "arity": -5,
+      "min_args": 5,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "HGET",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "HGETALL",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "HGETDEL",
+      "kind": "command",
+      "arity": -5,
+      "min_args": 5,
+      "flags": [
+        "write",
+        "fast"
+      ],
+      "acl_categories": [
+        "@write",
+        "@hash",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "HGETEX",
+      "kind": "command",
+      "arity": -5,
+      "min_args": 5,
+      "flags": [
+        "write",
+        "fast"
+      ],
+      "acl_categories": [
+        "@write",
+        "@hash",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "HINCRBY",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "HINCRBYFLOAT",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "HKEYS",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "HLEN",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "HMGET",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "HMSET",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "HPERSIST",
+      "kind": "command",
+      "arity": -5,
+      "min_args": 5,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "HPEXPIRE",
+      "kind": "command",
+      "arity": -6,
+      "min_args": 6,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "HPEXPIREAT",
+      "kind": "command",
+      "arity": -6,
+      "min_args": 6,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "HPEXPIRETIME",
+      "kind": "command",
+      "arity": -5,
+      "min_args": 5,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "HPTTL",
+      "kind": "command",
+      "arity": -5,
+      "min_args": 5,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "HRANDFIELD",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "max_args": 4,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "HSCAN",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "HSET",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "write",
+        "denyoom",
+        "fast"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "HSETEX",
+      "kind": "command",
+      "arity": -6,
+      "min_args": 6,
+      "flags": [
+        "write",
+        "denyoom",
+        "fast"
+      ],
+      "acl_categories": [
+        "@write",
+        "@hash",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "HSETNX",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "HSTRLEN",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "HTTL",
+      "kind": "command",
+      "arity": -5,
+      "min_args": 5,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "HVALS",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "INCR",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "write",
+        "denyoom"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "INCRBY",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "write",
+        "denyoom"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "INCRBYFLOAT",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "write",
+        "denyoom"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "INFO",
+      "kind": "command",
+      "arity": -1,
+      "min_args": 1,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "JSON.ARRAPPEND",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "JSON.ARRINDEX",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "max_args": 6,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "JSON.ARRINSERT",
+      "kind": "command",
+      "arity": -5,
+      "min_args": 5,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "JSON.ARRLEN",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "max_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "JSON.ARRPOP",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "max_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "JSON.ARRTRIM",
+      "kind": "command",
+      "arity": 5,
+      "min_args": 5,
+      "max_args": 5,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "JSON.CLEAR",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "max_args": 3,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "JSON.DEBUG",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "max_args": 4,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "JSON.DEL",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "max_args": 3,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "JSON.FORGET",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "max_args": 3,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "JSON.GET",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "max_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "JSON.MERGE",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "JSON.MGET",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "JSON.MSET",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "JSON.NUMINCRBY",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "JSON.NUMMULTBY",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "JSON.OBJKEYS",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "max_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "JSON.OBJLEN",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "max_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "JSON.RESP",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "max_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "JSON.SET",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "max_args": 5,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "JSON.STRAPPEND",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "max_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "JSON.STRLEN",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "max_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "JSON.TOGGLE",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "JSON.TYPE",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "max_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "KEYS",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "LASTSAVE",
+      "kind": "command",
+      "arity": 1,
+      "min_args": 1,
+      "max_args": 1,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "LCS",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "@read",
+        "@string",
+        "@slow"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "LINDEX",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "LINSERT",
+      "kind": "command",
+      "arity": 5,
+      "min_args": 5,
+      "max_args": 5,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "LLEN",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "LMOVE",
+      "kind": "command",
+      "arity": 5,
+      "min_args": 5,
+      "max_args": 5,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "LMPOP",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "write",
+        "movablekeys"
+      ],
+      "acl_categories": [
+        "@write",
+        "@list",
+        "@slow"
+      ],
+      "key_mode": "dynamic",
+      "write": true,
+      "cluster_routing": "same-slot-dynamic",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "LPOP",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "max_args": 3,
+      "flags": [
+        "write",
+        "fast"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "LPOS",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "LPUSH",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "write",
+        "denyoom",
+        "fast"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "LPUSHX",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "LRANGE",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "LREM",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "LSET",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "LTRIM",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "MEMORY",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "max_args": 5,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "MGET",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "MIGRATE",
+      "kind": "command",
+      "arity": -6,
+      "min_args": 6,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@keyspace",
+        "@dangerous"
+      ],
+      "key_mode": "dynamic",
+      "write": true,
+      "cluster_routing": "same-slot-dynamic",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "MONITOR",
+      "kind": "command",
+      "arity": 1,
+      "min_args": 1,
+      "max_args": 1,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "MSET",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "write",
+        "denyoom"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "MSETNX",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "write",
+        "denyoom"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "MULTI",
+      "kind": "command",
+      "arity": 1,
+      "min_args": 1,
+      "max_args": 1,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "OBJECT",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "max_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "PERSIST",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "write",
+        "fast"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "PEXPIRE",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "max_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "PEXPIREAT",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "max_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "PEXPIRETIME",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "PFADD",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "flags": [
+        "write",
+        "denyoom",
+        "fast"
+      ],
+      "acl_categories": [
+        "@write",
+        "@hyperloglog",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "PFCOUNT",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "PFMERGE",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "PING",
+      "kind": "command",
+      "arity": -1,
+      "min_args": 1,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "PSETEX",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "write",
+        "denyoom"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "PSUBSCRIBE",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "PSYNC",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "PTTL",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "PUBLISH",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "PUBSUB",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "PUNSUBSCRIBE",
+      "kind": "command",
+      "arity": -1,
+      "min_args": 1,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "QUIT",
+      "kind": "command",
+      "arity": 1,
+      "min_args": 1,
+      "max_args": 1,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "RANDOMKEY",
+      "kind": "command",
+      "arity": 1,
+      "min_args": 1,
+      "max_args": 1,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "RENAME",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "RENAMENX",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "REPLICAOF",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "RESET",
+      "kind": "command",
+      "arity": 1,
+      "min_args": 1,
+      "max_args": 1,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "RESTORE",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "RESTORE-ASKING",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ROLE",
+      "kind": "command",
+      "arity": 1,
+      "min_args": 1,
+      "max_args": 1,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "RPOP",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "max_args": 3,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "RPOPLPUSH",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "RPUSH",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "write",
+        "denyoom"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "RPUSHX",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SADD",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "write",
+        "denyoom",
+        "fast"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SAVE",
+      "kind": "command",
+      "arity": 1,
+      "min_args": 1,
+      "max_args": 1,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SCAN",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SCARD",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SCRIPT",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SDIFF",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SDIFFSTORE",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SELECT",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SET",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "write",
+        "denyoom"
+      ],
+      "acl_categories": [
+        "@write",
+        "@string",
+        "@slow"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SETBIT",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SETEX",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "write",
+        "denyoom"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SETNX",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "write",
+        "denyoom"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SETRANGE",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SINTER",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SINTERCARD",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly",
+        "movablekeys"
+      ],
+      "acl_categories": [
+        "@read",
+        "@set",
+        "@slow"
+      ],
+      "key_mode": "dynamic",
+      "write": false,
+      "cluster_routing": "same-slot-dynamic",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SINTERSTORE",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SISMEMBER",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SLOWLOG",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SMEMBERS",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SMISMEMBER",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SMOVE",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SNUG.AOFREWRITE",
+      "kind": "command",
+      "arity": 1,
+      "min_args": 1,
+      "max_args": 1,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SNUG.CANDIDATES",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SNUG.COMPACT",
+      "kind": "command",
+      "arity": -1,
+      "min_args": 1,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SNUG.ENCODING",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SNUG.FAILOVER",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "max_args": 7,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SNUG.MEMORY",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SNUG.POLICY",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SNUG.SHAPES",
+      "kind": "command",
+      "arity": -1,
+      "min_args": 1,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SNUG.STATS",
+      "kind": "command",
+      "arity": 1,
+      "min_args": 1,
+      "max_args": 1,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SNUG.TYPE",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SORT",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "flags": [
+        "write",
+        "denyoom",
+        "movablekeys"
+      ],
+      "acl_categories": [
+        "@write",
+        "@set",
+        "@sortedset",
+        "@list",
+        "@slow",
+        "@dangerous"
+      ],
+      "key_mode": "dynamic",
+      "write": true,
+      "cluster_routing": "same-slot-dynamic",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SORT_RO",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "flags": [
+        "readonly",
+        "movablekeys"
+      ],
+      "acl_categories": [
+        "@read",
+        "@set",
+        "@sortedset",
+        "@list",
+        "@slow",
+        "@dangerous"
+      ],
+      "key_mode": "dynamic",
+      "write": false,
+      "cluster_routing": "same-slot-dynamic",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SPOP",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "max_args": 3,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SPUBLISH",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SRANDMEMBER",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "max_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SREM",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "write",
+        "fast"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SSCAN",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SSUBSCRIBE",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "STRLEN",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SUBSCRIBE",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SUNION",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SUNIONSTORE",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "SUNSUBSCRIBE",
+      "kind": "command",
+      "arity": -1,
+      "min_args": 1,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TDIGEST.ADD",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "write",
+        "denyoom"
+      ],
+      "acl_categories": [
+        "@write",
+        "@tdigest",
+        "@slow"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TDIGEST.BYRANK",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read",
+        "@tdigest",
+        "@slow"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TDIGEST.BYREVRANK",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read",
+        "@tdigest",
+        "@slow"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TDIGEST.CDF",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read",
+        "@tdigest",
+        "@slow"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TDIGEST.CREATE",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "max_args": 4,
+      "flags": [
+        "write",
+        "denyoom",
+        "fast"
+      ],
+      "acl_categories": [
+        "@write",
+        "@tdigest",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TDIGEST.INFO",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read",
+        "@tdigest",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TDIGEST.MAX",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read",
+        "@tdigest",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TDIGEST.MERGE",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "write",
+        "denyoom"
+      ],
+      "acl_categories": [
+        "@write",
+        "@tdigest",
+        "@slow"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TDIGEST.MIN",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read",
+        "@tdigest",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TDIGEST.QUANTILE",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read",
+        "@tdigest",
+        "@slow"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TDIGEST.RANK",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read",
+        "@tdigest",
+        "@slow"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TDIGEST.RESET",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "write",
+        "denyoom",
+        "fast"
+      ],
+      "acl_categories": [
+        "@write",
+        "@tdigest",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TDIGEST.REVRANK",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read",
+        "@tdigest",
+        "@slow"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TDIGEST.TRIMMED_MEAN",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read",
+        "@tdigest",
+        "@slow"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TIME",
+      "kind": "command",
+      "arity": 1,
+      "min_args": 1,
+      "max_args": 1,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TOPK.ADD",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "write",
+        "denyoom"
+      ],
+      "acl_categories": [
+        "@write",
+        "@topk",
+        "@slow"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TOPK.COUNT",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read",
+        "@topk",
+        "@slow"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TOPK.INCRBY",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "write",
+        "denyoom"
+      ],
+      "acl_categories": [
+        "@write",
+        "@topk",
+        "@slow"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TOPK.INFO",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read",
+        "@topk",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TOPK.LIST",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "max_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read",
+        "@topk",
+        "@slow"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TOPK.QUERY",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read",
+        "@topk",
+        "@slow"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TOPK.RESERVE",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "max_args": 6,
+      "flags": [
+        "write",
+        "denyoom",
+        "fast"
+      ],
+      "acl_categories": [
+        "@write",
+        "@topk",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TOUCH",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "flags": [
+        "readonly",
+        "fast"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TS.ADD",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "write",
+        "denyoom"
+      ],
+      "acl_categories": [
+        "@write",
+        "@timeseries",
+        "@slow"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TS.ALTER",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TS.CREATE",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "flags": [
+        "write",
+        "denyoom"
+      ],
+      "acl_categories": [
+        "@write",
+        "@timeseries",
+        "@slow"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TS.CREATERULE",
+      "kind": "command",
+      "arity": -6,
+      "min_args": 6,
+      "max_args": 7,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TS.DECRBY",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "write",
+        "denyoom"
+      ],
+      "acl_categories": [
+        "@write",
+        "@timeseries",
+        "@slow"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TS.DEL",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "write",
+        "fast"
+      ],
+      "acl_categories": [
+        "@write",
+        "@timeseries",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TS.DELETERULE",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TS.GET",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read",
+        "@timeseries",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TS.INCRBY",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "write",
+        "denyoom"
+      ],
+      "acl_categories": [
+        "@write",
+        "@timeseries",
+        "@slow"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TS.INFO",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read",
+        "@timeseries",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TS.MADD",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TS.MGET",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TS.MRANGE",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TS.MREVRANGE",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TS.QUERYINDEX",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TS.RANGE",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read",
+        "@timeseries",
+        "@slow"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TS.REVRANGE",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read",
+        "@timeseries",
+        "@slow"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TTL",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "TYPE",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "UNLINK",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "UNSUBSCRIBE",
+      "kind": "command",
+      "arity": -1,
+      "min_args": 1,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "UNWATCH",
+      "kind": "command",
+      "arity": 1,
+      "min_args": 1,
+      "max_args": 1,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "VADD",
+      "kind": "command",
+      "arity": -5,
+      "min_args": 5,
+      "flags": [
+        "write",
+        "denyoom"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "VCARD",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "VDIM",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "VEMB",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "max_args": 4,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "VGETATTR",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "VINFO",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "VISMEMBER",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "VLINKS",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "max_args": 4,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "VRANDMEMBER",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "max_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "VREM",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "VSETATTR",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "VSIM",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "WAIT",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "blocking"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@blocking",
+        "@connection"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "WAITAOF",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "blocking"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@blocking",
+        "@connection"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "WATCH",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "same-slot-static",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "XACK",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "XACKDEL",
+      "kind": "command",
+      "arity": -6,
+      "min_args": 6,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "XADD",
+      "kind": "command",
+      "arity": -5,
+      "min_args": 5,
+      "flags": [
+        "write",
+        "denyoom",
+        "fast"
+      ],
+      "acl_categories": [
+        "@write",
+        "@stream",
+        "@fast"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "XAUTOCLAIM",
+      "kind": "command",
+      "arity": -6,
+      "min_args": 6,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "XCLAIM",
+      "kind": "command",
+      "arity": -6,
+      "min_args": 6,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "XDEL",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "write",
+        "fast"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "XDELEX",
+      "kind": "command",
+      "arity": -5,
+      "min_args": 5,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "XGROUP",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "XINFO",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "XLEN",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "XPENDING",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "XRANGE",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "max_args": 6,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "XREAD",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "readonly",
+        "blocking",
+        "movablekeys"
+      ],
+      "acl_categories": [
+        "@read",
+        "@stream",
+        "@slow",
+        "@blocking"
+      ],
+      "key_mode": "dynamic",
+      "write": false,
+      "cluster_routing": "same-slot-dynamic",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "XREADGROUP",
+      "kind": "command",
+      "arity": -7,
+      "min_args": 7,
+      "flags": [
+        "write",
+        "blocking",
+        "movablekeys"
+      ],
+      "acl_categories": [
+        "@write",
+        "@stream",
+        "@slow",
+        "@blocking"
+      ],
+      "key_mode": "dynamic",
+      "write": true,
+      "cluster_routing": "same-slot-dynamic",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "XREVRANGE",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "max_args": 6,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "XTRIM",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ZADD",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "write",
+        "denyoom",
+        "fast"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ZCARD",
+      "kind": "command",
+      "arity": 2,
+      "min_args": 2,
+      "max_args": 2,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ZCOUNT",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ZDIFF",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly",
+        "movablekeys"
+      ],
+      "acl_categories": [
+        "@read",
+        "@sortedset",
+        "@slow"
+      ],
+      "key_mode": "dynamic",
+      "write": false,
+      "cluster_routing": "same-slot-dynamic",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ZDIFFSTORE",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "write",
+        "denyoom",
+        "movablekeys"
+      ],
+      "acl_categories": [
+        "@write",
+        "@sortedset",
+        "@slow"
+      ],
+      "key_mode": "dynamic",
+      "write": true,
+      "cluster_routing": "same-slot-dynamic",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ZINCRBY",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ZINTER",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly",
+        "movablekeys"
+      ],
+      "acl_categories": [
+        "@read",
+        "@sortedset",
+        "@slow"
+      ],
+      "key_mode": "dynamic",
+      "write": false,
+      "cluster_routing": "same-slot-dynamic",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ZINTERCARD",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly",
+        "movablekeys"
+      ],
+      "acl_categories": [
+        "@read",
+        "@sortedset",
+        "@slow"
+      ],
+      "key_mode": "dynamic",
+      "write": false,
+      "cluster_routing": "same-slot-dynamic",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ZINTERSTORE",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "write",
+        "denyoom",
+        "movablekeys"
+      ],
+      "acl_categories": [
+        "@write",
+        "@sortedset",
+        "@slow"
+      ],
+      "key_mode": "dynamic",
+      "write": true,
+      "cluster_routing": "same-slot-dynamic",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ZLEXCOUNT",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ZMPOP",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "write",
+        "movablekeys"
+      ],
+      "acl_categories": [
+        "@write",
+        "@sortedset",
+        "@slow"
+      ],
+      "key_mode": "dynamic",
+      "write": true,
+      "cluster_routing": "same-slot-dynamic",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ZMSCORE",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ZPOPMAX",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "max_args": 3,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ZPOPMIN",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "max_args": 3,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ZRANDMEMBER",
+      "kind": "command",
+      "arity": -2,
+      "min_args": 2,
+      "max_args": 4,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ZRANGE",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ZRANGEBYLEX",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ZRANGEBYSCORE",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ZRANGESTORE",
+      "kind": "command",
+      "arity": -5,
+      "min_args": 5,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ZRANK",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "max_args": 4,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ZREM",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "write",
+        "fast"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ZREMRANGEBYLEX",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ZREMRANGEBYRANK",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ZREMRANGEBYSCORE",
+      "kind": "command",
+      "arity": 4,
+      "min_args": 4,
+      "max_args": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write"
+      ],
+      "key_mode": "static",
+      "write": true,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ZREVRANGE",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "max_args": 5,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ZREVRANGEBYLEX",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ZREVRANGEBYSCORE",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ZREVRANK",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "max_args": 4,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ZSCAN",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ZSCORE",
+      "kind": "command",
+      "arity": 3,
+      "min_args": 3,
+      "max_args": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read"
+      ],
+      "key_mode": "static",
+      "write": false,
+      "cluster_routing": "single-key",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ZUNION",
+      "kind": "command",
+      "arity": -3,
+      "min_args": 3,
+      "flags": [
+        "readonly",
+        "movablekeys"
+      ],
+      "acl_categories": [
+        "@read",
+        "@sortedset",
+        "@slow"
+      ],
+      "key_mode": "dynamic",
+      "write": false,
+      "cluster_routing": "same-slot-dynamic",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "ZUNIONSTORE",
+      "kind": "command",
+      "arity": -4,
+      "min_args": 4,
+      "flags": [
+        "write",
+        "denyoom",
+        "movablekeys"
+      ],
+      "acl_categories": [
+        "@write",
+        "@sortedset",
+        "@slow"
+      ],
+      "key_mode": "dynamic",
+      "write": true,
+      "cluster_routing": "same-slot-dynamic",
+      "metadata_source": "internal/server/commandTable"
+    },
+    {
+      "name": "CLIENT|CACHING",
+      "parent": "CLIENT",
+      "kind": "subcommand",
+      "arity": 3,
+      "flags": [
+        "noscript",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@connection"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "CLIENT|GETNAME",
+      "parent": "CLIENT",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "noscript",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@connection"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "CLIENT|GETREDIR",
+      "parent": "CLIENT",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "noscript",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@connection"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "CLIENT|HELP",
+      "parent": "CLIENT",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@connection"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "CLIENT|ID",
+      "parent": "CLIENT",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "noscript",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@connection"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "CLIENT|INFO",
+      "parent": "CLIENT",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "noscript",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@connection"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "CLIENT|KILL",
+      "parent": "CLIENT",
+      "kind": "subcommand",
+      "arity": -3,
+      "flags": [
+        "admin",
+        "noscript",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@admin",
+        "@slow",
+        "@dangerous",
+        "@connection"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "CLIENT|LIST",
+      "parent": "CLIENT",
+      "kind": "subcommand",
+      "arity": -2,
+      "flags": [
+        "admin",
+        "noscript",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@admin",
+        "@slow",
+        "@dangerous",
+        "@connection"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "CLIENT|SETINFO",
+      "parent": "CLIENT",
+      "kind": "subcommand",
+      "arity": 4,
+      "flags": [
+        "noscript",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@connection"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "CLIENT|SETNAME",
+      "parent": "CLIENT",
+      "kind": "subcommand",
+      "arity": 3,
+      "flags": [
+        "noscript",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@connection"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "CLIENT|TRACKING",
+      "parent": "CLIENT",
+      "kind": "subcommand",
+      "arity": -3,
+      "flags": [
+        "noscript",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@connection"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "CLIENT|UNBLOCK",
+      "parent": "CLIENT",
+      "kind": "subcommand",
+      "arity": -3,
+      "flags": [
+        "admin",
+        "noscript",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@admin",
+        "@slow",
+        "@dangerous",
+        "@connection"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "COMMAND|COUNT",
+      "parent": "COMMAND",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@connection"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "COMMAND|DOCS",
+      "parent": "COMMAND",
+      "kind": "subcommand",
+      "arity": -2,
+      "flags": [
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@connection"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "COMMAND|GETKEYS",
+      "parent": "COMMAND",
+      "kind": "subcommand",
+      "arity": -3,
+      "flags": [
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@connection"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "COMMAND|GETKEYSANDFLAGS",
+      "parent": "COMMAND",
+      "kind": "subcommand",
+      "arity": -3,
+      "flags": [
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@connection"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "COMMAND|INFO",
+      "parent": "COMMAND",
+      "kind": "subcommand",
+      "arity": -2,
+      "flags": [
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@connection"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "CONFIG|GET",
+      "parent": "CONFIG",
+      "kind": "subcommand",
+      "arity": -3,
+      "flags": [
+        "admin",
+        "noscript",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@admin",
+        "@slow",
+        "@dangerous"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "CONFIG|HELP",
+      "parent": "CONFIG",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@slow"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "CONFIG|RESETSTAT",
+      "parent": "CONFIG",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "admin",
+        "noscript",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@admin",
+        "@slow",
+        "@dangerous"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "CONFIG|REWRITE",
+      "parent": "CONFIG",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "admin",
+        "noscript",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@admin",
+        "@slow",
+        "@dangerous"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "CONFIG|SET",
+      "parent": "CONFIG",
+      "kind": "subcommand",
+      "arity": -4,
+      "flags": [
+        "admin",
+        "noscript",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@admin",
+        "@slow",
+        "@dangerous"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "FUNCTION|DELETE",
+      "parent": "FUNCTION",
+      "kind": "subcommand",
+      "arity": 3,
+      "flags": [
+        "write",
+        "noscript"
+      ],
+      "acl_categories": [
+        "@write",
+        "@slow",
+        "@scripting"
+      ],
+      "key_mode": "none",
+      "write": true,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "FUNCTION|DUMP",
+      "parent": "FUNCTION",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "noscript"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@scripting"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "FUNCTION|FLUSH",
+      "parent": "FUNCTION",
+      "kind": "subcommand",
+      "arity": -2,
+      "flags": [
+        "write",
+        "noscript"
+      ],
+      "acl_categories": [
+        "@write",
+        "@slow",
+        "@scripting"
+      ],
+      "key_mode": "none",
+      "write": true,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "FUNCTION|HELP",
+      "parent": "FUNCTION",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@scripting"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "FUNCTION|KILL",
+      "parent": "FUNCTION",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "noscript",
+        "allow_busy"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@scripting"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "FUNCTION|LIST",
+      "parent": "FUNCTION",
+      "kind": "subcommand",
+      "arity": -2,
+      "flags": [
+        "noscript"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@scripting"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "FUNCTION|LOAD",
+      "parent": "FUNCTION",
+      "kind": "subcommand",
+      "arity": -3,
+      "flags": [
+        "write",
+        "denyoom",
+        "noscript"
+      ],
+      "acl_categories": [
+        "@write",
+        "@slow",
+        "@scripting"
+      ],
+      "key_mode": "none",
+      "write": true,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "FUNCTION|RESTORE",
+      "parent": "FUNCTION",
+      "kind": "subcommand",
+      "arity": -3,
+      "flags": [
+        "write",
+        "denyoom",
+        "noscript"
+      ],
+      "acl_categories": [
+        "@write",
+        "@slow",
+        "@scripting"
+      ],
+      "key_mode": "none",
+      "write": true,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "FUNCTION|STATS",
+      "parent": "FUNCTION",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "noscript",
+        "allow_busy"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@scripting"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "SCRIPT|DEBUG",
+      "parent": "SCRIPT",
+      "kind": "subcommand",
+      "arity": 3,
+      "flags": [
+        "noscript"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@scripting"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "SCRIPT|EXISTS",
+      "parent": "SCRIPT",
+      "kind": "subcommand",
+      "arity": -3,
+      "flags": [
+        "noscript"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@scripting"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "SCRIPT|FLUSH",
+      "parent": "SCRIPT",
+      "kind": "subcommand",
+      "arity": -2,
+      "flags": [
+        "noscript"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@scripting"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "SCRIPT|KILL",
+      "parent": "SCRIPT",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "noscript",
+        "allow_busy"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@scripting"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "SCRIPT|LOAD",
+      "parent": "SCRIPT",
+      "kind": "subcommand",
+      "arity": 3,
+      "flags": [
+        "noscript",
+        "stale"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@scripting"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    }
+  ],
+  "top_level_command_count": 374
+}
