@@ -399,7 +399,7 @@ topology easy to bootstrap.
 
 Do not build a general service-discovery platform.
 
-Status: **IN PROGRESS**
+Status: **COMPLETE**
 
 Implementation branch: `release/c2-bounded-cluster-bootstrap`
 
@@ -419,7 +419,14 @@ Implemented scope:
 
 Retained operator doc: `docs/release/CLUSTER-BOOTSTRAP.md`.
 
-Validation pending local unit + multi-process smoke.
+Validation:
+
+- `python3 scripts/release/test_snug_cluster_bootstrap.py`: **PASS** (4 tests)
+- sharded three-process bootstrap: **PASS**
+- sharded independent verification: **PASS**
+- HA three-process bootstrap: **PASS**
+- HA independent verification: **PASS**
+- `bash scripts/release/run-cluster-bootstrap-smoke.sh`: **PASS**
 
 ---
 
