@@ -4,7 +4,7 @@
 > Do not edit command rows manually.
 
 - Top-level commands: **374**
-- Structured subcommands: **36**
+- Structured subcommands: **85**
 - Top-level count is the same metadata count used by `COMMAND COUNT`.
 
 ## Top-level commands
@@ -390,6 +390,19 @@
 
 | Subcommand | Parent | Arity | Access | Flags | ACL categories |
 |---|---|---:|---|---|---|
+| `ACL|CAT` | `ACL` | -2 | read/control | `noscript` `loading` `stale` | `@slow` |
+| `ACL|DELUSER` | `ACL` | -3 | read/control | `admin` `noscript` `loading` `stale` | `@admin` `@slow` `@dangerous` |
+| `ACL|DRYRUN` | `ACL` | -4 | read/control | `admin` `noscript` `loading` `stale` | `@admin` `@slow` `@dangerous` |
+| `ACL|GENPASS` | `ACL` | -2 | read/control | `noscript` `loading` `stale` | `@slow` |
+| `ACL|GETUSER` | `ACL` | 3 | read/control | `admin` `noscript` `loading` `stale` | `@admin` `@slow` `@dangerous` |
+| `ACL|HELP` | `ACL` | 2 | read/control | `loading` `stale` | `@slow` |
+| `ACL|LIST` | `ACL` | 2 | read/control | `admin` `noscript` `loading` `stale` | `@admin` `@slow` `@dangerous` |
+| `ACL|LOAD` | `ACL` | 2 | read/control | `admin` `noscript` `loading` `stale` | `@admin` `@slow` `@dangerous` |
+| `ACL|LOG` | `ACL` | -2 | read/control | `admin` `noscript` `loading` `stale` | `@admin` `@slow` `@dangerous` |
+| `ACL|SAVE` | `ACL` | 2 | read/control | `admin` `noscript` `loading` `stale` | `@admin` `@slow` `@dangerous` |
+| `ACL|SETUSER` | `ACL` | -3 | read/control | `admin` `noscript` `loading` `stale` | `@admin` `@slow` `@dangerous` |
+| `ACL|USERS` | `ACL` | 2 | read/control | `admin` `noscript` `loading` `stale` | `@admin` `@slow` `@dangerous` |
+| `ACL|WHOAMI` | `ACL` | 2 | read/control | `noscript` `loading` `stale` | `@slow` |
 | `CLIENT|CACHING` | `CLIENT` | 3 | read/control | `noscript` `loading` `stale` | `@slow` `@connection` |
 | `CLIENT|GETNAME` | `CLIENT` | 2 | read/control | `noscript` `loading` `stale` | `@slow` `@connection` |
 | `CLIENT|GETREDIR` | `CLIENT` | 2 | read/control | `noscript` `loading` `stale` | `@slow` `@connection` |
@@ -402,11 +415,24 @@
 | `CLIENT|SETNAME` | `CLIENT` | 3 | read/control | `noscript` `loading` `stale` | `@slow` `@connection` |
 | `CLIENT|TRACKING` | `CLIENT` | -3 | read/control | `noscript` `loading` `stale` | `@slow` `@connection` |
 | `CLIENT|UNBLOCK` | `CLIENT` | -3 | read/control | `admin` `noscript` `loading` `stale` | `@admin` `@slow` `@dangerous` `@connection` |
+| `CLUSTER|ADDSLOTS` | `CLUSTER` | -3 | read/control | `admin` `stale` `no_async_loading` | `@admin` `@slow` `@dangerous` |
+| `CLUSTER|COUNTKEYSINSLOT` | `CLUSTER` | 3 | read/control | `stale` | `@slow` |
+| `CLUSTER|DELSLOTS` | `CLUSTER` | -3 | read/control | `admin` `stale` `no_async_loading` | `@admin` `@slow` `@dangerous` |
+| `CLUSTER|FLUSHSLOTS` | `CLUSTER` | 2 | read/control | `admin` `stale` `no_async_loading` | `@admin` `@slow` `@dangerous` |
+| `CLUSTER|GETKEYSINSLOT` | `CLUSTER` | 4 | read/control | `stale` | `@slow` |
+| `CLUSTER|INFO` | `CLUSTER` | 2 | read/control | `stale` | `@slow` |
+| `CLUSTER|KEYSLOT` | `CLUSTER` | 3 | read/control | `stale` | `@slow` |
+| `CLUSTER|MYID` | `CLUSTER` | 2 | read/control | `stale` | `@slow` |
+| `CLUSTER|NODES` | `CLUSTER` | 2 | read/control | `stale` | `@slow` |
+| `CLUSTER|SETSLOT` | `CLUSTER` | -4 | read/control | `admin` `stale` `no_async_loading` | `@admin` `@slow` `@dangerous` |
+| `CLUSTER|SHARDS` | `CLUSTER` | 2 | read/control | `loading` `stale` | `@slow` |
+| `CLUSTER|SLOTS` | `CLUSTER` | 2 | read/control | `loading` `stale` | `@slow` |
 | `COMMAND|COUNT` | `COMMAND` | 2 | read/control | `loading` `stale` | `@slow` `@connection` |
 | `COMMAND|DOCS` | `COMMAND` | -2 | read/control | `loading` `stale` | `@slow` `@connection` |
 | `COMMAND|GETKEYS` | `COMMAND` | -3 | read/control | `loading` `stale` | `@slow` `@connection` |
 | `COMMAND|GETKEYSANDFLAGS` | `COMMAND` | -3 | read/control | `loading` `stale` | `@slow` `@connection` |
 | `COMMAND|INFO` | `COMMAND` | -2 | read/control | `loading` `stale` | `@slow` `@connection` |
+| `COMMAND|LIST` | `COMMAND` | -2 | read/control | `loading` `stale` | `@slow` `@connection` |
 | `CONFIG|GET` | `CONFIG` | -3 | read/control | `admin` `noscript` `loading` `stale` | `@admin` `@slow` `@dangerous` |
 | `CONFIG|HELP` | `CONFIG` | 2 | read/control | `loading` `stale` | `@slow` |
 | `CONFIG|RESETSTAT` | `CONFIG` | 2 | read/control | `admin` `noscript` `loading` `stale` | `@admin` `@slow` `@dangerous` |
@@ -421,11 +447,34 @@
 | `FUNCTION|LOAD` | `FUNCTION` | -3 | write | `write` `denyoom` `noscript` | `@write` `@slow` `@scripting` |
 | `FUNCTION|RESTORE` | `FUNCTION` | -3 | write | `write` `denyoom` `noscript` | `@write` `@slow` `@scripting` |
 | `FUNCTION|STATS` | `FUNCTION` | 2 | read/control | `noscript` `allow_busy` | `@slow` `@scripting` |
+| `MEMORY|USAGE` | `MEMORY` | -3 | read/control | `readonly` | `@read` `@slow` |
+| `OBJECT|ENCODING` | `OBJECT` | 3 | read/control | `readonly` | `@keyspace` `@read` `@slow` |
+| `OBJECT|HELP` | `OBJECT` | 2 | read/control | `loading` `stale` | `@keyspace` `@slow` |
+| `OBJECT|REFCOUNT` | `OBJECT` | 3 | read/control | `readonly` | `@keyspace` `@read` `@slow` |
+| `PUBSUB|CHANNELS` | `PUBSUB` | -2 | read/control | `pubsub` `loading` `stale` | `@pubsub` `@slow` |
+| `PUBSUB|HELP` | `PUBSUB` | 2 | read/control | `loading` `stale` | `@slow` |
+| `PUBSUB|NUMPAT` | `PUBSUB` | 2 | read/control | `pubsub` `loading` `stale` | `@pubsub` `@slow` |
+| `PUBSUB|NUMSUB` | `PUBSUB` | -2 | read/control | `pubsub` `loading` `stale` | `@pubsub` `@slow` |
+| `PUBSUB|SHARDCHANNELS` | `PUBSUB` | -2 | read/control | `pubsub` `loading` `stale` | `@pubsub` `@slow` |
+| `PUBSUB|SHARDNUMSUB` | `PUBSUB` | -2 | read/control | `pubsub` `loading` `stale` | `@pubsub` `@slow` |
 | `SCRIPT|DEBUG` | `SCRIPT` | 3 | read/control | `noscript` | `@slow` `@scripting` |
 | `SCRIPT|EXISTS` | `SCRIPT` | -3 | read/control | `noscript` | `@slow` `@scripting` |
 | `SCRIPT|FLUSH` | `SCRIPT` | -2 | read/control | `noscript` | `@slow` `@scripting` |
 | `SCRIPT|KILL` | `SCRIPT` | 2 | read/control | `noscript` `allow_busy` | `@slow` `@scripting` |
 | `SCRIPT|LOAD` | `SCRIPT` | 3 | read/control | `noscript` `stale` | `@slow` `@scripting` |
+| `SLOWLOG|GET` | `SLOWLOG` | -2 | read/control | `admin` `loading` `stale` | `@admin` `@slow` `@dangerous` |
+| `SLOWLOG|HELP` | `SLOWLOG` | 2 | read/control | `loading` `stale` | `@slow` |
+| `SLOWLOG|LEN` | `SLOWLOG` | 2 | read/control | `admin` `loading` `stale` | `@admin` `@slow` `@dangerous` |
+| `SLOWLOG|RESET` | `SLOWLOG` | 2 | read/control | `admin` `loading` `stale` | `@admin` `@slow` `@dangerous` |
+| `XGROUP|CREATE` | `XGROUP` | -5 | write | `write` `denyoom` | `@write` `@stream` `@slow` |
+| `XGROUP|CREATECONSUMER` | `XGROUP` | 5 | write | `write` `denyoom` | `@write` `@stream` `@slow` |
+| `XGROUP|DELCONSUMER` | `XGROUP` | 5 | write | `write` | `@write` `@stream` `@slow` |
+| `XGROUP|DESTROY` | `XGROUP` | 4 | write | `write` | `@write` `@stream` `@slow` |
+| `XGROUP|SETID` | `XGROUP` | -5 | write | `write` | `@write` `@stream` `@slow` |
+| `XINFO|CONSUMERS` | `XINFO` | 4 | read/control | `readonly` | `@read` `@stream` `@slow` |
+| `XINFO|GROUPS` | `XINFO` | 3 | read/control | `readonly` | `@read` `@stream` `@slow` |
+| `XINFO|HELP` | `XINFO` | 2 | read/control | `loading` `stale` | `@stream` `@slow` |
+| `XINFO|STREAM` | `XINFO` | -3 | read/control | `readonly` | `@read` `@stream` `@slow` |
 
 ## Interpretation
 
