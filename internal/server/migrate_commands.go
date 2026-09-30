@@ -295,31 +295,42 @@ func (s *Server) executeMigrateWithTransport(args [][]byte, clusterTransport boo
 	}
 
 	reader := bufio.NewReader(conn)
-	if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
-		return nil, errors.New("IOERR error or timeout reading to target instance")
+	readReply := func() (string, error) {
+		// MIGRATE timeout is an I/O inactivity timeout, not a wall-clock budget
+		// for the entire pipelined batch. Refresh the read deadline before each
+		// expected reply so a large batch can make steady progress without timing
+		// out merely because its cumulative durable processing exceeds timeout.
+		if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+			return "", errors.New("IOERR error or timeout reading to target instance")
+		}
+		line, err := readMigrateLine(reader)
+		if err != nil {
+			return "", errors.New("IOERR error or timeout reading to target instance")
+		}
+		return line, nil
 	}
 
 	var authLine string
 	if authExpected {
-		authLine, err = readMigrateLine(reader)
+		authLine, err = readReply()
 		if err != nil {
-			return nil, errors.New("IOERR error or timeout reading to target instance")
+			return nil, err
 		}
 	}
 
-	selectLine, err := readMigrateLine(reader)
+	selectLine, err := readReply()
 	if err != nil {
-		return nil, errors.New("IOERR error or timeout reading to target instance")
+		return nil, err
 	}
 
 	var firstTargetErr error
 	for _, item := range items {
-		restoreLine, readErr := readMigrateLine(reader)
+		restoreLine, readErr := readReply()
 		if readErr != nil {
 			if firstTargetErr != nil {
 				return nil, firstTargetErr
 			}
-			return nil, errors.New("IOERR error or timeout reading to target instance")
+			return nil, readErr
 		}
 
 		var targetErr error
