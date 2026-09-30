@@ -219,7 +219,9 @@ Details: `docs/ACL-COMPATIBILITY.md`.
 - [x] `CLIENT HELP` for the implemented surface.
 - [x] Concurrency-safe registry on main/admin listeners and targeted blocked-client cancellation.
 - [x] Live Redis differential audit plus race/vet/fuzz/build/admin-listener validation.
-- [ ] Advanced tracking/caching/redirection CLIENT features if required by real clients/tooling.
+- [x] CLIENT tracking/caching/redirection surface: TRACKING/CACHING/GETREDIR,
+  BCAST/PREFIX, OPTIN/OPTOUT, NOLOOP, REDIRECT, RESP3 invalidation pushes, and
+  broken-redirect notification, with Redis 8.2 differential coverage.
 - [ ] Additional client classes beyond NORMAL when matching topology/features exist.
 
 ### SORT / SORT_RO
@@ -345,7 +347,8 @@ Details: `docs/ACL-COMPATIBILITY.md`.
 - [x] Broad Redis 8.2 RESP3 command-shape differential sweep across the implemented surface.
 - [x] RESP3 client-library smoke coverage across ioredis 6, node-redis 6, redis-py, and go-redis v9, validated against both SnugKV and Redis 8.2.
 - [ ] RESP3 attribute-frame support if future supported commands require it.
-- [ ] Advanced CLIENT tracking/caching/redirection features if required.
+- [x] Advanced CLIENT tracking/caching/redirection surface for the audited
+  first-release workflows.
 - [ ] Equivalent proactive blocked-client disconnect detection for non-Linux server builds if cross-platform parity is required.
 
 ### P3 — memory/performance validation
@@ -411,7 +414,10 @@ lands.
 - [x] Dynamic failover membership: group/epoch identity, advertised endpoints, dual-majority joint reconfiguration, durable commit-forward recovery, and safe member retirement/removal. Audit: `docs/AUTOMATIC-FAILOVER-AUDIT.md`.
 - [x] Authenticated failover peer discovery/gossip with stale-health observability, dry-run discovery planning, and explicit discovered-peer adoption through the dual-majority membership protocol. Audit: `docs/AUTOMATIC-FAILOVER-AUDIT.md`.
 - [x] Richer failover operator/topology controls: topology/health views, transition diagnosis, and explicit retry of already-durable commit-forward recovery. Audit: `docs/AUTOMATIC-FAILOVER-AUDIT.md`.
-- [ ] Optional fully automatic membership admission policy.
+- [x] Bounded first-release cluster bootstrap helper for the documented
+  three-node sharded and HA layouts.
+- [ ] Optional fully automatic membership admission policy beyond the bounded
+  first-release bootstrap.
 - [x] Cluster/sharding protocol core: Redis-compatible hash-slot routing, MOVED/ASK/ASKING, CROSSSLOT enforcement, CLUSTER SLOTS/NODES/SHARDS/INFO, guarded resharding, deterministic rebalance planning/apply/recovery, dynamic zero-slot membership, safe node evacuation/removal, replica-aware shard topology, and operator health/consistency views.
 - [x] Multi-node consistency and recovery core: topology-digest stale-coordinator fencing, failover/rebalance serialization, majority-backed write leases for promoted and original primaries, foreign-lease write fencing, persisted topology/transition recovery, restart-safe rebalance resume, and target IMPORTING reassertion.
 - [x] Cluster production hardening: authenticated control-plane RPC, TLS-capable internal rebalance data migration, live TCP MOVED/ASK/CLUSTERDOWN routing coverage, and restart-during-reshard recovery. Audit: `docs/CLUSTER-PRODUCTION-HARDENING.md`.
