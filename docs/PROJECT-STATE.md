@@ -14,9 +14,10 @@ SnugKV is an alpha-stage Redis-compatible datastore in Go with a broad
 single-node command surface and a substantial distributed implementation.
 
 The distributed core has completed the current production-candidate hardening
-gates for its audited scope. First-release work is now in documentation
-convergence and feature-freeze preparation rather than foundational cluster
-implementation.
+gates for its audited scope. **First-release feature freeze is active.** Current
+work is release validation, durability/failure injection, soak, profiling,
+packaging, security review, and first-user/release-candidate preparation rather
+than new product feature implementation.
 
 Implemented distributed capabilities include:
 
