@@ -525,12 +525,17 @@ Regression coverage also verifies:
 
 ### Bounded distributed soak
 
-Final bounded validation:
+Latest retained bounded validation:
 
-- **3/3 cycles**
-- **21/21 cases**
+- **6/6 cycles**
+- **42/42 cases**
 - **0 failures**
 - **0 timeouts**
+- **952 seconds elapsed (~15m52s)**
+
+The run was configured with `DURATION_SECONDS=1800` and `MAX_CYCLES=6`; it
+ended because the six-cycle cap was reached, not because the 30-minute duration
+expired.
 
 ### Client Cluster smoke
 
@@ -844,7 +849,7 @@ automatic failover and Redis-style Cluster routing/resharding. The project has
 moved well beyond a prototype: many surfaces have live Redis differential audits,
 the distributed system has multi-process chaos/recovery tests, four major Cluster
 client-library smokes, reproducible distributed benchmarks, 5/5 repeated-recovery
-stress runs, 10/10 failover-restart stress runs and a 21/21 bounded distributed
+stress runs, 10/10 failover-restart stress runs and a 42/42 bounded distributed
 soak. It is still alpha-stage and should not be represented as exhaustive Redis
 parity or as having mature long-term production history. The main engineering
 principle is to make compatibility and durability claims only where the
