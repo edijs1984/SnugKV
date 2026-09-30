@@ -26,16 +26,14 @@ administration are implemented to the documented scope.
 
 Major Redis-compatible features still not implemented or incomplete:
 
-- full Lua/Functions parity (`SCRIPT DEBUG`, `allow-oom`, exact command flags/ACL behavior);
-- Redis-RDB byte compatibility for `FUNCTION DUMP` / `RESTORE` payloads;
-- cross-database COPY and broader migration/transfer command scope;
-- optional RESP3 client-library smoke coverage and unused RESP3 types/attributes if required;
-- deeper dynamic SORT/script/Function ACL-policy edge auditing;
-- advanced CLIENT tracking/caching/redirection features;
+- exact Redis Lua VM internals and every scripting edge case;
+- cross-database COPY and multiple logical databases;
+- RESP3 attributes/unused types not required by the supported surface;
+- additional CLIENT connection classes beyond the audited NORMAL/tracking surface;
 - exhaustive Redis Cluster parity beyond the audited distributed surface;
 - longer-term large-scale production/soak history beyond the retained validation runs;
-- optional fully automatic membership admission;
-- modules.
+- fully automatic membership admission beyond the bounded first-release bootstrap helper;
+- Redis Modules interoperability.
 
 The current JSON commands are not a complete RedisJSON implementation.
 
@@ -106,15 +104,14 @@ Current boundaries are intentional and documented rather than silently emulated:
 - when AOF or snapshot persistence is configured, Function library definitions are
   restored across restart from a checksum-protected atomic sidecar; without either
   persistence mode configured, Function libraries remain process-local and volatile;
-- `FUNCTION DUMP` uses SnugKV's versioned `SNUGF001` payload rather than Redis RDB
-  Function bytes, so Redis and SnugKV dump payloads are not cross-restorable;
+- `FUNCTION DUMP` / `RESTORE` use Redis 8.2-compatible Function RDB payloads
+  for the audited surface, including LZF strings plus RDB version/CRC validation;
 - Function-local Lua variables are not serialized and reset when a library is
   restored or reconstructed after process restart;
-- `no-writes`, `allow-stale`, `no-cluster`, and `allow-cross-slot-keys` are supported
-  for the current standalone semantics; `allow-oom` remains intentionally deferred
-  until exact scoped memory-admission behavior is implemented;
-- `SCRIPT DEBUG`, exact Redis command-flag/ACL/OOM behavior, and every Lua edge
-  case still need differential hardening.
+- `no-writes`, `allow-stale`, `no-cluster`, `allow-cross-slot-keys`, and
+  audited Redis 8.2 `allow-oom` semantics are supported;
+- `SCRIPT DEBUG` implements the audited Redis-compatible LDB wire/session surface;
+  exact Redis VM implementation details and every scripting edge case are not claimed.
 
 Scripts and function calls are atomic with respect to other SnugKV clients because
 they execute under the same command-serialization boundary as transactions. Lua
@@ -147,10 +144,11 @@ connection-scoped/concurrency-safe and targeted KILL/UNBLOCK behavior has been
 compared directly with Redis, including self-kill and blocked-connection survival.
 See [docs/CLIENT-COMPATIBILITY.md](docs/CLIENT-COMPATIBILITY.md).
 
-Advanced Redis CLIENT tracking/caching/redirection features are not implemented,
-and only the NORMAL client class is currently meaningful for LIST TYPE filtering.
-Additional client classes should be added only when the corresponding topology or
-connection modes exist.
+`CLIENT TRACKING`, `CLIENT CACHING`, `CLIENT GETREDIR`, BCAST/PREFIX,
+OPTIN/OPTOUT, NOLOOP, REDIRECT, RESP3 invalidation pushes, and broken-redirect
+notification are implemented and Redis 8.2-audited. Only the NORMAL client class
+is currently meaningful for LIST TYPE filtering; additional classes should be
+added only when corresponding connection modes exist.
 
 ## SORT boundaries
 
@@ -167,9 +165,9 @@ Current compatibility boundaries:
   for non-STORE ALPHA replies, so locale-sensitive/non-ASCII ordering can differ;
 - SET native iteration order under a constant/no-wildcard `BY` is implementation
   dependent, so exact order is not promised for that intentionally-unsorted case;
-- core command/key ACL enforcement is implemented, but deeper Redis parity for
-  dynamically resolved BY/GET external keys is still being audited;
-- Redis Cluster slot restrictions remain outside SnugKV's single-node scope.
+- dynamic SORT/script/Function ACL behavior has dedicated Redis 8.2 audit coverage;
+- Cluster slot restrictions are enforced for the documented cluster-aware surface,
+  while exhaustive per-command Redis Cluster parity is not claimed.
 
 The implemented common SORT surface has been compared manually against Redis for
 LIST/SET/ZSET sources, BY/GET/hash patterns, nosort, STORE/TTL, missing values,
@@ -183,13 +181,15 @@ and can replace any destination type with `REPLACE`.
 
 SnugKV exposes only database 0. `COPY ... DB 0` is accepted, while every nonzero
 DB index is rejected with `ERR DB index is out of range`; cross-database COPY is
-not emulated. Migration/transfer commands and multi-database semantics remain out
-of scope for the current single-node target. The documented DB0 COPY surface has
+not emulated. Multiple logical databases remain intentionally unsupported. Redis-compatible
+`MIGRATE` is implemented for the audited standalone transfer surface; cluster
+internal migration has separately guarded semantics. The documented DB0 COPY surface has
 been manually differentially tested against Redis for return values, errors, TTL,
 native type preservation, REPLACE, and deep-copy independence.
 
-Modern GEO commands are implemented, but deprecated `GEORADIUS`,
-`GEORADIUSBYMEMBER`, `GEORADIUS_RO`, and `GEORADIUSBYMEMBER_RO` aliases are not.
+Modern GEO commands and the legacy `GEORADIUS`, `GEORADIUSBYMEMBER`,
+`GEORADIUS_RO`, and `GEORADIUSBYMEMBER_RO` aliases are implemented for the
+audited Redis 8.2 surface.
 `GEOSEARCH` currently scans/decodes the packed source ZSET rather than maintaining
 a permanent secondary geospatial index, making searches O(source cardinality).
 This is a deliberate memory/performance tradeoff pending large-GEO benchmarks.
@@ -218,23 +218,29 @@ queued MULTI commands; `PUBLISH` and `SPUBLISH` remain ordinary queueable comman
   non-Linux builds.
 - COMMAND metadata and common CONFIG tooling are complete. The audited AUTH/ACL
   surface includes command/category/key/channel enforcement, selectors, hardened
-  SETUSER modifiers, persistence, and transaction re-authorization; remaining ACL
-  work is deeper dynamic SORT/script/Function policy auditing. Advanced CLIENT
-  tracking/caching remains incomplete.
+  SETUSER modifiers, persistence, transaction re-authorization, and dynamic
+  SORT/script/Function policy auditing. CLIENT tracking/caching/redirection is
+  implemented for the audited surface.
 - The modern GEO command set has focused command-level compatibility tests; large
   dataset differential/performance testing is intentionally still pending.
-- Lua scripting/read-only variants and Functions core have focused unit,
-  durability, transaction, restart-persistence, live introspection, cancellation,
-  standalone-safe flag, and live Redis differential coverage; deeper
-  command-flag/ACL/OOM auditing remains.
+- Lua scripting/read-only variants and Functions have focused unit, durability,
+  transaction, restart-persistence, debugger, cancellation, OOM/flag, dynamic
+  ACL, and live Redis differential coverage.
 - `FUNCTION DUMP`/`RESTORE` command policy/error semantics have automated coverage,
   but byte-level payload compatibility with Redis is intentionally not claimed.
 
 ## Deployment topology
 
-- SnugKV is single-node.
-- There is no automatic replication or failover.
-- High availability is not provided by SnugKV itself.
+SnugKV supports both standalone and distributed operation. The audited
+distributed surface includes primary/replica replication, partial resync,
+authenticated/TLS links, quorum-backed automatic failover, 16,384-slot Cluster
+routing, reshard/recovery, replica-aware topology, membership changes, and
+write fencing.
+
+A bounded first-release bootstrap helper generates and verifies the documented
+three-node sharded or one-primary/two-replica HA layouts. This is not a claim of
+general-purpose service discovery, exhaustive Redis Cluster parity, or mature
+large-scale production history.
 
 ## Durability
 
@@ -306,9 +312,8 @@ collection mutation:
   or compiled chunks; loaded Function libraries keep their own Lua VM/state until
   delete/flush/replacement or process exit.
 
-These tradeoffs are intentional for the current single-node design and should be
-revisited only with workload benchmarks that justify extra permanent memory or
-complexity.
+These storage/runtime tradeoffs are intentional and should be revisited only
+with workload benchmarks that justify extra permanent memory or complexity.
 
 ## Performance claims
 
