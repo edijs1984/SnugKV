@@ -243,7 +243,24 @@ Output:
 
 - `docs/release/FIRST-RELEASE-GAPS.md`
 
-Status: **TODO**
+Status: **COMPLETE**
+
+Implementation branch: `release/a4-first-release-gap-classification`
+
+Authoritative outputs:
+
+- `docs/release/FIRST-RELEASE-GAPS.md`
+- `docs/release/first-release-gaps.json`
+
+Result:
+
+- **0 REQUIRED** commands among the 58 Redis-only A2 candidates
+- **9 USEFUL** commands retained as optional low-risk compatibility work
+- **49 DEFER** commands excluded from first-release scope
+- **49 already-implemented subcommands** still need structured `COMMAND`
+  metadata completion as one REQUIRED compatibility slice
+- `CLUSTER SLOTS` replica advertisement was a REQUIRED compatibility defect
+  discovered and completed during A3
 
 ---
 
@@ -252,6 +269,31 @@ Status: **TODO**
 This phase is populated from A4.
 
 Do not pre-fill speculative commands here.
+
+## B1. Complete structured COMMAND subcommand metadata
+
+**Classification:** REQUIRED  
+**Evidence:** A2 found 49 Redis subcommands whose behavior already exists in SnugKV
+but is absent from structured command metadata.  
+**Branch:** TBD  
+**PR:** TBD
+
+Scope:
+
+- add metadata only for behavior that already exists;
+- do not implement new Redis commands in this slice;
+- ensure A1 inventory includes the newly advertised leaves;
+- compare the resulting structured metadata against the Redis 8.2 audit again;
+- keep top-level `COMMAND COUNT` semantics unchanged.
+
+Acceptance:
+
+- all A2 entries classified IMPLEMENTED no longer appear as Redis-only metadata gaps;
+- command inventory generation remains deterministic;
+- focused COMMAND INFO/LIST/DOCS tests pass;
+- A1/A2 retained artifacts regenerate cleanly.
+
+Status: **TODO**
 
 For every accepted gap use this template.
 
