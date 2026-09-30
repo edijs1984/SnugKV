@@ -12,7 +12,7 @@ rm -f "$OUT"/failover-*.monitor "$OUT"/failover.jsonl
 PRE_HOOK=$(cat <<'EOF'
 cd "$ROOT/compat/node"
 [[ -d node_modules ]] || npm ci
-CLIENT_STATE_DIR="$STATE" P0="$P0" PASSWORD="$PASSWORD" node failover-trace.cjs >"$STATE/client.log" 2>&1 &
+CLIENT_STATE_DIR="$STATE" P0="$P0" P1="$P1" P2="$P2" PASSWORD="$PASSWORD" node failover-trace.cjs >"$STATE/client.log" 2>&1 &
 echo $! >"$STATE/client.pid"
 for _ in $(seq 1 300); do
   [[ -f "$STATE/ready" ]] && exit 0
