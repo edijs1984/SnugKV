@@ -4,7 +4,7 @@
 > If an older TODO, audit, issue, or roadmap item conflicts with this file about
 > first-release scope, follow this file and the current implementation/tests.
 
-**Status:** Feature-completion phase  
+**Status:** Documentation convergence / feature-freeze preparation  
 **Target:** First public alpha / production-candidate release  
 **Feature-freeze rule:** Once the implementation queue in
 `docs/FIRST-RELEASE-IMPLEMENTATION.md` is complete, no new product features are
@@ -289,10 +289,12 @@ For first-release work, use this order:
 
 ## 9. Current phase
 
-**Current phase: R1 — command and client gap audit.**
+**Current phase: R5 — documentation convergence.**
+
+R1/R2 command-gap work, cluster onboarding, and the first-release client matrix
+are complete for the audited release scope. The remaining pre-freeze work is to
+make the canonical documentation internally consistent and resolve the retained
+USEFUL-gap disposition.
 
 The public standalone benchmark work may continue in parallel because it is
 measurement infrastructure, not new feature scope.
-
-All implementation work from this point should be selected through the
-first-release gap audit rather than by picking arbitrary unchecked roadmap items.
