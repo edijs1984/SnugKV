@@ -148,8 +148,9 @@ Final retained evidence after the migration/failover fixes:
 - repeated crash/recovery stress passed 5/5 runs with 2,000 durable keys;
 - the failover-restart harness stabilization race was removed and the scenario
   then passed 10/10 focused runs, including an alternate elected leader;
-- the bounded distributed soak passed 3/3 cycles, 21/21 cases, with zero failures
-  and zero timeouts.
+- the latest bounded distributed soak passed 6/6 cycles, 42/42 cases, with zero
+  failures and zero timeouts in 952 seconds (~15m52s). It was configured for
+  1,800 seconds but stopped because the six-cycle cap was reached first.
 
 The distributed hardening roadmap item is therefore closed for the audited
 production-candidate scope; final project-wide release validation remains before
