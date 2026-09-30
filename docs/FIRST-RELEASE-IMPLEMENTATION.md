@@ -551,11 +551,28 @@ Status: **ACTIVE**
 
 ## G1. Core gates
 
-- [ ] `go test ./... -count=1`
-- [ ] `go test -race ./... -count=1`
-- [ ] `go vet ./...`
-- [ ] RESP fuzz gate
-- [ ] branch-specific differential suites
+- [x] `go test ./... -count=1`
+- [x] `go test -race ./... -count=1`
+- [x] `go vet ./...`
+- [x] RESP fuzz gate (`FuzzReadCommand`, 60s)
+- [ ] Redis 8.2 differential release harness
+
+Retained operator validation on the frozen first-release baseline:
+
+- full test suite: **PASS**
+- full race suite: **PASS**
+- vet: **PASS**
+- RESP parser fuzz: **PASS**
+
+Differential harness:
+
+```sh
+bash scripts/release/run-redis82-differential-gates.sh
+```
+
+The harness runs self-checking Redis 8.2 interoperability gates for scalar/native/
+STREAM DUMP/RESTORE, Function RDB cross-restore, MIGRATE, authenticated MIGRATE,
+and real-client RESP3 against both Redis and SnugKV.
 
 ## G2. Durability
 
