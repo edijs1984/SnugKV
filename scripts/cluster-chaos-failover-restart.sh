@@ -216,7 +216,14 @@ for _ in $(seq 1 200); do
   [[ "$out" == "OK" ]] && break
   sleep 0.05
 done
-[[ "$(cli "$P0" GET failover:lease-ready)" == "yes" ]]
+lease_ready_value="$(cli "$P0" GET failover:lease-ready 2>/dev/null || true)"
+if [[ "$lease_ready_value" != "yes" ]]; then
+  echo "primary never became durably writable before seed: value=$lease_ready_value" >&2
+  cli "$P0" SNUG.FAILOVER HEALTH >&2 || true
+  cli "$P0" ROLE >&2 || true
+  tail -n 120 "$TMP/n0.log" >&2 || true
+  exit 1
+fi
 
 seed="$TMP/seed.commands"
 : >"$seed"
@@ -333,7 +340,14 @@ for _ in $(seq 1 100); do
   [[ "$got" == "leader-write" ]] && break
   sleep 0.05
 done
-[[ "$got" == "leader-write" ]]
+if [[ "$got" != "leader-write" ]]; then
+  echo "redirected follower read did not observe leader write: got=$got" >&2
+  echo "--- leader health ---" >&2
+  cli "$leader_port" SNUG.FAILOVER HEALTH >&2 || true
+  echo "--- follower health ---" >&2
+  cli "$follower_port" SNUG.FAILOVER HEALTH >&2 || true
+  exit 1
+fi
 
 echo "[6/9] verify cluster ownership converged to elected leader"
 ownership_converged=0
@@ -401,7 +415,12 @@ if [[ "$old_role" != "slave" ]]; then
   cli "$P0" CLUSTER NODES >&2 || true
   exit 1
 fi
-grep -F "$leader_addr@0" <<<"$old_nodes" | grep -q '0-16383'
+if ! grep -F "$leader_addr@0" <<<"$old_nodes" | grep -q '0-16383'; then
+  echo "restarted old primary did not learn leader slot ownership" >&2
+  printf '%s\n' "$old_nodes" >&2
+  cli "$P0" SNUG.FAILOVER HEALTH >&2 || true
+  exit 1
+fi
 
 old_write="$(cli "$P0" SET failover:stale-primary forbidden 2>&1 || true)"
 if [[ "$old_write" == "OK" ]]; then
