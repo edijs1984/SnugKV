@@ -17,8 +17,8 @@ Client versions:
 |---|---|---|---|---|---|---|---|
 | ioredis 6.0.0 | PASS | PASS | PASS | not separately release-gated | not separately release-gated | PASS | PASS |
 | node-redis 6.2.1 | PASS | PASS | PASS | PASS | PASS | PASS | PASS |
-| redis-py 6.4.0 | PASS | PASS | PASS | not separately release-gated | not separately release-gated | PASS | PENDING D failover matrix |
-| go-redis/v9 9.22.0 | PASS | PASS | PASS | not separately release-gated | not separately release-gated | PASS | PENDING D failover matrix |
+| redis-py 6.4.0 | PASS | PASS | PASS | not separately release-gated | not separately release-gated | PASS | PASS |
+| go-redis/v9 9.22.0 | PASS | PASS | PASS | not separately release-gated | not separately release-gated | PASS | PASS (1s topology reload configured) |
 
 ## Evidence
 
@@ -102,4 +102,13 @@ PASS and there is no unexplained compatibility failure.
 Pub/Sub/tracking are treated as explicit workflow capabilities rather than a
 claim that every client library's convenience API has been separately audited.
 
-Phase D is complete when the redis-py and go-redis failover cells become PASS.
+Phase D validation result:
+
+- ioredis persistent automatic failover: **PASS**
+- node-redis persistent automatic failover: **PASS**
+- redis-py persistent automatic failover: **PASS**
+- go-redis/v9 persistent automatic failover: **PASS** with a 1-second
+  `ClusterStateReloadInterval`
+- full crash/restart failover chaos: **PASS**
+
+Phase D is **COMPLETE**.
