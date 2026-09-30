@@ -449,7 +449,30 @@ Acceptance:
 - any unsupported behavior is documented;
 - client-triggered missing commands feed back into Phase A/B.
 
-Status: **TODO**
+Status: **COMPLETE**
+
+Implementation branch: `release/d-client-compatibility-matrix`
+
+Retained matrix: `docs/release/CLIENT-COMPATIBILITY-MATRIX.md`
+
+Existing A3 evidence is retained for standalone, RESP3, reconnect, normal Cluster
+routing, and ioredis/node-redis automatic failover. Phase D adds persistent
+redis-py and go-redis failover clients and an all-four-client failover matrix
+harness.
+
+Validation:
+
+- [x] `bash scripts/release/run-client-failover-matrix.sh`
+- [x] ioredis persistent failover
+- [x] node-redis persistent failover
+- [x] redis-py persistent failover
+- [x] go-redis persistent failover
+- [x] old-primary restart/demotion/reparent
+- [x] full cluster crash/restart chaos
+
+go-redis/v9 9.22.0 is documented with a 1-second
+`ClusterStateReloadInterval` for prompt hard-failover recovery; its default
+periodic topology reload is 60 seconds.
 
 ---
 
