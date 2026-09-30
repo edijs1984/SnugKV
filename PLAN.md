@@ -1,5 +1,7 @@
 # SnugKV Delivery Plan
 
+> First-release execution is now governed by `FIRST_RELEASE.md` and `docs/FIRST-RELEASE-IMPLEMENTATION.md`. This file remains the broader product roadmap.
+
 ## Phase F — SLOWLOG and persistence controls (2026-09-27)
 
 - [x] Implement the audited SLOWLOG and persistence command slice, client identity, one-off AOF export, rewrite serialization, INFO job results, and bidirectional background-job scheduling.

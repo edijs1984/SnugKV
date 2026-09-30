@@ -3,6 +3,7 @@
 **Updated:** 2026-09-30
 
 This is the canonical current-state handoff for maintainers and coding agents.
+For first-release scope and sequencing, use `FIRST_RELEASE.md` as the authoritative high-level plan and `docs/FIRST-RELEASE-IMPLEMENTATION.md` as the detailed execution queue.
 Historical audit documents remain evidence for the state at the time they were
 written; `PLAN.md` is the active roadmap and `PROGRESS.md` is the implementation
 log.
