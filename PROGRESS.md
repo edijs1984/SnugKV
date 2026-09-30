@@ -152,9 +152,10 @@ Final retained evidence after the migration/failover fixes:
   failures and zero timeouts in 952 seconds (~15m52s). It was configured for
   1,800 seconds but stopped because the six-cycle cap was reached first.
 
-The distributed hardening roadmap item is therefore closed for the audited
-production-candidate scope; final project-wide release validation remains before
-merge.
+The distributed hardening roadmap item is closed for the audited
+production-candidate scope. After PR #249 merged to `main`, the operator-reported
+project-wide release validation also passed: `go test ./... -count=1`,
+`go test -race ./... -count=1`, and `go vet ./...`.
 
 ## Cluster / failover production hardening — 2026-09-29
 
@@ -213,8 +214,9 @@ operator health/consistency views, stale-coordinator fencing, restart recovery,
 and dedicated internal control-plane authentication.
 
 The distributed production-hardening milestone is complete for the audited
-production-candidate scope. The remaining branch gate is project-wide release
-validation plus maintenance of accurate operator/compatibility documentation.
+production-candidate scope, including the post-merge project-wide release
+validation. Ongoing work should now be treated as new compatibility, performance,
+operability, or feature milestones rather than unfinished cluster hardening.
 
 COMMAND metadata/tooling and the common CONFIG compatibility milestone are
 complete. Core AUTH/ACL support is also implemented through command/category/key
