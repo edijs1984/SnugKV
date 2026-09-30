@@ -91,7 +91,7 @@ client-library-specific parity are not yet claimed.
 | Pub/Sub | Broad support | Classic and sharded Pub/Sub, pattern subscriptions, introspection, RESP2 subscribed-mode behavior |
 | Transactions | Broad support | `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH`, queue/runtime error semantics, AOF transaction frames |
 | HyperLogLog | Supported | `PFADD`, `PFCOUNT`, `PFMERGE`; Redis-compatible serialized HLL strings |
-| GEO | Broad audited support | Modern GEO commands plus Redis 8.2-audited legacy `GEORADIUS` / `GEORADIUSBYMEMBER` aliases, including read-only variants and STORE/STOREDIST behavior |
+| GEO | Broad audited support | Modern GEO commands plus Redis 8.2-audited legacy `GEORADIUS` / `GEORADIUSBYMEMBER` aliases with STORE/STOREDIST; `GEORADIUS_RO` / `GEORADIUSBYMEMBER_RO` remain deferred |
 | Lua scripting / Functions | Broad audited support | `EVAL*`, read-only EVAL, SCRIPT management/debugger, Functions core/management, Redis 8.2 Function RDB dump/restore interoperability, restart persistence, audited flags/OOM behavior; exact Redis VM internals and every edge case are not claimed |
 | AUTH / ACL | Audited single-node support | Named authentication, command/category/key/channel rules, selectors, transaction enforcement, CAT/DRYRUN/GENPASS/LOG, SAVE/LOAD, startup ACL-file restore, and Redis 8.2 differential coverage |
 | CONFIG | Broad tooling support | GET/SET/RESETSTAT/REWRITE/HELP for supported SnugKV settings with runtime mutation and restart persistence |
@@ -283,9 +283,10 @@ Supported GEOSEARCH forms include `FROMMEMBER` / `FROMLONLAT`, `BYRADIUS` /
 Current implementation note: Redis uses geohash score ranges to prune radius
 searches. SnugKV currently scans and decodes the packed source ZSET, so GEOSEARCH
 is O(source cardinality). This avoids another permanent index but may be slower on
-very large geospatial sets. Legacy `GEORADIUS`, `GEORADIUSBYMEMBER`, and
-their read-only variants are implemented with the audited COUNT/ANY, WITH*,
+very large geospatial sets. Legacy `GEORADIUS` and
+`GEORADIUSBYMEMBER` are implemented with the audited COUNT/ANY, WITH*,
 STORE/STOREDIST, key-metadata, and Redis 8.2 error/behavior surface.
+`GEORADIUS_RO` and `GEORADIUSBYMEMBER_RO` remain deferred.
 
 ## STREAM
 
