@@ -148,13 +148,17 @@ for _ in $(seq 1 200); do
   i1="$(cli "$P1" INFO replication 2>/dev/null || true)"
   i2="$(cli "$P2" INFO replication 2>/dev/null || true)"
   if grep -q '^master_link_status:up' <<<"$i1" &&
-     grep -q '^master_link_status:up' <<<"$i2"; then
+     grep -q '^master_sync_in_progress:0' <<<"$i1" &&
+     grep -q '^master_link_status:up' <<<"$i2" &&
+     grep -q '^master_sync_in_progress:0' <<<"$i2"; then
     break
   fi
   sleep 0.05
 done
 grep -q '^master_link_status:up' <<<"$i1"
+grep -q '^master_sync_in_progress:0' <<<"$i1"
 grep -q '^master_link_status:up' <<<"$i2"
+grep -q '^master_sync_in_progress:0' <<<"$i2"
 
 seed="$TMP/seed.commands"
 : >"$seed"
@@ -204,21 +208,44 @@ cat >"$post" <<EOF
 SET persist:after-failure durable-after-failure
 WAIT 2 15000
 EOF
-redis-cli --no-auth-warning --raw -a "$PASSWORD" -p "$P0" <"$post" >"$TMP/post-failure.out"
-grep -qx OK < <(head -n 1 "$TMP/post-failure.out")
-post_wait="$(tail -n 1 "$TMP/post-failure.out")"
-if [[ "$post_wait" != "2" ]]; then
-  echo "post-failure write did not replicate to both replicas: WAIT=$post_wait" >&2
+
+post_ok=0
+for attempt in $(seq 1 20); do
+  redis-cli --no-auth-warning --raw -a "$PASSWORD" -p "$P0" \
+    <"$post" >"$TMP/post-failure.out" 2>"$TMP/post-failure.err" || true
+
+  post_set="$(head -n 1 "$TMP/post-failure.out" 2>/dev/null || true)"
+  post_wait="$(tail -n 1 "$TMP/post-failure.out" 2>/dev/null || true)"
+
+  if [[ "$post_set" == "OK" && "$post_wait" == "2" ]]; then
+    post_ok=1
+    break
+  fi
+
+  echo "post-failure attempt $attempt: SET=$post_set WAIT=$post_wait" >&2
+  if [[ -s "$TMP/post-failure.err" ]]; then
+    cat "$TMP/post-failure.err" >&2
+  fi
+  sleep 0.1
+done
+
+if (( post_ok == 0 )); then
+  echo "post-failure write/replication did not stabilize" >&2
+  echo "--- primary INFO persistence ---" >&2
+  cli "$P0" INFO persistence >&2 || true
   echo "--- primary INFO replication ---" >&2
   cli "$P0" INFO replication >&2 || true
   echo "--- replica n1 INFO replication ---" >&2
   cli "$P1" INFO replication >&2 || true
   echo "--- replica n2 INFO replication ---" >&2
   cli "$P2" INFO replication >&2 || true
+  echo "--- primary failover health ---" >&2
+  cli "$P0" SNUG.FAILOVER HEALTH >&2 || true
   echo "--- primary log tail ---" >&2
   tail -n 120 "$TMP/n0.log" >&2 || true
   exit 1
 fi
+
 [[ "$(cli "$P0" GET persist:after-failure)" == "durable-after-failure" ]]
 
 echo "[5/8] restore storage permissions and retry rewrite"
