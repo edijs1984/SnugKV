@@ -16,12 +16,18 @@ PROFILES="${PROFILES:-counter uuid cache-json text random}"
 ROOT_OUT="${ROOT_OUT:-benchmark-results/public-baseline-$(date +%Y%m%d-%H%M%S)}"
 SNUG_IMAGE="${SNUG_IMAGE:-snugkv-bench:local}"
 
-mkdir -p "$ROOT_OUT"
-
-if [[ -n "$(git status --porcelain)" ]]; then
+dirty="$(git status --porcelain)"
+if [[ -n "$dirty" ]]; then
   echo "error: public baseline requires a clean git worktree" >&2
+  echo >&2
+  echo "dirty paths:" >&2
+  printf '%s\n' "$dirty" >&2
+  echo >&2
+  echo "Commit, stash, remove, or ignore those paths as appropriate, then rerun." >&2
   exit 2
 fi
+
+mkdir -p "$ROOT_OUT"
 
 python3 - "$ROOT_OUT/environment.json" "$KEYS" "$GET_OPS" "$MIXED_OPS" "$TTL_OPS" "$WORKERS" "$PIPELINE" "$RUNS" "$SETTLE_MS" "$PROFILES" <<'PY'
 import json, os, platform, subprocess, sys
