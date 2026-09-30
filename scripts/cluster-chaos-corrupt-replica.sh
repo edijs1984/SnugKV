@@ -241,15 +241,44 @@ wait_ready "$P2" || {
 
 echo "[6/8] reattach n2 and require full recovery from healthy primary"
 cli "$P2" REPLICAOF 127.0.0.1 "$P0" | grep -qx OK
-for _ in $(seq 1 300); do
+
+# A live replication TCP link is not sufficient after rebuilding an empty
+# replica: master_link_status can become "up" while a full snapshot is still
+# being applied. Require the replica to report sync completion for a
+# consecutive stabilization window before validating recovered data.
+stable=0
+info=""
+for _ in $(seq 1 600); do
   info="$(cli "$P2" INFO replication 2>/dev/null || true)"
   if grep -q '^role:slave' <<<"$info" &&
-     grep -q '^master_link_status:up' <<<"$info"; then
-    break
+     grep -q '^master_link_status:up' <<<"$info" &&
+     grep -q '^master_sync_in_progress:0' <<<"$info"; then
+    stable=$((stable + 1))
+    if (( stable >= 10 )); then
+      break
+    fi
+  else
+    stable=0
   fi
   sleep 0.05
 done
-grep -q '^master_link_status:up' <<<"$info"
+
+if (( stable < 10 )); then
+  echo "rebuilt replica did not finish full synchronization" >&2
+  echo "--- rebuilt replica INFO replication ---" >&2
+  printf '%s\n' "$info" >&2
+  echo "--- primary INFO replication ---" >&2
+  cli "$P0" INFO replication >&2 || true
+  echo "--- primary ROLE ---" >&2
+  cli "$P0" ROLE >&2 || true
+  echo "--- rebuilt replica ROLE ---" >&2
+  cli "$P2" ROLE >&2 || true
+  echo "--- primary log tail ---" >&2
+  tail -n 120 "$TMP/n0.log" >&2 || true
+  echo "--- rebuilt replica log tail ---" >&2
+  tail -n 120 "$TMP/n2.log" >&2 || true
+  exit 1
+fi
 
 echo "[7/8] verify cluster routing sees the rebuilt replica's recovered dataset"
 for n in 001 100 200; do
@@ -265,6 +294,10 @@ for n in 001 100 200; do
     cli "$P2" INFO replication >&2 || true
     echo "--- rebuilt replica CLUSTER NODES ---" >&2
     cli "$P2" CLUSTER NODES >&2 || true
+    echo "--- primary log tail ---" >&2
+    tail -n 120 "$TMP/n0.log" >&2 || true
+    echo "--- rebuilt replica log tail ---" >&2
+    tail -n 120 "$TMP/n2.log" >&2 || true
     exit 1
   }
 done
