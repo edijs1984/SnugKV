@@ -58,6 +58,12 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Added
 
+- Completed the audited distributed production-hardening matrix: deterministic
+  MIGRATE sliding-timeout/partial-durability regressions, 5/5 repeated-recovery
+  stress runs, 10/10 failover-restart stress runs, and a retained 3-cycle /
+  21-case distributed soak with zero failures/timeouts. An earlier extended soak
+  completed 70 consecutive cases before exposing the migration timeout defect
+  fixed by this branch.
 - Distributed hardening now includes a dedicated internal cluster-control credential (`cluster_control_auth`), connection-scoped `SNUG.INTERNAL AUTH`, peer-only RPC gating, and revocation on AUTH/HELLO/RESET.
 - Cluster/sharding core includes Redis-compatible slot routing, MOVED/ASK/ASKING, guarded reshard/recovery, membership, replica-aware shard topology, failover ownership convergence, health/consistency views, and stale-coordinator/write-fencing protections.
 - Added `docs/PROJECT-STATE.md` as the canonical maintainer/agent handoff for current implementation status and remaining hardening work.
