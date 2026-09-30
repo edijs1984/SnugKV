@@ -352,7 +352,7 @@ The large sparse fixed-overhead wins are complete; further memory work must just
 its complexity with measurements.
 
 - [x] Re-evaluate remaining index/entry/arena slack using representative workloads rather than structural size alone.
-- [ ] Fresh dedicated Redis baselines for public comparison claims.
+- [ ] Fresh dedicated Redis baselines for public comparison claims.\n- [ ] Retain a fresh standalone Redis 8.2 vs optimized SnugKV public baseline using scripts/bench/public-baseline.sh: 3 isolated runs across counter/UUID/cache-JSON/text/random profiles with LOAD, GET, mixed 90/10, TTL, latency percentiles, bytes/key, environment metadata, and machine-readable summaries.
 - [x] Multi-run benchmark support and repeated-run engineering comparisons; public claims still require clean dedicated reruns.
 - [x] Million-record local development datasets; repeat on dedicated hardware before public claims.
 - [ ] Retain evidence from a 24-hour mixed workload soak.
