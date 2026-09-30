@@ -801,6 +801,13 @@ func waitForMemoryConvergence(addr string, maxWait, poll time.Duration, keys, va
 			optimizerComplete =
 				snug["optimizer_queue_depth"] == 0 &&
 				now.Sub(lastRewriteChange) >= stableFor
+		} else {
+			// rediswirebench may be pointed only at SnugKV's public listener,
+			// where SNUG.STATS is intentionally unavailable. In that case,
+			// stable used_memory across a full maintenance interval is the
+			// strongest portable convergence signal we have. Do not turn the
+			// absence of private optimizer telemetry into "never converged".
+			optimizerComplete = now.Sub(lastChange) >= stableFor
 		}
 
 		if optimizerComplete && now.Sub(lastChange) >= stableFor {
