@@ -14,6 +14,9 @@ PASSWORD="${PASSWORD:-cluster-failover-secret}"
 CONTROL_SECRET="${CONTROL_SECRET:-cluster-failover-control-secret}"
 GROUP_ID="${GROUP_ID:-cluster-chaos-failover}"
 KEY_COUNT="${KEY_COUNT:-200}"
+PRE_FAILOVER_HOOK="${PRE_FAILOVER_HOOK:-}"
+POST_FAILOVER_HOOK="${POST_FAILOVER_HOOK:-}"
+TRACE_DIR="${TRACE_DIR:-}"
 
 cleanup() {
   for pidfile in "$TMP"/*.pid; do
@@ -125,6 +128,15 @@ start_node n2
 wait_ready "$P0"
 wait_ready "$P1"
 wait_ready "$P2"
+
+if [[ -n "$TRACE_DIR" ]]; then
+  mkdir -p "$TRACE_DIR"
+  for port in "$P0" "$P1" "$P2"; do
+    redis-cli --no-auth-warning -a "$PASSWORD" -p "$port" MONITOR >"$TRACE_DIR/failover-$port.monitor" 2>&1 &
+    echo $! >"$TMP/monitor-$port.pid"
+  done
+  sleep 0.2
+fi
 
 attach_replica() {
   local replica_port="$1"
@@ -271,6 +283,11 @@ if [[ ! "$wait_reply" =~ ^[0-9]+$ ]] || (( wait_reply < 2 )); then
 fi
 echo "replication acknowledgements: WAIT=$wait_reply"
 
+if [[ -n "$PRE_FAILOVER_HOOK" ]]; then
+  export P0 P1 P2 PASSWORD TMP TRACE_DIR
+  bash -c "$PRE_FAILOVER_HOOK"
+fi
+
 echo "[3/9] SIGKILL primary"
 stop_hard n0
 
@@ -391,6 +408,11 @@ if (( ownership_converged == 0 )); then
   exit 1
 fi
 echo "cluster ownership converged to $leader_addr"
+
+if [[ -n "$POST_FAILOVER_HOOK" ]]; then
+  export P0 P1 P2 PASSWORD TMP TRACE_DIR leader_port follower_port leader_addr follower_addr
+  bash -c "$POST_FAILOVER_HOOK"
+fi
 
 echo "[7/9] restart old primary"
 start_node n0
