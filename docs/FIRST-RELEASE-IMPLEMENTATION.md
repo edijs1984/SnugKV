@@ -590,12 +590,28 @@ Status: **G1 COMPLETE**
 
 ## G2. Durability
 
-- [ ] AOF restart matrix
-- [ ] snapshot restart matrix
-- [ ] append failure behavior
-- [ ] rewrite interaction
-- [ ] transaction/script/function persistence
-- [ ] replication restart behavior
+- [x] AOF restart matrix
+- [x] snapshot restart matrix
+- [x] append failure behavior
+- [x] rewrite interaction
+- [x] transaction/script/function persistence
+- [x] replication restart behavior
+
+Retained release harness:
+
+```sh
+bash scripts/release/run-durability-gates.sh
+```
+
+Validation result: **PASS**
+
+Coverage includes persistence frame truncation/checksum behavior, snapshot
+recovery, AOF replay/rewrite concurrency, Function/Search sidecar persistence,
+replication continuation state, persistence rollback on failure, persistence
+decoder fuzzing, and the real multi-process persistence failure/hard-restart
+chaos matrix.
+
+Status: **G2 COMPLETE**
 
 ## G3. Long-running validation
 

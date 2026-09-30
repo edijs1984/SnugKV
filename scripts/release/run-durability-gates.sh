@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+echo "[1/6] persistence frame/replay/rewrite tests"
+go test ./internal/persistence -count=1 -run '^(TestFramesAndTruncation|TestLogAndSnapshot|TestWriteFailure|TestSnapshotRejectsTruncation|TestExclusiveLockAndRewrite|TestMixedJSONAndPlainSetFramesReplay|TestLogAppendPlainSetRestartRecovery|TestPlainSetBatchFrameReplay|TestLogAppendPlainSetBatchDurabilitySequence|TestBufferedRewritePreservesConcurrentAppends|TestBufferedRewriteRejectsOverlappingRewrite|TestLogRuntimeFsyncPolicy|TestLogRejectsInvalidRuntimeFsyncPolicy)$'
+
+echo "[2/6] native engine export/restore tests"
+go test ./internal/engine -count=1 -run '^(TestStreamExportRestorePreservesEntriesAndTopID|TestNativeValueTypesSurviveExportRestore|TestRestoreRejectsUnknownSemanticType)$'
+
+echo "[3/6] server restart/sidecar/replication persistence tests"
+go test ./internal/server -count=1 -run '^(TestFunctionLibrariesPersistAcrossRestart|TestFunctionFlushPersistsEmptyRegistry|TestFunctionRecoveryRejectsCorruptState|TestSearchDefinitionsPersistAndRebuildAcrossRestart|TestSearchDropPersistsEmptyRegistry|TestSearchRecoveryRejectsCorruptState|TestSearchDefinitionMutationsDoNotJournalKeyspace|TestSearchPersistenceFailureRollsBackDefinitionMutation|TestRedisReplicationBatchPersistsMutationAndCheckpointTogether|TestRedisReplicationBatchPersistenceFailureRollsBack|TestReplicationCheckpointClearTombstoneWinsOnReplay|TestPersistRedisFullSyncWritesClearBeforeCheckpoint|TestPersistSnugFullSyncCheckpointSurvivesCrashReplay|TestPersistSnugFullSyncCheckpointFailureMarksDurabilityFailed|TestReplicationPersistenceCheckpointAndClear|TestConfigureReplicationPersistenceRestoresContinuation|TestConfigureReplicationPersistenceRejectsCorruptState)$'
+
+echo "[4/6] snapshot/AOF scheduling and rewrite interaction"
+go test ./internal/server -count=1 -run '^(TestBGSaveScheduleRejectsRunningSave|TestBGSaveScheduleRunsAfterRewrite|TestBGRewriteAOFScheduleAfterSave|TestPersistenceJobsWaitForActiveRewrite|TestPersistenceJobsWaitThroughRewriteToScheduledSave|TestPersistenceJobsWaitThroughSaveToScheduledRewrite|TestSaveRejectsActiveBGSave|TestBGSaveRejectsActiveSave|TestTransactionBGSAVECapturesStateAtCommandPosition|TestTransactionBGRewriteAOFIncludesLaterTransactionWrites|TestPeriodicSnapshotTriggerUsesBackgroundSaveLifecycle|TestPeriodicSnapshotTriggerSkipsBusyPersistence|TestPersistenceInfoSections|TestPersistenceInfoBGSaveFailureThenSuccess|TestPersistenceInfoAOFRewriteFailureThenSuccess|TestPersistenceInfoOneOffRewriteStaysDisabled|TestBGRewriteAOFAllowsWritesDuringBackgroundRewrite|TestPlainSetAOFFastPathRestartRecovery|TestPlainSetAOFFastPathDoesNotMutateOnAppendFailure|TestConcurrentPlainSetAOFReplayMatchesLiveValue)$'
+
+echo "[5/6] persistence decoder fuzz"
+go test ./internal/persistence -run=^$ -fuzz=FuzzRead -fuzztime=60s
+
+echo "[6/6] real multi-process persistence failure/restart chaos"
+bash scripts/cluster-chaos-persistence-failure.sh
+
+echo
+echo "first-release G2 durability gates: PASS"
