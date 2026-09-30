@@ -419,7 +419,7 @@ lands.
   - [x] Validate ioredis Cluster, node-redis Cluster, redis-py Cluster, and go-redis Cluster against the static three-node cluster smoke; broader `redis-cli -c` routing remains covered by the existing static routing smoke.
   - [x] Execute the interrupted-migration/failover restart matrix, including persistence/disk failure injection. `scripts/cluster-recovery-matrix.sh` now gates source/target migration crashes, failover restart, repeated recovery, majority partition/heal, rewrite filesystem failure, and corrupted-replica fail-closed/rebuild recovery.
   - [x] Establish reproducible multi-node routing, reshard, TLS migration, failover-recovery, and topology-observation benchmarks.
-  - [x] Retain distributed soak evidence and complete the final operator/release documentation audit. Evidence includes 5/5 repeated-recovery stress runs, 10/10 dedicated failover-restart runs, and a 3-cycle / 21-case bounded distributed soak with zero failures/timeouts after regression fixes.
+  - [x] Retain distributed soak evidence and complete the final operator/release documentation audit. Evidence includes 5/5 repeated-recovery stress runs, 10/10 dedicated failover-restart runs, and a 6-cycle / 42-case bounded distributed soak with zero failures/timeouts after regression fixes.
 
 ## Release discipline
 
