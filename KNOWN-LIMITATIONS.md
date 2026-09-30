@@ -1,7 +1,8 @@
 # Known Limitations
 
-SnugKV is currently an alpha-stage, single-node RESP2/RESP3 datastore. It has broad
-coverage across the common Redis datatype families, including Streams, Pub/Sub,
+SnugKV is currently an alpha-stage Redis-compatible RESP2/RESP3 datastore with
+standalone and distributed operation. It has broad coverage across the common
+Redis datatype families, including Streams, Pub/Sub,
 transactions, HyperLogLog, modern GEO, Lua scripting/read-only scripting, Redis
 Functions core/management, `SORT` / `SORT_RO`, single-database `COPY`, and the
 current CLIENT tooling slice, but it is not a complete Redis replacement.
@@ -31,8 +32,8 @@ Major Redis-compatible features still not implemented or incomplete:
 - optional RESP3 client-library smoke coverage and unused RESP3 types/attributes if required;
 - deeper dynamic SORT/script/Function ACL-policy edge auditing;
 - advanced CLIENT tracking/caching/redirection features;
-- broader multi-process distributed chaos/recovery testing;
-- Cluster client-library validation and multi-node performance/soak baselines;
+- exhaustive Redis Cluster parity beyond the audited distributed surface;
+- longer-term large-scale production/soak history beyond the retained validation runs;
 - optional fully automatic membership admission;
 - modules.
 
@@ -45,11 +46,14 @@ Replication, quorum-backed automatic failover, hash-slot routing,
 shard topology, stale-coordinator fencing, restart recovery, and dedicated
 internal control-plane authentication are implemented.
 
-Remaining distributed limitations are primarily validation/hardening:
-multi-process partition/kill matrices, failure/recovery combinations around
-resharding and failover, ioredis/node-redis/redis-py/go-redis Cluster smoke,
-long-running soak, disk/persistence fault injection, and reproducible multi-node
-benchmarks. Fully automatic membership admission remains optional/deferred.
+The planned distributed hardening matrix has been executed: multi-process
+partition/kill scenarios, reshard/failover recovery combinations,
+ioredis/node-redis/redis-py/go-redis Cluster smoke, disk/persistence fault
+injection, reproducible multi-node benchmarks, repeated-recovery stress,
+dedicated failover stress, and bounded distributed soak all have retained
+evidence. Remaining limitations are primarily exhaustive Redis Cluster parity,
+longer-term large-scale production history, and optional fully automatic
+membership admission.
 
 Configured clusters require a separate `cluster_control_auth` credential.
 Private peer RPCs establish a connection-scoped `SNUG.INTERNAL AUTH` identity;

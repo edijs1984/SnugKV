@@ -1,6 +1,6 @@
 # SnugKV Project State
 
-**Updated:** 2026-09-29
+**Updated:** 2026-09-30
 
 This is the canonical current-state handoff for maintainers and coding agents.
 Historical audit documents remain evidence for the state at the time they were
@@ -42,40 +42,30 @@ SnugKV intentionally exposes one logical database.
 
 ## Current distributed hardening queue
 
-Work in this order unless a correctness/security regression takes priority:
+The distributed implementation has completed the major chaos, recovery,
+client-library, and benchmark hardening gates.
 
-1. **Multi-process chaos harness**
-   - kill source/target during exact migration stages;
-   - partition/heal primary, replicas, coordinators, and migration peers;
-   - restart nodes during failover and resharding;
-   - persistence/disk failure injection;
-   - repeated transitions and long-running soak.
+Completed evidence includes:
 
-2. **Cluster client-library validation**
-   - ioredis Cluster;
-   - node-redis Cluster;
-   - redis-py Cluster;
-   - go-redis Cluster;
-   - broader `redis-cli -c` routing scenarios.
+- real multi-process crash/restart and partition/heal harnesses;
+- interrupted source/target migration recovery, repeated recovery, persistence
+  failure, and corrupted-replica recovery;
+- ioredis, node-redis, redis-py, and go-redis Cluster-mode smoke;
+- reproducible routing, reshard, TLS migration, failover-recovery, and
+  topology-observation benchmarks;
+- repeated-recovery stress passed 5/5 focused runs with 2,000 durable keys;
+- dedicated failover-restart stress passed 10/10 runs, including alternate
+  elected-leader paths;
+- the bounded distributed soak passed 6/6 cycles, 42/42 cases, with zero failures/timeouts over 952 seconds (~15m52s) after the failover stabilization harness race was fixed;
+- an earlier extended soak completed 70 consecutive chaos cases before exposing
+  the MIGRATE pipelined-read timeout bug that is now regression-covered.
 
-3. **Recovery matrix**
-   - source/target restart combinations around interrupted migration;
-   - failover before/during/after resharding;
-   - corrupted/missing persistence sidecars and partial failure cases.
+The remaining release gate is:
 
-4. **Multi-node performance baselines**
-   - routing throughput and latency;
-   - TLS migration throughput;
-   - reshard throughput;
-   - failover recovery time;
-   - topology/health observation cost.
-
-5. **Release audit**
-   - long-running soak;
-   - operator runbooks;
-   - configuration examples;
-   - compatibility/limitations review;
-   - reproducible benchmark evidence.
+1. **Final release validation**
+   - keep operator/configuration/compatibility documentation aligned with the
+     implemented distributed behavior;
+   - run the full release validation suite before merge.
 
 Optional/deferred: fully automatic membership admission policy and richer
 per-node health/TLS-SNI ergonomics.
@@ -84,12 +74,13 @@ per-node health/TLS-SNI ergonomics.
 
 Do **not** describe the distributed system as production-complete yet.
 
-The implemented cluster/replication/failover core is substantial, but the project
-still needs broader independent multi-process failure testing, client-library
-validation, recovery matrices, soak, and multi-node benchmarks before a
-production-complete claim is justified.
+The implemented cluster/replication/failover core has now completed the planned
+multi-process failure matrix, Cluster client-library smoke, distributed benchmark
+baselines, repeated recovery stress, and retained bounded soak validation.
 
-"Production-candidate" is the target after those hardening gates are completed.
+Do not interpret this as a claim of exhaustive Redis Cluster parity or mature
+large-scale production history. "Production-candidate" is the appropriate
+distributed-system claim once the final release validation suite is green.
 
 ## Documentation authority
 

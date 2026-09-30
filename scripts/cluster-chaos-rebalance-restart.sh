@@ -205,11 +205,16 @@ if ! grep -qx "resume" "$recovery"; then
 fi
 
 source_remaining="$(redis-cli --raw -p "$SOURCE_PORT" CLUSTER COUNTKEYSINSLOT "$SLOT")"
-if (( source_remaining <= 0 || source_remaining >= KEY_COUNT )); then
+if (( source_remaining <= 0 || source_remaining > KEY_COUNT )); then
   echo "unexpected recovered source key count: $source_remaining" >&2
   exit 1
 fi
-echo "recovered source still owns $source_remaining keys"
+# With batched MIGRATE, the target may persist some RESTORE-ASKING writes before
+# the source receives the complete batch reply and durably records deletions.
+# A crash in that window can legitimately restore all KEY_COUNT keys on source
+# while the target retains a partial duplicate set. RECOVER RESUME uses REPLACE
+# specifically to converge this at-least-once state without data loss.
+echo "recovered source owns $source_remaining keys; target retained $survived keys"
 
 echo "[6/7] resume migration and converge ownership"
 if ! redis-cli --raw -p "$SOURCE_PORT" CLUSTER REBALANCE RECOVER RESUME "$SLOT" >"$TMP/resume.out" 2>"$TMP/resume.err"; then

@@ -1,6 +1,6 @@
 # Cluster Production Hardening Audit
 
-Date: 2026-09-29
+Date: 2026-09-30
 
 ## Scope
 
@@ -227,26 +227,54 @@ migration.
 
 ## Known boundaries
 
-The following are still open production-hardening items:
+The planned distributed production-hardening matrix is complete. The remaining
+gate for this branch is final project-wide release validation and keeping
+operator/compatibility documentation synchronized with the implemented behavior.
 
-1. Broader chaos/soak
-   - More multi-process partition matrices;
-   - repeated kill/restart during migration/failover;
-   - long-running partition/heal soak;
-   - disk/persistence failure injection across distributed transitions.
+Completed hardening evidence now includes:
 
-2. Client-library cluster validation
-   - redis-cli cluster routing is covered;
-   - broader ioredis/node-redis/redis-py/go-redis Cluster-mode smoke remains.
+1. Multi-process chaos and recovery
+   - source and target crash during migration;
+   - repeated interrupted migration recovery;
+   - failover restart and returning-primary recovery;
+   - majority partition/heal with write fencing;
+   - AOF rewrite filesystem failure;
+   - corrupted-replica fail-closed/rebuild recovery.
 
-3. Distributed membership policy
+2. Cluster client-library validation
+   - ioredis Cluster;
+   - node-redis Cluster;
+   - redis-py Cluster;
+   - go-redis Cluster;
+   - redis-cli cluster routing.
+
+3. Distributed performance baselines
+   - direct/redirect/cache routing;
+   - reshard throughput;
+   - TLS migration transport overhead;
+   - failover recovery timing;
+   - topology/health observation cost.
+
+4. Distributed membership policy
    - fully automatic admission remains optional/deferred;
    - current membership changes are explicit and guarded.
 
-4. Performance
-   - cluster routing, resharding, TLS migration, failover recovery, and topology
-     observation need reproducible multi-node benchmark baselines before product
-     performance claims.
+Retained distributed validation now includes:
+
+- an earlier extended soak that completed 70 consecutive chaos cases before
+  exposing the MIGRATE pipelined-read timeout bug;
+- deterministic regression coverage for sliding MIGRATE read deadlines and
+  durable acknowledged partial deletions;
+- 5/5 repeated crash/recovery stress runs with 2,000 durable keys;
+- 10/10 dedicated failover-restart stress runs after removing a startup
+  stabilization race from the harness, including an alternate elected leader;
+- a final bounded soak of 6 cycles / 42 cases with zero failures and zero timeouts.
+
+The MIGRATE timeout fix refreshes the read deadline before each expected
+pipelined reply, so the timeout measures inactivity rather than imposing one
+absolute wall-clock deadline across SELECT plus a batch of RESTORE replies.
+Recovery retries transient transport failures only on the REPLACE-based recovery
+path, where retrying an ambiguously completed batch is idempotent.
 
 ## Validation
 

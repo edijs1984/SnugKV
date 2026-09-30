@@ -373,3 +373,267 @@ database, record machine/configuration details, repeat runs to measure variance,
 and distinguish engine-accounted memory, Redis `used_memory`, and process RSS.
 Load-time comparisons from these harnesses are not product latency claims because
 SnugKV is loaded in-process while Redis is reached over TCP.
+
+
+## Cluster routing benchmark
+
+`benchmarks/run-cluster-routing-bench.sh` starts a deterministic three-node
+static SnugKV cluster and measures black-box RESP2/TCP routing behavior with the
+same worker and pipeline depth across modes:
+
+- `direct`: the benchmark computes the Redis Cluster hash slot and sends each
+  operation directly to the configured owner;
+- `redirect`: every operation starts at the seed node and follows `MOVED`
+  when the seed is not the owner;
+- `cache`: each worker starts at the seed, learns slot owners from `MOVED`,
+  and caches those destinations for subsequent operations.
+
+Results are emitted as JSONL, including throughput, amortized per-operation
+batch latency percentiles, redirect counts, errors, runtime metadata, and the
+benchmark parameters. The latency samples are batch time divided by operations
+in the batch, matching the interpretation used by the existing pipelined wire
+benchmarks; they are not independent single-request latency samples.
+
+During development of this benchmark, the first clustered smoke run exposed a
+routing hot-path regression: ordinary GET/SET routing called
+`clusterStateSnapshot()` for every command, copying the complete 16,384-slot
+owner, migrating, and importing arrays before routing one key. On the same
+10,000-key / 50,000-GET / 4-worker / pipeline-256 smoke workload, direct GET
+measured about 863 ops/s before the fix and about 186,725 ops/s after routing
+was changed to read only the current slot's owner/migration/import state under
+the cluster read lock. The pre-fix measurement is therefore diagnostic evidence,
+not a performance baseline.
+
+Do not use a single smoke run as a public performance claim. Use multiple clean
+repeats and preserve the raw JSONL output.
+
+
+### Cluster routing development snapshot — 2026-09-29
+
+On the 4-logical-CPU development machine with 100,000 keys, 500,000 GETs,
+4 workers, pipeline depth 256, 256-byte values, and three repeats:
+
+| Mode | GET ops/s runs | Median ops/s | p50 range | Redirects/run |
+|---|---:|---:|---:|---:|
+| Direct owner | 184,239 / 204,092 / 201,683 | 201,683 | 17.17–18.33 us | 0 |
+| Lazy slot cache | 176,279 / 176,996 / 180,385 | 176,996 | 19.49–19.93 us | ~42.5k |
+| Forced MOVED | 139,942 / 135,403 / 137,965 | 137,965 | 25.99–26.96 us | 333,500 |
+
+On this exact benchmark, lazy per-worker slot caching was about 12.2% below
+direct-owner throughput, while deliberately forcing every non-local operation
+through a `MOVED` round trip was about 31.6% below direct-owner throughput.
+These are development measurements of this harness and machine, not general
+cluster-performance claims.
+
+The initial distributed load completed at 127,077 SET/s with zero errors and
+distributed 100,000 keys approximately evenly across the three static owners.
+
+Example:
+
+```sh
+KEYS=100000 \
+OPS=500000 \
+WORKERS=4 \
+PIPELINE=256 \
+REPEATS=3 \
+VALUE_BYTES=256 \
+bash benchmarks/run-cluster-routing-bench.sh
+```
+
+
+
+### Cluster reshard smoke snapshot — 2026-09-29
+
+A two-node single-slot smoke migration with 1,000 keys and 2,048-byte values
+completed successfully with full ownership convergence and post-migration
+`MOVED` correctness.
+
+Recorded result:
+
+- migration command duration: 5.281 s
+- convergence duration: 5.296 s
+- throughput: 188.8 keys/s
+- logical payload throughput: 386,728 B/s (~0.39 MB/s)
+
+This is a functional smoke measurement, not yet the repeated reshard baseline.
+The migration implementation currently moves keys individually through the
+cluster migration path, so larger repeated runs are needed before interpreting
+the result as a stable throughput characteristic.
+
+
+### Cluster reshard repeated baseline — 2026-09-29
+
+Three clean two-node single-slot migrations used 5,000 keys with 2,048-byte
+values (10,240,000 logical bytes per run).
+
+| Run | Convergence | Keys/s | Logical B/s |
+|---:|---:|---:|---:|
+| 1 | 19.373 s | 258.09 | 528,567 |
+| 2 | 20.193 s | 247.61 | 507,108 |
+| 3 | 19.621 s | 254.83 | 521,901 |
+
+The median convergence was approximately 19.621 s, corresponding to 254.83
+keys/s and 521,901 logical B/s (~0.522 MB/s). The three runs were close enough
+to treat this as a useful development baseline for the current single-key
+migration implementation.
+
+The migration command itself accounted for nearly the entire convergence
+interval in each run, so post-command ownership convergence overhead was small
+relative to key movement time. This points future optimization work toward the
+per-key migration path rather than topology-finalization latency.
+
+
+### Cluster failover smoke snapshot — 2026-09-29
+
+A three-node failover smoke with 200 replicated keys and `fsync=always`
+completed successfully after a hard primary crash.
+
+Recorded intervals from successful SIGKILL of the primary:
+
+- elected leader: 594.98 ms
+- first successful write on promoted leader: 608.34 ms
+- cluster ownership convergence on leader and follower views: 645.64 ms
+- election-to-writable delay: 13.36 ms
+- writable-to-ownership-converged delay: 37.30 ms
+
+This is a functional smoke result, not yet the repeated failover baseline.
+
+
+### Cluster failover repeated baseline — 2026-09-29
+
+Three clean three-node failover runs used 200 replicated keys with `fsync=always`
+and a hard primary crash.
+
+| Run | Election | Writable | Ownership converged |
+|---:|---:|---:|---:|
+| 1 | 569.50 ms | 583.09 ms | 622.18 ms |
+| 2 | 569.34 ms | 582.42 ms | 623.24 ms |
+| 3 | 624.01 ms | 634.78 ms | 671.95 ms |
+
+Median intervals from successful primary SIGKILL:
+
+- elected leader: 569.50 ms
+- first successful write: 583.09 ms
+- cluster ownership convergence: 623.24 ms
+- election-to-writable delay: 13.08 ms
+- writable-to-ownership-converged delay: 39.09 ms
+
+All three runs elected the same configured-priority replica and preserved the
+replicated dataset. These are development measurements for the current
+400 ms failover timeout and 50 ms maintenance cadence, not general SLA claims.
+
+
+### Cluster topology observation smoke snapshot — 2026-09-29
+
+A persistent-connection smoke benchmark against a healthy three-node cluster
+measured 20 synchronous observations per command.
+
+| Command | Ops/s | p50 | p95 | p99 |
+|---|---:|---:|---:|---:|
+| `CLUSTER SLOTS` | 364.94 | 1.77 ms | 6.49 ms | 6.49 ms |
+| `CLUSTER NODES` | 265.70 | 2.71 ms | 7.37 ms | 7.37 ms |
+| `CLUSTER SHARDS` | 137.19 | 5.93 ms | 14.96 ms | 14.96 ms |
+| `CLUSTER INFO` | 135.41 | 6.85 ms | 9.51 ms | 9.51 ms |
+| `CLUSTER HEALTH` | 159.92 | 5.90 ms | 7.94 ms | 7.94 ms |
+
+The local topology-rendering commands (`SLOTS`, `NODES`) were materially
+cheaper than the commands that perform shard/failover observation
+(`SHARDS`, `INFO`, `HEALTH`). This is a smoke result only; use repeated
+runs before treating it as a stable baseline.
+
+
+### Cluster topology observation repeated baseline — 2026-09-29
+
+Three repeated 100-operation runs over one persistent RESP2 connection produced
+the following median throughput and median p50 latency:
+
+| Command | Median ops/s | Median p50 |
+|---|---:|---:|
+| `CLUSTER SLOTS` | 473.90 | 1.73 ms |
+| `CLUSTER NODES` | 282.39 | 2.91 ms |
+| `CLUSTER SHARDS` | 152.69 | 6.18 ms |
+| `CLUSTER INFO` | 118.44 | 6.37 ms |
+| `CLUSTER HEALTH` | 159.97 | 5.97 ms |
+
+The local-rendering commands remained consistently cheaper than peer-observing
+commands. The peer-observing commands also showed intermittent long-tail events
+on this development machine: one `CLUSTER SHARDS` run reached ~209 ms max,
+`CLUSTER INFO` reached ~570 ms max, and `CLUSTER HEALTH` reached ~207 ms
+max, while their p50 values remained near 6 ms. Treat these as useful
+observability-path tail-latency evidence, not as data-path latency.
+
+
+### Cluster migration batching optimization — 2026-09-29
+
+The first TLS transport smoke exposed an implementation artifact rather than
+normal TLS encryption cost. The rebalance loop issued one internal `MIGRATE`
+per key, and each internal migration opened and closed a new TCP/TLS
+connection. With 500 keys this meant roughly 500 TLS handshakes.
+
+The rebalance path now uses multi-key `MIGRATE ... KEYS ...` batches of up to
+64 slot keys per connection. On the same 500-key, 2,048-byte smoke:
+
+| Transport | Before batching | After batching | Change |
+|---|---:|---:|---:|
+| Plain TCP | 214.58 keys/s | 338.17 keys/s | +57.6% |
+| TLS via local forwarding proxy | 21.63 keys/s | 292.68 keys/s | ~13.5x |
+
+After batching, TLS throughput was about 13.5% below the plain transport in
+this smoke instead of about 90% below. The pre-batching TLS number should be
+treated as diagnostic evidence of handshake-per-key behavior, not as a TLS
+transport baseline.
+
+Because batching changes the migration implementation itself, earlier repeated
+reshard throughput measurements are no longer the current baseline and must be
+re-run before final benchmark claims are recorded.
+
+
+### Cluster reshard repeated baseline after batching — 2026-09-29
+
+After changing the rebalance path to use multi-key `MIGRATE ... KEYS ...`
+batches of up to 64 keys per connection, the 5,000-key / 2,048-byte
+single-slot reshard benchmark was repeated three times.
+
+| Run | Convergence | Keys/s | Logical B/s |
+|---:|---:|---:|---:|
+| 1 | 12.954 s | 385.99 | 790,500 |
+| 2 | 11.429 s | 437.48 | 895,962 |
+| 3 | 11.572 s | 432.09 | 884,923 |
+
+Median:
+- convergence: 11.572 s
+- throughput: 432.09 keys/s
+- logical payload throughput: 884,923 B/s (~0.885 MB/s)
+
+The prior pre-batching repeated median was 254.83 keys/s, so the current
+batched migration path improves median reshard throughput by about 69.6%.
+The pre-batching repeated reshard numbers should therefore be treated as
+historical diagnostic data rather than the current baseline.
+
+### Cluster TLS migration transport repeated baseline — 2026-09-29
+
+The same batched 5,000-key / 2,048-byte migration path was measured three
+times over direct TCP and through a local TLS 1.2+ forwarding proxy.
+
+| Transport | Run | Convergence | Keys/s | Logical B/s |
+|---|---:|---:|---:|---:|
+| Plain | 1 | 11.891 s | 420.47 | 861,121 |
+| Plain | 2 | 11.605 s | 430.86 | 882,402 |
+| Plain | 3 | 11.139 s | 448.87 | 919,293 |
+| TLS | 1 | 13.397 s | 373.21 | 764,324 |
+| TLS | 2 | 11.749 s | 425.55 | 871,535 |
+| TLS | 3 | 12.271 s | 407.46 | 834,470 |
+
+Median throughput:
+- plain TCP: 430.86 keys/s
+- TLS transport: 407.46 keys/s
+
+Median convergence:
+- plain TCP: 11.605 s
+- TLS transport: 12.271 s
+
+On this development machine, the repeated median TLS throughput was about
+5.4% below plain TCP. This is the current transport comparison after removing
+the earlier handshake-per-key artifact. SnugKV still provides outbound
+internal TLS rather than a native inbound TLS listener, so the TLS side of this
+benchmark uses a local forwarding proxy and should be interpreted accordingly.

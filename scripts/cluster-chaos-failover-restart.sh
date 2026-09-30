@@ -126,36 +126,60 @@ wait_ready "$P0"
 wait_ready "$P1"
 wait_ready "$P2"
 
-echo "[1/9] attach two replicas to primary"
-cli "$P1" REPLICAOF 127.0.0.1 "$P0" | grep -qx OK
-cli "$P2" REPLICAOF 127.0.0.1 "$P0" | grep -qx OK
+attach_replica() {
+  local replica_port="$1"
+  local label="$2"
+  local reply=""
 
-for _ in $(seq 1 200); do
+  for _ in $(seq 1 100); do
+    reply="$(cli "$replica_port" REPLICAOF 127.0.0.1 "$P0" 2>&1 || true)"
+    if [[ "$reply" == "OK" ]]; then
+      return 0
+    fi
+    sleep 0.05
+  done
+
+  echo "$label failed to accept REPLICAOF after retries: $reply" >&2
+  echo "--- primary ROLE ---" >&2
+  cli "$P0" ROLE >&2 || true
+  echo "--- $label ROLE ---" >&2
+  cli "$replica_port" ROLE >&2 || true
+  echo "--- primary failover health ---" >&2
+  cli "$P0" SNUG.FAILOVER HEALTH >&2 || true
+  echo "--- $label failover health ---" >&2
+  cli "$replica_port" SNUG.FAILOVER HEALTH >&2 || true
+  echo "--- primary log tail ---" >&2
+  tail -n 120 "$TMP/n0.log" >&2 || true
+  if [[ "$replica_port" == "$P1" ]]; then
+    echo "--- n1 log tail ---" >&2
+    tail -n 120 "$TMP/n1.log" >&2 || true
+  else
+    echo "--- n2 log tail ---" >&2
+    tail -n 120 "$TMP/n2.log" >&2 || true
+  fi
+  return 1
+}
+
+echo "[1/9] attach two replicas to primary"
+attach_replica "$P1" n1
+attach_replica "$P2" n2
+
+# Full sync completion and master_link_status=up can be observed briefly
+# before a replica settles into steady-state streaming on a busy machine.
+# Do not perform a one-shot assertion here: require both replicas to remain
+# slaves with an up link for a consecutive stabilization window instead.
+stable=0
+r1=""
+r2=""
+for _ in $(seq 1 400); do
   r1="$(cli "$P1" INFO replication 2>/dev/null || true)"
   r2="$(cli "$P2" INFO replication 2>/dev/null || true)"
   if grep -q 'role:slave' <<<"$r1" &&
      grep -q 'master_link_status:up' <<<"$r1" &&
      grep -q 'role:slave' <<<"$r2" &&
      grep -q 'master_link_status:up' <<<"$r2"; then
-    break
-  fi
-  sleep 0.05
-done
-grep -q 'master_link_status:up' <<<"$(cli "$P1" INFO replication)"
-grep -q 'master_link_status:up' <<<"$(cli "$P2" INFO replication)"
-
-# Full sync completion and master_link_status=up can be observed immediately
-# before the replica has settled into steady-state streaming on a busy machine.
-# Require both links to remain up for a short consecutive window before the
-# fsync=always seed burst.
-stable=0
-for _ in $(seq 1 100); do
-  r1="$(cli "$P1" INFO replication 2>/dev/null || true)"
-  r2="$(cli "$P2" INFO replication 2>/dev/null || true)"
-  if grep -q 'master_link_status:up' <<<"$r1" &&
-     grep -q 'master_link_status:up' <<<"$r2"; then
     stable=$((stable + 1))
-    if (( stable >= 5 )); then
+    if (( stable >= 10 )); then
       break
     fi
   else
@@ -163,10 +187,26 @@ for _ in $(seq 1 100); do
   fi
   sleep 0.05
 done
-if (( stable < 5 )); then
+if (( stable < 10 )); then
   echo "replication links did not stabilize before seed" >&2
-  cli "$P1" INFO replication >&2 || true
-  cli "$P2" INFO replication >&2 || true
+  echo "--- replica n1 INFO replication ---" >&2
+  printf '%s\n' "$r1" >&2
+  echo "--- replica n2 INFO replication ---" >&2
+  printf '%s\n' "$r2" >&2
+  echo "--- primary ROLE ---" >&2
+  cli "$P0" ROLE >&2 || true
+  echo "--- primary failover health ---" >&2
+  cli "$P0" SNUG.FAILOVER HEALTH >&2 || true
+  echo "--- n1 failover health ---" >&2
+  cli "$P1" SNUG.FAILOVER HEALTH >&2 || true
+  echo "--- n2 failover health ---" >&2
+  cli "$P2" SNUG.FAILOVER HEALTH >&2 || true
+  echo "--- primary log tail ---" >&2
+  tail -n 120 "$TMP/n0.log" >&2 || true
+  echo "--- n1 log tail ---" >&2
+  tail -n 120 "$TMP/n1.log" >&2 || true
+  echo "--- n2 log tail ---" >&2
+  tail -n 120 "$TMP/n2.log" >&2 || true
   exit 1
 fi
 
@@ -176,7 +216,14 @@ for _ in $(seq 1 200); do
   [[ "$out" == "OK" ]] && break
   sleep 0.05
 done
-[[ "$(cli "$P0" GET failover:lease-ready)" == "yes" ]]
+lease_ready_value="$(cli "$P0" GET failover:lease-ready 2>/dev/null || true)"
+if [[ "$lease_ready_value" != "yes" ]]; then
+  echo "primary never became durably writable before seed: value=$lease_ready_value" >&2
+  cli "$P0" SNUG.FAILOVER HEALTH >&2 || true
+  cli "$P0" ROLE >&2 || true
+  tail -n 120 "$TMP/n0.log" >&2 || true
+  exit 1
+fi
 
 seed="$TMP/seed.commands"
 : >"$seed"
@@ -293,7 +340,14 @@ for _ in $(seq 1 100); do
   [[ "$got" == "leader-write" ]] && break
   sleep 0.05
 done
-[[ "$got" == "leader-write" ]]
+if [[ "$got" != "leader-write" ]]; then
+  echo "redirected follower read did not observe leader write: got=$got" >&2
+  echo "--- leader health ---" >&2
+  cli "$leader_port" SNUG.FAILOVER HEALTH >&2 || true
+  echo "--- follower health ---" >&2
+  cli "$follower_port" SNUG.FAILOVER HEALTH >&2 || true
+  exit 1
+fi
 
 echo "[6/9] verify cluster ownership converged to elected leader"
 ownership_converged=0
@@ -361,7 +415,12 @@ if [[ "$old_role" != "slave" ]]; then
   cli "$P0" CLUSTER NODES >&2 || true
   exit 1
 fi
-grep -F "$leader_addr@0" <<<"$old_nodes" | grep -q '0-16383'
+if ! grep -F "$leader_addr@0" <<<"$old_nodes" | grep -q '0-16383'; then
+  echo "restarted old primary did not learn leader slot ownership" >&2
+  printf '%s\n' "$old_nodes" >&2
+  cli "$P0" SNUG.FAILOVER HEALTH >&2 || true
+  exit 1
+fi
 
 old_write="$(cli "$P0" SET failover:stale-primary forbidden 2>&1 || true)"
 if [[ "$old_write" == "OK" ]]; then

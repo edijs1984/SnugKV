@@ -174,9 +174,15 @@ echo "first interruption: target had $first_partial/$KEY_COUNT keys"
 stop_node_hard target
 wait "$apply_pid" 2>/dev/null || true
 
+# Batched MIGRATE creates an at-least-once crash window: the target can have
+# restored part of a batch while the source has not yet received all replies
+# and durably recorded deletions. Intermediate recovery counts may therefore
+# range all the way from zero/full retention to partial progress. The strict
+# correctness requirement is final convergence after RECOVER RESUME.
+
 source_after_target_crash="$(redis-cli --raw -p "$SOURCE_PORT" CLUSTER COUNTKEYSINSLOT "$SLOT" 2>/dev/null || true)"
 if [[ ! "$source_after_target_crash" =~ ^[0-9]+$ ]] ||
-   (( source_after_target_crash <= 0 || source_after_target_crash >= KEY_COUNT )); then
+   (( source_after_target_crash <= 0 || source_after_target_crash > KEY_COUNT )); then
   echo "unexpected source count after target crash: $source_after_target_crash" >&2
   dump_state
   exit 1
@@ -188,7 +194,7 @@ wait_ready "$TARGET_PORT"
 
 target_recovered="$(redis-cli --raw -p "$TARGET_PORT" DBSIZE)"
 if [[ ! "$target_recovered" =~ ^[0-9]+$ ]] ||
-   (( target_recovered <= 0 || target_recovered >= KEY_COUNT )); then
+   (( target_recovered < 0 || target_recovered > KEY_COUNT )); then
   echo "unexpected target recovered count: $target_recovered" >&2
   dump_state
   exit 1
@@ -235,7 +241,7 @@ wait "$resume_pid" 2>/dev/null || true
 
 target_after_source_crash="$(redis-cli --raw -p "$TARGET_PORT" DBSIZE)"
 if [[ ! "$target_after_source_crash" =~ ^[0-9]+$ ]] ||
-   (( target_after_source_crash <= target_recovered || target_after_source_crash >= KEY_COUNT )); then
+   (( target_after_source_crash <= target_recovered || target_after_source_crash > KEY_COUNT )); then
   echo "unexpected target count after source crash: $target_after_source_crash" >&2
   dump_state
   exit 1
@@ -247,7 +253,7 @@ wait_ready "$SOURCE_PORT"
 
 source_recovered="$(redis-cli --raw -p "$SOURCE_PORT" CLUSTER COUNTKEYSINSLOT "$SLOT" 2>/dev/null || true)"
 if [[ ! "$source_recovered" =~ ^[0-9]+$ ]] ||
-   (( source_recovered <= 0 || source_recovered >= KEY_COUNT )); then
+   (( source_recovered <= 0 || source_recovered > KEY_COUNT )); then
   echo "unexpected source recovered count after second crash: $source_recovered" >&2
   dump_state
   exit 1

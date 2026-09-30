@@ -81,6 +81,78 @@ func startMigrateTarget(t *testing.T, replies []string, got chan<- [][][]byte) (
 	return "127.0.0.1", strconv.Itoa(addr.Port)
 }
 
+
+func startDelayedMigrateTarget(t *testing.T, replies []string, delay time.Duration, got chan<- [][][]byte) (host, port string) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	addr := ln.Addr().(*net.TCPAddr)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		r := bufio.NewReader(conn)
+		commands := make([][][]byte, 0, len(replies))
+		for _, reply := range replies {
+			command, err := readTestRESPCommand(r)
+			if err != nil {
+				return
+			}
+			commands = append(commands, command)
+			time.Sleep(delay)
+			_, _ = conn.Write([]byte(reply))
+		}
+		got <- commands
+	}()
+
+	return "127.0.0.1", strconv.Itoa(addr.Port)
+}
+
+
+func startMigrateTargetWithReplyDelays(t *testing.T, replies []string, delays []time.Duration, got chan<- [][][]byte) (host, port string) {
+	t.Helper()
+	if len(replies) != len(delays) {
+		t.Fatalf("replies=%d delays=%d", len(replies), len(delays))
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	addr := ln.Addr().(*net.TCPAddr)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		r := bufio.NewReader(conn)
+		commands := make([][][]byte, 0, len(replies))
+		for i, reply := range replies {
+			command, err := readTestRESPCommand(r)
+			if err != nil {
+				return
+			}
+			commands = append(commands, command)
+			time.Sleep(delays[i])
+			if _, err := conn.Write([]byte(reply)); err != nil {
+				return
+			}
+		}
+		got <- commands
+	}()
+
+	return "127.0.0.1", strconv.Itoa(addr.Port)
+}
+
+
 func TestParseMigrateOptions(t *testing.T) {
 	args := [][]byte{
 		[]byte("MIGRATE"), []byte("127.0.0.1"), []byte("6379"), []byte(""),
@@ -111,6 +183,58 @@ func TestMigrateKeysRequiresEmptyKeyArgument(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+
+func TestMigrateReadTimeoutRefreshesWhileBatchMakesProgress(t *testing.T) {
+	got := make(chan [][][]byte, 1)
+	host, port := startDelayedMigrateTarget(t,
+		[]string{
+			"+OK\r\n", // SELECT
+			"+OK\r\n", // RESTORE a
+			"+OK\r\n", // RESTORE b
+		},
+		300*time.Millisecond,
+		got,
+	)
+
+	s := New(engine.New())
+	if _, err := s.Execute([][]byte{[]byte("SET"), []byte("a"), []byte("1")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Execute([][]byte{[]byte("SET"), []byte("b"), []byte("2")}); err != nil {
+		t.Fatal(err)
+	}
+
+	started := time.Now()
+	response, err := s.Execute([][]byte{
+		[]byte("MIGRATE"), []byte(host), []byte(port), []byte(""),
+		[]byte("0"), []byte("500"), []byte("KEYS"), []byte("a"), []byte("b"),
+	})
+	elapsed := time.Since(started)
+
+	if err != nil || string(response) != "+OK\r\n" {
+		t.Fatalf("MIGRATE response=%q err=%v elapsed=%v", response, err, elapsed)
+	}
+	if elapsed <= 500*time.Millisecond {
+		t.Fatalf("test did not exceed one timeout window: elapsed=%v", elapsed)
+	}
+	if _, found := s.store.Get("a"); found {
+		t.Fatal("key a was not deleted after acknowledged migration")
+	}
+	if _, found := s.store.Get("b"); found {
+		t.Fatal("key b was not deleted after acknowledged migration")
+	}
+
+	select {
+	case commands := <-got:
+		if len(commands) != 3 {
+			t.Fatalf("commands=%d want=3", len(commands))
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("target did not receive complete MIGRATE pipeline")
+	}
+}
+
 
 func TestMigratePartialTargetErrorDeletesAcknowledgedKeys(t *testing.T) {
 	got := make(chan [][][]byte, 1)
@@ -164,6 +288,68 @@ func TestMigratePartialTargetErrorDeletesAcknowledgedKeys(t *testing.T) {
 		t.Fatal("target did not receive MIGRATE pipeline")
 	}
 }
+
+
+func TestMigrateReadTimeoutPersistsAcknowledgedPartialDeletion(t *testing.T) {
+	got := make(chan [][][]byte, 1)
+	host, port := startMigrateTargetWithReplyDelays(t,
+		[]string{
+			"+OK\r\n", // SELECT
+			"+OK\r\n", // RESTORE a
+			"+OK\r\n", // RESTORE b, intentionally too late
+		},
+		[]time.Duration{
+			0,
+			0,
+			700 * time.Millisecond,
+		},
+		got,
+	)
+
+	s := New(engine.New())
+	journal := &transactionCaptureJournal{}
+	s.SetJournal(journal)
+
+	if _, err := s.Execute([][]byte{[]byte("SET"), []byte("a"), []byte("1")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Execute([][]byte{[]byte("SET"), []byte("b"), []byte("2")}); err != nil {
+		t.Fatal(err)
+	}
+	journal.frames = nil
+
+	response, err := s.Execute([][]byte{
+		[]byte("MIGRATE"), []byte(host), []byte(port), []byte(""),
+		[]byte("0"), []byte("300"), []byte("KEYS"), []byte("a"), []byte("b"),
+	})
+	if err == nil || err.Error() != "IOERR error or timeout reading to target instance" {
+		t.Fatalf("MIGRATE response=%q err=%v", response, err)
+	}
+
+	if _, found := s.store.Get("a"); found {
+		t.Fatal("acknowledged key a was not deleted")
+	}
+	if value, found := s.store.Get("b"); !found || string(value) != "2" {
+		t.Fatalf("unacknowledged key b value=%q found=%v", value, found)
+	}
+
+	if len(journal.frames) != 1 {
+		t.Fatalf("journal frames=%d want=1", len(journal.frames))
+	}
+	deleted := map[string]bool{}
+	for _, record := range journal.frames[0] {
+		if record.Deleted {
+			deleted[string(record.Key)] = true
+		}
+	}
+	if !deleted["a"] {
+		t.Fatalf("acknowledged key a deletion not journaled: %#v", journal.frames[0])
+	}
+	if deleted["b"] {
+		t.Fatalf("unacknowledged key b deletion was journaled: %#v", journal.frames[0])
+	}
+}
+
 
 func TestMigrateCopyPreservesSource(t *testing.T) {
 	got := make(chan [][][]byte, 1)

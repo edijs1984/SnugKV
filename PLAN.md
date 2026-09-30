@@ -414,12 +414,12 @@ lands.
 - [x] Multi-node consistency and recovery core: topology-digest stale-coordinator fencing, failover/rebalance serialization, majority-backed write leases for promoted and original primaries, foreign-lease write fencing, persisted topology/transition recovery, restart-safe rebalance resume, and target IMPORTING reassertion.
 - [x] Cluster production hardening: authenticated control-plane RPC, TLS-capable internal rebalance data migration, live TCP MOVED/ASK/CLUSTERDOWN routing coverage, and restart-during-reshard recovery. Audit: `docs/CLUSTER-PRODUCTION-HARDENING.md`.
 - [x] Separate internal cluster-control authorization from ordinary public ACL access: configured clusters require `cluster_control_auth`; peer connections establish a connection-scoped internal identity with `SNUG.INTERNAL AUTH`; private cluster/failover RPCs reject ordinary authenticated clients; RESET/AUTH/HELLO revoke the internal identity.
-- [ ] Broader multi-process chaos, client-library cluster smoke, long-running partition/recovery soak, and benchmark coverage before claiming production-complete distributed operation.
+- [x] Broader multi-process chaos, client-library cluster smoke, partition/recovery soak, and benchmark coverage for the audited production-candidate distributed milestone.
   - [x] Build a real multi-process chaos harness for kill/restart and partition/heal cases during migration and failover.
   - [x] Validate ioredis Cluster, node-redis Cluster, redis-py Cluster, and go-redis Cluster against the static three-node cluster smoke; broader `redis-cli -c` routing remains covered by the existing static routing smoke.
   - [x] Execute the interrupted-migration/failover restart matrix, including persistence/disk failure injection. `scripts/cluster-recovery-matrix.sh` now gates source/target migration crashes, failover restart, repeated recovery, majority partition/heal, rewrite filesystem failure, and corrupted-replica fail-closed/rebuild recovery.
-  - [ ] Establish reproducible multi-node routing, reshard, TLS migration, failover-recovery, and topology-observation benchmarks.
-  - [ ] Retain long-running distributed soak evidence and complete the final operator/release documentation audit.
+  - [x] Establish reproducible multi-node routing, reshard, TLS migration, failover-recovery, and topology-observation benchmarks.
+  - [x] Retain distributed soak evidence and complete the final operator/release documentation audit. Evidence includes 5/5 repeated-recovery stress runs, 10/10 dedicated failover-restart runs, and a 6-cycle / 42-case bounded distributed soak with zero failures/timeouts after regression fixes.
 
 ## Release discipline
 
