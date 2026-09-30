@@ -187,9 +187,9 @@ internal migration has separately guarded semantics. The documented DB0 COPY sur
 been manually differentially tested against Redis for return values, errors, TTL,
 native type preservation, REPLACE, and deep-copy independence.
 
-Modern GEO commands and the legacy `GEORADIUS`, `GEORADIUSBYMEMBER`,
-`GEORADIUS_RO`, and `GEORADIUSBYMEMBER_RO` aliases are implemented for the
-audited Redis 8.2 surface.
+Modern GEO commands plus legacy `GEORADIUS` and `GEORADIUSBYMEMBER` are
+implemented for the audited Redis 8.2 surface. `GEORADIUS_RO` and
+`GEORADIUSBYMEMBER_RO` remain deferred compatibility aliases.
 `GEOSEARCH` currently scans/decodes the packed source ZSET rather than maintaining
 a permanent secondary geospatial index, making searches O(source cardinality).
 This is a deliberate memory/performance tradeoff pending large-GEO benchmarks.
