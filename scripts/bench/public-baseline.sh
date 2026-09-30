@@ -12,6 +12,7 @@ WORKERS="${WORKERS:-8}"
 PIPELINE="${PIPELINE:-256}"
 RUNS="${RUNS:-3}"
 SETTLE_MS="${SETTLE_MS:-10000}"
+SNUG_CONVERGE_MS="${SNUG_CONVERGE_MS:-120000}"
 PROFILES="${PROFILES:-counter uuid cache-json text random}"
 ROOT_OUT="${ROOT_OUT:-benchmark-results/public-baseline-$(date +%Y%m%d-%H%M%S)}"
 SNUG_IMAGE="${SNUG_IMAGE:-snugkv-bench:local}"
@@ -29,7 +30,7 @@ fi
 
 mkdir -p "$ROOT_OUT"
 
-python3 - "$ROOT_OUT/environment.json" "$KEYS" "$GET_OPS" "$MIXED_OPS" "$TTL_OPS" "$WORKERS" "$PIPELINE" "$RUNS" "$SETTLE_MS" "$PROFILES" <<'PY'
+python3 - "$ROOT_OUT/environment.json" "$KEYS" "$GET_OPS" "$MIXED_OPS" "$TTL_OPS" "$WORKERS" "$PIPELINE" "$RUNS" "$SETTLE_MS" "$SNUG_CONVERGE_MS" "$PROFILES" <<'PY'
 import json, os, platform, subprocess, sys
 
 def cmd(*args):
@@ -61,7 +62,8 @@ out = {
         "pipeline": int(sys.argv[7]),
         "runs": int(sys.argv[8]),
         "settle_ms": int(sys.argv[9]),
-        "profiles": sys.argv[10].split(),
+        "snug_converge_ms": int(sys.argv[10]),
+        "profiles": sys.argv[11].split(),
         "servers": ["redis", "snug-opt"],
         "workloads": ["load", "get", "mixed", "ttl"],
         "redis_image": "redis:8.2"
@@ -110,6 +112,7 @@ for profile in $PROFILES; do
   PIPELINE="$PIPELINE" \
   RUNS="$RUNS" \
   SETTLE_MS="$SETTLE_MS" \
+  SNUG_CONVERGE_MS="$SNUG_CONVERGE_MS" \
   SERVERS="redis snug-opt" \
   WORKLOADS="load get mixed ttl" \
   ROOT_OUT="$ROOT_OUT/$profile" \
@@ -173,8 +176,8 @@ md += [
     "",
     "## Memory after load",
     "",
-    "| Profile | Redis B/key | SnugKV B/key | Snug vs Redis |",
-    "|---|---:|---:|---:|",
+    "| Profile | Redis B/key | SnugKV B/key | Snug vs Redis | Redis container MiB | Snug container MiB | Snug converged |",
+    "|---|---:|---:|---:|---:|---:|---:|",
 ]
 
 for profile in profiles:
@@ -185,7 +188,10 @@ for profile in profiles:
     rb = rr.get("bytes_per_key_delta_median", 0)
     sb = sr.get("bytes_per_key_delta_median", 0)
     pct = ((sb / rb) - 1.0) * 100.0 if rb else 0
-    md.append(f"| {profile} | {rb:.2f} | {sb:.2f} | {pct:+.1f}% |")
+    rmb = rr.get("container_memory_after_median", 0) / (1024*1024)
+    smb = sr.get("container_memory_after_median", 0) / (1024*1024)
+    converged = "yes" if sr.get("converged_all") else "no"
+    md.append(f"| {profile} | {rb:.2f} | {sb:.2f} | {pct:+.1f}% | {rmb:.1f} | {smb:.1f} | {converged} |")
 
 md += [
     "",
