@@ -1442,13 +1442,27 @@ func (s *Server) resumeRebalanceSlot(state clusterStateSnapshot, slot int) (int,
 		if len(keys) == 0 {
 			break
 		}
-		result, err := s.executeClusterMigrateDurableLocked(
-			s.rebalanceRecoveryMigrateKeysArgs(host, port, keys),
-		)
+
+		beforeRemaining := int(s.store.Exists(keys))
+		var result []byte
+		var migrateErr error
+		for attempt := 0; attempt < 3; attempt++ {
+			result, migrateErr = s.executeClusterMigrateDurableLocked(
+				s.rebalanceRecoveryMigrateKeysArgs(host, port, keys),
+			)
+			if migrateErr == nil || !isMigrateTransportError(migrateErr) {
+				break
+			}
+			// Recovery uses REPLACE, so retrying an ambiguous transport failure
+			// is idempotent even when the target committed part of the batch.
+			// Source-side acknowledged deletions were already journaled by the
+			// durable MIGRATE wrapper before the error was returned.
+		}
+
 		remaining := int(s.store.Exists(keys))
-		moved += len(keys) - remaining
-		if err != nil {
-			return moved, err
+		moved += beforeRemaining - remaining
+		if migrateErr != nil {
+			return moved, migrateErr
 		}
 		if string(result) != "+OK\r\n" && string(result) != "+NOKEY\r\n" {
 			return moved, fmt.Errorf("ERR unexpected MIGRATE result %q", result)
