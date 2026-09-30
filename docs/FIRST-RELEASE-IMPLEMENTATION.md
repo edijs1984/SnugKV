@@ -361,7 +361,22 @@ Output:
 
 - `docs/release/CLUSTER-ONBOARDING-AUDIT.md`
 
-Status: **TODO**
+Status: **COMPLETE**
+
+Implementation branch: `release/c1-cluster-onboarding-audit`
+
+Audit result:
+
+- routing-only clusters require the full static slot map on every node;
+- three-node HA currently requires explicit peer/quorum/group configuration plus
+  two post-start `REPLICAOF` attachments;
+- node IDs do not require manual copying;
+- restart/failover recovery is automatic once configured;
+- `CLUSTER JOIN` and discovery seeds do not remove zero-state topology setup.
+
+C1 recommendation: choose **C2 Option 2 — bounded bootstrap/admission**. The
+needed work is a thin orchestration layer over existing hardened primitives, not
+new consensus or service-discovery infrastructure.
 
 ---
 
@@ -384,7 +399,11 @@ topology easy to bootstrap.
 
 Do not build a general service-discovery platform.
 
-Status: **BLOCKED ON C1**
+Status: **READY**
+
+C1 recommends Option 2. Bound the implementation to the documented small
+first-release topology and generate/apply the existing configuration,
+replication attachment, and health verification steps automatically.
 
 ---
 
