@@ -1,0 +1,4026 @@
+{
+  "source_counts": {
+    "redis_entries": 589,
+    "snug_entries": 410,
+    "shared": 400,
+    "redis_only": 189,
+    "snug_only": 10
+  },
+  "classification_counts": {
+    "IMPLEMENTED": 49,
+    "INTENTIONALLY_UNSUPPORTED": 10,
+    "CANDIDATE_GAP": 58,
+    "IRRELEVANT": 72
+  },
+  "entries": [
+    {
+      "name": "ACL|CAT",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "ACL|CAT",
+        "arity": -2,
+        "flags": [
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "ACL|DELUSER",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "ACL|DELUSER",
+        "arity": -3,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": [
+          "request_policy:all_nodes",
+          "response_policy:all_succeeded"
+        ]
+      }
+    },
+    {
+      "name": "ACL|DRYRUN",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "ACL|DRYRUN",
+        "arity": -4,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "ACL|GENPASS",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "ACL|GENPASS",
+        "arity": -2,
+        "flags": [
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "ACL|GETUSER",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "ACL|GETUSER",
+        "arity": 3,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "ACL|HELP",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "ACL|HELP",
+        "arity": 2,
+        "flags": [
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "ACL|LIST",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "ACL|LIST",
+        "arity": 2,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "ACL|LOAD",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "ACL|LOAD",
+        "arity": 2,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "ACL|LOG",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "ACL|LOG",
+        "arity": -2,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "ACL|SAVE",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "ACL|SAVE",
+        "arity": 2,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": [
+          "request_policy:all_nodes",
+          "response_policy:all_succeeded"
+        ]
+      }
+    },
+    {
+      "name": "ACL|SETUSER",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "ACL|SETUSER",
+        "arity": -3,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": [
+          "request_policy:all_nodes",
+          "response_policy:all_succeeded"
+        ]
+      }
+    },
+    {
+      "name": "ACL|USERS",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "ACL|USERS",
+        "arity": 2,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "ACL|WHOAMI",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "ACL|WHOAMI",
+        "arity": 2,
+        "flags": [
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "BF.DEBUG",
+      "classification": "IRRELEVANT",
+      "reason": "Debug/internal/module-coordination surface does not define a first-release SnugKV workflow.",
+      "redis": {
+        "name": "BF.DEBUG",
+        "arity": -1,
+        "flags": [
+          "readonly",
+          "module",
+          "fast"
+        ],
+        "first_key": 1,
+        "last_key": 1,
+        "step": 1,
+        "acl_categories": [
+          "@read",
+          "@bloom"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "CF.COMPACT",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "CF.COMPACT",
+        "arity": -1,
+        "flags": [
+          "readonly",
+          "module",
+          "fast"
+        ],
+        "first_key": 1,
+        "last_key": 1,
+        "step": 1,
+        "acl_categories": [
+          "@read",
+          "@cuckoo"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "CF.DEBUG",
+      "classification": "IRRELEVANT",
+      "reason": "Debug/internal/module-coordination surface does not define a first-release SnugKV workflow.",
+      "redis": {
+        "name": "CF.DEBUG",
+        "arity": -1,
+        "flags": [
+          "readonly",
+          "module",
+          "fast"
+        ],
+        "first_key": 1,
+        "last_key": 1,
+        "step": 1,
+        "acl_categories": [
+          "@read",
+          "@cuckoo"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "CLIENT|NO-EVICT",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "CLIENT|NO-EVICT",
+        "arity": 3,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous",
+          "@connection"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "CLIENT|NO-TOUCH",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "CLIENT|NO-TOUCH",
+        "arity": 3,
+        "flags": [
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow",
+          "@connection"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "CLIENT|PAUSE",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "CLIENT|PAUSE",
+        "arity": -3,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous",
+          "@connection"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "CLIENT|REPLY",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "CLIENT|REPLY",
+        "arity": 3,
+        "flags": [
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow",
+          "@connection"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "CLIENT|TRACKINGINFO",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "CLIENT|TRACKINGINFO",
+        "arity": 2,
+        "flags": [
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow",
+          "@connection"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "CLIENT|UNPAUSE",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "CLIENT|UNPAUSE",
+        "arity": 2,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous",
+          "@connection"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "CLUSTER|ADDSLOTS",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "CLUSTER|ADDSLOTS",
+        "arity": -3,
+        "flags": [
+          "admin",
+          "stale",
+          "no_async_loading"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "CLUSTER|ADDSLOTSRANGE",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "CLUSTER|ADDSLOTSRANGE",
+        "arity": -4,
+        "flags": [
+          "admin",
+          "stale",
+          "no_async_loading"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "CLUSTER|BUMPEPOCH",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "CLUSTER|BUMPEPOCH",
+        "arity": 2,
+        "flags": [
+          "admin",
+          "stale",
+          "no_async_loading"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": [
+          "nondeterministic_output"
+        ]
+      }
+    },
+    {
+      "name": "CLUSTER|COUNT-FAILURE-REPORTS",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "CLUSTER|COUNT-FAILURE-REPORTS",
+        "arity": 3,
+        "flags": [
+          "admin",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": [
+          "nondeterministic_output"
+        ]
+      }
+    },
+    {
+      "name": "CLUSTER|COUNTKEYSINSLOT",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "CLUSTER|COUNTKEYSINSLOT",
+        "arity": 3,
+        "flags": [
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "CLUSTER|DELSLOTS",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "CLUSTER|DELSLOTS",
+        "arity": -3,
+        "flags": [
+          "admin",
+          "stale",
+          "no_async_loading"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "CLUSTER|DELSLOTSRANGE",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "CLUSTER|DELSLOTSRANGE",
+        "arity": -4,
+        "flags": [
+          "admin",
+          "stale",
+          "no_async_loading"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "CLUSTER|FAILOVER",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "CLUSTER|FAILOVER",
+        "arity": -2,
+        "flags": [
+          "admin",
+          "stale",
+          "no_async_loading"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "CLUSTER|FLUSHSLOTS",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "CLUSTER|FLUSHSLOTS",
+        "arity": 2,
+        "flags": [
+          "admin",
+          "stale",
+          "no_async_loading"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "CLUSTER|FORGET",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "CLUSTER|FORGET",
+        "arity": 3,
+        "flags": [
+          "admin",
+          "stale",
+          "no_async_loading"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "CLUSTER|GETKEYSINSLOT",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "CLUSTER|GETKEYSINSLOT",
+        "arity": 4,
+        "flags": [
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": [
+          "nondeterministic_output"
+        ]
+      }
+    },
+    {
+      "name": "CLUSTER|HELP",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "CLUSTER|HELP",
+        "arity": 2,
+        "flags": [
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "CLUSTER|INFO",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "CLUSTER|INFO",
+        "arity": 2,
+        "flags": [
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": [
+          "nondeterministic_output"
+        ]
+      }
+    },
+    {
+      "name": "CLUSTER|KEYSLOT",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "CLUSTER|KEYSLOT",
+        "arity": 3,
+        "flags": [
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "CLUSTER|LINKS",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "CLUSTER|LINKS",
+        "arity": 2,
+        "flags": [
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": [
+          "nondeterministic_output"
+        ]
+      }
+    },
+    {
+      "name": "CLUSTER|MEET",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "CLUSTER|MEET",
+        "arity": -4,
+        "flags": [
+          "admin",
+          "stale",
+          "no_async_loading"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "CLUSTER|MYID",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "CLUSTER|MYID",
+        "arity": 2,
+        "flags": [
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "CLUSTER|MYSHARDID",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "CLUSTER|MYSHARDID",
+        "arity": 2,
+        "flags": [
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": [
+          "nondeterministic_output"
+        ]
+      }
+    },
+    {
+      "name": "CLUSTER|NODES",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "CLUSTER|NODES",
+        "arity": 2,
+        "flags": [
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": [
+          "nondeterministic_output"
+        ]
+      }
+    },
+    {
+      "name": "CLUSTER|REPLICAS",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "CLUSTER|REPLICAS",
+        "arity": 3,
+        "flags": [
+          "admin",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": [
+          "nondeterministic_output"
+        ]
+      }
+    },
+    {
+      "name": "CLUSTER|REPLICATE",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "CLUSTER|REPLICATE",
+        "arity": 3,
+        "flags": [
+          "admin",
+          "stale",
+          "no_async_loading"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "CLUSTER|RESET",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "CLUSTER|RESET",
+        "arity": -2,
+        "flags": [
+          "admin",
+          "noscript",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "CLUSTER|SAVECONFIG",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "CLUSTER|SAVECONFIG",
+        "arity": 2,
+        "flags": [
+          "admin",
+          "stale",
+          "no_async_loading"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "CLUSTER|SET-CONFIG-EPOCH",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "CLUSTER|SET-CONFIG-EPOCH",
+        "arity": 3,
+        "flags": [
+          "admin",
+          "stale",
+          "no_async_loading"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "CLUSTER|SETSLOT",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "CLUSTER|SETSLOT",
+        "arity": -4,
+        "flags": [
+          "admin",
+          "stale",
+          "no_async_loading"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "CLUSTER|SHARDS",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "CLUSTER|SHARDS",
+        "arity": 2,
+        "flags": [
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": [
+          "nondeterministic_output"
+        ]
+      }
+    },
+    {
+      "name": "CLUSTER|SLAVES",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "CLUSTER|SLAVES",
+        "arity": 3,
+        "flags": [
+          "admin",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": [
+          "nondeterministic_output"
+        ]
+      }
+    },
+    {
+      "name": "CLUSTER|SLOT-STATS",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "CLUSTER|SLOT-STATS",
+        "arity": -4,
+        "flags": [
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": [
+          "nondeterministic_output",
+          "request_policy:all_shards"
+        ]
+      }
+    },
+    {
+      "name": "CLUSTER|SLOTS",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "CLUSTER|SLOTS",
+        "arity": 2,
+        "flags": [
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": [
+          "nondeterministic_output"
+        ]
+      }
+    },
+    {
+      "name": "COMMAND|HELP",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "COMMAND|HELP",
+        "arity": 2,
+        "flags": [
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow",
+          "@connection"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "COMMAND|LIST",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "COMMAND|LIST",
+        "arity": -2,
+        "flags": [
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow",
+          "@connection"
+        ],
+        "tips": [
+          "nondeterministic_output_order"
+        ]
+      }
+    },
+    {
+      "name": "DEBUG",
+      "classification": "IRRELEVANT",
+      "reason": "Debug/internal/module-coordination surface does not define a first-release SnugKV workflow.",
+      "redis": {
+        "name": "DEBUG",
+        "arity": -2,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "FAILOVER",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "FAILOVER",
+        "arity": -1,
+        "flags": [
+          "admin",
+          "noscript",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "FT.ADD",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "FT.ADD",
+        "arity": -1,
+        "flags": [
+          "write",
+          "denyoom",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@write",
+          "@search"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "FT.DEL",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "FT.DEL",
+        "arity": -1,
+        "flags": [
+          "write",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@write",
+          "@search"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "FT.DROP",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "FT.DROP",
+        "arity": -1,
+        "flags": [
+          "write",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@write",
+          "@slow",
+          "@dangerous",
+          "@search"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "FT.GET",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "FT.GET",
+        "arity": -1,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@read",
+          "@search"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "FT.MGET",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "FT.MGET",
+        "arity": -1,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@read",
+          "@search"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "FT.SYNADD",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "FT.SYNADD",
+        "arity": -1,
+        "flags": [
+          "write",
+          "denyoom",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@search"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "FT._ALIASADDIFNX",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "FT._ALIASADDIFNX",
+        "arity": -1,
+        "flags": [
+          "write",
+          "denyoom",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@search"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "FT._ALIASDELIFX",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "FT._ALIASDELIFX",
+        "arity": -1,
+        "flags": [
+          "write",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@search"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "FT._ALTERIFNX",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "FT._ALTERIFNX",
+        "arity": -1,
+        "flags": [
+          "write",
+          "denyoom",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@search"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "FT._CREATEIFNX",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "FT._CREATEIFNX",
+        "arity": -1,
+        "flags": [
+          "write",
+          "denyoom",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@search"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "FT._DROPIFX",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "FT._DROPIFX",
+        "arity": -1,
+        "flags": [
+          "write",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@write",
+          "@search"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "FT._DROPINDEXIFX",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "FT._DROPINDEXIFX",
+        "arity": -1,
+        "flags": [
+          "write",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@write",
+          "@slow",
+          "@dangerous",
+          "@search"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "GEORADIUSBYMEMBER_RO",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "GEORADIUSBYMEMBER_RO",
+        "arity": -5,
+        "flags": [
+          "readonly"
+        ],
+        "first_key": 1,
+        "last_key": 1,
+        "step": 1,
+        "acl_categories": [
+          "@read",
+          "@geo",
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "GEORADIUS_RO",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "GEORADIUS_RO",
+        "arity": -6,
+        "flags": [
+          "readonly"
+        ],
+        "first_key": 1,
+        "last_key": 1,
+        "step": 1,
+        "acl_categories": [
+          "@read",
+          "@geo",
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "JSON.NUMPOWBY",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "JSON.NUMPOWBY",
+        "arity": -1,
+        "flags": [
+          "write",
+          "module"
+        ],
+        "first_key": 1,
+        "last_key": 1,
+        "step": 1,
+        "acl_categories": [
+          "@write",
+          "@json"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "LATENCY",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "LATENCY",
+        "arity": -2,
+        "flags": [],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "LATENCY|DOCTOR",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "LATENCY|DOCTOR",
+        "arity": 2,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": [
+          "nondeterministic_output",
+          "request_policy:all_nodes",
+          "response_policy:special"
+        ]
+      }
+    },
+    {
+      "name": "LATENCY|GRAPH",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "LATENCY|GRAPH",
+        "arity": 3,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": [
+          "nondeterministic_output",
+          "request_policy:all_nodes",
+          "response_policy:special"
+        ]
+      }
+    },
+    {
+      "name": "LATENCY|HELP",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "LATENCY|HELP",
+        "arity": 2,
+        "flags": [
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "LATENCY|HISTOGRAM",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "LATENCY|HISTOGRAM",
+        "arity": -2,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": [
+          "nondeterministic_output",
+          "request_policy:all_nodes",
+          "response_policy:special"
+        ]
+      }
+    },
+    {
+      "name": "LATENCY|HISTORY",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "LATENCY|HISTORY",
+        "arity": 3,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": [
+          "nondeterministic_output",
+          "request_policy:all_nodes",
+          "response_policy:special"
+        ]
+      }
+    },
+    {
+      "name": "LATENCY|LATEST",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "LATENCY|LATEST",
+        "arity": 2,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": [
+          "nondeterministic_output",
+          "request_policy:all_nodes",
+          "response_policy:special"
+        ]
+      }
+    },
+    {
+      "name": "LATENCY|RESET",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "LATENCY|RESET",
+        "arity": -2,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": [
+          "request_policy:all_nodes",
+          "response_policy:agg_sum"
+        ]
+      }
+    },
+    {
+      "name": "LOLWUT",
+      "classification": "IRRELEVANT",
+      "reason": "Debug/internal/module-coordination surface does not define a first-release SnugKV workflow.",
+      "redis": {
+        "name": "LOLWUT",
+        "arity": -1,
+        "flags": [
+          "readonly",
+          "fast"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@read",
+          "@fast"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "MEMORY|DOCTOR",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "MEMORY|DOCTOR",
+        "arity": 2,
+        "flags": [],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": [
+          "nondeterministic_output",
+          "request_policy:all_shards",
+          "response_policy:special"
+        ]
+      }
+    },
+    {
+      "name": "MEMORY|HELP",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "MEMORY|HELP",
+        "arity": 2,
+        "flags": [
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "MEMORY|MALLOC-STATS",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "MEMORY|MALLOC-STATS",
+        "arity": 2,
+        "flags": [],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": [
+          "nondeterministic_output",
+          "request_policy:all_shards",
+          "response_policy:special"
+        ]
+      }
+    },
+    {
+      "name": "MEMORY|PURGE",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "MEMORY|PURGE",
+        "arity": 2,
+        "flags": [],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": [
+          "request_policy:all_shards",
+          "response_policy:all_succeeded"
+        ]
+      }
+    },
+    {
+      "name": "MEMORY|STATS",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "MEMORY|STATS",
+        "arity": 2,
+        "flags": [],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": [
+          "nondeterministic_output",
+          "request_policy:all_shards",
+          "response_policy:special"
+        ]
+      }
+    },
+    {
+      "name": "MEMORY|USAGE",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "MEMORY|USAGE",
+        "arity": -3,
+        "flags": [
+          "readonly"
+        ],
+        "first_key": 2,
+        "last_key": 2,
+        "step": 1,
+        "acl_categories": [
+          "@read",
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "MODULE",
+      "classification": "INTENTIONALLY_UNSUPPORTED",
+      "reason": "SnugKV implements extended features natively and does not load Redis modules.",
+      "redis": {
+        "name": "MODULE",
+        "arity": -2,
+        "flags": [],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "MODULE|HELP",
+      "classification": "INTENTIONALLY_UNSUPPORTED",
+      "reason": "SnugKV implements extended features natively and does not load Redis modules.",
+      "redis": {
+        "name": "MODULE|HELP",
+        "arity": 2,
+        "flags": [
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "MODULE|LIST",
+      "classification": "INTENTIONALLY_UNSUPPORTED",
+      "reason": "SnugKV implements extended features natively and does not load Redis modules.",
+      "redis": {
+        "name": "MODULE|LIST",
+        "arity": 2,
+        "flags": [
+          "admin",
+          "noscript"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": [
+          "nondeterministic_output_order"
+        ]
+      }
+    },
+    {
+      "name": "MODULE|LOAD",
+      "classification": "INTENTIONALLY_UNSUPPORTED",
+      "reason": "SnugKV implements extended features natively and does not load Redis modules.",
+      "redis": {
+        "name": "MODULE|LOAD",
+        "arity": -3,
+        "flags": [
+          "admin",
+          "noscript",
+          "no_async_loading"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "MODULE|LOADEX",
+      "classification": "INTENTIONALLY_UNSUPPORTED",
+      "reason": "SnugKV implements extended features natively and does not load Redis modules.",
+      "redis": {
+        "name": "MODULE|LOADEX",
+        "arity": -3,
+        "flags": [
+          "admin",
+          "noscript",
+          "no_async_loading"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "MODULE|UNLOAD",
+      "classification": "INTENTIONALLY_UNSUPPORTED",
+      "reason": "SnugKV implements extended features natively and does not load Redis modules.",
+      "redis": {
+        "name": "MODULE|UNLOAD",
+        "arity": 3,
+        "flags": [
+          "admin",
+          "noscript",
+          "no_async_loading"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "MOVE",
+      "classification": "INTENTIONALLY_UNSUPPORTED",
+      "reason": "First release intentionally supports DB 0 only.",
+      "redis": {
+        "name": "MOVE",
+        "arity": 3,
+        "flags": [
+          "write",
+          "fast"
+        ],
+        "first_key": 1,
+        "last_key": 1,
+        "step": 1,
+        "acl_categories": [
+          "@keyspace",
+          "@write",
+          "@fast"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "OBJECT|ENCODING",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "OBJECT|ENCODING",
+        "arity": 3,
+        "flags": [
+          "readonly"
+        ],
+        "first_key": 2,
+        "last_key": 2,
+        "step": 1,
+        "acl_categories": [
+          "@keyspace",
+          "@read",
+          "@slow"
+        ],
+        "tips": [
+          "nondeterministic_output"
+        ]
+      }
+    },
+    {
+      "name": "OBJECT|FREQ",
+      "classification": "INTENTIONALLY_UNSUPPORTED",
+      "reason": "Requires Redis-style object access metadata that SnugKV intentionally does not currently track.",
+      "redis": {
+        "name": "OBJECT|FREQ",
+        "arity": 3,
+        "flags": [
+          "readonly"
+        ],
+        "first_key": 2,
+        "last_key": 2,
+        "step": 1,
+        "acl_categories": [
+          "@keyspace",
+          "@read",
+          "@slow"
+        ],
+        "tips": [
+          "nondeterministic_output"
+        ]
+      }
+    },
+    {
+      "name": "OBJECT|HELP",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "OBJECT|HELP",
+        "arity": 2,
+        "flags": [
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@keyspace",
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "OBJECT|IDLETIME",
+      "classification": "INTENTIONALLY_UNSUPPORTED",
+      "reason": "Requires Redis-style object access metadata that SnugKV intentionally does not currently track.",
+      "redis": {
+        "name": "OBJECT|IDLETIME",
+        "arity": 3,
+        "flags": [
+          "readonly"
+        ],
+        "first_key": 2,
+        "last_key": 2,
+        "step": 1,
+        "acl_categories": [
+          "@keyspace",
+          "@read",
+          "@slow"
+        ],
+        "tips": [
+          "nondeterministic_output"
+        ]
+      }
+    },
+    {
+      "name": "OBJECT|REFCOUNT",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "OBJECT|REFCOUNT",
+        "arity": 3,
+        "flags": [
+          "readonly"
+        ],
+        "first_key": 2,
+        "last_key": 2,
+        "step": 1,
+        "acl_categories": [
+          "@keyspace",
+          "@read",
+          "@slow"
+        ],
+        "tips": [
+          "nondeterministic_output"
+        ]
+      }
+    },
+    {
+      "name": "PFDEBUG",
+      "classification": "IRRELEVANT",
+      "reason": "Debug/internal/module-coordination surface does not define a first-release SnugKV workflow.",
+      "redis": {
+        "name": "PFDEBUG",
+        "arity": 3,
+        "flags": [
+          "write",
+          "denyoom",
+          "admin"
+        ],
+        "first_key": 2,
+        "last_key": 2,
+        "step": 1,
+        "acl_categories": [
+          "@write",
+          "@hyperloglog",
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "PFSELFTEST",
+      "classification": "IRRELEVANT",
+      "reason": "Debug/internal/module-coordination surface does not define a first-release SnugKV workflow.",
+      "redis": {
+        "name": "PFSELFTEST",
+        "arity": 1,
+        "flags": [
+          "admin"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@hyperloglog",
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "PUBSUB|CHANNELS",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "PUBSUB|CHANNELS",
+        "arity": -2,
+        "flags": [
+          "pubsub",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@pubsub",
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "PUBSUB|HELP",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "PUBSUB|HELP",
+        "arity": 2,
+        "flags": [
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "PUBSUB|NUMPAT",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "PUBSUB|NUMPAT",
+        "arity": 2,
+        "flags": [
+          "pubsub",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@pubsub",
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "PUBSUB|NUMSUB",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "PUBSUB|NUMSUB",
+        "arity": -2,
+        "flags": [
+          "pubsub",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@pubsub",
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "PUBSUB|SHARDCHANNELS",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "PUBSUB|SHARDCHANNELS",
+        "arity": -2,
+        "flags": [
+          "pubsub",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@pubsub",
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "PUBSUB|SHARDNUMSUB",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "PUBSUB|SHARDNUMSUB",
+        "arity": -2,
+        "flags": [
+          "pubsub",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@pubsub",
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "READONLY",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "READONLY",
+        "arity": 1,
+        "flags": [
+          "loading",
+          "stale",
+          "fast"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@fast",
+          "@connection"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "READWRITE",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "READWRITE",
+        "arity": 1,
+        "flags": [
+          "loading",
+          "stale",
+          "fast"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@fast",
+          "@connection"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "REPLCONF",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "REPLCONF",
+        "arity": -1,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale",
+          "allow_busy"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "SCRIPT|HELP",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "SCRIPT|HELP",
+        "arity": 2,
+        "flags": [
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow",
+          "@scripting"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "SEARCH.CLUSTERINFO",
+      "classification": "IRRELEVANT",
+      "reason": "Debug/internal/module-coordination surface does not define a first-release SnugKV workflow.",
+      "redis": {
+        "name": "SEARCH.CLUSTERINFO",
+        "arity": -1,
+        "flags": [
+          "readonly",
+          "module",
+          "noscript",
+          "loading"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@search"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "SEARCH.CLUSTERREFRESH",
+      "classification": "IRRELEVANT",
+      "reason": "Debug/internal/module-coordination surface does not define a first-release SnugKV workflow.",
+      "redis": {
+        "name": "SEARCH.CLUSTERREFRESH",
+        "arity": -1,
+        "flags": [
+          "readonly",
+          "module",
+          "noscript"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@search"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "SEARCH.CLUSTERSET",
+      "classification": "IRRELEVANT",
+      "reason": "Debug/internal/module-coordination surface does not define a first-release SnugKV workflow.",
+      "redis": {
+        "name": "SEARCH.CLUSTERSET",
+        "arity": -1,
+        "flags": [
+          "readonly",
+          "module",
+          "noscript",
+          "loading"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@search"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "SHUTDOWN",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "SHUTDOWN",
+        "arity": -1,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale",
+          "no_multi",
+          "allow_busy"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "SLAVEOF",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "SLAVEOF",
+        "arity": 3,
+        "flags": [
+          "admin",
+          "noscript",
+          "stale",
+          "no_async_loading"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "SLOWLOG|GET",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "SLOWLOG|GET",
+        "arity": -2,
+        "flags": [
+          "admin",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": [
+          "request_policy:all_nodes",
+          "nondeterministic_output"
+        ]
+      }
+    },
+    {
+      "name": "SLOWLOG|HELP",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "SLOWLOG|HELP",
+        "arity": 2,
+        "flags": [
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "SLOWLOG|LEN",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "SLOWLOG|LEN",
+        "arity": 2,
+        "flags": [
+          "admin",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": [
+          "request_policy:all_nodes",
+          "response_policy:agg_sum",
+          "nondeterministic_output"
+        ]
+      }
+    },
+    {
+      "name": "SLOWLOG|RESET",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "SLOWLOG|RESET",
+        "arity": 2,
+        "flags": [
+          "admin",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": [
+          "request_policy:all_nodes",
+          "response_policy:all_succeeded"
+        ]
+      }
+    },
+    {
+      "name": "SUBSTR",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "SUBSTR",
+        "arity": 4,
+        "flags": [
+          "readonly"
+        ],
+        "first_key": 1,
+        "last_key": 1,
+        "step": 1,
+        "acl_categories": [
+          "@read",
+          "@string",
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "SWAPDB",
+      "classification": "INTENTIONALLY_UNSUPPORTED",
+      "reason": "First release intentionally supports DB 0 only.",
+      "redis": {
+        "name": "SWAPDB",
+        "arity": 3,
+        "flags": [
+          "write",
+          "fast"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@keyspace",
+          "@write",
+          "@fast",
+          "@dangerous"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "SYNC",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "SYNC",
+        "arity": 1,
+        "flags": [
+          "admin",
+          "noscript",
+          "no_async_loading",
+          "no_multi"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "TIMESERIES.CLUSTERSET",
+      "classification": "IRRELEVANT",
+      "reason": "Debug/internal/module-coordination surface does not define a first-release SnugKV workflow.",
+      "redis": {
+        "name": "TIMESERIES.CLUSTERSET",
+        "arity": -1,
+        "flags": [
+          "readonly",
+          "module",
+          "noscript"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "TIMESERIES.REFRESHCLUSTER",
+      "classification": "IRRELEVANT",
+      "reason": "Debug/internal/module-coordination surface does not define a first-release SnugKV workflow.",
+      "redis": {
+        "name": "TIMESERIES.REFRESHCLUSTER",
+        "arity": -1,
+        "flags": [
+          "readonly",
+          "module",
+          "noscript"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "XGROUP|CREATE",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "XGROUP|CREATE",
+        "arity": -5,
+        "flags": [
+          "write",
+          "denyoom"
+        ],
+        "first_key": 2,
+        "last_key": 2,
+        "step": 1,
+        "acl_categories": [
+          "@write",
+          "@stream",
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "XGROUP|CREATECONSUMER",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "XGROUP|CREATECONSUMER",
+        "arity": 5,
+        "flags": [
+          "write",
+          "denyoom"
+        ],
+        "first_key": 2,
+        "last_key": 2,
+        "step": 1,
+        "acl_categories": [
+          "@write",
+          "@stream",
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "XGROUP|DELCONSUMER",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "XGROUP|DELCONSUMER",
+        "arity": 5,
+        "flags": [
+          "write"
+        ],
+        "first_key": 2,
+        "last_key": 2,
+        "step": 1,
+        "acl_categories": [
+          "@write",
+          "@stream",
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "XGROUP|DESTROY",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "XGROUP|DESTROY",
+        "arity": 4,
+        "flags": [
+          "write"
+        ],
+        "first_key": 2,
+        "last_key": 2,
+        "step": 1,
+        "acl_categories": [
+          "@write",
+          "@stream",
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "XGROUP|HELP",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "XGROUP|HELP",
+        "arity": 2,
+        "flags": [
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@stream",
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "XGROUP|SETID",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "XGROUP|SETID",
+        "arity": -5,
+        "flags": [
+          "write"
+        ],
+        "first_key": 2,
+        "last_key": 2,
+        "step": 1,
+        "acl_categories": [
+          "@write",
+          "@stream",
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "XINFO|CONSUMERS",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "XINFO|CONSUMERS",
+        "arity": 4,
+        "flags": [
+          "readonly"
+        ],
+        "first_key": 2,
+        "last_key": 2,
+        "step": 1,
+        "acl_categories": [
+          "@read",
+          "@stream",
+          "@slow"
+        ],
+        "tips": [
+          "nondeterministic_output"
+        ]
+      }
+    },
+    {
+      "name": "XINFO|GROUPS",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "XINFO|GROUPS",
+        "arity": 3,
+        "flags": [
+          "readonly"
+        ],
+        "first_key": 2,
+        "last_key": 2,
+        "step": 1,
+        "acl_categories": [
+          "@read",
+          "@stream",
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "XINFO|HELP",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "XINFO|HELP",
+        "arity": 2,
+        "flags": [
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@stream",
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "XINFO|STREAM",
+      "classification": "IMPLEMENTED",
+      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
+      "redis": {
+        "name": "XINFO|STREAM",
+        "arity": -3,
+        "flags": [
+          "readonly"
+        ],
+        "first_key": 2,
+        "last_key": 2,
+        "step": 1,
+        "acl_categories": [
+          "@read",
+          "@stream",
+          "@slow"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "XSETID",
+      "classification": "CANDIDATE_GAP",
+      "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
+      "redis": {
+        "name": "XSETID",
+        "arity": -3,
+        "flags": [
+          "write",
+          "denyoom",
+          "fast"
+        ],
+        "first_key": 1,
+        "last_key": 1,
+        "step": 1,
+        "acl_categories": [
+          "@write",
+          "@stream",
+          "@fast"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.CONFIG",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.CONFIG",
+        "arity": -1,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@search"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous",
+          "@search"
+        ],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|BG_SCAN_CONTROLLER",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|BG_SCAN_CONTROLLER",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|CLEAR_PENDING_TOPOLOGY",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|CLEAR_PENDING_TOPOLOGY",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|COORD_THREADS",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|COORD_THREADS",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|DELETE_LOCAL_CURSORS",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|DELETE_LOCAL_CURSORS",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|DOCIDTOID",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|DOCIDTOID",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|DOCINFO",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|DOCINFO",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|DUMP_GEOMIDX",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|DUMP_GEOMIDX",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|DUMP_HNSW",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|DUMP_HNSW",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|DUMP_INVIDX",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|DUMP_INVIDX",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|DUMP_NUMIDX",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|DUMP_NUMIDX",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|DUMP_NUMIDXTREE",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|DUMP_NUMIDXTREE",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|DUMP_PHONETIC_HASH",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|DUMP_PHONETIC_HASH",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|DUMP_PREFIX_TRIE",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|DUMP_PREFIX_TRIE",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|DUMP_SUFFIX_TRIE",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|DUMP_SUFFIX_TRIE",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|DUMP_TAGIDX",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|DUMP_TAGIDX",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|DUMP_TERMS",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|DUMP_TERMS",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|FT.AGGREGATE",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|FT.AGGREGATE",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|FT.PROFILE",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|FT.PROFILE",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|FT.SEARCH",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|FT.SEARCH",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|GC_CLEAN_NUMERIC",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|GC_CLEAN_NUMERIC",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|GC_CONTINUE_SCHEDULE",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|GC_CONTINUE_SCHEDULE",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|GC_FORCEBGINVOKE",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|GC_FORCEBGINVOKE",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|GC_FORCEINVOKE",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|GC_FORCEINVOKE",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|GC_STOP_SCHEDULE",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|GC_STOP_SCHEDULE",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|GC_WAIT_FOR_JOBS",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|GC_WAIT_FOR_JOBS",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|GET_HIDE_USER_DATA_FROM_LOGS",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|GET_HIDE_USER_DATA_FROM_LOGS",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|GIT_SHA",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|GIT_SHA",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|HELP",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|HELP",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|IDTODOCID",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|IDTODOCID",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|INDEXER_SLEEP_BEFORE_YIELD_MICROS",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|INDEXER_SLEEP_BEFORE_YIELD_MICROS",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|INDEXES",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|INDEXES",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|INFO",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|INFO",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|INFO_TAGIDX",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|INFO_TAGIDX",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|INVIDX_SUMMARY",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|INVIDX_SUMMARY",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|NUMIDX_SUMMARY",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|NUMIDX_SUMMARY",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|PAUSE_TOPOLOGY_UPDATER",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|PAUSE_TOPOLOGY_UPDATER",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|QUERY_CONTROLLER",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|QUERY_CONTROLLER",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|RESUME_TOPOLOGY_UPDATER",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|RESUME_TOPOLOGY_UPDATER",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|SET_MAX_INDEXES",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|SET_MAX_INDEXES",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|SET_MONITOR_EXPIRATION",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|SET_MONITOR_EXPIRATION",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|SHARD_CONNECTION_STATES",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|SHARD_CONNECTION_STATES",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|SPEC_INVIDXES_INFO",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|SPEC_INVIDXES_INFO",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|TTL",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|TTL",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|TTL_EXPIRE",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|TTL_EXPIRE",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|TTL_PAUSE",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|TTL_PAUSE",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|VECSIM_INFO",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|VECSIM_INFO",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|VECSIM_MOCK_TIMEOUT",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|VECSIM_MOCK_TIMEOUT",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|WORKERS",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|WORKERS",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|YIELDS_COUNTER",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|YIELDS_COUNTER",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|_FT.AGGREGATE",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|_FT.AGGREGATE",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|_FT.PROFILE",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|_FT.PROFILE",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.DEBUG|_FT.SEARCH",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.DEBUG|_FT.SEARCH",
+        "arity": -2,
+        "flags": [
+          "readonly",
+          "module"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [],
+        "tips": []
+      }
+    },
+    {
+      "name": "_FT.SAFEADD",
+      "classification": "IRRELEVANT",
+      "reason": "Redis Search internal/private command surface.",
+      "redis": {
+        "name": "_FT.SAFEADD",
+        "arity": -1,
+        "flags": [
+          "write",
+          "denyoom",
+          "module"
+        ],
+        "first_key": 2,
+        "last_key": 2,
+        "step": 1,
+        "acl_categories": [
+          "@write",
+          "@search"
+        ],
+        "tips": []
+      }
+    }
+  ]
+}
