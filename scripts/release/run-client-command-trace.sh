@@ -24,6 +24,7 @@ pushd compat/node >/dev/null
 [[ -d node_modules ]] || npm ci
 SNUGKV_HOST=127.0.0.1 SNUGKV_PORT="$PROXY_PORT" node smoke.cjs
 REDIS_HOST=127.0.0.1 REDIS_PORT="$PROXY_PORT" TARGET_NAME=redis82-trace node resp3-smoke.cjs
+REDIS_HOST=127.0.0.1 REDIS_PORT="$PROXY_PORT" node trace-workflows.cjs
 popd >/dev/null
 
 PY_VENV=/tmp/snugkv-a3-client-venv
