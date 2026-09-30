@@ -56,8 +56,7 @@ Completed evidence includes:
 - repeated-recovery stress passed 5/5 focused runs with 2,000 durable keys;
 - dedicated failover-restart stress passed 10/10 runs, including alternate
   elected-leader paths;
-- the bounded distributed soak passed 3/3 cycles, 21/21 cases, with zero
-  failures/timeouts after the failover stabilization harness race was fixed;
+- the bounded distributed soak passed 6/6 cycles, 42/42 cases, with zero failures/timeouts over 952 seconds (~15m52s) after the failover stabilization harness race was fixed;
 - an earlier extended soak completed 70 consecutive chaos cases before exposing
   the MIGRATE pipelined-read timeout bug that is now regression-covered.
 
