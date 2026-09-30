@@ -58,6 +58,10 @@ All notable changes to SnugKV will be documented in this file.
 
 ### Added
 
+- Post-merge project-wide validation for the distributed hardening milestone passed
+  on `main`: `go test ./... -count=1`, `go test -race ./... -count=1`, and
+  `go vet ./...`. The audited distributed scope is now documented as
+  production-candidate.
 - Completed the audited distributed production-hardening matrix: deterministic
   MIGRATE sliding-timeout/partial-durability regressions, 5/5 repeated-recovery
   stress runs, 10/10 failover-restart stress runs, and a retained 6-cycle / 42-case distributed soak with zero failures/timeouts. An earlier extended soak
