@@ -75,9 +75,20 @@ Acceptance:
 - command count matches `COMMAND COUNT`;
 - parent/subcommand treatment is deterministic.
 
-Status: **IN PROGRESS**
+Status: **COMPLETE**
 
 Implementation branch: `release/a1-command-inventory`
+
+Retained outputs:
+
+- `docs/release/IMPLEMENTED-COMMANDS.md`
+- `docs/release/implemented-commands.json`
+
+Inventory result:
+
+- **374** top-level commands
+- **36** structured subcommands
+- top-level count is sourced from the same `commandTable` used by `COMMAND COUNT`
 
 Generator:
 
@@ -85,11 +96,15 @@ Generator:
 bash scripts/release/generate-command-inventory.sh
 ```
 
-The generator is backed by `CommandInventorySnapshot()`; tests assert that its
-top-level command count matches the same `commandTable` used by `COMMAND COUNT`.
+Validation:
 
-Remaining A1 gate: generate and retain the Markdown/JSON artifacts from a clean
-checkout, then run the focused test and project build gate.
+```sh
+go test ./internal/server -run '^TestCommandInventory' -count=1 -v
+go test ./cmd/commandinventory -count=1
+go vet ./cmd/commandinventory ./internal/server
+```
+
+All validation passed on the retained generated inventory.
 
 ---
 
