@@ -268,8 +268,7 @@ Retained distributed validation now includes:
 - 5/5 repeated crash/recovery stress runs with 2,000 durable keys;
 - 10/10 dedicated failover-restart stress runs after removing a startup
   stabilization race from the harness, including an alternate elected leader;
-- a final bounded soak of 3 cycles / 21 cases with zero failures and zero
-  timeouts.
+- a final bounded soak of 6 cycles / 42 cases with zero failures and zero timeouts.
 
 The MIGRATE timeout fix refreshes the read deadline before each expected
 pipelined reply, so the timeout measures inactivity rather than imposing one
