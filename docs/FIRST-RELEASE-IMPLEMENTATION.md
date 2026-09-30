@@ -129,7 +129,7 @@ Acceptance:
 - every candidate gap has an explicit reason;
 - no gap is promoted to REQUIRED solely because Redis implements it.
 
-Status: **IN PROGRESS**
+Status: **COMPLETE**
 
 Implementation branch: `release/a2-redis82-command-gap-audit`
 
@@ -143,7 +143,14 @@ This starts an isolated Redis 8.2 container, captures its live `COMMAND` metadat
 and compares top-level commands and structured subcommands against the retained
 SnugKV A1 inventory.
 
-Initial Redis-only entries are then classified as IMPLEMENTED, INTENTIONALLY_UNSUPPORTED, CANDIDATE_GAP, or IRRELEVANT using the A2 classifier. IMPLEMENTED entries represent structured COMMAND metadata gaps rather than missing behavior. Final REQUIRED / USEFUL / DEFER decisions happen in Phase A4 after client/workflow evidence.
+Classification result:
+
+- **49 IMPLEMENTED** — behavior exists; structured COMMAND metadata is incomplete.
+- **10 INTENTIONALLY_UNSUPPORTED** — deliberate first-release architecture boundaries.
+- **58 CANDIDATE_GAP** — require client/workflow evidence.
+- **72 IRRELEVANT** — Redis internal/debug/private/module-coordination surfaces.
+
+Final REQUIRED / USEFUL / DEFER decisions happen in Phase A4 after client/workflow evidence.
 
 ---
 
