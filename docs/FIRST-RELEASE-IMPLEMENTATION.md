@@ -275,7 +275,7 @@ Do not pre-fill speculative commands here.
 **Classification:** REQUIRED  
 **Evidence:** A2 found 49 Redis subcommands whose behavior already exists in SnugKV
 but is absent from structured command metadata.  
-**Branch:** TBD  
+**Branch:** `release/b1-command-subcommand-metadata`  
 **PR:** TBD
 
 Scope:
@@ -293,7 +293,14 @@ Acceptance:
 - focused COMMAND INFO/LIST/DOCS tests pass;
 - A1/A2 retained artifacts regenerate cleanly.
 
-Status: **TODO**
+Status: **IN PROGRESS**
+
+Implementation notes:
+
+- metadata-only slice; no Redis command behavior added;
+- registers the 49 A2 `IMPLEMENTED` leaves under structured parent metadata;
+- preserves top-level `COMMAND COUNT` semantics;
+- regression tests lock all 49 leaves into the generated inventory.
 
 For every accepted gap use this template.
 
