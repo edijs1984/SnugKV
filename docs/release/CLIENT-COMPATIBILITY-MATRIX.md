@@ -77,6 +77,13 @@ Phase D adds persistent clients for:
 - redis-py: `compat/python/failover_trace.py`
 - go-redis: `compat/go/failover/main.go`
 
+For go-redis/v9 9.22.0, prompt hard-failover recovery requires configuring
+`ClusterStateReloadInterval` below its 60-second default. A dead primary cannot
+return MOVED/ASK/READONLY, and v9.22.0 does not trigger an immediate topology
+reload on a plain TCP dial failure. The retained failover fixture uses a 1-second
+reload interval; this is a client-library recovery-timing requirement, not a
+SnugKV topology defect.
+
 All four are exercised together by:
 
 ```sh
