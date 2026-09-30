@@ -1,6 +1,6 @@
 # SnugKV Project State
 
-**Updated:** 2026-09-29
+**Updated:** 2026-09-30
 
 This is the canonical current-state handoff for maintainers and coding agents.
 Historical audit documents remain evidence for the state at the time they were
@@ -53,15 +53,19 @@ Completed evidence includes:
 - ioredis, node-redis, redis-py, and go-redis Cluster-mode smoke;
 - reproducible routing, reshard, TLS migration, failover-recovery, and
   topology-observation benchmarks;
-- a one-cycle distributed soak smoke covering all seven recovery/failure cases.
+- repeated-recovery stress passed 5/5 focused runs with 2,000 durable keys;
+- dedicated failover-restart stress passed 10/10 runs, including alternate
+  elected-leader paths;
+- the bounded distributed soak passed 3/3 cycles, 21/21 cases, with zero
+  failures/timeouts after the failover stabilization harness race was fixed;
+- an earlier extended soak completed 70 consecutive chaos cases before exposing
+  the MIGRATE pipelined-read timeout bug that is now regression-covered.
 
 The remaining release gate is:
 
-1. **Final release audit**
-   - retain a longer-duration distributed soak run;
-   - audit operator runbooks and configuration examples;
-   - refresh compatibility/limitations documentation against the implemented
-     distributed behavior;
+1. **Final release validation**
+   - keep operator/configuration/compatibility documentation aligned with the
+     implemented distributed behavior;
    - run the full release validation suite before merge.
 
 Optional/deferred: fully automatic membership admission policy and richer
@@ -71,12 +75,13 @@ per-node health/TLS-SNI ergonomics.
 
 Do **not** describe the distributed system as production-complete yet.
 
-The implemented cluster/replication/failover core is substantial, but the project
-still needs broader independent multi-process failure testing, client-library
-validation, recovery matrices, soak, and multi-node benchmarks before a
-production-complete claim is justified.
+The implemented cluster/replication/failover core has now completed the planned
+multi-process failure matrix, Cluster client-library smoke, distributed benchmark
+baselines, repeated recovery stress, and retained bounded soak validation.
 
-"Production-candidate" is the target after those hardening gates are completed.
+Do not interpret this as a claim of exhaustive Redis Cluster parity or mature
+large-scale production history. "Production-candidate" is the appropriate
+distributed-system claim once the final release validation suite is green.
 
 ## Documentation authority
 
