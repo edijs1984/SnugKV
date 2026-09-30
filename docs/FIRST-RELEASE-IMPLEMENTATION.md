@@ -293,7 +293,7 @@ Acceptance:
 - focused COMMAND INFO/LIST/DOCS tests pass;
 - A1/A2 retained artifacts regenerate cleanly.
 
-Status: **IN PROGRESS**
+Status: **COMPLETE**
 
 Implementation notes:
 
@@ -301,6 +301,16 @@ Implementation notes:
 - registers the 49 A2 `IMPLEMENTED` leaves under structured parent metadata;
 - preserves top-level `COMMAND COUNT` semantics;
 - regression tests lock all 49 leaves into the generated inventory.
+
+Validation:
+
+- top-level commands: **374** (unchanged)
+- structured subcommands: **85** (36 + 49)
+- Redis/Snug shared entries: **449** (was 400)
+- Redis-only entries: **140** (was 189)
+- A2 classification `IMPLEMENTED`: **0** (was 49)
+- focused inventory/metadata tests: PASS
+- `go vet ./internal/server ./cmd/commandinventory`: PASS
 
 For every accepted gap use this template.
 
