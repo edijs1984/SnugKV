@@ -449,7 +449,20 @@ Acceptance:
 - any unsupported behavior is documented;
 - client-triggered missing commands feed back into Phase A/B.
 
-Status: **TODO**
+Status: **IN PROGRESS**
+
+Implementation branch: `release/d-client-compatibility-matrix`
+
+Retained matrix: `docs/release/CLIENT-COMPATIBILITY-MATRIX.md`
+
+Existing A3 evidence is retained for standalone, RESP3, reconnect, normal Cluster
+routing, and ioredis/node-redis automatic failover. Phase D adds persistent
+redis-py and go-redis failover clients and an all-four-client failover matrix
+harness.
+
+Remaining gate:
+
+- [ ] `bash scripts/release/run-client-failover-matrix.sh`
 
 ---
 
