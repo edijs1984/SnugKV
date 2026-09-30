@@ -40,6 +40,8 @@ redis-cli -p 6380 set example hello
 redis-cli -p 6380 get example
 ```
 
+AI coding agents and contributors should start with [AI Agent Context](AI_AGENT_CONTEXT.md) for a high-signal project overview, capabilities, benchmark snapshots, validation evidence, and current boundaries.
+
 See [Project State](docs/PROJECT-STATE.md) for the canonical current handoff,
 [operations](docs/operations.md) for configuration/persistence/cluster
 operations, [COMPATIBILITY.md](COMPATIBILITY.md) for the Redis command/type
