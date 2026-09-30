@@ -6512,6 +6512,266 @@
       "metadata_source": "internal/server/commandTable"
     },
     {
+      "name": "ACL|CAT",
+      "parent": "ACL",
+      "kind": "subcommand",
+      "arity": -2,
+      "flags": [
+        "noscript",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@slow"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "ACL|DELUSER",
+      "parent": "ACL",
+      "kind": "subcommand",
+      "arity": -3,
+      "flags": [
+        "admin",
+        "noscript",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@admin",
+        "@slow",
+        "@dangerous"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "ACL|DRYRUN",
+      "parent": "ACL",
+      "kind": "subcommand",
+      "arity": -4,
+      "flags": [
+        "admin",
+        "noscript",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@admin",
+        "@slow",
+        "@dangerous"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "ACL|GENPASS",
+      "parent": "ACL",
+      "kind": "subcommand",
+      "arity": -2,
+      "flags": [
+        "noscript",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@slow"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "ACL|GETUSER",
+      "parent": "ACL",
+      "kind": "subcommand",
+      "arity": 3,
+      "flags": [
+        "admin",
+        "noscript",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@admin",
+        "@slow",
+        "@dangerous"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "ACL|HELP",
+      "parent": "ACL",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@slow"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "ACL|LIST",
+      "parent": "ACL",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "admin",
+        "noscript",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@admin",
+        "@slow",
+        "@dangerous"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "ACL|LOAD",
+      "parent": "ACL",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "admin",
+        "noscript",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@admin",
+        "@slow",
+        "@dangerous"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "ACL|LOG",
+      "parent": "ACL",
+      "kind": "subcommand",
+      "arity": -2,
+      "flags": [
+        "admin",
+        "noscript",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@admin",
+        "@slow",
+        "@dangerous"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "ACL|SAVE",
+      "parent": "ACL",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "admin",
+        "noscript",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@admin",
+        "@slow",
+        "@dangerous"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "ACL|SETUSER",
+      "parent": "ACL",
+      "kind": "subcommand",
+      "arity": -3,
+      "flags": [
+        "admin",
+        "noscript",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@admin",
+        "@slow",
+        "@dangerous"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "ACL|USERS",
+      "parent": "ACL",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "admin",
+        "noscript",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@admin",
+        "@slow",
+        "@dangerous"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "ACL|WHOAMI",
+      "parent": "ACL",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "noscript",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@slow"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
       "name": "CLIENT|CACHING",
       "parent": "CLIENT",
       "kind": "subcommand",
@@ -6748,6 +7008,216 @@
       "metadata_source": "internal/server/commandLeafMetadataTable"
     },
     {
+      "name": "CLUSTER|ADDSLOTS",
+      "parent": "CLUSTER",
+      "kind": "subcommand",
+      "arity": -3,
+      "flags": [
+        "admin",
+        "stale",
+        "no_async_loading"
+      ],
+      "acl_categories": [
+        "@admin",
+        "@slow",
+        "@dangerous"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "CLUSTER|COUNTKEYSINSLOT",
+      "parent": "CLUSTER",
+      "kind": "subcommand",
+      "arity": 3,
+      "flags": [
+        "stale"
+      ],
+      "acl_categories": [
+        "@slow"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "CLUSTER|DELSLOTS",
+      "parent": "CLUSTER",
+      "kind": "subcommand",
+      "arity": -3,
+      "flags": [
+        "admin",
+        "stale",
+        "no_async_loading"
+      ],
+      "acl_categories": [
+        "@admin",
+        "@slow",
+        "@dangerous"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "CLUSTER|FLUSHSLOTS",
+      "parent": "CLUSTER",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "admin",
+        "stale",
+        "no_async_loading"
+      ],
+      "acl_categories": [
+        "@admin",
+        "@slow",
+        "@dangerous"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "CLUSTER|GETKEYSINSLOT",
+      "parent": "CLUSTER",
+      "kind": "subcommand",
+      "arity": 4,
+      "flags": [
+        "stale"
+      ],
+      "acl_categories": [
+        "@slow"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "CLUSTER|INFO",
+      "parent": "CLUSTER",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "stale"
+      ],
+      "acl_categories": [
+        "@slow"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "CLUSTER|KEYSLOT",
+      "parent": "CLUSTER",
+      "kind": "subcommand",
+      "arity": 3,
+      "flags": [
+        "stale"
+      ],
+      "acl_categories": [
+        "@slow"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "CLUSTER|MYID",
+      "parent": "CLUSTER",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "stale"
+      ],
+      "acl_categories": [
+        "@slow"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "CLUSTER|NODES",
+      "parent": "CLUSTER",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "stale"
+      ],
+      "acl_categories": [
+        "@slow"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "CLUSTER|SETSLOT",
+      "parent": "CLUSTER",
+      "kind": "subcommand",
+      "arity": -4,
+      "flags": [
+        "admin",
+        "stale",
+        "no_async_loading"
+      ],
+      "acl_categories": [
+        "@admin",
+        "@slow",
+        "@dangerous"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "CLUSTER|SHARDS",
+      "parent": "CLUSTER",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@slow"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "CLUSTER|SLOTS",
+      "parent": "CLUSTER",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@slow"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
       "name": "COMMAND|COUNT",
       "parent": "COMMAND",
       "kind": "subcommand",
@@ -6821,6 +7291,24 @@
     },
     {
       "name": "COMMAND|INFO",
+      "parent": "COMMAND",
+      "kind": "subcommand",
+      "arity": -2,
+      "flags": [
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@slow",
+        "@connection"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "COMMAND|LIST",
       "parent": "COMMAND",
       "kind": "subcommand",
       "arity": -2,
@@ -7105,6 +7593,189 @@
       "metadata_source": "internal/server/commandLeafMetadataTable"
     },
     {
+      "name": "MEMORY|USAGE",
+      "parent": "MEMORY",
+      "kind": "subcommand",
+      "arity": -3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read",
+        "@slow"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "OBJECT|ENCODING",
+      "parent": "OBJECT",
+      "kind": "subcommand",
+      "arity": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@keyspace",
+        "@read",
+        "@slow"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "OBJECT|HELP",
+      "parent": "OBJECT",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@keyspace",
+        "@slow"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "OBJECT|REFCOUNT",
+      "parent": "OBJECT",
+      "kind": "subcommand",
+      "arity": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@keyspace",
+        "@read",
+        "@slow"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "PUBSUB|CHANNELS",
+      "parent": "PUBSUB",
+      "kind": "subcommand",
+      "arity": -2,
+      "flags": [
+        "pubsub",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@pubsub",
+        "@slow"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "PUBSUB|HELP",
+      "parent": "PUBSUB",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@slow"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "PUBSUB|NUMPAT",
+      "parent": "PUBSUB",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "pubsub",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@pubsub",
+        "@slow"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "PUBSUB|NUMSUB",
+      "parent": "PUBSUB",
+      "kind": "subcommand",
+      "arity": -2,
+      "flags": [
+        "pubsub",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@pubsub",
+        "@slow"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "PUBSUB|SHARDCHANNELS",
+      "parent": "PUBSUB",
+      "kind": "subcommand",
+      "arity": -2,
+      "flags": [
+        "pubsub",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@pubsub",
+        "@slow"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "PUBSUB|SHARDNUMSUB",
+      "parent": "PUBSUB",
+      "kind": "subcommand",
+      "arity": -2,
+      "flags": [
+        "pubsub",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@pubsub",
+        "@slow"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
       "name": "SCRIPT|DEBUG",
       "parent": "SCRIPT",
       "kind": "subcommand",
@@ -7185,6 +7856,247 @@
       "acl_categories": [
         "@slow",
         "@scripting"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "SLOWLOG|GET",
+      "parent": "SLOWLOG",
+      "kind": "subcommand",
+      "arity": -2,
+      "flags": [
+        "admin",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@admin",
+        "@slow",
+        "@dangerous"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "SLOWLOG|HELP",
+      "parent": "SLOWLOG",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@slow"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "SLOWLOG|LEN",
+      "parent": "SLOWLOG",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "admin",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@admin",
+        "@slow",
+        "@dangerous"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "SLOWLOG|RESET",
+      "parent": "SLOWLOG",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "admin",
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@admin",
+        "@slow",
+        "@dangerous"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "XGROUP|CREATE",
+      "parent": "XGROUP",
+      "kind": "subcommand",
+      "arity": -5,
+      "flags": [
+        "write",
+        "denyoom"
+      ],
+      "acl_categories": [
+        "@write",
+        "@stream",
+        "@slow"
+      ],
+      "key_mode": "none",
+      "write": true,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "XGROUP|CREATECONSUMER",
+      "parent": "XGROUP",
+      "kind": "subcommand",
+      "arity": 5,
+      "flags": [
+        "write",
+        "denyoom"
+      ],
+      "acl_categories": [
+        "@write",
+        "@stream",
+        "@slow"
+      ],
+      "key_mode": "none",
+      "write": true,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "XGROUP|DELCONSUMER",
+      "parent": "XGROUP",
+      "kind": "subcommand",
+      "arity": 5,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write",
+        "@stream",
+        "@slow"
+      ],
+      "key_mode": "none",
+      "write": true,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "XGROUP|DESTROY",
+      "parent": "XGROUP",
+      "kind": "subcommand",
+      "arity": 4,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write",
+        "@stream",
+        "@slow"
+      ],
+      "key_mode": "none",
+      "write": true,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "XGROUP|SETID",
+      "parent": "XGROUP",
+      "kind": "subcommand",
+      "arity": -5,
+      "flags": [
+        "write"
+      ],
+      "acl_categories": [
+        "@write",
+        "@stream",
+        "@slow"
+      ],
+      "key_mode": "none",
+      "write": true,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "XINFO|CONSUMERS",
+      "parent": "XINFO",
+      "kind": "subcommand",
+      "arity": 4,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read",
+        "@stream",
+        "@slow"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "XINFO|GROUPS",
+      "parent": "XINFO",
+      "kind": "subcommand",
+      "arity": 3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read",
+        "@stream",
+        "@slow"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "XINFO|HELP",
+      "parent": "XINFO",
+      "kind": "subcommand",
+      "arity": 2,
+      "flags": [
+        "loading",
+        "stale"
+      ],
+      "acl_categories": [
+        "@stream",
+        "@slow"
+      ],
+      "key_mode": "none",
+      "write": false,
+      "cluster_routing": "no-key-routing",
+      "metadata_source": "internal/server/commandLeafMetadataTable"
+    },
+    {
+      "name": "XINFO|STREAM",
+      "parent": "XINFO",
+      "kind": "subcommand",
+      "arity": -3,
+      "flags": [
+        "readonly"
+      ],
+      "acl_categories": [
+        "@read",
+        "@stream",
+        "@slow"
       ],
       "key_mode": "none",
       "write": false,

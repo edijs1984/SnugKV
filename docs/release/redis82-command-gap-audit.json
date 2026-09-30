@@ -1,322 +1,14 @@
 {
   "redis_entry_count": 589,
-  "snug_entry_count": 410,
-  "shared_count": 400,
-  "redis_only_count": 189,
+  "snug_entry_count": 459,
+  "shared_count": 449,
+  "redis_only_count": 140,
   "snug_only_count": 10,
   "redis_top_level_count": 407,
   "redis_subcommand_count": 182,
   "snug_top_level_count": 374,
-  "snug_subcommand_count": 36,
+  "snug_subcommand_count": 85,
   "redis_only": [
-    {
-      "name": "ACL|CAT",
-      "redis": {
-        "name": "ACL|CAT",
-        "arity": -2,
-        "flags": [
-          "noscript",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@slow"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "ACL|DELUSER",
-      "redis": {
-        "name": "ACL|DELUSER",
-        "arity": -3,
-        "flags": [
-          "admin",
-          "noscript",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@admin",
-          "@slow",
-          "@dangerous"
-        ],
-        "tips": [
-          "request_policy:all_nodes",
-          "response_policy:all_succeeded"
-        ]
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "ACL|DRYRUN",
-      "redis": {
-        "name": "ACL|DRYRUN",
-        "arity": -4,
-        "flags": [
-          "admin",
-          "noscript",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@admin",
-          "@slow",
-          "@dangerous"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "ACL|GENPASS",
-      "redis": {
-        "name": "ACL|GENPASS",
-        "arity": -2,
-        "flags": [
-          "noscript",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@slow"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "ACL|GETUSER",
-      "redis": {
-        "name": "ACL|GETUSER",
-        "arity": 3,
-        "flags": [
-          "admin",
-          "noscript",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@admin",
-          "@slow",
-          "@dangerous"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "ACL|HELP",
-      "redis": {
-        "name": "ACL|HELP",
-        "arity": 2,
-        "flags": [
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@slow"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "ACL|LIST",
-      "redis": {
-        "name": "ACL|LIST",
-        "arity": 2,
-        "flags": [
-          "admin",
-          "noscript",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@admin",
-          "@slow",
-          "@dangerous"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "ACL|LOAD",
-      "redis": {
-        "name": "ACL|LOAD",
-        "arity": 2,
-        "flags": [
-          "admin",
-          "noscript",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@admin",
-          "@slow",
-          "@dangerous"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "ACL|LOG",
-      "redis": {
-        "name": "ACL|LOG",
-        "arity": -2,
-        "flags": [
-          "admin",
-          "noscript",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@admin",
-          "@slow",
-          "@dangerous"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "ACL|SAVE",
-      "redis": {
-        "name": "ACL|SAVE",
-        "arity": 2,
-        "flags": [
-          "admin",
-          "noscript",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@admin",
-          "@slow",
-          "@dangerous"
-        ],
-        "tips": [
-          "request_policy:all_nodes",
-          "response_policy:all_succeeded"
-        ]
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "ACL|SETUSER",
-      "redis": {
-        "name": "ACL|SETUSER",
-        "arity": -3,
-        "flags": [
-          "admin",
-          "noscript",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@admin",
-          "@slow",
-          "@dangerous"
-        ],
-        "tips": [
-          "request_policy:all_nodes",
-          "response_policy:all_succeeded"
-        ]
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "ACL|USERS",
-      "redis": {
-        "name": "ACL|USERS",
-        "arity": 2,
-        "flags": [
-          "admin",
-          "noscript",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@admin",
-          "@slow",
-          "@dangerous"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "ACL|WHOAMI",
-      "redis": {
-        "name": "ACL|WHOAMI",
-        "arity": 2,
-        "flags": [
-          "noscript",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@slow"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
     {
       "name": "BF.DEBUG",
       "redis": {
@@ -525,29 +217,6 @@
       "reason": ""
     },
     {
-      "name": "CLUSTER|ADDSLOTS",
-      "redis": {
-        "name": "CLUSTER|ADDSLOTS",
-        "arity": -3,
-        "flags": [
-          "admin",
-          "stale",
-          "no_async_loading"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@admin",
-          "@slow",
-          "@dangerous"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
       "name": "CLUSTER|ADDSLOTSRANGE",
       "redis": {
         "name": "CLUSTER|ADDSLOTSRANGE",
@@ -620,48 +289,6 @@
       "reason": ""
     },
     {
-      "name": "CLUSTER|COUNTKEYSINSLOT",
-      "redis": {
-        "name": "CLUSTER|COUNTKEYSINSLOT",
-        "arity": 3,
-        "flags": [
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@slow"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "CLUSTER|DELSLOTS",
-      "redis": {
-        "name": "CLUSTER|DELSLOTS",
-        "arity": -3,
-        "flags": [
-          "admin",
-          "stale",
-          "no_async_loading"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@admin",
-          "@slow",
-          "@dangerous"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
       "name": "CLUSTER|DELSLOTSRANGE",
       "redis": {
         "name": "CLUSTER|DELSLOTSRANGE",
@@ -708,29 +335,6 @@
       "reason": ""
     },
     {
-      "name": "CLUSTER|FLUSHSLOTS",
-      "redis": {
-        "name": "CLUSTER|FLUSHSLOTS",
-        "arity": 2,
-        "flags": [
-          "admin",
-          "stale",
-          "no_async_loading"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@admin",
-          "@slow",
-          "@dangerous"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
       "name": "CLUSTER|FORGET",
       "redis": {
         "name": "CLUSTER|FORGET",
@@ -754,73 +358,12 @@
       "reason": ""
     },
     {
-      "name": "CLUSTER|GETKEYSINSLOT",
-      "redis": {
-        "name": "CLUSTER|GETKEYSINSLOT",
-        "arity": 4,
-        "flags": [
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@slow"
-        ],
-        "tips": [
-          "nondeterministic_output"
-        ]
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
       "name": "CLUSTER|HELP",
       "redis": {
         "name": "CLUSTER|HELP",
         "arity": 2,
         "flags": [
           "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@slow"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "CLUSTER|INFO",
-      "redis": {
-        "name": "CLUSTER|INFO",
-        "arity": 2,
-        "flags": [
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@slow"
-        ],
-        "tips": [
-          "nondeterministic_output"
-        ]
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "CLUSTER|KEYSLOT",
-      "redis": {
-        "name": "CLUSTER|KEYSLOT",
-        "arity": 3,
-        "flags": [
           "stale"
         ],
         "first_key": 0,
@@ -879,49 +422,9 @@
       "reason": ""
     },
     {
-      "name": "CLUSTER|MYID",
-      "redis": {
-        "name": "CLUSTER|MYID",
-        "arity": 2,
-        "flags": [
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@slow"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
       "name": "CLUSTER|MYSHARDID",
       "redis": {
         "name": "CLUSTER|MYSHARDID",
-        "arity": 2,
-        "flags": [
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@slow"
-        ],
-        "tips": [
-          "nondeterministic_output"
-        ]
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "CLUSTER|NODES",
-      "redis": {
-        "name": "CLUSTER|NODES",
         "arity": 2,
         "flags": [
           "stale"
@@ -1056,51 +559,6 @@
       "reason": ""
     },
     {
-      "name": "CLUSTER|SETSLOT",
-      "redis": {
-        "name": "CLUSTER|SETSLOT",
-        "arity": -4,
-        "flags": [
-          "admin",
-          "stale",
-          "no_async_loading"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@admin",
-          "@slow",
-          "@dangerous"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "CLUSTER|SHARDS",
-      "redis": {
-        "name": "CLUSTER|SHARDS",
-        "arity": 2,
-        "flags": [
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@slow"
-        ],
-        "tips": [
-          "nondeterministic_output"
-        ]
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
       "name": "CLUSTER|SLAVES",
       "redis": {
         "name": "CLUSTER|SLAVES",
@@ -1148,28 +606,6 @@
       "reason": ""
     },
     {
-      "name": "CLUSTER|SLOTS",
-      "redis": {
-        "name": "CLUSTER|SLOTS",
-        "arity": 2,
-        "flags": [
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@slow"
-        ],
-        "tips": [
-          "nondeterministic_output"
-        ]
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
       "name": "COMMAND|HELP",
       "redis": {
         "name": "COMMAND|HELP",
@@ -1186,29 +622,6 @@
           "@connection"
         ],
         "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "COMMAND|LIST",
-      "redis": {
-        "name": "COMMAND|LIST",
-        "arity": -2,
-        "flags": [
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@slow",
-          "@connection"
-        ],
-        "tips": [
-          "nondeterministic_output_order"
-        ]
       },
       "classification": "UNCLASSIFIED",
       "reason": ""
@@ -1908,26 +1321,6 @@
       "reason": ""
     },
     {
-      "name": "MEMORY|USAGE",
-      "redis": {
-        "name": "MEMORY|USAGE",
-        "arity": -3,
-        "flags": [
-          "readonly"
-        ],
-        "first_key": 2,
-        "last_key": 2,
-        "step": 1,
-        "acl_categories": [
-          "@read",
-          "@slow"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
       "name": "MODULE",
       "redis": {
         "name": "MODULE",
@@ -2080,29 +1473,6 @@
       "reason": ""
     },
     {
-      "name": "OBJECT|ENCODING",
-      "redis": {
-        "name": "OBJECT|ENCODING",
-        "arity": 3,
-        "flags": [
-          "readonly"
-        ],
-        "first_key": 2,
-        "last_key": 2,
-        "step": 1,
-        "acl_categories": [
-          "@keyspace",
-          "@read",
-          "@slow"
-        ],
-        "tips": [
-          "nondeterministic_output"
-        ]
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
       "name": "OBJECT|FREQ",
       "redis": {
         "name": "OBJECT|FREQ",
@@ -2126,53 +1496,9 @@
       "reason": ""
     },
     {
-      "name": "OBJECT|HELP",
-      "redis": {
-        "name": "OBJECT|HELP",
-        "arity": 2,
-        "flags": [
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@keyspace",
-          "@slow"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
       "name": "OBJECT|IDLETIME",
       "redis": {
         "name": "OBJECT|IDLETIME",
-        "arity": 3,
-        "flags": [
-          "readonly"
-        ],
-        "first_key": 2,
-        "last_key": 2,
-        "step": 1,
-        "acl_categories": [
-          "@keyspace",
-          "@read",
-          "@slow"
-        ],
-        "tips": [
-          "nondeterministic_output"
-        ]
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "OBJECT|REFCOUNT",
-      "redis": {
-        "name": "OBJECT|REFCOUNT",
         "arity": 3,
         "flags": [
           "readonly"
@@ -2233,136 +1559,6 @@
           "@admin",
           "@slow",
           "@dangerous"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "PUBSUB|CHANNELS",
-      "redis": {
-        "name": "PUBSUB|CHANNELS",
-        "arity": -2,
-        "flags": [
-          "pubsub",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@pubsub",
-          "@slow"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "PUBSUB|HELP",
-      "redis": {
-        "name": "PUBSUB|HELP",
-        "arity": 2,
-        "flags": [
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@slow"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "PUBSUB|NUMPAT",
-      "redis": {
-        "name": "PUBSUB|NUMPAT",
-        "arity": 2,
-        "flags": [
-          "pubsub",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@pubsub",
-          "@slow"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "PUBSUB|NUMSUB",
-      "redis": {
-        "name": "PUBSUB|NUMSUB",
-        "arity": -2,
-        "flags": [
-          "pubsub",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@pubsub",
-          "@slow"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "PUBSUB|SHARDCHANNELS",
-      "redis": {
-        "name": "PUBSUB|SHARDCHANNELS",
-        "arity": -2,
-        "flags": [
-          "pubsub",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@pubsub",
-          "@slow"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "PUBSUB|SHARDNUMSUB",
-      "redis": {
-        "name": "PUBSUB|SHARDNUMSUB",
-        "arity": -2,
-        "flags": [
-          "pubsub",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@pubsub",
-          "@slow"
         ],
         "tips": []
       },
@@ -2575,105 +1771,6 @@
       "reason": ""
     },
     {
-      "name": "SLOWLOG|GET",
-      "redis": {
-        "name": "SLOWLOG|GET",
-        "arity": -2,
-        "flags": [
-          "admin",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@admin",
-          "@slow",
-          "@dangerous"
-        ],
-        "tips": [
-          "request_policy:all_nodes",
-          "nondeterministic_output"
-        ]
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "SLOWLOG|HELP",
-      "redis": {
-        "name": "SLOWLOG|HELP",
-        "arity": 2,
-        "flags": [
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@slow"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "SLOWLOG|LEN",
-      "redis": {
-        "name": "SLOWLOG|LEN",
-        "arity": 2,
-        "flags": [
-          "admin",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@admin",
-          "@slow",
-          "@dangerous"
-        ],
-        "tips": [
-          "request_policy:all_nodes",
-          "response_policy:agg_sum",
-          "nondeterministic_output"
-        ]
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "SLOWLOG|RESET",
-      "redis": {
-        "name": "SLOWLOG|RESET",
-        "arity": 2,
-        "flags": [
-          "admin",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@admin",
-          "@slow",
-          "@dangerous"
-        ],
-        "tips": [
-          "request_policy:all_nodes",
-          "response_policy:all_succeeded"
-        ]
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
       "name": "SUBSTR",
       "redis": {
         "name": "SUBSTR",
@@ -2780,92 +1877,6 @@
       "reason": ""
     },
     {
-      "name": "XGROUP|CREATE",
-      "redis": {
-        "name": "XGROUP|CREATE",
-        "arity": -5,
-        "flags": [
-          "write",
-          "denyoom"
-        ],
-        "first_key": 2,
-        "last_key": 2,
-        "step": 1,
-        "acl_categories": [
-          "@write",
-          "@stream",
-          "@slow"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "XGROUP|CREATECONSUMER",
-      "redis": {
-        "name": "XGROUP|CREATECONSUMER",
-        "arity": 5,
-        "flags": [
-          "write",
-          "denyoom"
-        ],
-        "first_key": 2,
-        "last_key": 2,
-        "step": 1,
-        "acl_categories": [
-          "@write",
-          "@stream",
-          "@slow"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "XGROUP|DELCONSUMER",
-      "redis": {
-        "name": "XGROUP|DELCONSUMER",
-        "arity": 5,
-        "flags": [
-          "write"
-        ],
-        "first_key": 2,
-        "last_key": 2,
-        "step": 1,
-        "acl_categories": [
-          "@write",
-          "@stream",
-          "@slow"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "XGROUP|DESTROY",
-      "redis": {
-        "name": "XGROUP|DESTROY",
-        "arity": 4,
-        "flags": [
-          "write"
-        ],
-        "first_key": 2,
-        "last_key": 2,
-        "step": 1,
-        "acl_categories": [
-          "@write",
-          "@stream",
-          "@slow"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
       "name": "XGROUP|HELP",
       "redis": {
         "name": "XGROUP|HELP",
@@ -2878,113 +1889,6 @@
         "last_key": 0,
         "step": 0,
         "acl_categories": [
-          "@stream",
-          "@slow"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "XGROUP|SETID",
-      "redis": {
-        "name": "XGROUP|SETID",
-        "arity": -5,
-        "flags": [
-          "write"
-        ],
-        "first_key": 2,
-        "last_key": 2,
-        "step": 1,
-        "acl_categories": [
-          "@write",
-          "@stream",
-          "@slow"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "XINFO|CONSUMERS",
-      "redis": {
-        "name": "XINFO|CONSUMERS",
-        "arity": 4,
-        "flags": [
-          "readonly"
-        ],
-        "first_key": 2,
-        "last_key": 2,
-        "step": 1,
-        "acl_categories": [
-          "@read",
-          "@stream",
-          "@slow"
-        ],
-        "tips": [
-          "nondeterministic_output"
-        ]
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "XINFO|GROUPS",
-      "redis": {
-        "name": "XINFO|GROUPS",
-        "arity": 3,
-        "flags": [
-          "readonly"
-        ],
-        "first_key": 2,
-        "last_key": 2,
-        "step": 1,
-        "acl_categories": [
-          "@read",
-          "@stream",
-          "@slow"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "XINFO|HELP",
-      "redis": {
-        "name": "XINFO|HELP",
-        "arity": 2,
-        "flags": [
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@stream",
-          "@slow"
-        ],
-        "tips": []
-      },
-      "classification": "UNCLASSIFIED",
-      "reason": ""
-    },
-    {
-      "name": "XINFO|STREAM",
-      "redis": {
-        "name": "XINFO|STREAM",
-        "arity": -3,
-        "flags": [
-          "readonly"
-        ],
-        "first_key": 2,
-        "last_key": 2,
-        "step": 1,
-        "acl_categories": [
-          "@read",
           "@stream",
           "@slow"
         ],
@@ -4251,6 +3155,548 @@
         "write": false,
         "cluster_routing": "no-key-routing",
         "metadata_source": "internal/server/commandTable"
+      }
+    },
+    {
+      "name": "ACL|CAT",
+      "redis": {
+        "name": "ACL|CAT",
+        "arity": -2,
+        "flags": [
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "ACL|CAT",
+        "parent": "ACL",
+        "kind": "subcommand",
+        "arity": -2,
+        "flags": [
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "acl_categories": [
+          "@slow"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "ACL|DELUSER",
+      "redis": {
+        "name": "ACL|DELUSER",
+        "arity": -3,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": [
+          "request_policy:all_nodes",
+          "response_policy:all_succeeded"
+        ]
+      },
+      "snug": {
+        "name": "ACL|DELUSER",
+        "parent": "ACL",
+        "kind": "subcommand",
+        "arity": -3,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "ACL|DRYRUN",
+      "redis": {
+        "name": "ACL|DRYRUN",
+        "arity": -4,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "ACL|DRYRUN",
+        "parent": "ACL",
+        "kind": "subcommand",
+        "arity": -4,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "ACL|GENPASS",
+      "redis": {
+        "name": "ACL|GENPASS",
+        "arity": -2,
+        "flags": [
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "ACL|GENPASS",
+        "parent": "ACL",
+        "kind": "subcommand",
+        "arity": -2,
+        "flags": [
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "acl_categories": [
+          "@slow"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "ACL|GETUSER",
+      "redis": {
+        "name": "ACL|GETUSER",
+        "arity": 3,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "ACL|GETUSER",
+        "parent": "ACL",
+        "kind": "subcommand",
+        "arity": 3,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "ACL|HELP",
+      "redis": {
+        "name": "ACL|HELP",
+        "arity": 2,
+        "flags": [
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "ACL|HELP",
+        "parent": "ACL",
+        "kind": "subcommand",
+        "arity": 2,
+        "flags": [
+          "loading",
+          "stale"
+        ],
+        "acl_categories": [
+          "@slow"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "ACL|LIST",
+      "redis": {
+        "name": "ACL|LIST",
+        "arity": 2,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "ACL|LIST",
+        "parent": "ACL",
+        "kind": "subcommand",
+        "arity": 2,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "ACL|LOAD",
+      "redis": {
+        "name": "ACL|LOAD",
+        "arity": 2,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "ACL|LOAD",
+        "parent": "ACL",
+        "kind": "subcommand",
+        "arity": 2,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "ACL|LOG",
+      "redis": {
+        "name": "ACL|LOG",
+        "arity": -2,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "ACL|LOG",
+        "parent": "ACL",
+        "kind": "subcommand",
+        "arity": -2,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "ACL|SAVE",
+      "redis": {
+        "name": "ACL|SAVE",
+        "arity": 2,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": [
+          "request_policy:all_nodes",
+          "response_policy:all_succeeded"
+        ]
+      },
+      "snug": {
+        "name": "ACL|SAVE",
+        "parent": "ACL",
+        "kind": "subcommand",
+        "arity": 2,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "ACL|SETUSER",
+      "redis": {
+        "name": "ACL|SETUSER",
+        "arity": -3,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": [
+          "request_policy:all_nodes",
+          "response_policy:all_succeeded"
+        ]
+      },
+      "snug": {
+        "name": "ACL|SETUSER",
+        "parent": "ACL",
+        "kind": "subcommand",
+        "arity": -3,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "ACL|USERS",
+      "redis": {
+        "name": "ACL|USERS",
+        "arity": 2,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "ACL|USERS",
+        "parent": "ACL",
+        "kind": "subcommand",
+        "arity": 2,
+        "flags": [
+          "admin",
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "ACL|WHOAMI",
+      "redis": {
+        "name": "ACL|WHOAMI",
+        "arity": 2,
+        "flags": [
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "ACL|WHOAMI",
+        "parent": "ACL",
+        "kind": "subcommand",
+        "arity": 2,
+        "flags": [
+          "noscript",
+          "loading",
+          "stale"
+        ],
+        "acl_categories": [
+          "@slow"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
       }
     },
     {
@@ -6370,6 +5816,448 @@
       }
     },
     {
+      "name": "CLUSTER|ADDSLOTS",
+      "redis": {
+        "name": "CLUSTER|ADDSLOTS",
+        "arity": -3,
+        "flags": [
+          "admin",
+          "stale",
+          "no_async_loading"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "CLUSTER|ADDSLOTS",
+        "parent": "CLUSTER",
+        "kind": "subcommand",
+        "arity": -3,
+        "flags": [
+          "admin",
+          "stale",
+          "no_async_loading"
+        ],
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "CLUSTER|COUNTKEYSINSLOT",
+      "redis": {
+        "name": "CLUSTER|COUNTKEYSINSLOT",
+        "arity": 3,
+        "flags": [
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "CLUSTER|COUNTKEYSINSLOT",
+        "parent": "CLUSTER",
+        "kind": "subcommand",
+        "arity": 3,
+        "flags": [
+          "stale"
+        ],
+        "acl_categories": [
+          "@slow"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "CLUSTER|DELSLOTS",
+      "redis": {
+        "name": "CLUSTER|DELSLOTS",
+        "arity": -3,
+        "flags": [
+          "admin",
+          "stale",
+          "no_async_loading"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "CLUSTER|DELSLOTS",
+        "parent": "CLUSTER",
+        "kind": "subcommand",
+        "arity": -3,
+        "flags": [
+          "admin",
+          "stale",
+          "no_async_loading"
+        ],
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "CLUSTER|FLUSHSLOTS",
+      "redis": {
+        "name": "CLUSTER|FLUSHSLOTS",
+        "arity": 2,
+        "flags": [
+          "admin",
+          "stale",
+          "no_async_loading"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "CLUSTER|FLUSHSLOTS",
+        "parent": "CLUSTER",
+        "kind": "subcommand",
+        "arity": 2,
+        "flags": [
+          "admin",
+          "stale",
+          "no_async_loading"
+        ],
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "CLUSTER|GETKEYSINSLOT",
+      "redis": {
+        "name": "CLUSTER|GETKEYSINSLOT",
+        "arity": 4,
+        "flags": [
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": [
+          "nondeterministic_output"
+        ]
+      },
+      "snug": {
+        "name": "CLUSTER|GETKEYSINSLOT",
+        "parent": "CLUSTER",
+        "kind": "subcommand",
+        "arity": 4,
+        "flags": [
+          "stale"
+        ],
+        "acl_categories": [
+          "@slow"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "CLUSTER|INFO",
+      "redis": {
+        "name": "CLUSTER|INFO",
+        "arity": 2,
+        "flags": [
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": [
+          "nondeterministic_output"
+        ]
+      },
+      "snug": {
+        "name": "CLUSTER|INFO",
+        "parent": "CLUSTER",
+        "kind": "subcommand",
+        "arity": 2,
+        "flags": [
+          "stale"
+        ],
+        "acl_categories": [
+          "@slow"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "CLUSTER|KEYSLOT",
+      "redis": {
+        "name": "CLUSTER|KEYSLOT",
+        "arity": 3,
+        "flags": [
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "CLUSTER|KEYSLOT",
+        "parent": "CLUSTER",
+        "kind": "subcommand",
+        "arity": 3,
+        "flags": [
+          "stale"
+        ],
+        "acl_categories": [
+          "@slow"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "CLUSTER|MYID",
+      "redis": {
+        "name": "CLUSTER|MYID",
+        "arity": 2,
+        "flags": [
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "CLUSTER|MYID",
+        "parent": "CLUSTER",
+        "kind": "subcommand",
+        "arity": 2,
+        "flags": [
+          "stale"
+        ],
+        "acl_categories": [
+          "@slow"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "CLUSTER|NODES",
+      "redis": {
+        "name": "CLUSTER|NODES",
+        "arity": 2,
+        "flags": [
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": [
+          "nondeterministic_output"
+        ]
+      },
+      "snug": {
+        "name": "CLUSTER|NODES",
+        "parent": "CLUSTER",
+        "kind": "subcommand",
+        "arity": 2,
+        "flags": [
+          "stale"
+        ],
+        "acl_categories": [
+          "@slow"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "CLUSTER|SETSLOT",
+      "redis": {
+        "name": "CLUSTER|SETSLOT",
+        "arity": -4,
+        "flags": [
+          "admin",
+          "stale",
+          "no_async_loading"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "CLUSTER|SETSLOT",
+        "parent": "CLUSTER",
+        "kind": "subcommand",
+        "arity": -4,
+        "flags": [
+          "admin",
+          "stale",
+          "no_async_loading"
+        ],
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "CLUSTER|SHARDS",
+      "redis": {
+        "name": "CLUSTER|SHARDS",
+        "arity": 2,
+        "flags": [
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": [
+          "nondeterministic_output"
+        ]
+      },
+      "snug": {
+        "name": "CLUSTER|SHARDS",
+        "parent": "CLUSTER",
+        "kind": "subcommand",
+        "arity": 2,
+        "flags": [
+          "loading",
+          "stale"
+        ],
+        "acl_categories": [
+          "@slow"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "CLUSTER|SLOTS",
+      "redis": {
+        "name": "CLUSTER|SLOTS",
+        "arity": 2,
+        "flags": [
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": [
+          "nondeterministic_output"
+        ]
+      },
+      "snug": {
+        "name": "CLUSTER|SLOTS",
+        "parent": "CLUSTER",
+        "kind": "subcommand",
+        "arity": 2,
+        "flags": [
+          "loading",
+          "stale"
+        ],
+        "acl_categories": [
+          "@slow"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
       "name": "CMS.INCRBY",
       "redis": {
         "name": "CMS.INCRBY",
@@ -6816,6 +6704,45 @@
       },
       "snug": {
         "name": "COMMAND|INFO",
+        "parent": "COMMAND",
+        "kind": "subcommand",
+        "arity": -2,
+        "flags": [
+          "loading",
+          "stale"
+        ],
+        "acl_categories": [
+          "@slow",
+          "@connection"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "COMMAND|LIST",
+      "redis": {
+        "name": "COMMAND|LIST",
+        "arity": -2,
+        "flags": [
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow",
+          "@connection"
+        ],
+        "tips": [
+          "nondeterministic_output_order"
+        ]
+      },
+      "snug": {
+        "name": "COMMAND|LIST",
         "parent": "COMMAND",
         "kind": "subcommand",
         "arity": -2,
@@ -12496,6 +12423,41 @@
       }
     },
     {
+      "name": "MEMORY|USAGE",
+      "redis": {
+        "name": "MEMORY|USAGE",
+        "arity": -3,
+        "flags": [
+          "readonly"
+        ],
+        "first_key": 2,
+        "last_key": 2,
+        "step": 1,
+        "acl_categories": [
+          "@read",
+          "@slow"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "MEMORY|USAGE",
+        "parent": "MEMORY",
+        "kind": "subcommand",
+        "arity": -3,
+        "flags": [
+          "readonly"
+        ],
+        "acl_categories": [
+          "@read",
+          "@slow"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
       "name": "MGET",
       "redis": {
         "name": "MGET",
@@ -12758,6 +12720,121 @@
         "write": false,
         "cluster_routing": "no-key-routing",
         "metadata_source": "internal/server/commandTable"
+      }
+    },
+    {
+      "name": "OBJECT|ENCODING",
+      "redis": {
+        "name": "OBJECT|ENCODING",
+        "arity": 3,
+        "flags": [
+          "readonly"
+        ],
+        "first_key": 2,
+        "last_key": 2,
+        "step": 1,
+        "acl_categories": [
+          "@keyspace",
+          "@read",
+          "@slow"
+        ],
+        "tips": [
+          "nondeterministic_output"
+        ]
+      },
+      "snug": {
+        "name": "OBJECT|ENCODING",
+        "parent": "OBJECT",
+        "kind": "subcommand",
+        "arity": 3,
+        "flags": [
+          "readonly"
+        ],
+        "acl_categories": [
+          "@keyspace",
+          "@read",
+          "@slow"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "OBJECT|HELP",
+      "redis": {
+        "name": "OBJECT|HELP",
+        "arity": 2,
+        "flags": [
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@keyspace",
+          "@slow"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "OBJECT|HELP",
+        "parent": "OBJECT",
+        "kind": "subcommand",
+        "arity": 2,
+        "flags": [
+          "loading",
+          "stale"
+        ],
+        "acl_categories": [
+          "@keyspace",
+          "@slow"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "OBJECT|REFCOUNT",
+      "redis": {
+        "name": "OBJECT|REFCOUNT",
+        "arity": 3,
+        "flags": [
+          "readonly"
+        ],
+        "first_key": 2,
+        "last_key": 2,
+        "step": 1,
+        "acl_categories": [
+          "@keyspace",
+          "@read",
+          "@slow"
+        ],
+        "tips": [
+          "nondeterministic_output"
+        ]
+      },
+      "snug": {
+        "name": "OBJECT|REFCOUNT",
+        "parent": "OBJECT",
+        "kind": "subcommand",
+        "arity": 3,
+        "flags": [
+          "readonly"
+        ],
+        "acl_categories": [
+          "@keyspace",
+          "@read",
+          "@slow"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
       }
     },
     {
@@ -13280,6 +13357,236 @@
         "write": false,
         "cluster_routing": "no-key-routing",
         "metadata_source": "internal/server/commandTable"
+      }
+    },
+    {
+      "name": "PUBSUB|CHANNELS",
+      "redis": {
+        "name": "PUBSUB|CHANNELS",
+        "arity": -2,
+        "flags": [
+          "pubsub",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@pubsub",
+          "@slow"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "PUBSUB|CHANNELS",
+        "parent": "PUBSUB",
+        "kind": "subcommand",
+        "arity": -2,
+        "flags": [
+          "pubsub",
+          "loading",
+          "stale"
+        ],
+        "acl_categories": [
+          "@pubsub",
+          "@slow"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "PUBSUB|HELP",
+      "redis": {
+        "name": "PUBSUB|HELP",
+        "arity": 2,
+        "flags": [
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "PUBSUB|HELP",
+        "parent": "PUBSUB",
+        "kind": "subcommand",
+        "arity": 2,
+        "flags": [
+          "loading",
+          "stale"
+        ],
+        "acl_categories": [
+          "@slow"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "PUBSUB|NUMPAT",
+      "redis": {
+        "name": "PUBSUB|NUMPAT",
+        "arity": 2,
+        "flags": [
+          "pubsub",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@pubsub",
+          "@slow"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "PUBSUB|NUMPAT",
+        "parent": "PUBSUB",
+        "kind": "subcommand",
+        "arity": 2,
+        "flags": [
+          "pubsub",
+          "loading",
+          "stale"
+        ],
+        "acl_categories": [
+          "@pubsub",
+          "@slow"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "PUBSUB|NUMSUB",
+      "redis": {
+        "name": "PUBSUB|NUMSUB",
+        "arity": -2,
+        "flags": [
+          "pubsub",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@pubsub",
+          "@slow"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "PUBSUB|NUMSUB",
+        "parent": "PUBSUB",
+        "kind": "subcommand",
+        "arity": -2,
+        "flags": [
+          "pubsub",
+          "loading",
+          "stale"
+        ],
+        "acl_categories": [
+          "@pubsub",
+          "@slow"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "PUBSUB|SHARDCHANNELS",
+      "redis": {
+        "name": "PUBSUB|SHARDCHANNELS",
+        "arity": -2,
+        "flags": [
+          "pubsub",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@pubsub",
+          "@slow"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "PUBSUB|SHARDCHANNELS",
+        "parent": "PUBSUB",
+        "kind": "subcommand",
+        "arity": -2,
+        "flags": [
+          "pubsub",
+          "loading",
+          "stale"
+        ],
+        "acl_categories": [
+          "@pubsub",
+          "@slow"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "PUBSUB|SHARDNUMSUB",
+      "redis": {
+        "name": "PUBSUB|SHARDNUMSUB",
+        "arity": -2,
+        "flags": [
+          "pubsub",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@pubsub",
+          "@slow"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "PUBSUB|SHARDNUMSUB",
+        "parent": "PUBSUB",
+        "kind": "subcommand",
+        "arity": -2,
+        "flags": [
+          "pubsub",
+          "loading",
+          "stale"
+        ],
+        "acl_categories": [
+          "@pubsub",
+          "@slow"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
       }
     },
     {
@@ -14668,6 +14975,174 @@
         "write": false,
         "cluster_routing": "no-key-routing",
         "metadata_source": "internal/server/commandTable"
+      }
+    },
+    {
+      "name": "SLOWLOG|GET",
+      "redis": {
+        "name": "SLOWLOG|GET",
+        "arity": -2,
+        "flags": [
+          "admin",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": [
+          "request_policy:all_nodes",
+          "nondeterministic_output"
+        ]
+      },
+      "snug": {
+        "name": "SLOWLOG|GET",
+        "parent": "SLOWLOG",
+        "kind": "subcommand",
+        "arity": -2,
+        "flags": [
+          "admin",
+          "loading",
+          "stale"
+        ],
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "SLOWLOG|HELP",
+      "redis": {
+        "name": "SLOWLOG|HELP",
+        "arity": 2,
+        "flags": [
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@slow"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "SLOWLOG|HELP",
+        "parent": "SLOWLOG",
+        "kind": "subcommand",
+        "arity": 2,
+        "flags": [
+          "loading",
+          "stale"
+        ],
+        "acl_categories": [
+          "@slow"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "SLOWLOG|LEN",
+      "redis": {
+        "name": "SLOWLOG|LEN",
+        "arity": 2,
+        "flags": [
+          "admin",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": [
+          "request_policy:all_nodes",
+          "response_policy:agg_sum",
+          "nondeterministic_output"
+        ]
+      },
+      "snug": {
+        "name": "SLOWLOG|LEN",
+        "parent": "SLOWLOG",
+        "kind": "subcommand",
+        "arity": 2,
+        "flags": [
+          "admin",
+          "loading",
+          "stale"
+        ],
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "SLOWLOG|RESET",
+      "redis": {
+        "name": "SLOWLOG|RESET",
+        "arity": 2,
+        "flags": [
+          "admin",
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "tips": [
+          "request_policy:all_nodes",
+          "response_policy:all_succeeded"
+        ]
+      },
+      "snug": {
+        "name": "SLOWLOG|RESET",
+        "parent": "SLOWLOG",
+        "kind": "subcommand",
+        "arity": 2,
+        "flags": [
+          "admin",
+          "loading",
+          "stale"
+        ],
+        "acl_categories": [
+          "@admin",
+          "@slow",
+          "@dangerous"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
       }
     },
     {
@@ -17825,6 +18300,195 @@
       }
     },
     {
+      "name": "XGROUP|CREATE",
+      "redis": {
+        "name": "XGROUP|CREATE",
+        "arity": -5,
+        "flags": [
+          "write",
+          "denyoom"
+        ],
+        "first_key": 2,
+        "last_key": 2,
+        "step": 1,
+        "acl_categories": [
+          "@write",
+          "@stream",
+          "@slow"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "XGROUP|CREATE",
+        "parent": "XGROUP",
+        "kind": "subcommand",
+        "arity": -5,
+        "flags": [
+          "write",
+          "denyoom"
+        ],
+        "acl_categories": [
+          "@write",
+          "@stream",
+          "@slow"
+        ],
+        "key_mode": "none",
+        "write": true,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "XGROUP|CREATECONSUMER",
+      "redis": {
+        "name": "XGROUP|CREATECONSUMER",
+        "arity": 5,
+        "flags": [
+          "write",
+          "denyoom"
+        ],
+        "first_key": 2,
+        "last_key": 2,
+        "step": 1,
+        "acl_categories": [
+          "@write",
+          "@stream",
+          "@slow"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "XGROUP|CREATECONSUMER",
+        "parent": "XGROUP",
+        "kind": "subcommand",
+        "arity": 5,
+        "flags": [
+          "write",
+          "denyoom"
+        ],
+        "acl_categories": [
+          "@write",
+          "@stream",
+          "@slow"
+        ],
+        "key_mode": "none",
+        "write": true,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "XGROUP|DELCONSUMER",
+      "redis": {
+        "name": "XGROUP|DELCONSUMER",
+        "arity": 5,
+        "flags": [
+          "write"
+        ],
+        "first_key": 2,
+        "last_key": 2,
+        "step": 1,
+        "acl_categories": [
+          "@write",
+          "@stream",
+          "@slow"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "XGROUP|DELCONSUMER",
+        "parent": "XGROUP",
+        "kind": "subcommand",
+        "arity": 5,
+        "flags": [
+          "write"
+        ],
+        "acl_categories": [
+          "@write",
+          "@stream",
+          "@slow"
+        ],
+        "key_mode": "none",
+        "write": true,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "XGROUP|DESTROY",
+      "redis": {
+        "name": "XGROUP|DESTROY",
+        "arity": 4,
+        "flags": [
+          "write"
+        ],
+        "first_key": 2,
+        "last_key": 2,
+        "step": 1,
+        "acl_categories": [
+          "@write",
+          "@stream",
+          "@slow"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "XGROUP|DESTROY",
+        "parent": "XGROUP",
+        "kind": "subcommand",
+        "arity": 4,
+        "flags": [
+          "write"
+        ],
+        "acl_categories": [
+          "@write",
+          "@stream",
+          "@slow"
+        ],
+        "key_mode": "none",
+        "write": true,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "XGROUP|SETID",
+      "redis": {
+        "name": "XGROUP|SETID",
+        "arity": -5,
+        "flags": [
+          "write"
+        ],
+        "first_key": 2,
+        "last_key": 2,
+        "step": 1,
+        "acl_categories": [
+          "@write",
+          "@stream",
+          "@slow"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "XGROUP|SETID",
+        "parent": "XGROUP",
+        "kind": "subcommand",
+        "arity": -5,
+        "flags": [
+          "write"
+        ],
+        "acl_categories": [
+          "@write",
+          "@stream",
+          "@slow"
+        ],
+        "key_mode": "none",
+        "write": true,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
       "name": "XINFO",
       "redis": {
         "name": "XINFO",
@@ -17853,6 +18517,156 @@
         "write": false,
         "cluster_routing": "no-key-routing",
         "metadata_source": "internal/server/commandTable"
+      }
+    },
+    {
+      "name": "XINFO|CONSUMERS",
+      "redis": {
+        "name": "XINFO|CONSUMERS",
+        "arity": 4,
+        "flags": [
+          "readonly"
+        ],
+        "first_key": 2,
+        "last_key": 2,
+        "step": 1,
+        "acl_categories": [
+          "@read",
+          "@stream",
+          "@slow"
+        ],
+        "tips": [
+          "nondeterministic_output"
+        ]
+      },
+      "snug": {
+        "name": "XINFO|CONSUMERS",
+        "parent": "XINFO",
+        "kind": "subcommand",
+        "arity": 4,
+        "flags": [
+          "readonly"
+        ],
+        "acl_categories": [
+          "@read",
+          "@stream",
+          "@slow"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "XINFO|GROUPS",
+      "redis": {
+        "name": "XINFO|GROUPS",
+        "arity": 3,
+        "flags": [
+          "readonly"
+        ],
+        "first_key": 2,
+        "last_key": 2,
+        "step": 1,
+        "acl_categories": [
+          "@read",
+          "@stream",
+          "@slow"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "XINFO|GROUPS",
+        "parent": "XINFO",
+        "kind": "subcommand",
+        "arity": 3,
+        "flags": [
+          "readonly"
+        ],
+        "acl_categories": [
+          "@read",
+          "@stream",
+          "@slow"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "XINFO|HELP",
+      "redis": {
+        "name": "XINFO|HELP",
+        "arity": 2,
+        "flags": [
+          "loading",
+          "stale"
+        ],
+        "first_key": 0,
+        "last_key": 0,
+        "step": 0,
+        "acl_categories": [
+          "@stream",
+          "@slow"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "XINFO|HELP",
+        "parent": "XINFO",
+        "kind": "subcommand",
+        "arity": 2,
+        "flags": [
+          "loading",
+          "stale"
+        ],
+        "acl_categories": [
+          "@stream",
+          "@slow"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
+      }
+    },
+    {
+      "name": "XINFO|STREAM",
+      "redis": {
+        "name": "XINFO|STREAM",
+        "arity": -3,
+        "flags": [
+          "readonly"
+        ],
+        "first_key": 2,
+        "last_key": 2,
+        "step": 1,
+        "acl_categories": [
+          "@read",
+          "@stream",
+          "@slow"
+        ],
+        "tips": []
+      },
+      "snug": {
+        "name": "XINFO|STREAM",
+        "parent": "XINFO",
+        "kind": "subcommand",
+        "arity": -3,
+        "flags": [
+          "readonly"
+        ],
+        "acl_categories": [
+          "@read",
+          "@stream",
+          "@slow"
+        ],
+        "key_mode": "none",
+        "write": false,
+        "cluster_routing": "no-key-routing",
+        "metadata_source": "internal/server/commandLeafMetadataTable"
       }
     },
     {

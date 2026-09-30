@@ -1,326 +1,18 @@
 {
   "source_counts": {
     "redis_entries": 589,
-    "snug_entries": 410,
-    "shared": 400,
-    "redis_only": 189,
+    "snug_entries": 459,
+    "shared": 449,
+    "redis_only": 140,
     "snug_only": 10
   },
   "classification_counts": {
-    "IMPLEMENTED": 49,
+    "IMPLEMENTED": 0,
     "INTENTIONALLY_UNSUPPORTED": 10,
     "CANDIDATE_GAP": 58,
     "IRRELEVANT": 72
   },
   "entries": [
-    {
-      "name": "ACL|CAT",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "ACL|CAT",
-        "arity": -2,
-        "flags": [
-          "noscript",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@slow"
-        ],
-        "tips": []
-      }
-    },
-    {
-      "name": "ACL|DELUSER",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "ACL|DELUSER",
-        "arity": -3,
-        "flags": [
-          "admin",
-          "noscript",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@admin",
-          "@slow",
-          "@dangerous"
-        ],
-        "tips": [
-          "request_policy:all_nodes",
-          "response_policy:all_succeeded"
-        ]
-      }
-    },
-    {
-      "name": "ACL|DRYRUN",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "ACL|DRYRUN",
-        "arity": -4,
-        "flags": [
-          "admin",
-          "noscript",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@admin",
-          "@slow",
-          "@dangerous"
-        ],
-        "tips": []
-      }
-    },
-    {
-      "name": "ACL|GENPASS",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "ACL|GENPASS",
-        "arity": -2,
-        "flags": [
-          "noscript",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@slow"
-        ],
-        "tips": []
-      }
-    },
-    {
-      "name": "ACL|GETUSER",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "ACL|GETUSER",
-        "arity": 3,
-        "flags": [
-          "admin",
-          "noscript",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@admin",
-          "@slow",
-          "@dangerous"
-        ],
-        "tips": []
-      }
-    },
-    {
-      "name": "ACL|HELP",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "ACL|HELP",
-        "arity": 2,
-        "flags": [
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@slow"
-        ],
-        "tips": []
-      }
-    },
-    {
-      "name": "ACL|LIST",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "ACL|LIST",
-        "arity": 2,
-        "flags": [
-          "admin",
-          "noscript",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@admin",
-          "@slow",
-          "@dangerous"
-        ],
-        "tips": []
-      }
-    },
-    {
-      "name": "ACL|LOAD",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "ACL|LOAD",
-        "arity": 2,
-        "flags": [
-          "admin",
-          "noscript",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@admin",
-          "@slow",
-          "@dangerous"
-        ],
-        "tips": []
-      }
-    },
-    {
-      "name": "ACL|LOG",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "ACL|LOG",
-        "arity": -2,
-        "flags": [
-          "admin",
-          "noscript",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@admin",
-          "@slow",
-          "@dangerous"
-        ],
-        "tips": []
-      }
-    },
-    {
-      "name": "ACL|SAVE",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "ACL|SAVE",
-        "arity": 2,
-        "flags": [
-          "admin",
-          "noscript",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@admin",
-          "@slow",
-          "@dangerous"
-        ],
-        "tips": [
-          "request_policy:all_nodes",
-          "response_policy:all_succeeded"
-        ]
-      }
-    },
-    {
-      "name": "ACL|SETUSER",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "ACL|SETUSER",
-        "arity": -3,
-        "flags": [
-          "admin",
-          "noscript",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@admin",
-          "@slow",
-          "@dangerous"
-        ],
-        "tips": [
-          "request_policy:all_nodes",
-          "response_policy:all_succeeded"
-        ]
-      }
-    },
-    {
-      "name": "ACL|USERS",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "ACL|USERS",
-        "arity": 2,
-        "flags": [
-          "admin",
-          "noscript",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@admin",
-          "@slow",
-          "@dangerous"
-        ],
-        "tips": []
-      }
-    },
-    {
-      "name": "ACL|WHOAMI",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "ACL|WHOAMI",
-        "arity": 2,
-        "flags": [
-          "noscript",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@slow"
-        ],
-        "tips": []
-      }
-    },
     {
       "name": "BF.DEBUG",
       "classification": "IRRELEVANT",
@@ -529,29 +221,6 @@
       }
     },
     {
-      "name": "CLUSTER|ADDSLOTS",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "CLUSTER|ADDSLOTS",
-        "arity": -3,
-        "flags": [
-          "admin",
-          "stale",
-          "no_async_loading"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@admin",
-          "@slow",
-          "@dangerous"
-        ],
-        "tips": []
-      }
-    },
-    {
       "name": "CLUSTER|ADDSLOTSRANGE",
       "classification": "CANDIDATE_GAP",
       "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
@@ -624,48 +293,6 @@
       }
     },
     {
-      "name": "CLUSTER|COUNTKEYSINSLOT",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "CLUSTER|COUNTKEYSINSLOT",
-        "arity": 3,
-        "flags": [
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@slow"
-        ],
-        "tips": []
-      }
-    },
-    {
-      "name": "CLUSTER|DELSLOTS",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "CLUSTER|DELSLOTS",
-        "arity": -3,
-        "flags": [
-          "admin",
-          "stale",
-          "no_async_loading"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@admin",
-          "@slow",
-          "@dangerous"
-        ],
-        "tips": []
-      }
-    },
-    {
       "name": "CLUSTER|DELSLOTSRANGE",
       "classification": "CANDIDATE_GAP",
       "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
@@ -712,29 +339,6 @@
       }
     },
     {
-      "name": "CLUSTER|FLUSHSLOTS",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "CLUSTER|FLUSHSLOTS",
-        "arity": 2,
-        "flags": [
-          "admin",
-          "stale",
-          "no_async_loading"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@admin",
-          "@slow",
-          "@dangerous"
-        ],
-        "tips": []
-      }
-    },
-    {
       "name": "CLUSTER|FORGET",
       "classification": "CANDIDATE_GAP",
       "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
@@ -758,27 +362,6 @@
       }
     },
     {
-      "name": "CLUSTER|GETKEYSINSLOT",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "CLUSTER|GETKEYSINSLOT",
-        "arity": 4,
-        "flags": [
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@slow"
-        ],
-        "tips": [
-          "nondeterministic_output"
-        ]
-      }
-    },
-    {
       "name": "CLUSTER|HELP",
       "classification": "CANDIDATE_GAP",
       "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
@@ -787,46 +370,6 @@
         "arity": 2,
         "flags": [
           "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@slow"
-        ],
-        "tips": []
-      }
-    },
-    {
-      "name": "CLUSTER|INFO",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "CLUSTER|INFO",
-        "arity": 2,
-        "flags": [
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@slow"
-        ],
-        "tips": [
-          "nondeterministic_output"
-        ]
-      }
-    },
-    {
-      "name": "CLUSTER|KEYSLOT",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "CLUSTER|KEYSLOT",
-        "arity": 3,
-        "flags": [
           "stale"
         ],
         "first_key": 0,
@@ -883,51 +426,11 @@
       }
     },
     {
-      "name": "CLUSTER|MYID",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "CLUSTER|MYID",
-        "arity": 2,
-        "flags": [
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@slow"
-        ],
-        "tips": []
-      }
-    },
-    {
       "name": "CLUSTER|MYSHARDID",
       "classification": "CANDIDATE_GAP",
       "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
       "redis": {
         "name": "CLUSTER|MYSHARDID",
-        "arity": 2,
-        "flags": [
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@slow"
-        ],
-        "tips": [
-          "nondeterministic_output"
-        ]
-      }
-    },
-    {
-      "name": "CLUSTER|NODES",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "CLUSTER|NODES",
         "arity": 2,
         "flags": [
           "stale"
@@ -1060,51 +563,6 @@
       }
     },
     {
-      "name": "CLUSTER|SETSLOT",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "CLUSTER|SETSLOT",
-        "arity": -4,
-        "flags": [
-          "admin",
-          "stale",
-          "no_async_loading"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@admin",
-          "@slow",
-          "@dangerous"
-        ],
-        "tips": []
-      }
-    },
-    {
-      "name": "CLUSTER|SHARDS",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "CLUSTER|SHARDS",
-        "arity": 2,
-        "flags": [
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@slow"
-        ],
-        "tips": [
-          "nondeterministic_output"
-        ]
-      }
-    },
-    {
       "name": "CLUSTER|SLAVES",
       "classification": "CANDIDATE_GAP",
       "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
@@ -1152,28 +610,6 @@
       }
     },
     {
-      "name": "CLUSTER|SLOTS",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "CLUSTER|SLOTS",
-        "arity": 2,
-        "flags": [
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@slow"
-        ],
-        "tips": [
-          "nondeterministic_output"
-        ]
-      }
-    },
-    {
       "name": "COMMAND|HELP",
       "classification": "CANDIDATE_GAP",
       "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
@@ -1192,29 +628,6 @@
           "@connection"
         ],
         "tips": []
-      }
-    },
-    {
-      "name": "COMMAND|LIST",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "COMMAND|LIST",
-        "arity": -2,
-        "flags": [
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@slow",
-          "@connection"
-        ],
-        "tips": [
-          "nondeterministic_output_order"
-        ]
       }
     },
     {
@@ -1912,26 +1325,6 @@
       }
     },
     {
-      "name": "MEMORY|USAGE",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "MEMORY|USAGE",
-        "arity": -3,
-        "flags": [
-          "readonly"
-        ],
-        "first_key": 2,
-        "last_key": 2,
-        "step": 1,
-        "acl_categories": [
-          "@read",
-          "@slow"
-        ],
-        "tips": []
-      }
-    },
-    {
       "name": "MODULE",
       "classification": "INTENTIONALLY_UNSUPPORTED",
       "reason": "SnugKV implements extended features natively and does not load Redis modules.",
@@ -2084,29 +1477,6 @@
       }
     },
     {
-      "name": "OBJECT|ENCODING",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "OBJECT|ENCODING",
-        "arity": 3,
-        "flags": [
-          "readonly"
-        ],
-        "first_key": 2,
-        "last_key": 2,
-        "step": 1,
-        "acl_categories": [
-          "@keyspace",
-          "@read",
-          "@slow"
-        ],
-        "tips": [
-          "nondeterministic_output"
-        ]
-      }
-    },
-    {
       "name": "OBJECT|FREQ",
       "classification": "INTENTIONALLY_UNSUPPORTED",
       "reason": "Requires Redis-style object access metadata that SnugKV intentionally does not currently track.",
@@ -2130,55 +1500,11 @@
       }
     },
     {
-      "name": "OBJECT|HELP",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "OBJECT|HELP",
-        "arity": 2,
-        "flags": [
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@keyspace",
-          "@slow"
-        ],
-        "tips": []
-      }
-    },
-    {
       "name": "OBJECT|IDLETIME",
       "classification": "INTENTIONALLY_UNSUPPORTED",
       "reason": "Requires Redis-style object access metadata that SnugKV intentionally does not currently track.",
       "redis": {
         "name": "OBJECT|IDLETIME",
-        "arity": 3,
-        "flags": [
-          "readonly"
-        ],
-        "first_key": 2,
-        "last_key": 2,
-        "step": 1,
-        "acl_categories": [
-          "@keyspace",
-          "@read",
-          "@slow"
-        ],
-        "tips": [
-          "nondeterministic_output"
-        ]
-      }
-    },
-    {
-      "name": "OBJECT|REFCOUNT",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "OBJECT|REFCOUNT",
         "arity": 3,
         "flags": [
           "readonly"
@@ -2239,136 +1565,6 @@
           "@admin",
           "@slow",
           "@dangerous"
-        ],
-        "tips": []
-      }
-    },
-    {
-      "name": "PUBSUB|CHANNELS",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "PUBSUB|CHANNELS",
-        "arity": -2,
-        "flags": [
-          "pubsub",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@pubsub",
-          "@slow"
-        ],
-        "tips": []
-      }
-    },
-    {
-      "name": "PUBSUB|HELP",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "PUBSUB|HELP",
-        "arity": 2,
-        "flags": [
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@slow"
-        ],
-        "tips": []
-      }
-    },
-    {
-      "name": "PUBSUB|NUMPAT",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "PUBSUB|NUMPAT",
-        "arity": 2,
-        "flags": [
-          "pubsub",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@pubsub",
-          "@slow"
-        ],
-        "tips": []
-      }
-    },
-    {
-      "name": "PUBSUB|NUMSUB",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "PUBSUB|NUMSUB",
-        "arity": -2,
-        "flags": [
-          "pubsub",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@pubsub",
-          "@slow"
-        ],
-        "tips": []
-      }
-    },
-    {
-      "name": "PUBSUB|SHARDCHANNELS",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "PUBSUB|SHARDCHANNELS",
-        "arity": -2,
-        "flags": [
-          "pubsub",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@pubsub",
-          "@slow"
-        ],
-        "tips": []
-      }
-    },
-    {
-      "name": "PUBSUB|SHARDNUMSUB",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "PUBSUB|SHARDNUMSUB",
-        "arity": -2,
-        "flags": [
-          "pubsub",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@pubsub",
-          "@slow"
         ],
         "tips": []
       }
@@ -2579,105 +1775,6 @@
       }
     },
     {
-      "name": "SLOWLOG|GET",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "SLOWLOG|GET",
-        "arity": -2,
-        "flags": [
-          "admin",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@admin",
-          "@slow",
-          "@dangerous"
-        ],
-        "tips": [
-          "request_policy:all_nodes",
-          "nondeterministic_output"
-        ]
-      }
-    },
-    {
-      "name": "SLOWLOG|HELP",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "SLOWLOG|HELP",
-        "arity": 2,
-        "flags": [
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@slow"
-        ],
-        "tips": []
-      }
-    },
-    {
-      "name": "SLOWLOG|LEN",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "SLOWLOG|LEN",
-        "arity": 2,
-        "flags": [
-          "admin",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@admin",
-          "@slow",
-          "@dangerous"
-        ],
-        "tips": [
-          "request_policy:all_nodes",
-          "response_policy:agg_sum",
-          "nondeterministic_output"
-        ]
-      }
-    },
-    {
-      "name": "SLOWLOG|RESET",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "SLOWLOG|RESET",
-        "arity": 2,
-        "flags": [
-          "admin",
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@admin",
-          "@slow",
-          "@dangerous"
-        ],
-        "tips": [
-          "request_policy:all_nodes",
-          "response_policy:all_succeeded"
-        ]
-      }
-    },
-    {
       "name": "SUBSTR",
       "classification": "CANDIDATE_GAP",
       "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
@@ -2784,92 +1881,6 @@
       }
     },
     {
-      "name": "XGROUP|CREATE",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "XGROUP|CREATE",
-        "arity": -5,
-        "flags": [
-          "write",
-          "denyoom"
-        ],
-        "first_key": 2,
-        "last_key": 2,
-        "step": 1,
-        "acl_categories": [
-          "@write",
-          "@stream",
-          "@slow"
-        ],
-        "tips": []
-      }
-    },
-    {
-      "name": "XGROUP|CREATECONSUMER",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "XGROUP|CREATECONSUMER",
-        "arity": 5,
-        "flags": [
-          "write",
-          "denyoom"
-        ],
-        "first_key": 2,
-        "last_key": 2,
-        "step": 1,
-        "acl_categories": [
-          "@write",
-          "@stream",
-          "@slow"
-        ],
-        "tips": []
-      }
-    },
-    {
-      "name": "XGROUP|DELCONSUMER",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "XGROUP|DELCONSUMER",
-        "arity": 5,
-        "flags": [
-          "write"
-        ],
-        "first_key": 2,
-        "last_key": 2,
-        "step": 1,
-        "acl_categories": [
-          "@write",
-          "@stream",
-          "@slow"
-        ],
-        "tips": []
-      }
-    },
-    {
-      "name": "XGROUP|DESTROY",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "XGROUP|DESTROY",
-        "arity": 4,
-        "flags": [
-          "write"
-        ],
-        "first_key": 2,
-        "last_key": 2,
-        "step": 1,
-        "acl_categories": [
-          "@write",
-          "@stream",
-          "@slow"
-        ],
-        "tips": []
-      }
-    },
-    {
       "name": "XGROUP|HELP",
       "classification": "CANDIDATE_GAP",
       "reason": "Real Redis surface not yet proven necessary; validate against first-release workflows and client traces.",
@@ -2884,113 +1895,6 @@
         "last_key": 0,
         "step": 0,
         "acl_categories": [
-          "@stream",
-          "@slow"
-        ],
-        "tips": []
-      }
-    },
-    {
-      "name": "XGROUP|SETID",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "XGROUP|SETID",
-        "arity": -5,
-        "flags": [
-          "write"
-        ],
-        "first_key": 2,
-        "last_key": 2,
-        "step": 1,
-        "acl_categories": [
-          "@write",
-          "@stream",
-          "@slow"
-        ],
-        "tips": []
-      }
-    },
-    {
-      "name": "XINFO|CONSUMERS",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "XINFO|CONSUMERS",
-        "arity": 4,
-        "flags": [
-          "readonly"
-        ],
-        "first_key": 2,
-        "last_key": 2,
-        "step": 1,
-        "acl_categories": [
-          "@read",
-          "@stream",
-          "@slow"
-        ],
-        "tips": [
-          "nondeterministic_output"
-        ]
-      }
-    },
-    {
-      "name": "XINFO|GROUPS",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "XINFO|GROUPS",
-        "arity": 3,
-        "flags": [
-          "readonly"
-        ],
-        "first_key": 2,
-        "last_key": 2,
-        "step": 1,
-        "acl_categories": [
-          "@read",
-          "@stream",
-          "@slow"
-        ],
-        "tips": []
-      }
-    },
-    {
-      "name": "XINFO|HELP",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "XINFO|HELP",
-        "arity": 2,
-        "flags": [
-          "loading",
-          "stale"
-        ],
-        "first_key": 0,
-        "last_key": 0,
-        "step": 0,
-        "acl_categories": [
-          "@stream",
-          "@slow"
-        ],
-        "tips": []
-      }
-    },
-    {
-      "name": "XINFO|STREAM",
-      "classification": "IMPLEMENTED",
-      "reason": "Command/subcommand exists in SnugKV; gap is structured COMMAND metadata coverage.",
-      "redis": {
-        "name": "XINFO|STREAM",
-        "arity": -3,
-        "flags": [
-          "readonly"
-        ],
-        "first_key": 2,
-        "last_key": 2,
-        "step": 1,
-        "acl_categories": [
-          "@read",
           "@stream",
           "@slow"
         ],
