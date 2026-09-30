@@ -39,6 +39,7 @@ Default matrix:
     workers     = 8
     pipeline    = 256
     runs        = 3
+    snug convergence window = 120,000 ms
     servers     = Redis 8.2, SnugKV optimized
     profiles    = counter, uuid, cache-json, text, random
 
@@ -78,7 +79,8 @@ version, benchmark parameters, Redis image identity, and SnugKV image identity.
 3. Pipelined LOAD/GET percentiles are amortized per-operation batch times.
 4. SnugKV used_memory is engine-accounted memory and is not process RSS.
 5. Redis and SnugKV memory values do not use identical accounting models.
-6. Container memory should be reported separately when process footprint matters.
+6. Optimized SnugKV load memory is allowed up to 120 seconds to converge by default; the retained scoreboard reports whether all runs actually converged.
+7. Container memory is reported separately because engine-accounted savings can coexist with a larger process footprint.
 7. Do not generalize compressible-profile results to random/incompressible data.
 8. Do not mix persistence-off results with AOF/fsync results.
 9. Keep standalone, persistence, and cluster baselines as separate benchmark slices.
