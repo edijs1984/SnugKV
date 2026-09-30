@@ -1,4 +1,4 @@
-# Benchmark results
+# Benchmark results\n\nFor the reproducible public comparison protocol, see [PUBLIC_BASELINE.md](PUBLIC_BASELINE.md).
 
 ## Redis 8.2 comparison — 1M repetitive scalar keys, 2026-09-20
 
