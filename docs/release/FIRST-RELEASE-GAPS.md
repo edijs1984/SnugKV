@@ -14,6 +14,29 @@ The supported first-release client/workflow matrix did not require any of the 58
 Redis-only candidate commands. First-release scope therefore remains evidence-driven
 rather than chasing broad Redis command-count parity.
 
+## Feature-freeze disposition of USEFUL candidates
+
+The nine A4 USEFUL candidates are **not first-release blockers**.
+
+Current source review before feature freeze found:
+
+- `CLIENT|TRACKINGINFO`: behavior is implemented in the CLIENT tracking path;
+  structured leaf metadata remains optional and does not block the documented
+  client workflows.
+- `GEORADIUSBYMEMBER_RO`
+- `GEORADIUS_RO`
+- `MEMORY|STATS`
+- `READONLY`
+- `READWRITE`
+- `SHUTDOWN`
+- `SUBSTR`
+- `XSETID`
+
+The latter eight remain absent from the generated implemented-command inventory
+and are explicitly **deferred to the post-release compatibility backlog**.
+
+No A4 USEFUL candidate is approved as additional pre-freeze feature work.
+
 ## Required release work outside the 58 command candidates
 
 | Gap | Classification | Evidence | Implementation slice |
