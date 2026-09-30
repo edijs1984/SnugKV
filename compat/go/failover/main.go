@@ -69,9 +69,15 @@ func main() {
 		},
 		Password: password,
 		DialTimeout: 2 * time.Second,
+		DialerRetries: 1,
+		DialerRetryTimeout: 100 * time.Millisecond,
 		ReadTimeout: 2 * time.Second,
 		WriteTimeout: 2 * time.Second,
 		MaxRedirects: 8,
+		// go-redis v9.22.0 does not reactively reload cluster state on a
+		// plain TCP dial failure. The library's default periodic reload is 60s.
+		// Use the documented reload interval knob for prompt HA recovery.
+		ClusterStateReloadInterval: time.Second,
 	})
 	defer client.Close()
 
