@@ -912,7 +912,14 @@ func isConcurrentScalarCommand(args [][]byte) bool {
 	if len(args) == 2 && bytes.EqualFold(args[0], []byte("GET")) {
 		return true
 	}
-	// Keep only the plain SET key value form on the concurrent fast path.
+	// Native container point reads are shard-read-locked and do not mutate
+	// engine state. Let them share the durability read lock so independent
+	// clients are not serialized behind the global command mutex.
+	if len(args) == 3 &&
+		(bytes.EqualFold(args[0], []byte("HGET")) || bytes.EqualFold(args[0], []byte("LINDEX"))) {
+		return true
+	}
+	// Keep only the plain SET key value form on the concurrent write fast path.
 	// Option parsing can involve TTL/conditional semantics and stays on the
 	// serialized path until separately audited.
 	return len(args) == 3 && bytes.EqualFold(args[0], []byte("SET"))

@@ -91,7 +91,11 @@ func listPreparedEntry(packed []byte) preparedEntry {
 }
 
 func (s *Store) listElementsFromEntry(sh *shard, e entry) ([][]byte, error) {
-	return decodePackedList(sh.encoded(e))
+	data := sh.encoded(e)
+	if isIndexedList(data) {
+		return decodeIndexedList(data)
+	}
+	return decodePackedList(data)
 }
 
 func (s *Store) listLogicalValue(sh *shard, e entry) ([]byte, error) {
@@ -129,12 +133,34 @@ func (s *Store) listPush(key string, values [][]byte, left bool) (int64, error) 
 		if old.valueType != TypeList {
 			return 0, listWrongType()
 		}
+		expiresAt = sh.expirationAt(key, old)
+		physical := sh.encoded(old)
+		if !left && isIndexedList(physical) {
+			length, rebuilt, err := indexedListAppend(physical, values)
+			if err != nil {
+				return 0, err
+			}
+			if rebuilt == nil {
+				return int64(length), nil
+			}
+			updated := preparedEntry{
+				entry: entry{entryData: entryData{
+					valueType: TypeList,
+					rawLength: uint32(len(rebuilt)),
+				}},
+				data: rebuilt,
+				expiresAt: expiresAt,
+			}
+			if err := s.publish(sh, key, updated); err != nil {
+				return 0, err
+			}
+			return int64(length), nil
+		}
 		var err error
 		current, err = s.listElementsFromEntry(sh, old)
 		if err != nil {
 			return 0, err
 		}
-		expiresAt = sh.expirationAt(key, old)
 	}
 	result := make([][]byte, 0, len(current)+len(values))
 	if left {
@@ -148,11 +174,26 @@ func (s *Store) listPush(key string, values [][]byte, left bool) (int64, error) 
 			result = append(result, append([]byte(nil), value...))
 		}
 	}
-	packed, err := encodePackedList(result)
-	if err != nil {
-		return 0, err
+	var updated preparedEntry
+	if len(result) >= indexedListPromoteElements {
+		indexed, err := encodeIndexedList(result)
+		if err != nil {
+			return 0, err
+		}
+		updated = preparedEntry{
+			entry: entry{entryData: entryData{
+				valueType: TypeList,
+				rawLength: uint32(len(indexed)),
+			}},
+			data: indexed,
+		}
+	} else {
+		packed, err := encodePackedList(result)
+		if err != nil {
+			return 0, err
+		}
+		updated = listPreparedEntry(packed)
 	}
-	updated := listPreparedEntry(packed)
 	updated.expiresAt = expiresAt
 	if err := s.publish(sh, key, updated); err != nil {
 		return 0, err
@@ -234,6 +275,11 @@ func (s *Store) ListLen(key string) (int64, error) {
 	if e.valueType != TypeList {
 		return 0, listWrongType()
 	}
+	physical := sh.encoded(e)
+	if isIndexedList(physical) {
+		count, _, _, _, err := indexedListMeta(physical)
+		return int64(count), err
+	}
 	elements, err := s.listElementsFromEntry(sh, e)
 	return int64(len(elements)), err
 }
@@ -248,6 +294,10 @@ func (s *Store) ListIndex(key string, index int64) ([]byte, bool, error) {
 	}
 	if e.valueType != TypeList {
 		return nil, false, listWrongType()
+	}
+	physical := sh.encoded(e)
+	if isIndexedList(physical) {
+		return indexedListElement(physical, int(index))
 	}
 	elements, err := s.listElementsFromEntry(sh, e)
 	if err != nil {
@@ -320,7 +370,11 @@ func (s *Store) ListStorageStats(key string) (ListStats, bool, error) {
 	if err != nil {
 		return ListStats{}, false, err
 	}
-	stats := ListStats{Elements: len(elements), PackedBytes: len(logical), StoredBytes: len(sh.encoded(e)), Encoding: "packed"}
+	encoding := "packed"
+	if isIndexedList(sh.encoded(e)) {
+		encoding = "indexed"
+	}
+	stats := ListStats{Elements: len(elements), PackedBytes: len(logical), StoredBytes: len(sh.encoded(e)), Encoding: encoding}
 	for _, element := range elements {
 		stats.ElementBytes += len(element)
 	}
