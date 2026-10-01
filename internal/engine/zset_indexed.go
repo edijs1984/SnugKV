@@ -89,6 +89,15 @@ func indexedZSetFind(data, target []byte) (slot,pos int, found bool, score float
 	return 0,0,false,0,errors.New("invalid indexed zset table")
 }
 
+func zsetUvarintLen(value uint64) int {
+	n := 1
+	for value >= 0x80 {
+		value >>= 7
+		n++
+	}
+	return n
+}
+
 func indexedZSetRecordBytes(member []byte, score float64) []byte {
 	out := make([]byte,8,8+binary.MaxVarintLen64+len(member))
 	binary.LittleEndian.PutUint64(out[:8],math.Float64bits(normalizeZSetScore(score)))
@@ -200,9 +209,9 @@ func indexedZSetAddSimple(data []byte, pairs []ZSetItem)(added int64, rebuilt []
 		if found && current == score {
 			continue
 		}
-		rec := indexedZSetRecordBytes(pair.Member,score)
+		recordLen := 8 + zsetUvarintLen(uint64(len(pair.Member))) + len(pair.Member)
 		needRehash := !found && (count+1)*10 >= slots*7
-		if needRehash || start+used+len(rec) > len(data) {
+		if needRehash || start+used+recordLen > len(data) {
 			items,e := decodeIndexedZSet(data)
 			if e != nil {
 				return added,nil,e
@@ -230,9 +239,15 @@ func indexedZSetAddSimple(data []byte, pairs []ZSetItem)(added int64, rebuilt []
 			return added,rebuilt,e
 		}
 
-		copy(data[start+used:],rec)
+		// Write the record directly into the arena. The previous hot path built
+		// a temporary []byte for every ZADD only to copy it here.
+		recordStart := start + used
+		binary.LittleEndian.PutUint64(data[recordStart:recordStart+8], math.Float64bits(score))
+		cursor := recordStart + 8
+		cursor += binary.PutUvarint(data[cursor:], uint64(len(pair.Member)))
+		copy(data[cursor:cursor+len(pair.Member)], pair.Member)
 		binary.LittleEndian.PutUint32(data[indexedZSetFixed+slot*4:indexedZSetFixed+slot*4+4],uint32(used+1))
-		used += len(rec)
+		used += recordLen
 		if !found {
 			count++
 			added++
