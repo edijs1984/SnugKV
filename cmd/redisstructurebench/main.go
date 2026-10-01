@@ -236,7 +236,7 @@ func runRead(addr, dataType string, items, cardinality, ops, workers, pipeline i
 					}
 				}
 				if err := c.w.Flush(); err != nil { atomic.AddUint64(&errs, uint64(end-base)); return }
-				for i := range indexes {
+				for range indexes {
 					var err error
 					if dataType == "set" { err = c.readIntegerReply() } else { err = c.readBulkOrNilReply() }
 					if err != nil { atomic.AddUint64(&errs, 1) }
