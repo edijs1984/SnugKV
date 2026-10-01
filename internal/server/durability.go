@@ -371,12 +371,12 @@ func (s *Server) executeAuthorizedConcurrentSet(args [][]byte) (response []byte,
 
 	key := string(args[1])
 	if s.optimizer != nil {
-		s.optimizer.BeginForegroundWrite()
+		// Signal the background optimizer before mutating the shard so its
+		// workers yield during sustained foreground SET bursts and catch up
+		// once the write burst goes quiet.
+		s.optimizer.NoteForegroundWrite()
 	}
 	setErr := s.store.SetPlain(key, args[2])
-	if s.optimizer != nil {
-		s.optimizer.EndForegroundWrite()
-	}
 	s.durableMu.RUnlock()
 
 	atomic.AddUint64(&s.commands, 1)
@@ -455,7 +455,7 @@ func (s *Server) executeAuthorizedConcurrentSetBatch(keys, values [][]byte) (han
 	}
 
 	if s.optimizer != nil {
-		s.optimizer.BeginForegroundWrite()
+		s.optimizer.NoteForegroundWrite()
 	}
 
 	batched, setErr := s.store.SetPlainBatchFresh(keys, values)
@@ -465,9 +465,6 @@ func (s *Server) executeAuthorizedConcurrentSetBatch(keys, values [][]byte) (han
 				break
 			}
 		}
-	}
-	if s.optimizer != nil {
-		s.optimizer.EndForegroundWrite()
 	}
 	s.durableMu.RUnlock()
 
