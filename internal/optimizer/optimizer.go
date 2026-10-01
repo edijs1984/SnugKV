@@ -76,6 +76,7 @@ type Optimizer struct {
 	window                                     time.Time
 	queued, rewritten, skipped, stale, dropped uint64
 	lastForegroundWrite                      int64
+	activeForegroundWrites                   int64
 }
 
 func New(store *engine.Store, c Config) (*Optimizer, error) {
@@ -100,7 +101,23 @@ func (o *Optimizer) NoteForegroundWrite() {
 	atomic.StoreInt64(&o.lastForegroundWrite, time.Now().UnixNano())
 }
 
+func (o *Optimizer) BeginForegroundWrite() {
+	atomic.AddInt64(&o.activeForegroundWrites, 1)
+	o.NoteForegroundWrite()
+}
+
+func (o *Optimizer) EndForegroundWrite() {
+	remaining := atomic.AddInt64(&o.activeForegroundWrites, -1)
+	if remaining < 0 {
+		panic("optimizer foreground write counter underflow")
+	}
+	o.NoteForegroundWrite()
+}
+
 func (o *Optimizer) foregroundQuietFor(d time.Duration) bool {
+	if atomic.LoadInt64(&o.activeForegroundWrites) != 0 {
+		return false
+	}
 	last := atomic.LoadInt64(&o.lastForegroundWrite)
 	if last == 0 {
 		return true
@@ -112,17 +129,18 @@ func (o *Optimizer) waitForForegroundQuiet() bool {
 	const quietWindow = 5 * time.Millisecond
 
 	for {
-		last := atomic.LoadInt64(&o.lastForegroundWrite)
-		if last == 0 || time.Since(time.Unix(0, last)) >= quietWindow {
-			return true
+		if atomic.LoadInt64(&o.activeForegroundWrites) == 0 {
+			last := atomic.LoadInt64(&o.lastForegroundWrite)
+			if last == 0 {
+				return true
+			}
+			elapsed := time.Since(time.Unix(0, last))
+			if elapsed >= quietWindow {
+				return true
+			}
 		}
 
-		remaining := quietWindow - time.Since(time.Unix(0, last))
-		if remaining <= 0 {
-			continue
-		}
-
-		timer := time.NewTimer(remaining)
+		timer := time.NewTimer(quietWindow)
 		select {
 		case <-o.ctx.Done():
 			timer.Stop()
