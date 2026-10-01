@@ -60,6 +60,10 @@ func packedHashHasFieldExpiry(data []byte) bool {
 }
 
 func packedHashCount(data []byte) (int, error) {
+	if isIndexedHash(data) {
+		count, _, _, _, err := indexedHashMeta(data)
+		return count, err
+	}
 	if len(data) < len(packedHashHeader) ||
 		(!bytes.Equal(data[:len(packedHashHeader)], packedHashHeader[:]) && !packedHashHasFieldExpiry(data)) {
 		return 0, errors.New("invalid packed hash")
@@ -134,6 +138,9 @@ func encodePackedHash(input []HashPair) ([]byte, error) {
 }
 
 func decodePackedHash(data []byte) ([]HashPair, error) {
+	if isIndexedHash(data) {
+		return decodeIndexedHash(data)
+	}
 	count, err := packedHashCount(data)
 	if err != nil {
 		return nil, err
@@ -194,6 +201,9 @@ func decodePackedHash(data []byte) ([]HashPair, error) {
 }
 
 func packedHashLookup(data, target []byte, nowMS int64) ([]byte, bool, error) {
+	if isIndexedHash(data) {
+		return indexedHashLookup(data, target)
+	}
 	count, err := packedHashCount(data)
 	if err != nil {
 		return nil, false, err
@@ -305,13 +315,35 @@ func (s *Store) HashSet(key string, fields, values [][]byte) (int64, error) {
 		if old.valueType != TypeHash {
 			return 0, hashWrongType()
 		}
+		expiresAt = sh.expirationAt(key, old)
+		physical := sh.encoded(old)
+		if isIndexedHash(physical) {
+			added, rebuilt, err := indexedHashSet(physical, fields, values)
+			if err != nil {
+				return 0, err
+			}
+			if rebuilt == nil {
+				return added, nil
+			}
+			updated := preparedEntry{
+				entry: entry{entryData: entryData{
+					valueType: TypeHash,
+					rawLength: uint32(len(rebuilt)),
+				}},
+				data: rebuilt,
+				expiresAt: expiresAt,
+			}
+			if err := s.publish(sh, key, updated); err != nil {
+				return 0, err
+			}
+			return added, nil
+		}
 		var err error
 		pairs, err = decodePackedHash(s.decode(sh, old))
 		if err != nil {
 			return 0, err
 		}
 		pairs = liveHashPairs(pairs, now.UnixMilli())
-		expiresAt = sh.expirationAt(key, old)
 	}
 
 	var added int64
@@ -337,12 +369,26 @@ func (s *Store) HashSet(key string, fields, values [][]byte) (int64, error) {
 		added++
 	}
 
-	packed, err := encodePackedHash(pairs)
-	if err != nil {
-		return 0, err
+	var updated preparedEntry
+	if len(pairs) >= indexedHashPromoteFields {
+		indexed, err := encodeIndexedHash(pairs)
+		if err != nil {
+			return 0, err
+		}
+		updated = preparedEntry{
+			entry: entry{entryData: entryData{
+				valueType: TypeHash,
+				rawLength: uint32(len(indexed)),
+			}},
+			data: indexed,
+		}
+	} else {
+		packed, err := encodePackedHash(pairs)
+		if err != nil {
+			return 0, err
+		}
+		updated = s.hashEntry(pairs, packed)
 	}
-
-	updated := s.hashEntry(pairs, packed)
 	updated.expiresAt = expiresAt
 	if err := s.publish(sh, key, updated); err != nil {
 		return 0, err
