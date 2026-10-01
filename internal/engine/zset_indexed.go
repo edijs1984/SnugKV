@@ -200,11 +200,9 @@ func indexedZSetAddSimple(data []byte, pairs []ZSetItem)(added int64, rebuilt []
 		if found && current == score {
 			continue
 		}
-		var lenBuf [binary.MaxVarintLen64]byte
-		lenBytes := binary.PutUvarint(lenBuf[:], uint64(len(pair.Member)))
-		recordLen := 8 + lenBytes + len(pair.Member)
+		rec := indexedZSetRecordBytes(pair.Member,score)
 		needRehash := !found && (count+1)*10 >= slots*7
-		if needRehash || start+used+recordLen > len(data) {
+		if needRehash || start+used+len(rec) > len(data) {
 			items,e := decodeIndexedZSet(data)
 			if e != nil {
 				return added,nil,e
@@ -232,14 +230,9 @@ func indexedZSetAddSimple(data []byte, pairs []ZSetItem)(added int64, rebuilt []
 			return added,rebuilt,e
 		}
 
-		recordStart := start + used
-		binary.LittleEndian.PutUint64(data[recordStart:recordStart+8], math.Float64bits(score))
-		cursor := recordStart + 8
-		copy(data[cursor:cursor+lenBytes], lenBuf[:lenBytes])
-		cursor += lenBytes
-		copy(data[cursor:cursor+len(pair.Member)], pair.Member)
+		copy(data[start+used:],rec)
 		binary.LittleEndian.PutUint32(data[indexedZSetFixed+slot*4:indexedZSetFixed+slot*4+4],uint32(used+1))
-		used += recordLen
+		used += len(rec)
 		if !found {
 			count++
 			added++
