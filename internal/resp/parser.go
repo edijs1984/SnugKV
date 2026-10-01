@@ -526,6 +526,7 @@ func Parse(data []byte) ([][]byte, error) {
 		}
 		copy(dst, buf[start:start+n])
 		args[i] = dst
+		scratch[i] = dst
 		pos = next
 	}
 	if pos > d.limits.MaxRequestBytes {
