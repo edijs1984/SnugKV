@@ -466,6 +466,12 @@ func (s *Server) executeAuthorizedConcurrentSetBatch(keys, values [][]byte) (han
 			}
 		}
 	}
+	if s.optimizer != nil {
+		// Refresh the foreground timestamp after the whole batch completes.
+		// A large P256 batch can itself span the quiet window; without this,
+		// optimizer workers may wake in the middle of sustained pipeline traffic.
+		s.optimizer.NoteForegroundWrite()
+	}
 	s.durableMu.RUnlock()
 
 	if setErr != nil {
