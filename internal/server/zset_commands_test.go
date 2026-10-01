@@ -141,3 +141,32 @@ func TestZSetRenamePreservesTypeTTLAndOrder(t *testing.T) {
 		t.Fatalf("renamed ZSET lost TTL: %q", pttl)
 	}
 }
+
+
+func TestParseZSetScoreIntegerFastPath(t *testing.T) {
+	tests := []struct {
+		in string
+		want float64
+	}{
+		{"0", 0},
+		{"1", 1},
+		{"-42", -42},
+		{"+17", 17},
+		{"9007199254740991", 9007199254740991},
+	}
+	for _, tc := range tests {
+		got, err := parseZSetScore([]byte(tc.in))
+		if err != nil {
+			t.Fatalf("parse %q: %v", tc.in, err)
+		}
+		if got != tc.want {
+			t.Fatalf("parse %q=%v want=%v", tc.in, got, tc.want)
+		}
+	}
+
+	for _, in := range []string{"1.5", "1e3", "inf", "-inf"} {
+		if _, err := parseZSetScore([]byte(in)); err != nil {
+			t.Fatalf("fallback parse %q: %v", in, err)
+		}
+	}
+}
