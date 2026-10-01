@@ -742,13 +742,11 @@ func (s *Store) CompactIndexedZSet(key string) bool {
 		return false
 	}
 
-	// Keep the existing slot table and live records byte-for-byte. Compaction
-	// only trims excess payload reserve left over from aggressive growth.
-	reserve := used / 4
-	if reserve < 512 {
-		reserve = 512
-	}
-	targetLen := dataStart + used + reserve
+	// Keep the existing slot table and live records byte-for-byte. Once the
+	// foreground burst is over, append reserve has no value and can keep the
+	// payload in a larger arena allocation class. Trim to exact live bytes;
+	// a later write can rebuild growth headroom on demand.
+	targetLen := dataStart + used
 	if targetLen >= len(physical) {
 		return false
 	}
