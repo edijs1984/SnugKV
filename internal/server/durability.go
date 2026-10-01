@@ -352,6 +352,52 @@ func (s *Server) executeAuthorizedConcurrentAOFSet(args [][]byte) (response []by
 	return []byte("+OK\r\n"), durabilitySequence, true, nil
 }
 
+func (s *Server) executeAuthorizedConcurrentSetBatch(keys, values [][]byte) (handled bool, err error) {
+	if s.clusterEnabled ||
+		len(keys) < 2 || len(keys) != len(values) ||
+		s.journal != nil ||
+		s.replication.primaryHasReplicas() ||
+		atomic.LoadUint32(&s.metricsEnabled) != 0 ||
+		s.store.MaxMemory() != 0 {
+		return false, nil
+	}
+
+	s.durableMu.RLock()
+	if s.hasWatchSessionsLocked() {
+		s.durableMu.RUnlock()
+		return false, nil
+	}
+
+	if s.optimizer != nil {
+		s.optimizer.NoteForegroundWrite()
+	}
+
+	batched, setErr := s.store.SetPlainBatchFresh(keys, values)
+	if !batched {
+		for i := range keys {
+			if setErr = s.store.SetPlain(string(keys[i]), values[i]); setErr != nil {
+				break
+			}
+		}
+	}
+	s.durableMu.RUnlock()
+
+	if setErr != nil {
+		return true, setErr
+	}
+
+	if s.optimizer != nil {
+		for i := range keys {
+			if s.store.ShouldQueueOptimization(values[i]) {
+				s.optimizer.Queue(string(keys[i]))
+			}
+		}
+	}
+
+	atomic.AddUint64(&s.commands, uint64(len(keys)))
+	return true, nil
+}
+
 func (s *Server) executeAuthorizedSerializedAOFSetBatch(keys, values [][]byte) (durabilitySequence uint64, handled bool, err error) {
 	if s.clusterEnabled ||
 		len(keys) < 2 || len(keys) != len(values) ||
