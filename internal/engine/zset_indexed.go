@@ -65,25 +65,43 @@ func indexedZSetRecord(data []byte, pos int) (member []byte, score float64, end 
 }
 
 func indexedZSetFind(data, target []byte) (slot,pos int, found bool, score float64, err error) {
-	_,slots,_,_,e := indexedZSetMeta(data)
+	_,slots,used,dataStart,e := indexedZSetMeta(data)
 	if e != nil {
 		return 0,0,false,0,e
 	}
 	mask := slots-1
-	start := int(hashField64(target)) & mask
+	startSlot := int(hashField64(target)) & mask
+	dataEnd := dataStart + used
 	for probe:=0;probe<slots;probe++ {
-		slot=(start+probe)&mask
+		slot=(startSlot+probe)&mask
 		raw := binary.LittleEndian.Uint32(data[indexedZSetFixed+slot*4:indexedZSetFixed+slot*4+4])
 		if raw==0 {
 			return slot,0,false,0,nil
 		}
 		pos=int(raw-1)
-		member,sc,_,e := indexedZSetRecord(data,pos)
-		if e != nil {
-			return 0,0,false,0,e
+		if pos < 0 || dataStart+pos+8 > dataEnd {
+			return 0,0,false,0,errors.New("invalid indexed zset offset")
 		}
-		if bytes.Equal(member,target) {
-			return slot,pos,true,sc,nil
+
+		off := dataStart + pos
+		score = math.Float64frombits(binary.LittleEndian.Uint64(data[off:off+8]))
+		if math.IsNaN(score) {
+			return 0,0,false,0,errors.New("invalid indexed zset score")
+		}
+		score = normalizeZSetScore(score)
+		off += 8
+
+		length,n := binary.Uvarint(data[off:dataEnd])
+		if n <= 0 {
+			return 0,0,false,0,errors.New("invalid indexed zset member")
+		}
+		off += n
+		if length > uint64(dataEnd-off) {
+			return 0,0,false,0,errors.New("invalid indexed zset member")
+		}
+		memberEnd := off + int(length)
+		if bytes.Equal(data[off:memberEnd],target) {
+			return slot,pos,true,score,nil
 		}
 	}
 	return 0,0,false,0,errors.New("invalid indexed zset table")
