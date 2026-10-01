@@ -2,6 +2,7 @@ package engine
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -317,5 +318,92 @@ func TestHashStorageStats(t *testing.T) {
 	}
 	if stats.PackedBytes <= stats.FieldBytes+stats.ValueBytes {
 		t.Fatalf("packed bytes must include framing: %+v", stats)
+	}
+}
+
+
+func TestIndexedHashPromotionLookupOverwriteAndPersistence(t *testing.T) {
+	store := New()
+	const fields = 128
+	for i := 0; i < fields; i++ {
+		field := []byte(fmt.Sprintf("f:%06d", i))
+		value := []byte(fmt.Sprintf("v:%06d", i))
+		added, err := store.HashSet("indexed", [][]byte{field}, [][]byte{value})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if added != 1 {
+			t.Fatalf("field %d added=%d want 1", i, added)
+		}
+	}
+
+	sh := store.shardFor("indexed")
+	sh.mu.RLock()
+	e, ok := sh.get("indexed")
+	if !ok {
+		sh.mu.RUnlock()
+		t.Fatal("indexed hash missing")
+	}
+	if !isIndexedHash(sh.encoded(e)) {
+		sh.mu.RUnlock()
+		t.Fatal("large hash did not promote to indexed representation")
+	}
+	sh.mu.RUnlock()
+
+	for _, i := range []int{0, 31, 32, 63, 127} {
+		field := []byte(fmt.Sprintf("f:%06d", i))
+		value, found, err := store.HashGet("indexed", field)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !found || string(value) != fmt.Sprintf("v:%06d", i) {
+			t.Fatalf("field %d value=%q found=%v", i, value, found)
+		}
+	}
+
+	added, err := store.HashSet("indexed", [][]byte{[]byte("f:000063")}, [][]byte{[]byte("updated")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if added != 0 {
+		t.Fatalf("overwrite added=%d want 0", added)
+	}
+	value, found, err := store.HashGet("indexed", []byte("f:000063"))
+	if err != nil || !found || string(value) != "updated" {
+		t.Fatalf("updated value=%q found=%v err=%v", value, found, err)
+	}
+
+	records := store.Export(nil)
+	if len(records) != 1 {
+		t.Fatalf("records=%d want 1", len(records))
+	}
+	if isIndexedHash(records[0].Value) {
+		t.Fatal("persistence export leaked physical indexed representation")
+	}
+	restored := New()
+	if err := restored.Restore(records, false); err != nil {
+		t.Fatal(err)
+	}
+	value, found, err = restored.HashGet("indexed", []byte("f:000127"))
+	if err != nil || !found || string(value) != "v:000127" {
+		t.Fatalf("restored value=%q found=%v err=%v", value, found, err)
+	}
+}
+
+func TestIndexedHashFieldExpiryFallsBackToCanonical(t *testing.T) {
+	store := New()
+	for i := 0; i < 40; i++ {
+		if _, err := store.HashSet("hfe-indexed",
+			[][]byte{[]byte(fmt.Sprintf("f:%06d", i))},
+			[][]byte{[]byte("value")},
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.HashFieldExpireAt("hfe-indexed", [][]byte{[]byte("f:000001")}, time.Now().Add(time.Minute).UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.HashSet("hfe-indexed", [][]byte{[]byte("new")}, [][]byte{[]byte("value")}); err != nil {
+		t.Fatal(err)
 	}
 }
