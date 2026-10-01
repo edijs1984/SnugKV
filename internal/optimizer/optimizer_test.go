@@ -268,3 +268,57 @@ func TestMaintenanceSamplingConvergesDroppedCandidate(t *testing.T) {
 	}
 	t.Fatalf("maintenance sampling did not converge candidate: %+v", o.Stats())
 }
+
+
+func TestForegroundWriteBlocksOptimizerUntilSustainedIdle(t *testing.T) {
+	store, err := engine.NewWithOptions(engine.Options{
+		Shards:      1,
+		Encoding:    true,
+		Compression: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	value := bytes.Repeat([]byte("foreground-priority"), 1024)
+	if err := store.Set("k", value, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	config := Default()
+	config.Workers = 1
+	config.MinRewriteInterval = 0
+	config.MinAttemptInterval = 0
+
+	o, err := New(store, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer o.Close()
+
+	o.BeginForegroundWrite()
+	if !o.Queue("k") {
+		t.Fatal("queue rejected")
+	}
+
+	time.Sleep(150 * time.Millisecond)
+	if got := o.Stats().Rewritten; got != 0 {
+		t.Fatalf("optimizer rewrote during active foreground write: %d", got)
+	}
+
+	o.EndForegroundWrite()
+
+	time.Sleep(50 * time.Millisecond)
+	if got := o.Stats().Rewritten; got != 0 {
+		t.Fatalf("optimizer rewrote before sustained idle window: %d", got)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if o.Stats().Rewritten != 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("optimizer did not resume after foreground idle: %+v", o.Stats())
+}
