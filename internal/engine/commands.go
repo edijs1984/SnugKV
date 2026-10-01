@@ -231,6 +231,14 @@ func (s *Store) SetPlainBatchFresh(keys [][]byte, values [][]byte) (bool, error)
 		start = end
 	}
 
+	var liveBlocks uint64
+	for i := range items {
+		item := &items[i]
+		if !shouldInlinePrepared(item.entry) {
+			liveBlocks += arena.AllocationBytesForLength(len(item.entry.data))
+		}
+	}
+
 	s.memory.mu.Lock()
 	next := s.memory.used +
 		keyBytes +
@@ -251,28 +259,27 @@ func (s *Store) SetPlainBatchFresh(keys [][]byte, values [][]byte) (bool, error)
 	s.memory.metas += metaBytes
 	s.memory.index += extraIndex
 	s.memory.arenas += extraArena
+	s.memory.arenaPayload += arenaPayload
+	s.memory.arenaLiveBlocks += liveBlocks
+	s.memory.mu.Unlock()
 
-	var liveBlocks uint64
+	// Physical arena mutation is protected by the owning shard locks above.
+	// Keep the global memory-accounting mutex out of the copy/allocation loop so
+	// independent SET workers do not serialize while writing payload bytes.
 	for i := range items {
 		item := &items[i]
 		sh := &s.shards[item.shardIndex]
 		if shouldInlinePrepared(item.entry) {
 			ref, ok := sh.arena.AllocInline(item.entry.data)
 			if !ok {
-				s.memory.mu.Unlock()
 				unlock()
 				panic("inline scalar admission invariant")
 			}
 			item.entry.ref = ref
 		} else {
 			item.entry.ref = sh.arena.Alloc(item.entry.data)
-			liveBlocks += sh.arena.AllocationBytes(item.entry.ref)
 		}
 	}
-
-	s.memory.arenaPayload += arenaPayload
-	s.memory.arenaLiveBlocks += liveBlocks
-	s.memory.mu.Unlock()
 
 	now := s.now()
 	for i := range items {
