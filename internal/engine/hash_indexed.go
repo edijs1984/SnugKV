@@ -83,13 +83,12 @@ func encodeIndexedHash(pairs []HashPair) ([]byte,error) {
 	}
 	// Keep append headroom without doubling the entire payload. The arena already
 	// rounds the complete allocation into geometric size classes, so a second
-	// power-of-two expansion here created excessive slack (roughly 200 B/item
-	// for 64-byte values at 1000 fields). 50% logical headroom keeps HSET mostly
-	// in-place while allowing the final allocation to settle much closer to the
-	// live payload size.
-	dataCap := used + used/2
-	if dataCap-used < 1024 {
-		dataCap = used + 1024
+	// power-of-two expansion here created excessive slack. A 25% reserve is enough
+	// to amortize append/rebuild work while keeping the final indexed layout much
+	// closer to the live logical payload.
+	dataCap := used + used/4
+	if dataCap-used < 512 {
+		dataCap = used + 512
 	}
 	total:=indexedHashFixed+slots*4+dataCap
 	if total>maxPackedHashBytes { return nil,errors.New("ERR hash exceeds 32 MiB limit") }
