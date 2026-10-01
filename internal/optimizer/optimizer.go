@@ -343,6 +343,15 @@ func (o *Optimizer) worker() {
 				continue
 			}
 
+			// Foreground work may have started after waitForForegroundQuiet()
+			// returned. Re-check before allocating scratch or copying candidate
+			// bytes so an optimizer worker that lost the race does not compete
+			// with an active SET burst.
+			if !o.foregroundQuietFor(100 * time.Millisecond) {
+				o.Queue(key)
+				continue
+			}
+
 			if !o.reserve(rawBytes) {
 				atomic.AddUint64(&o.skipped, 1)
 				continue
@@ -405,6 +414,15 @@ func (o *Optimizer) worker() {
 			) {
 				o.release(rawBytes)
 				atomic.AddUint64(&o.skipped, 1)
+				continue
+			}
+
+			// A SET may also start while candidate encoding is in progress.
+			// Never publish a background rewrite into an active foreground burst;
+			// release scratch and retry the key once the host is quiet again.
+			if !o.foregroundQuietFor(100 * time.Millisecond) {
+				o.release(rawBytes)
+				o.Queue(key)
 				continue
 			}
 
