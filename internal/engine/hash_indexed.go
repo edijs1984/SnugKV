@@ -9,7 +9,7 @@ import (
 
 var indexedHashHeader = [...]byte{'S','H',4}
 const indexedHashFixed = 15
-const indexedHashPromoteFields = 8
+const indexedHashPromoteFields = 32
 
 func isIndexedHash(data []byte) bool {
 	return len(data) >= indexedHashFixed && bytes.Equal(data[:3], indexedHashHeader[:])
