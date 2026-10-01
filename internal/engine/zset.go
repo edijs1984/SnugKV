@@ -736,18 +736,28 @@ func (s *Store) CompactIndexedZSet(key string) bool {
 	if !isIndexedZSet(physical) {
 		return false
 	}
-	items, err := decodeIndexedZSet(physical)
+
+	_, _, used, dataStart, err := indexedZSetMeta(physical)
 	if err != nil {
 		return false
 	}
-	compact, err := encodeIndexedZSetCompact(items)
-	if err != nil || len(compact) >= len(physical) {
+
+	// Keep the existing slot table and live records byte-for-byte. Compaction
+	// only trims excess payload reserve left over from aggressive growth.
+	reserve := used / 4
+	if reserve < 512 {
+		reserve = 512
+	}
+	targetLen := dataStart + used + reserve
+	if targetLen >= len(physical) {
 		return false
 	}
+
+	compact := append([]byte(nil), physical[:targetLen]...)
 	updated := preparedEntry{
 		entry: entry{entryData: entryData{
 			valueType: TypeZSet,
-			rawLength: uint32(len(compact)),
+			rawLength: e.rawLength,
 		}},
 		data: compact,
 		expiresAt: sh.expirationAt(key, e),
