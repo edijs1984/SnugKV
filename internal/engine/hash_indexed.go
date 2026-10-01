@@ -95,8 +95,8 @@ func encodeIndexedHash(pairs []HashPair) ([]byte,error) {
 		copy(out[start+cursor:],records[i])
 		binary.LittleEndian.PutUint32(out[indexedHashFixed+slot*4:indexedHashFixed+slot*4+4],uint32(cursor+1))
 		cursor+=len(records[i])
+		binary.LittleEndian.PutUint32(out[11:15],uint32(cursor))
 	}
-	binary.LittleEndian.PutUint32(out[11:15],uint32(cursor))
 	return out,nil
 }
 
