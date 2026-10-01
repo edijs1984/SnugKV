@@ -918,7 +918,8 @@ func isConcurrentScalarCommand(args [][]byte) bool {
 	if len(args) == 3 &&
 		(bytes.EqualFold(args[0], []byte("HGET")) ||
 			bytes.EqualFold(args[0], []byte("LINDEX")) ||
-			bytes.EqualFold(args[0], []byte("SISMEMBER"))) {
+			bytes.EqualFold(args[0], []byte("SISMEMBER")) ||
+			bytes.EqualFold(args[0], []byte("ZSCORE"))) {
 		return true
 	}
 	// Keep only the plain SET key value form on the concurrent write fast path.
