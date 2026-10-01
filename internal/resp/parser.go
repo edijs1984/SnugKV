@@ -300,9 +300,8 @@ func (d *Decoder) ReadBufferedSET(keyScratch, valueScratch []byte) (key, value [
 // HSET key field value, RPUSH key value, SADD key member, and
 // ZADD key score member from bytes already buffered by bufio.Reader.
 //
-// It mirrors ReadBufferedSET: partial/complex frames consume nothing and fall
-// back to ReadCommand. Caller-owned scratch keeps the steady-state pipelined
-// path allocation-light without retaining bufio.Reader memory.
+// Partial or complex frames consume nothing and fall back to ReadCommand.
+// Caller-owned scratch keeps the steady-state pipelined path allocation-light.
 func (d *Decoder) ReadBufferedNativeMutation(
 	scratch *[3][]byte,
 ) (cmd string, args [3][]byte, argc int, ok bool, err error) {
@@ -317,76 +316,12 @@ func (d *Decoder) ReadBufferedNativeMutation(
 	if err != nil {
 		return "", args, 0, false, nil
 	}
-
 	if len(buf) < 13 || buf[0] != '*' || buf[2] != '\r' || buf[3] != '\n' {
 		return "", args, 0, false, nil
 	}
+
 	arrayCount := int(buf[1] - '0')
 	if buf[1] < '0' || buf[1] > '9' || (arrayCount != 3 && arrayCount != 4) {
-		return "", args, 0, false, nil
-	}
-	if buf[4] != '
-// io.EOF means clean end of stream; truncated requests return io.ErrUnexpectedEOF.
-// After any other error the stream must be closed, not resynchronized.
-func (d *Decoder) ReadCommand() (args [][]byte, err error) {
-	d.remaining = d.limits.MaxRequestBytes
-	if _, err = d.reader.Peek(1); err != nil {
-		return nil, err
-	}
-	defer func() {
-		if err == io.EOF {
-			err = io.ErrUnexpectedEOF
-		}
-	}()
-	n, err := d.length('*', d.limits.MaxArguments)
-	if err != nil {
-		return nil, err
-	}
-	if n == 0 {
-		return nil, errors.New("empty command array")
-	}
-	// Even an empty bulk needs six framing bytes.
-	if n > d.remaining/6 {
-		return nil, errors.New("request exceeds byte limit")
-	}
-	args = make([][]byte, n)
-	for i := 0; i < n; i++ {
-		args[i], err = d.bulk()
-		if err != nil {
-			return nil, err
-		}
-	}
-	return args, nil
-}
-
-// Parse accepts a complete command or a standalone bulk string for callers
-// parsing values. TCP command decoding always requires an array.
-func Parse(data []byte) ([][]byte, error) {
-	limits := DefaultLimits()
-	if len(data) > limits.MaxRequestBytes {
-		return nil, errors.New("request exceeds byte limit")
-	}
-	reader := bufio.NewReader(bytes.NewReader(data))
-	d, _ := NewDecoder(reader, limits)
-	var args [][]byte
-	var err error
-	if len(data) > 0 && data[0] == '$' {
-		d.remaining = limits.MaxRequestBytes
-		var value []byte
-		value, err = d.bulk()
-		args = [][]byte{value}
-	} else {
-		args, err = d.ReadCommand()
-	}
-	if err != nil {
-		return nil, err
-	}
-	if _, err = reader.Peek(1); err != io.EOF {
-		return nil, errors.New("trailing bytes")
-	}
-	return args, nil
-}
- {
 		return "", args, 0, false, nil
 	}
 
@@ -485,27 +420,23 @@ func Parse(data []byte) ([][]byte, error) {
 		if buf[pos+n] != '\r' || buf[pos+n+1] != '\n' {
 			return 0, 0, 0, false
 		}
-		return pos, n, pos+n+2, true
+		return pos, n, pos + n + 2, true
 	}
 
 	commandStart, commandLen, pos, complete := parseBulk(4)
 	if !complete {
 		return "", args, 0, false, nil
 	}
-	command := buf[commandStart:commandStart+commandLen]
+	command := buf[commandStart : commandStart+commandLen]
 	switch {
 	case arrayCount == 4 && bytes.EqualFold(command, []byte("HSET")):
-		cmd = "HSET"
-		argc = 3
+		cmd, argc = "HSET", 3
 	case arrayCount == 3 && bytes.EqualFold(command, []byte("RPUSH")):
-		cmd = "RPUSH"
-		argc = 2
+		cmd, argc = "RPUSH", 2
 	case arrayCount == 3 && bytes.EqualFold(command, []byte("SADD")):
-		cmd = "SADD"
-		argc = 2
+		cmd, argc = "SADD", 2
 	case arrayCount == 4 && bytes.EqualFold(command, []byte("ZADD")):
-		cmd = "ZADD"
-		argc = 3
+		cmd, argc = "ZADD", 3
 	default:
 		return "", args, 0, false, nil
 	}
@@ -529,6 +460,7 @@ func Parse(data []byte) ([][]byte, error) {
 		scratch[i] = dst
 		pos = next
 	}
+
 	if pos > d.limits.MaxRequestBytes {
 		return "", args, 0, false, nil
 	}
