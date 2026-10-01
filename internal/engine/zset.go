@@ -376,7 +376,11 @@ func zsetPreparedEntry(packed []byte) preparedEntry {
 }
 
 func (s *Store) zsetItemsFromEntry(sh *shard, e entry) ([]ZSetItem, error) {
-	return decodePackedZSet(sh.encoded(e))
+	data := sh.encoded(e)
+	if isIndexedZSet(data) {
+		return decodeIndexedZSet(data)
+	}
+	return decodePackedZSet(data)
 }
 
 func (s *Store) zsetLogicalValue(sh *shard, e entry) ([]byte, error) {
@@ -431,11 +435,33 @@ func (s *Store) ZSetAdd(key string, pairs []ZSetItem, options ZSetAddOptions) (c
 		if old.valueType != TypeZSet {
 			return 0, false, 0, zsetWrongType()
 		}
+		expiresAt = sh.expirationAt(key, old)
+		physical := sh.encoded(old)
+		if isIndexedZSet(physical) && options == (ZSetAddOptions{}) {
+			added, rebuilt, err := indexedZSetAddSimple(physical, pairs)
+			if err != nil {
+				return 0, false, 0, err
+			}
+			if rebuilt == nil {
+				return added, false, 0, nil
+			}
+			updated := preparedEntry{
+				entry: entry{entryData: entryData{
+					valueType: TypeZSet,
+					rawLength: uint32(len(rebuilt)),
+				}},
+				data: rebuilt,
+				expiresAt: expiresAt,
+			}
+			if err := s.publish(sh, key, updated); err != nil {
+				return 0, false, 0, err
+			}
+			return added, false, 0, nil
+		}
 		items, err = s.zsetItemsFromEntry(sh, old)
 		if err != nil {
 			return 0, false, 0, err
 		}
-		expiresAt = sh.expirationAt(key, old)
 	}
 
 	changedMembers := make(map[string]struct{})
@@ -490,11 +516,26 @@ func (s *Store) ZSetAdd(key string, pairs []ZSetItem, options ZSetAddOptions) (c
 	}
 
 	sort.Slice(items, func(i, j int) bool { return zsetLess(items[i], items[j]) })
-	packed, err := encodePackedZSet(items)
-	if err != nil {
-		return 0, false, 0, err
+	var updated preparedEntry
+	if len(items) >= indexedZSetPromoteMembers {
+		indexed, err := encodeIndexedZSet(items)
+		if err != nil {
+			return 0, false, 0, err
+		}
+		updated = preparedEntry{
+			entry: entry{entryData: entryData{
+				valueType: TypeZSet,
+				rawLength: uint32(len(indexed)),
+			}},
+			data: indexed,
+		}
+	} else {
+		packed, err := encodePackedZSet(items)
+		if err != nil {
+			return 0, false, 0, err
+		}
+		updated = zsetPreparedEntry(packed)
 	}
-	updated := zsetPreparedEntry(packed)
 	updated.expiresAt = expiresAt
 	if err := s.publish(sh, key, updated); err != nil {
 		return 0, false, 0, err
@@ -566,6 +607,10 @@ func (s *Store) ZSetScore(key string, member []byte) (float64, bool, error) {
 	if e.valueType != TypeZSet {
 		return 0, false, zsetWrongType()
 	}
+	physical := sh.encoded(e)
+	if isIndexedZSet(physical) {
+		return indexedZSetScore(physical, member)
+	}
 	items, err := s.zsetItemsFromEntry(sh, e)
 	if err != nil {
 		return 0, false, err
@@ -587,6 +632,11 @@ func (s *Store) ZSetCard(key string) (int64, error) {
 	}
 	if e.valueType != TypeZSet {
 		return 0, zsetWrongType()
+	}
+	physical := sh.encoded(e)
+	if isIndexedZSet(physical) {
+		count, _, _, _, err := indexedZSetMeta(physical)
+		return int64(count), err
 	}
 	items, err := s.zsetItemsFromEntry(sh, e)
 	return int64(len(items)), err
@@ -690,7 +740,11 @@ func (s *Store) ZSetStorageStats(key string) (ZSetStats, bool, error) {
 		return ZSetStats{}, false, err
 	}
 	stored := sh.encoded(e)
-	stats := ZSetStats{Members: len(items), PackedBytes: len(logical), StoredBytes: len(stored), Encoding: zsetEncodingName(stored)}
+	encoding := zsetEncodingName(stored)
+	if isIndexedZSet(stored) {
+		encoding = "indexed"
+	}
+	stats := ZSetStats{Members: len(items), PackedBytes: len(logical), StoredBytes: len(stored), Encoding: encoding}
 	for _, item := range items {
 		stats.MemberBytes += len(item.Member)
 	}
