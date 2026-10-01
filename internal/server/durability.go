@@ -458,31 +458,12 @@ func (s *Server) executeAuthorizedConcurrentSetBatch(keys, values [][]byte) (han
 		s.optimizer.NoteForegroundWrite()
 	}
 
-	const concurrentSetChunk = 32
-
-	var setErr error
-	for start := 0; start < len(keys); start += concurrentSetChunk {
-		end := start + concurrentSetChunk
-		if end > len(keys) {
-			end = len(keys)
-		}
-
-		batched, err := s.store.SetPlainBatchFresh(keys[start:end], values[start:end])
-		if err != nil {
-			setErr = err
-			break
-		}
-		if batched {
-			continue
-		}
-
-		for i := start; i < end; i++ {
+	batched, setErr := s.store.SetPlainBatchFresh(keys, values)
+	if !batched {
+		for i := range keys {
 			if setErr = s.store.SetPlain(string(keys[i]), values[i]); setErr != nil {
 				break
 			}
-		}
-		if setErr != nil {
-			break
 		}
 	}
 	s.durableMu.RUnlock()
