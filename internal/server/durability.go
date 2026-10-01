@@ -922,6 +922,23 @@ func isConcurrentScalarCommand(args [][]byte) bool {
 			bytes.EqualFold(args[0], []byte("ZSCORE"))) {
 		return true
 	}
+
+	// Simple single-key native mutations are fully serialized by their shard
+	// locks. With AOF/replication/MULTI/WATCH already excluded by the caller,
+	// they do not need the process-wide exclusive durability lock. Keep the
+	// fast path deliberately narrow: complex option/multi-value forms continue
+	// through the conservative serialized path until separately audited.
+	if len(args) == 4 &&
+		(bytes.EqualFold(args[0], []byte("HSET")) ||
+			bytes.EqualFold(args[0], []byte("ZADD"))) {
+		return true
+	}
+	if len(args) == 3 &&
+		(bytes.EqualFold(args[0], []byte("RPUSH")) ||
+			bytes.EqualFold(args[0], []byte("SADD"))) {
+		return true
+	}
+
 	// Keep only the plain SET key value form on the concurrent write fast path.
 	// Option parsing can involve TTL/conditional semantics and stays on the
 	// serialized path until separately audited.
