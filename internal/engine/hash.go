@@ -370,7 +370,16 @@ func (s *Store) HashSet(key string, fields, values [][]byte) (int64, error) {
 	}
 
 	var updated preparedEntry
-	if len(pairs) >= indexedHashPromoteFields {
+	canIndex := len(pairs) >= indexedHashPromoteFields
+	if canIndex {
+		for _, pair := range pairs {
+			if pair.ExpiresAtMS != 0 {
+				canIndex = false
+				break
+			}
+		}
+	}
+	if canIndex {
 		indexed, err := encodeIndexedHash(pairs)
 		if err != nil {
 			return 0, err
@@ -395,6 +404,14 @@ func (s *Store) HashSet(key string, fields, values [][]byte) (int64, error) {
 	}
 
 	return added, nil
+}
+
+func (s *Store) hashLogicalValue(sh *shard, e entry) ([]byte, error) {
+	pairs, err := decodePackedHash(s.decode(sh, e))
+	if err != nil {
+		return nil, err
+	}
+	return encodePackedHash(pairs)
 }
 
 func (s *Store) HashGet(key string, field []byte) ([]byte, bool, error) {
