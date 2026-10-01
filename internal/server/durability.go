@@ -915,7 +915,8 @@ func isConcurrentScalarCommand(args [][]byte) bool {
 	// Native container point reads are shard-read-locked and do not mutate
 	// engine state. Let them share the durability read lock so independent
 	// clients are not serialized behind the global command mutex.
-	if len(args) == 3 && bytes.EqualFold(args[0], []byte("HGET")) {
+	if len(args) == 3 &&
+		(bytes.EqualFold(args[0], []byte("HGET")) || bytes.EqualFold(args[0], []byte("LINDEX"))) {
 		return true
 	}
 	// Keep only the plain SET key value form on the concurrent write fast path.
