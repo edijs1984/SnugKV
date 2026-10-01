@@ -81,3 +81,49 @@ func TestSetPlainBatchFreshExistingKeyFallsBackWithoutPartialMutation(t *testing
 		t.Fatalf("existing value got=%q found=%t wrongType=%t", got, found, wrongType)
 	}
 }
+
+
+func TestSetPlainBatchFreshKeepsTerminalScalarsMetadataFree(t *testing.T) {
+	store, err := NewWithOptions(Options{
+		Shards:       256,
+		Encoding:     true,
+		ShapeEncoding:true,
+		Compression:  true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	keys := [][]byte{
+		[]byte("counter:a"),
+		[]byte("counter:b"),
+		[]byte("uuid:a"),
+		[]byte("uuid:b"),
+	}
+	values := [][]byte{
+		[]byte("1234567890"),
+		[]byte("9876543210"),
+		[]byte("550e8400-e29b-41d4-a716-446655440000"),
+		[]byte("123e4567-e89b-12d3-a456-426614174000"),
+	}
+
+	batched, err := store.SetPlainBatchFresh(keys, values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !batched {
+		t.Fatal("terminal scalar batch unexpectedly fell back")
+	}
+
+	mem := store.Memory()
+	if mem.MetaBytes != 0 {
+		t.Fatalf("terminal scalar batch metadata=%d want=0", mem.MetaBytes)
+	}
+
+	for i := range keys {
+		got, found, wrongType := store.GetString(string(keys[i]))
+		if wrongType || !found || string(got) != string(values[i]) {
+			t.Fatalf("key %q got=%q found=%t wrongType=%t", keys[i], got, found, wrongType)
+		}
+	}
+}
