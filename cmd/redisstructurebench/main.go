@@ -231,7 +231,7 @@ func runRead(addr, dataType string, items, cardinality, ops, workers, pipeline i
 				for i := base; i < end; i++ {
 					idx := rng.Intn(items)
 					indexes[i-base] = idx
-					if err := writeRead(c, dataType, idx, cardinality); err != nil {
+					if err := writeRead(c, dataType, idx, cardinality, seed); err != nil {
 						atomic.AddUint64(&errs, uint64(end-i)); return
 					}
 				}
@@ -267,7 +267,7 @@ func writeLoad(c *client, dataType string, idx, cardinality, valueBytes int, see
 	return errors.New("unsupported type")
 }
 
-func writeRead(c *client, dataType string, idx, cardinality int) error {
+func writeRead(c *client, dataType string, idx, cardinality int, seed int64) error {
 	container := idx / cardinality
 	member := idx % cardinality
 	k := structureKey(dataType, container)
@@ -277,9 +277,9 @@ func writeRead(c *client, dataType string, idx, cardinality int) error {
 	case "list":
 		return c.write(b("LINDEX"), k, []byte(strconv.Itoa(member)))
 	case "set":
-		return c.write(b("SISMEMBER"), k, memberValue(member, idx, 1))
+		return c.write(b("SISMEMBER"), k, memberValue(member, idx, seed))
 	case "zset":
-		return c.write(b("ZSCORE"), k, memberValue(member, idx, 1))
+		return c.write(b("ZSCORE"), k, memberValue(member, idx, seed))
 	}
 	return errors.New("unsupported type")
 }
