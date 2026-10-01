@@ -284,6 +284,12 @@ func (s *Server) executeAuthorizedConcurrentSet(args [][]byte) (response []byte,
 	}
 
 	key := string(args[1])
+	if s.optimizer != nil {
+		// Signal the background optimizer before mutating the shard so its
+		// workers yield during sustained foreground SET bursts and catch up
+		// once the write burst goes quiet.
+		s.optimizer.NoteForegroundWrite()
+	}
 	setErr := s.store.SetPlain(key, args[2])
 	s.durableMu.RUnlock()
 
