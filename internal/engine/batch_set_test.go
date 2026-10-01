@@ -119,6 +119,12 @@ func TestSetPlainBatchFreshKeepsTerminalScalarsMetadataFree(t *testing.T) {
 	if mem.MetaBytes != 0 {
 		t.Fatalf("terminal scalar batch metadata=%d want=0", mem.MetaBytes)
 	}
+	if mem.ArenaPayloadBytes != 0 {
+		t.Fatalf("terminal scalar batch arena payload=%d want=0", mem.ArenaPayloadBytes)
+	}
+	if mem.ArenaLiveBlockBytes != 0 {
+		t.Fatalf("terminal scalar batch arena live blocks=%d want=0", mem.ArenaLiveBlockBytes)
+	}
 
 	for i := range keys {
 		got, found, wrongType := store.GetString(string(keys[i]))
