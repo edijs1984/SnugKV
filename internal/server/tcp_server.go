@@ -328,6 +328,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 	var getKeyScratch []byte
 	var setKeyScratch []byte
 	var setValueScratch []byte
+	var nativeScratch [3][]byte
 	const maxRetainedGetScratch = 64 << 10
 	const maxRetainedGetKeyScratch = 64 << 10
 	const maxRetainedSetKeyScratch = 64 << 10
@@ -463,6 +464,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 		}
 		var borrowedGET [2][]byte
 		var borrowedSET [3][]byte
+		var borrowedNative [4][]byte
 		var msg [][]byte
 		borrowedKey, borrowed, borrowErr := decoder.ReadBufferedGET(getKeyScratch)
 		if borrowErr != nil {
@@ -504,8 +506,25 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			}
 		}
 
+		borrowedNativeMutation := false
+		if !borrowed && !borrowedSet && !txSession.multi {
+			cmd, args, argc, ok, nativeErr :=
+				decoder.ReadBufferedNativeMutation(&nativeScratch)
+			if nativeErr != nil {
+				return
+			}
+			if ok {
+				borrowedNative[0] = []byte(cmd)
+				for i := 0; i < argc; i++ {
+					borrowedNative[i+1] = args[i]
+				}
+				msg = borrowedNative[:argc+1]
+				borrowedNativeMutation = true
+			}
+		}
+
 		var err error
-		if !borrowed && !borrowedSet {
+		if !borrowed && !borrowedSet && !borrowedNativeMutation {
 			msg, err = decoder.ReadCommand()
 		}
 		if err != nil {
