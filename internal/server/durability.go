@@ -317,6 +317,10 @@ func (s *Server) executeAuthorizedConcurrentNativeMutation(args [][]byte) (respo
 		return nil, false, nil
 	}
 
+	if s.optimizer != nil {
+		s.optimizer.NoteForegroundWrite()
+	}
+
 	var result int64
 	switch kind {
 	case 'h':
