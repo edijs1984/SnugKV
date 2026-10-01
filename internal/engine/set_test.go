@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"bytes"
 	"testing"
 	"time"
@@ -167,5 +168,72 @@ func TestSetWrongTypeAndOptimizerExclusion(t *testing.T) {
 		// Sparse optimizer metadata is allocated only after a profitable
 		// rewrite, so this untouched ordinary string should own none.
 		t.Fatalf("meta bytes=%d want 0", stats.MetaBytes)
+	}
+}
+
+
+func TestIndexedSetPromotionAddContainsTTLAndPersistence(t *testing.T) {
+	s := New()
+	for i := 0; i < 128; i++ {
+		member := []byte(fmt.Sprintf("m:%06d", i))
+		added, err := s.SetAdd("indexed-set", [][]byte{member})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if added != 1 {
+			t.Fatalf("SADD %d added=%d", i, added)
+		}
+	}
+
+	sh := s.shardFor("indexed-set")
+	sh.mu.RLock()
+	e, ok := sh.get("indexed-set")
+	if !ok {
+		sh.mu.RUnlock()
+		t.Fatal("indexed set missing")
+	}
+	if !isIndexedSet(sh.encoded(e)) {
+		sh.mu.RUnlock()
+		t.Fatal("large set did not promote")
+	}
+	sh.mu.RUnlock()
+
+	for _, i := range []int{0, 31, 32, 63, 127} {
+		found, err := s.SetContains("indexed-set", []byte(fmt.Sprintf("m:%06d", i)))
+		if err != nil || !found {
+			t.Fatalf("SISMEMBER %d found=%v err=%v", i, found, err)
+		}
+	}
+	found, err := s.SetContains("indexed-set", []byte("missing"))
+	if err != nil || found {
+		t.Fatalf("missing found=%v err=%v", found, err)
+	}
+
+	if !s.Expire("indexed-set", time.Minute) {
+		t.Fatal("expire failed")
+	}
+	added, err := s.SetAdd("indexed-set", [][]byte{[]byte("tail")})
+	if err != nil || added != 1 {
+		t.Fatalf("SADD tail added=%d err=%v", added, err)
+	}
+	if ttl := s.TTL("indexed-set", true); ttl <= 0 {
+		t.Fatalf("TTL lost: %d", ttl)
+	}
+
+	records := s.Export(nil)
+	if len(records) != 1 {
+		t.Fatalf("records=%d want 1", len(records))
+	}
+	if isIndexedSet(records[0].Value) {
+		t.Fatal("persistence leaked physical indexed set")
+	}
+
+	restored := New()
+	if err := restored.Restore(records, false); err != nil {
+		t.Fatal(err)
+	}
+	found, err = restored.SetContains("indexed-set", []byte("tail"))
+	if err != nil || !found {
+		t.Fatalf("restored tail found=%v err=%v", found, err)
 	}
 }

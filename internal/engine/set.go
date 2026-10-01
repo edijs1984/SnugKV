@@ -241,6 +241,9 @@ func setPreparedEntry(packed []byte) preparedEntry {
 
 func (s *Store) setMembersFromEntry(sh *shard, e entry) ([][]byte, error) {
 	physical := sh.encoded(e)
+	if isIndexedSet(physical) {
+		return decodeIndexedSet(physical)
+	}
 	if len(physical) == int(e.rawLength) {
 		return decodePackedSet(physical)
 	}
@@ -287,12 +290,34 @@ func (s *Store) SetAdd(key string, members [][]byte) (int64, error) {
 		if old.valueType != TypeSet {
 			return 0, setWrongType()
 		}
+		expiresAt = sh.expirationAt(key, old)
+		physical := sh.encoded(old)
+		if isIndexedSet(physical) {
+			added, rebuilt, err := indexedSetAdd(physical, members)
+			if err != nil {
+				return 0, err
+			}
+			if rebuilt == nil {
+				return added, nil
+			}
+			updated := preparedEntry{
+				entry: entry{entryData: entryData{
+					valueType: TypeSet,
+					rawLength: uint32(len(rebuilt)),
+				}},
+				data: rebuilt,
+				expiresAt: expiresAt,
+			}
+			if err := s.publish(sh, key, updated); err != nil {
+				return 0, err
+			}
+			return added, nil
+		}
 		var err error
 		current, err = s.setMembersFromEntry(sh, old)
 		if err != nil {
 			return 0, err
 		}
-		expiresAt = sh.expirationAt(key, old)
 	}
 
 	var added int64
@@ -310,11 +335,26 @@ func (s *Store) SetAdd(key string, members [][]byte) (int64, error) {
 	if added == 0 {
 		return 0, nil
 	}
-	packed, err := encodePackedSet(current)
-	if err != nil {
-		return 0, err
+	var updated preparedEntry
+	if len(current) >= indexedSetPromoteMembers {
+		indexed, err := encodeIndexedSet(current)
+		if err != nil {
+			return 0, err
+		}
+		updated = preparedEntry{
+			entry: entry{entryData: entryData{
+				valueType: TypeSet,
+				rawLength: uint32(len(indexed)),
+			}},
+			data: indexed,
+		}
+	} else {
+		packed, err := encodePackedSet(current)
+		if err != nil {
+			return 0, err
+		}
+		updated = setPreparedEntry(packed)
 	}
-	updated := setPreparedEntry(packed)
 	updated.expiresAt = expiresAt
 	if err := s.publish(sh, key, updated); err != nil {
 		return 0, err
@@ -387,6 +427,10 @@ func (s *Store) SetContains(key string, member []byte) (bool, error) {
 	if e.valueType != TypeSet {
 		return false, setWrongType()
 	}
+	physical := sh.encoded(e)
+	if isIndexedSet(physical) {
+		return indexedSetContains(physical, member)
+	}
 	members, err := s.setMembersFromEntry(sh, e)
 	if err != nil {
 		return false, err
@@ -405,6 +449,11 @@ func (s *Store) SetLen(key string) (int64, error) {
 	}
 	if e.valueType != TypeSet {
 		return 0, setWrongType()
+	}
+	physical := sh.encoded(e)
+	if isIndexedSet(physical) {
+		count, _, _, _, err := indexedSetMeta(physical)
+		return int64(count), err
 	}
 	members, err := s.setMembersFromEntry(sh, e)
 	return int64(len(members)), err
@@ -441,7 +490,9 @@ func (s *Store) SetStorageStats(key string) (SetStats, bool, error) {
 	}
 	physical := sh.encoded(e)
 	encoding := "packed"
-	if len(members) == 1 && len(physical) != int(e.rawLength) {
+	if isIndexedSet(physical) {
+		encoding = "indexed"
+	} else if len(members) == 1 && len(physical) != int(e.rawLength) {
 		encoding = "singleton"
 	} else if bytes.HasPrefix(physical, tinySetHeader[:]) {
 		encoding = "prefix"

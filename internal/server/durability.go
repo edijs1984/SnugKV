@@ -916,7 +916,9 @@ func isConcurrentScalarCommand(args [][]byte) bool {
 	// engine state. Let them share the durability read lock so independent
 	// clients are not serialized behind the global command mutex.
 	if len(args) == 3 &&
-		(bytes.EqualFold(args[0], []byte("HGET")) || bytes.EqualFold(args[0], []byte("LINDEX"))) {
+		(bytes.EqualFold(args[0], []byte("HGET")) ||
+			bytes.EqualFold(args[0], []byte("LINDEX")) ||
+			bytes.EqualFold(args[0], []byte("SISMEMBER"))) {
 		return true
 	}
 	// Keep only the plain SET key value form on the concurrent write fast path.
