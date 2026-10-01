@@ -81,7 +81,16 @@ func encodeIndexedHash(pairs []HashPair) ([]byte,error) {
 		if p.ExpiresAtMS!=0 { return nil,errors.New("indexed hash does not support field expiry") }
 		records[i]=indexedHashRecordBytes(p.Field,p.Value); used+=len(records[i])
 	}
-	dataCap:=nextHashPow2(used*2)
+	// Keep append headroom without doubling the entire payload. The arena already
+	// rounds the complete allocation into geometric size classes, so a second
+	// power-of-two expansion here created excessive slack (roughly 200 B/item
+	// for 64-byte values at 1000 fields). 50% logical headroom keeps HSET mostly
+	// in-place while allowing the final allocation to settle much closer to the
+	// live payload size.
+	dataCap := used + used/2
+	if dataCap-used < 1024 {
+		dataCap = used + 1024
+	}
 	total:=indexedHashFixed+slots*4+dataCap
 	if total>maxPackedHashBytes { return nil,errors.New("ERR hash exceeds 32 MiB limit") }
 	out:=make([]byte,total)
