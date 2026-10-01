@@ -65,43 +65,25 @@ func indexedZSetRecord(data []byte, pos int) (member []byte, score float64, end 
 }
 
 func indexedZSetFind(data, target []byte) (slot,pos int, found bool, score float64, err error) {
-	_,slots,used,dataStart,e := indexedZSetMeta(data)
+	_,slots,_,_,e := indexedZSetMeta(data)
 	if e != nil {
 		return 0,0,false,0,e
 	}
 	mask := slots-1
-	startSlot := int(hashField64(target)) & mask
-	dataEnd := dataStart + used
+	start := int(hashField64(target)) & mask
 	for probe:=0;probe<slots;probe++ {
-		slot=(startSlot+probe)&mask
+		slot=(start+probe)&mask
 		raw := binary.LittleEndian.Uint32(data[indexedZSetFixed+slot*4:indexedZSetFixed+slot*4+4])
 		if raw==0 {
 			return slot,0,false,0,nil
 		}
 		pos=int(raw-1)
-		if pos < 0 || dataStart+pos+8 > dataEnd {
-			return 0,0,false,0,errors.New("invalid indexed zset offset")
+		member,sc,_,e := indexedZSetRecord(data,pos)
+		if e != nil {
+			return 0,0,false,0,e
 		}
-
-		off := dataStart + pos
-		score = math.Float64frombits(binary.LittleEndian.Uint64(data[off:off+8]))
-		if math.IsNaN(score) {
-			return 0,0,false,0,errors.New("invalid indexed zset score")
-		}
-		score = normalizeZSetScore(score)
-		off += 8
-
-		length,n := binary.Uvarint(data[off:dataEnd])
-		if n <= 0 {
-			return 0,0,false,0,errors.New("invalid indexed zset member")
-		}
-		off += n
-		if length > uint64(dataEnd-off) {
-			return 0,0,false,0,errors.New("invalid indexed zset member")
-		}
-		memberEnd := off + int(length)
-		if bytes.Equal(data[off:memberEnd],target) {
-			return slot,pos,true,score,nil
+		if bytes.Equal(member,target) {
+			return slot,pos,true,sc,nil
 		}
 	}
 	return 0,0,false,0,errors.New("invalid indexed zset table")
@@ -218,9 +200,9 @@ func indexedZSetAddSimple(data []byte, pairs []ZSetItem)(added int64, rebuilt []
 		if found && current == score {
 			continue
 		}
-		recordLen := 8 + zsetUvarintLen(uint64(len(pair.Member))) + len(pair.Member)
+		rec := indexedZSetRecordBytes(pair.Member,score)
 		needRehash := !found && (count+1)*10 >= slots*7
-		if needRehash || start+used+recordLen > len(data) {
+		if needRehash || start+used+len(rec) > len(data) {
 			items,e := decodeIndexedZSet(data)
 			if e != nil {
 				return added,nil,e
@@ -248,15 +230,9 @@ func indexedZSetAddSimple(data []byte, pairs []ZSetItem)(added int64, rebuilt []
 			return added,rebuilt,e
 		}
 
-		// Write the record directly into the arena. The previous hot path built
-		// a temporary []byte for every ZADD only to copy it here.
-		recordStart := start + used
-		binary.LittleEndian.PutUint64(data[recordStart:recordStart+8], math.Float64bits(score))
-		cursor := recordStart + 8
-		cursor += binary.PutUvarint(data[cursor:], uint64(len(pair.Member)))
-		copy(data[cursor:cursor+len(pair.Member)], pair.Member)
+		copy(data[start+used:],rec)
 		binary.LittleEndian.PutUint32(data[indexedZSetFixed+slot*4:indexedZSetFixed+slot*4+4],uint32(used+1))
-		used += recordLen
+		used += len(rec)
 		if !found {
 			count++
 			added++
