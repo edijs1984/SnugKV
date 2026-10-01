@@ -202,8 +202,12 @@ func (s *Store) SetPlainBatchFresh(keys [][]byte, values [][]byte) (bool, error)
 		item := &items[i]
 		keyBytes += uint64(len(item.key))
 		metaBytes += metadataCharge(item.entry.entry)
-		allocationLens[i] = len(item.entry.data)
-		if !shouldInlinePrepared(item.entry) {
+		if shouldInlinePrepared(item.entry) {
+			// Inline scalars live entirely inside arena.Ref. They must not
+			// participate in arena growth planning or payload accounting.
+			allocationLens[i] = 0
+		} else {
+			allocationLens[i] = len(item.entry.data)
 			arenaPayload += uint64(len(item.entry.data))
 		}
 	}
