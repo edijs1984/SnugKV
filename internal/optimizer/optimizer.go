@@ -76,7 +76,6 @@ type Optimizer struct {
 	window                                     time.Time
 	queued, rewritten, skipped, stale, dropped uint64
 	lastForegroundWrite                      int64
-	activeForegroundWrites                   int64
 }
 
 func New(store *engine.Store, c Config) (*Optimizer, error) {
@@ -101,23 +100,7 @@ func (o *Optimizer) NoteForegroundWrite() {
 	atomic.StoreInt64(&o.lastForegroundWrite, time.Now().UnixNano())
 }
 
-func (o *Optimizer) BeginForegroundWrite() {
-	atomic.AddInt64(&o.activeForegroundWrites, 1)
-	o.NoteForegroundWrite()
-}
-
-func (o *Optimizer) EndForegroundWrite() {
-	remaining := atomic.AddInt64(&o.activeForegroundWrites, -1)
-	if remaining < 0 {
-		panic("optimizer foreground write counter underflow")
-	}
-	o.NoteForegroundWrite()
-}
-
 func (o *Optimizer) foregroundQuietFor(d time.Duration) bool {
-	if atomic.LoadInt64(&o.activeForegroundWrites) != 0 {
-		return false
-	}
 	last := atomic.LoadInt64(&o.lastForegroundWrite)
 	if last == 0 {
 		return true
@@ -126,18 +109,17 @@ func (o *Optimizer) foregroundQuietFor(d time.Duration) bool {
 }
 
 func (o *Optimizer) waitForForegroundQuiet() bool {
-	const quietWindow = 100 * time.Millisecond
+	const quietWindow = 2 * time.Millisecond
+	const maxDeferral = 50 * time.Millisecond
+	deadline := time.Now().Add(maxDeferral)
 
 	for {
-		if atomic.LoadInt64(&o.activeForegroundWrites) == 0 {
-			last := atomic.LoadInt64(&o.lastForegroundWrite)
-			if last == 0 {
-				return true
-			}
-			elapsed := time.Since(time.Unix(0, last))
-			if elapsed >= quietWindow {
-				return true
-			}
+		last := atomic.LoadInt64(&o.lastForegroundWrite)
+		if last == 0 || time.Since(time.Unix(0, last)) >= quietWindow {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return true
 		}
 
 		timer := time.NewTimer(quietWindow)
@@ -326,9 +308,10 @@ func (o *Optimizer) worker() {
 			start := time.Now()
 
 			// Foreground writes own the machine. During an active write burst,
-			// do not run representation rewrites at all: they contend for the
-			// same cores, shard locks and arena bandwidth as SET. Once writes have
-			// been quiet for a few milliseconds, workers immediately catch up.
+			// defer expensive representation work briefly instead of competing
+			// for the same cores and shard locks. Continuous workloads still
+			// make bounded progress after maxDeferral; burst workloads switch
+			// to full-speed catch-up almost immediately after writes stop.
 			if !o.waitForForegroundQuiet() {
 				return
 			}
@@ -340,15 +323,6 @@ func (o *Optimizer) worker() {
 			)
 			if !eligible {
 				atomic.AddUint64(&o.skipped, 1)
-				continue
-			}
-
-			// Foreground work may have started after waitForForegroundQuiet()
-			// returned. Re-check before allocating scratch or copying candidate
-			// bytes so an optimizer worker that lost the race does not compete
-			// with an active SET burst.
-			if !o.foregroundQuietFor(100 * time.Millisecond) {
-				o.Queue(key)
 				continue
 			}
 
@@ -414,15 +388,6 @@ func (o *Optimizer) worker() {
 			) {
 				o.release(rawBytes)
 				atomic.AddUint64(&o.skipped, 1)
-				continue
-			}
-
-			// A SET may also start while candidate encoding is in progress.
-			// Never publish a background rewrite into an active foreground burst;
-			// release scratch and retry the key once the host is quiet again.
-			if !o.foregroundQuietFor(100 * time.Millisecond) {
-				o.release(rawBytes)
-				o.Queue(key)
 				continue
 			}
 
