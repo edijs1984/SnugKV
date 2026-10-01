@@ -126,7 +126,7 @@ func (o *Optimizer) foregroundQuietFor(d time.Duration) bool {
 }
 
 func (o *Optimizer) waitForForegroundQuiet() bool {
-	const quietWindow = 5 * time.Millisecond
+	const quietWindow = 100 * time.Millisecond
 
 	for {
 		if atomic.LoadInt64(&o.activeForegroundWrites) == 0 {
