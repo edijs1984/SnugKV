@@ -41,6 +41,12 @@ func (s *Store) Export(keys []string) []persistence.Record {
 			record.Deleted = true
 		} else {
 			switch e.valueType {
+			case TypeHash:
+				logical, err := s.hashLogicalValue(sh, e)
+				if err != nil {
+					panic(err)
+				}
+				record.Value = logical
 			case TypeSet:
 				logical, err := s.setLogicalValue(sh, e)
 				if err != nil {
