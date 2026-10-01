@@ -370,7 +370,16 @@ func (s *Store) HashSet(key string, fields, values [][]byte) (int64, error) {
 	}
 
 	var updated preparedEntry
-	canIndex := len(pairs) >= indexedHashPromoteFields
+	indexThreshold := indexedHashPromoteFields
+	if len(fields) == 1 {
+		// Incremental HSET workloads repeatedly rebuild the packed representation
+		// as each field is appended. Promote this narrow single-field mutation
+		// path earlier, while keeping multi-field writes on the existing shape-
+		// admission policy so shared HASH shapes and their accounting semantics
+		// remain unchanged.
+		indexThreshold = 8
+	}
+	canIndex := len(pairs) >= indexThreshold
 	if canIndex {
 		for _, pair := range pairs {
 			if pair.ExpiresAtMS != 0 {
