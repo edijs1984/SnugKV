@@ -147,6 +147,29 @@ func indexedListAppend(data []byte, values [][]byte) (newCount int, rebuilt []by
 	if err != nil {
 		return 0,nil,err
 	}
+
+	// Single-value RPUSH is the dominant hot path. Write the varint length and
+	// payload directly into reserved indexed-list space instead of allocating a
+	// temporary record slice that is immediately copied.
+	if len(values) == 1 {
+		value := values[0]
+		var lenBuf [binary.MaxVarintLen64]byte
+		lenBytes := binary.PutUvarint(lenBuf[:], uint64(len(value)))
+		extra := lenBytes + len(value)
+		if count+1 <= capacity && start+used+extra <= len(data) {
+			cursor := start + used
+			copy(data[cursor:cursor+lenBytes], lenBuf[:lenBytes])
+			cursor += lenBytes
+			copy(data[cursor:cursor+len(value)], value)
+			binary.LittleEndian.PutUint32(data[indexedListFixed+count*4:indexedListFixed+count*4+4], uint32(used+1))
+			count++
+			used += extra
+			binary.LittleEndian.PutUint32(data[3:7], uint32(count))
+			binary.LittleEndian.PutUint32(data[11:15], uint32(used))
+			return count,nil,nil
+		}
+	}
+
 	records := make([][]byte,len(values))
 	extra := 0
 	for i,value := range values {
