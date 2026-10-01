@@ -89,15 +89,6 @@ func indexedZSetFind(data, target []byte) (slot,pos int, found bool, score float
 	return 0,0,false,0,errors.New("invalid indexed zset table")
 }
 
-func zsetUvarintLen(value uint64) int {
-	n := 1
-	for value >= 0x80 {
-		value >>= 7
-		n++
-	}
-	return n
-}
-
 func indexedZSetRecordBytes(member []byte, score float64) []byte {
 	out := make([]byte,8,8+binary.MaxVarintLen64+len(member))
 	binary.LittleEndian.PutUint64(out[:8],math.Float64bits(normalizeZSetScore(score)))
