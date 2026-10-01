@@ -1304,6 +1304,22 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			continue
 		}
 
+		nativeMutationStarted := time.Now()
+		if result, handled, fastErr := s.server.executeAuthorizedConcurrentNativeMutation(msg); handled {
+			s.server.recordSlowlogForClient(clientSession, msg, time.Since(nativeMutationStarted))
+			if fastErr != nil {
+				result = errorResponse(fastErr)
+			}
+			commandSucceeded := fastErr == nil
+			if writeProtocol(msg, result) != nil {
+				return
+			}
+			if commandSucceeded {
+				s.invalidateTrackingKeys(clientSession, msg)
+			}
+			continue
+		}
+
 		var result []byte
 		if isBlockingListCommand(msg) || isBlockingZSetCommand(msg) || isBlockingStreamCommand(msg) || isReplicationWaitCommand(msg) || isWaitAOFCommand(msg) {
 			disconnected, stopWatch := watchConnectionDisconnect(peer)
