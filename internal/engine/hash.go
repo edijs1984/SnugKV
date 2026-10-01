@@ -427,6 +427,10 @@ func (s *Store) HashGet(key string, field []byte) ([]byte, bool, error) {
 		return nil, false, hashWrongType()
 	}
 
+	physical := sh.encoded(e)
+	if isIndexedHash(physical) {
+		return indexedHashLookup(physical, field)
+	}
 	return packedHashLookup(s.decode(sh, e), field, s.now().UnixMilli())
 }
 
