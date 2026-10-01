@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"snugkv/internal/engine"
 	"sync/atomic"
 	"testing"
@@ -113,4 +114,42 @@ func TestAuthorizedConcurrentSetFastPathFallbacks(t *testing.T) {
 			t.Fatalf("handled=%t err=%v", handled, err)
 		}
 	})
+}
+
+
+func TestAuthorizedConcurrentSetBatchChunksPreserveOrderAndFallback(t *testing.T) {
+	store := engine.New()
+	s := New(store)
+
+	const n = 70
+	keys := make([][]byte, n)
+	values := make([][]byte, n)
+	for i := 0; i < n; i++ {
+		keys[i] = []byte(fmt.Sprintf("batch:%03d", i))
+		values[i] = []byte(fmt.Sprintf("value:%03d", i))
+	}
+
+	// Force the middle chunk to use the ordinary SET fallback.
+	if err := store.SetPlain(string(keys[40]), []byte("old")); err != nil {
+		t.Fatal(err)
+	}
+
+	handled, err := s.executeAuthorizedConcurrentSetBatch(keys, values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !handled {
+		t.Fatal("batch fast path did not handle request")
+	}
+
+	for i := 0; i < n; i++ {
+		got, found, wrongType := store.GetString(string(keys[i]))
+		if wrongType || !found || string(got) != string(values[i]) {
+			t.Fatalf("key %q got=%q found=%t wrongType=%t", keys[i], got, found, wrongType)
+		}
+	}
+
+	if got := atomic.LoadUint64(&s.commands); got != n {
+		t.Fatalf("commands=%d want=%d", got, n)
+	}
 }
