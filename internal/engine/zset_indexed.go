@@ -138,12 +138,12 @@ func encodeIndexedZSetWithReserve(items []ZSetItem, aggressive bool) ([]byte,err
 		used += len(records[i])
 	}
 	dataCap := used + used/4
-	if aggressive && len(canonical) >= 256 {
-		// Large ZSETs are commonly built incrementally. A 25% payload reserve
-		// causes repeated decode/map/sort/re-encode rebuilds while the set grows
-		// through hundreds or thousands of members. Give large indexed ZSETs
-		// one full payload of append headroom; the optimizer can still rewrite
-		// the completed value to its compact final representation afterward.
+	if aggressive && len(canonical) >= 64 {
+		// Medium and large ZSETs are commonly built incrementally. A 25% payload
+		// reserve causes repeated decode/map/sort/re-encode rebuilds while the set
+		// grows. Give indexed ZSETs one full payload of append headroom once they
+		// reach 64 members; maintenance trims the completed value after writes go
+		// quiet.
 		dataCap = used * 2
 	}
 	if dataCap-used < 512 {
