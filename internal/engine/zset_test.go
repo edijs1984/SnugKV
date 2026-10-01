@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"encoding/binary"
 	"math"
 	"testing"
@@ -238,5 +239,76 @@ func TestZSetReadsLegacySZ1(t *testing.T) {
 	}
 	if canonical[2] == packedZSetHeaderV1[2] {
 		t.Fatal("legacy encoding was not canonicalized")
+	}
+}
+
+
+func TestIndexedZSetPromotionAddScoreTTLAndPersistence(t *testing.T) {
+	s := New()
+	for i := 0; i < 128; i++ {
+		member := []byte(fmt.Sprintf("m:%06d", i))
+		added, _, _, err := s.ZSetAdd(
+			"indexed-zset",
+			[]ZSetItem{{Member: member, Score: float64(i)}},
+			ZSetAddOptions{},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if added != 1 {
+			t.Fatalf("ZADD %d added=%d", i, added)
+		}
+	}
+
+	sh := s.shardFor("indexed-zset")
+	sh.mu.RLock()
+	e, ok := sh.get("indexed-zset")
+	if !ok {
+		sh.mu.RUnlock()
+		t.Fatal("indexed zset missing")
+	}
+	if !isIndexedZSet(sh.encoded(e)) {
+		sh.mu.RUnlock()
+		t.Fatal("large zset did not promote")
+	}
+	sh.mu.RUnlock()
+
+	for _, i := range []int{0, 31, 32, 63, 127} {
+		score, found, err := s.ZSetScore("indexed-zset", []byte(fmt.Sprintf("m:%06d", i)))
+		if err != nil || !found || score != float64(i) {
+			t.Fatalf("ZSCORE %d score=%v found=%v err=%v", i, score, found, err)
+		}
+	}
+
+	if !s.Expire("indexed-zset", time.Minute) {
+		t.Fatal("expire failed")
+	}
+	added, _, _, err := s.ZSetAdd(
+		"indexed-zset",
+		[]ZSetItem{{Member: []byte("tail"), Score: 9999}},
+		ZSetAddOptions{},
+	)
+	if err != nil || added != 1 {
+		t.Fatalf("ZADD tail added=%d err=%v", added, err)
+	}
+	if ttl := s.TTL("indexed-zset", true); ttl <= 0 {
+		t.Fatalf("TTL lost: %d", ttl)
+	}
+
+	records := s.Export(nil)
+	if len(records) != 1 {
+		t.Fatalf("records=%d want 1", len(records))
+	}
+	if isIndexedZSet(records[0].Value) {
+		t.Fatal("persistence leaked physical indexed zset")
+	}
+
+	restored := New()
+	if err := restored.Restore(records, false); err != nil {
+		t.Fatal(err)
+	}
+	score, found, err := restored.ZSetScore("indexed-zset", []byte("tail"))
+	if err != nil || !found || score != 9999 {
+		t.Fatalf("restored tail score=%v found=%v err=%v", score, found, err)
 	}
 }
