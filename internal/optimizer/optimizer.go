@@ -100,6 +100,14 @@ func (o *Optimizer) NoteForegroundWrite() {
 	atomic.StoreInt64(&o.lastForegroundWrite, time.Now().UnixNano())
 }
 
+func (o *Optimizer) foregroundQuietFor(d time.Duration) bool {
+	last := atomic.LoadInt64(&o.lastForegroundWrite)
+	if last == 0 {
+		return true
+	}
+	return time.Since(time.Unix(0, last)) >= d
+}
+
 func (o *Optimizer) waitForForegroundQuiet() bool {
 	const quietWindow = 2 * time.Millisecond
 	const maxDeferral = 50 * time.Millisecond
@@ -219,7 +227,7 @@ func (o *Optimizer) maintenanceStep() {
 	// foreground optimizer queue is empty, opportunistically compact sampled
 	// indexed ZSETs back to their normal reserve before starting generic sample
 	// recovery work.
-	if len(o.queue) == 0 {
+	if len(o.queue) == 0 && o.foregroundQuietFor(2*time.Second) {
 		for _, key := range o.store.SampleKeys(2048) {
 			o.store.CompactIndexedZSet(key)
 		}
