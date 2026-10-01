@@ -2,6 +2,7 @@ package engine
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -145,5 +146,78 @@ func assertListElements(t *testing.T, got [][]byte, want ...string) {
 		if string(got[i]) != want[i] {
 			t.Fatalf("element[%d]=%q want=%q", i, got[i], want[i])
 		}
+	}
+}
+
+
+func TestIndexedListPromotionAppendIndexTTLAndPersistence(t *testing.T) {
+	s := New()
+	for i := 0; i < 128; i++ {
+		value := []byte(fmt.Sprintf("v:%06d", i))
+		n, err := s.ListPushRight("indexed-list", [][]byte{value})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n != int64(i+1) {
+			t.Fatalf("RPUSH %d length=%d", i, n)
+		}
+	}
+
+	sh := s.shardFor("indexed-list")
+	sh.mu.RLock()
+	e, ok := sh.get("indexed-list")
+	if !ok {
+		sh.mu.RUnlock()
+		t.Fatal("indexed list missing")
+	}
+	if !isIndexedList(sh.encoded(e)) {
+		sh.mu.RUnlock()
+		t.Fatal("large list did not promote to indexed representation")
+	}
+	sh.mu.RUnlock()
+
+	for _, tc := range []struct {
+		index int64
+		want  string
+	}{
+		{0, "v:000000"},
+		{31, "v:000031"},
+		{32, "v:000032"},
+		{63, "v:000063"},
+		{127, "v:000127"},
+		{-1, "v:000127"},
+		{-128, "v:000000"},
+	} {
+		value, found, err := s.ListIndex("indexed-list", tc.index)
+		if err != nil || !found || string(value) != tc.want {
+			t.Fatalf("LINDEX %d value=%q found=%v err=%v want=%q", tc.index, value, found, err, tc.want)
+		}
+	}
+
+	if !s.Expire("indexed-list", time.Minute) {
+		t.Fatal("expire failed")
+	}
+	if n, err := s.ListPushRight("indexed-list", [][]byte{[]byte("tail")}); err != nil || n != 129 {
+		t.Fatalf("RPUSH tail n=%d err=%v", n, err)
+	}
+	if ttl := s.TTL("indexed-list", true); ttl <= 0 {
+		t.Fatalf("TTL lost after indexed RPUSH: %d", ttl)
+	}
+
+	records := s.Export(nil)
+	if len(records) != 1 {
+		t.Fatalf("records=%d want 1", len(records))
+	}
+	if isIndexedList(records[0].Value) {
+		t.Fatal("persistence export leaked physical indexed list")
+	}
+
+	restored := New()
+	if err := restored.Restore(records, false); err != nil {
+		t.Fatal(err)
+	}
+	value, found, err := restored.ListIndex("indexed-list", -1)
+	if err != nil || !found || string(value) != "tail" {
+		t.Fatalf("restored tail=%q found=%v err=%v", value, found, err)
 	}
 }
