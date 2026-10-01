@@ -41,11 +41,7 @@ func nextZSetPow2(n int) int {
 	return p
 }
 
-func indexedZSetRecord(data []byte, pos int) (member []byte, score float64, end int, err error) {
-	_,_,used,start,e := indexedZSetMeta(data)
-	if e != nil {
-		return nil,0,0,e
-	}
+func indexedZSetRecordKnown(data []byte, pos, used, start int) (member []byte, score float64, end int, err error) {
 	if pos < 0 || pos >= used || start+pos+8 > start+used {
 		return nil,0,0,errors.New("invalid indexed zset offset")
 	}
@@ -64,21 +60,25 @@ func indexedZSetRecord(data []byte, pos int) (member []byte, score float64, end 
 	return data[off:valueEnd], score, valueEnd-start, nil
 }
 
-func indexedZSetFind(data, target []byte) (slot,pos int, found bool, score float64, err error) {
-	_,slots,_,_,e := indexedZSetMeta(data)
+func indexedZSetRecord(data []byte, pos int) (member []byte, score float64, end int, err error) {
+	_,_,used,start,e := indexedZSetMeta(data)
 	if e != nil {
-		return 0,0,false,0,e
+		return nil,0,0,e
 	}
+	return indexedZSetRecordKnown(data,pos,used,start)
+}
+
+func indexedZSetFindKnown(data, target []byte, slots, used, dataStart int) (slot,pos int, found bool, score float64, err error) {
 	mask := slots-1
-	start := int(hashField64(target)) & mask
+	hashStart := int(hashField64(target)) & mask
 	for probe:=0;probe<slots;probe++ {
-		slot=(start+probe)&mask
+		slot=(hashStart+probe)&mask
 		raw := binary.LittleEndian.Uint32(data[indexedZSetFixed+slot*4:indexedZSetFixed+slot*4+4])
 		if raw==0 {
 			return slot,0,false,0,nil
 		}
 		pos=int(raw-1)
-		member,sc,_,e := indexedZSetRecord(data,pos)
+		member,sc,_,e := indexedZSetRecordKnown(data,pos,used,dataStart)
 		if e != nil {
 			return 0,0,false,0,e
 		}
@@ -87,6 +87,14 @@ func indexedZSetFind(data, target []byte) (slot,pos int, found bool, score float
 		}
 	}
 	return 0,0,false,0,errors.New("invalid indexed zset table")
+}
+
+func indexedZSetFind(data, target []byte) (slot,pos int, found bool, score float64, err error) {
+	_,slots,used,dataStart,e := indexedZSetMeta(data)
+	if e != nil {
+		return 0,0,false,0,e
+	}
+	return indexedZSetFindKnown(data,target,slots,used,dataStart)
 }
 
 func indexedZSetRecordBytes(member []byte, score float64) []byte {
@@ -192,7 +200,7 @@ func indexedZSetAddSimple(data []byte, pairs []ZSetItem)(added int64, rebuilt []
 		if math.IsNaN(pair.Score) {
 			return added,nil,errors.New("ERR resulting score is not a number (NaN)")
 		}
-		slot,_,found,current,e := indexedZSetFind(data,pair.Member)
+		slot,_,found,current,e := indexedZSetFindKnown(data,pair.Member,slots,used,start)
 		if e != nil {
 			return added,nil,e
 		}
