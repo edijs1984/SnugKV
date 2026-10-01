@@ -106,6 +106,14 @@ func indexedZSetRecordBytes(member []byte, score float64) []byte {
 }
 
 func encodeIndexedZSet(items []ZSetItem) ([]byte,error) {
+	return encodeIndexedZSetWithReserve(items, true)
+}
+
+func encodeIndexedZSetCompact(items []ZSetItem) ([]byte,error) {
+	return encodeIndexedZSetWithReserve(items, false)
+}
+
+func encodeIndexedZSetWithReserve(items []ZSetItem, aggressive bool) ([]byte,error) {
 	if len(items)==0 {
 		return nil,errors.New("invalid empty indexed zset")
 	}
@@ -130,7 +138,7 @@ func encodeIndexedZSet(items []ZSetItem) ([]byte,error) {
 		used += len(records[i])
 	}
 	dataCap := used + used/4
-	if len(canonical) >= 256 {
+	if aggressive && len(canonical) >= 256 {
 		// Large ZSETs are commonly built incrementally. A 25% payload reserve
 		// causes repeated decode/map/sort/re-encode rebuilds while the set grows
 		// through hundreds or thousands of members. Give large indexed ZSETs
