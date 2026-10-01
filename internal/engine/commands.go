@@ -179,7 +179,11 @@ func (s *Store) SetPlainBatchFresh(keys [][]byte, values [][]byte) (bool, error)
 			return false, nil
 		}
 		item.entry = s.makeEntryForShard(sh, item.value)
-		if s.shouldTrackActivity(item.entry.entry) {
+		// Specialized scalar encodings (integer/UUID/timestamp/float/bool)
+		// are already in their terminal representation and are never queued for
+		// background optimization. Keep those entries metadata-free so tiny
+		// scalars remain inline and compact scalar codecs avoid a sidecar.
+		if s.OptimizationClassForValue(item.value) != OptimizationNone {
 			item.entry.entryMeta = &entryMeta{}
 		}
 	}
