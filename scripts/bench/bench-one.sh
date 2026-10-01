@@ -12,7 +12,13 @@ Examples:
   bash scripts/bench/bench-one.sh counter -p 6379 -s redis -k 1000000
 
 Profiles:
-  session-json api-json cache-json counter uuid text repetitive compressed random
+  Strings:
+    session-json api-json cache-json counter uuid text repetitive compressed random
+  Native structures:
+    hash-small hash-medium hash-large
+    list-small list-medium list-large
+    set-small set-medium set-large
+    zset-small zset-medium zset-large
 
 Options:
   -p, --port PORT          Server port (required)
@@ -44,7 +50,9 @@ fi
 shift
 
 case "$PROFILE" in
-  session-json|api-json|cache-json|counter|uuid|text|repetitive|compressed|random) ;;
+  session-json|api-json|cache-json|counter|uuid|text|repetitive|compressed|random|\
+  hash-small|hash-medium|hash-large|list-small|list-medium|list-large|\
+  set-small|set-medium|set-large|zset-small|zset-medium|zset-large) ;;
   *)
     echo "unknown profile: $PROFILE" >&2
     usage >&2
@@ -107,6 +115,9 @@ if [[ -z "$PORT" ]]; then
   exit 2
 fi
 
+STRUCTURE_TYPE=""
+CARDINALITY=""
+
 case "$PROFILE" in
   session-json) VALUE_BYTES=384 ;;
   api-json) VALUE_BYTES=768 ;;
@@ -114,6 +125,18 @@ case "$PROFILE" in
   counter) VALUE_BYTES=10 ;;
   uuid) VALUE_BYTES=36 ;;
   text|repetitive|compressed|random) VALUE_BYTES=256 ;;
+  hash-small) STRUCTURE_TYPE=hash; CARDINALITY=10; VALUE_BYTES=64 ;;
+  hash-medium) STRUCTURE_TYPE=hash; CARDINALITY=100; VALUE_BYTES=64 ;;
+  hash-large) STRUCTURE_TYPE=hash; CARDINALITY=1000; VALUE_BYTES=64 ;;
+  list-small) STRUCTURE_TYPE=list; CARDINALITY=10; VALUE_BYTES=64 ;;
+  list-medium) STRUCTURE_TYPE=list; CARDINALITY=100; VALUE_BYTES=64 ;;
+  list-large) STRUCTURE_TYPE=list; CARDINALITY=1000; VALUE_BYTES=64 ;;
+  set-small) STRUCTURE_TYPE=set; CARDINALITY=10; VALUE_BYTES=24 ;;
+  set-medium) STRUCTURE_TYPE=set; CARDINALITY=100; VALUE_BYTES=24 ;;
+  set-large) STRUCTURE_TYPE=set; CARDINALITY=1000; VALUE_BYTES=24 ;;
+  zset-small) STRUCTURE_TYPE=zset; CARDINALITY=10; VALUE_BYTES=24 ;;
+  zset-medium) STRUCTURE_TYPE=zset; CARDINALITY=100; VALUE_BYTES=24 ;;
+  zset-large) STRUCTURE_TYPE=zset; CARDINALITY=1000; VALUE_BYTES=24 ;;
 esac
 
 if [[ -z "$CONVERGE_MS" ]]; then
@@ -132,8 +155,9 @@ mkdir -p "$ROOT_OUT"
 
 if [[ "$BUILD" == "1" ]]; then
   "$GO_BIN" build -o /tmp/rediswirebench ./cmd/rediswirebench
-elif [[ ! -x /tmp/rediswirebench ]]; then
-  echo "error: /tmp/rediswirebench does not exist; remove --no-build" >&2
+  "$GO_BIN" build -o /tmp/redisstructurebench ./cmd/redisstructurebench
+elif [[ ! -x /tmp/rediswirebench || ! -x /tmp/redisstructurebench ]]; then
+  echo "error: benchmark binaries do not exist; remove --no-build" >&2
   exit 2
 fi
 
@@ -157,35 +181,68 @@ LOAD_OUT="$ROOT_OUT/load.json"
 GET_OUT="$ROOT_OUT/get.json"
 
 echo "===== $PROFILE | $SERVER | LOAD ====="
-/tmp/rediswirebench \
-  -server "$SERVER" \
-  -addr "$ADDR" \
-  -workload load \
-  -keys "$KEYS" \
-  -workers "$WORKERS" \
-  -pipeline "$PIPELINE" \
-  -value-bytes "$VALUE_BYTES" \
-  -value-shape "$PROFILE" \
-  -seed "$SEED" \
-  -settle-ms "$SETTLE_MS" \
-  -converge-ms "$CONVERGE_MS" \
-  -reset \
-  | tee "$LOAD_OUT"
+if [[ -n "$STRUCTURE_TYPE" ]]; then
+  /tmp/redisstructurebench \
+    -server "$SERVER" \
+    -addr "$ADDR" \
+    -mode load \
+    -type "$STRUCTURE_TYPE" \
+    -items "$KEYS" \
+    -cardinality "$CARDINALITY" \
+    -workers "$WORKERS" \
+    -pipeline "$PIPELINE" \
+    -value-bytes "$VALUE_BYTES" \
+    -seed "$SEED" \
+    -converge-ms "$CONVERGE_MS" \
+    -reset \
+    | tee "$LOAD_OUT"
+else
+  /tmp/rediswirebench \
+    -server "$SERVER" \
+    -addr "$ADDR" \
+    -workload load \
+    -keys "$KEYS" \
+    -workers "$WORKERS" \
+    -pipeline "$PIPELINE" \
+    -value-bytes "$VALUE_BYTES" \
+    -value-shape "$PROFILE" \
+    -seed "$SEED" \
+    -settle-ms "$SETTLE_MS" \
+    -converge-ms "$CONVERGE_MS" \
+    -reset \
+    | tee "$LOAD_OUT"
+fi
 
 echo
-echo "===== $PROFILE | $SERVER | GET ====="
-/tmp/rediswirebench \
-  -server "$SERVER" \
-  -addr "$ADDR" \
-  -workload get \
-  -keys "$KEYS" \
-  -ops "$GET_OPS" \
-  -workers "$WORKERS" \
-  -pipeline "$PIPELINE" \
-  -value-bytes "$VALUE_BYTES" \
-  -value-shape "$PROFILE" \
-  -seed "$SEED" \
-  | tee "$GET_OUT"
+echo "===== $PROFILE | $SERVER | READ ====="
+if [[ -n "$STRUCTURE_TYPE" ]]; then
+  /tmp/redisstructurebench \
+    -server "$SERVER" \
+    -addr "$ADDR" \
+    -mode read \
+    -type "$STRUCTURE_TYPE" \
+    -items "$KEYS" \
+    -cardinality "$CARDINALITY" \
+    -ops "$GET_OPS" \
+    -workers "$WORKERS" \
+    -pipeline "$PIPELINE" \
+    -value-bytes "$VALUE_BYTES" \
+    -seed "$SEED" \
+    | tee "$GET_OUT"
+else
+  /tmp/rediswirebench \
+    -server "$SERVER" \
+    -addr "$ADDR" \
+    -workload get \
+    -keys "$KEYS" \
+    -ops "$GET_OPS" \
+    -workers "$WORKERS" \
+    -pipeline "$PIPELINE" \
+    -value-bytes "$VALUE_BYTES" \
+    -value-shape "$PROFILE" \
+    -seed "$SEED" \
+    | tee "$GET_OUT"
+fi
 
 python3 - "$LOAD_OUT" "$GET_OUT" <<'PY'
 import json, sys
@@ -201,12 +258,18 @@ print(f"server:        {load['server']}")
 print(f"address:       {load['addr']}")
 print(f"keys:          {load['keys']:,}")
 print(f"value_bytes:   {load['value_bytes']}")
-print(f"SET:           {load['ops_per_second']:,.0f}/s")
-print(f"SET p95:       {load['p95_ns']/1000:.2f} us")
-print(f"GET:           {get['ops_per_second']:,.0f}/s")
-print(f"GET p95:       {get['p95_ns']/1000:.2f} us")
-print(f"bytes/key hot: {load.get('bytes_per_key_post_workload', load['bytes_per_key_delta']):.2f}")
-print(f"bytes/key final:{load['bytes_per_key_delta']:.2f}")
+write_label = "WRITE" if load.get("logical_unit") == "item" else "SET"
+read_label = "READ" if load.get("logical_unit") == "item" else "GET"
+unit = load.get("logical_unit", "key")
+print(f"{write_label}:           {load['ops_per_second']:,.0f}/s")
+print(f"{write_label} p95:       {load['p95_ns']/1000:.2f} us")
+print(f"{read_label}:           {get['ops_per_second']:,.0f}/s")
+print(f"{read_label} p95:       {get['p95_ns']/1000:.2f} us")
+print(f"bytes/{unit} hot: {load.get('bytes_per_key_post_workload', load['bytes_per_key_delta']):.2f}")
+print(f"bytes/{unit} final:{load['bytes_per_key_delta']:.2f}")
+if load.get("logical_unit") == "item":
+    print(f"container keys: {load.get('container_keys', 0):,}")
+    print(f"cardinality:    {load.get('cardinality', 0):,}")
 print(f"memory hot:    {load.get('used_memory_post_workload_delta', load['used_memory_delta']):,} B")
 print(f"memory final:  {load['used_memory_delta']:,} B")
 if load.get('converge_ms', 0):
