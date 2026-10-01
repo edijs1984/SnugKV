@@ -215,6 +215,16 @@ func shouldCompactEntries(capacity, live uint64, queueDepth int) bool {
 }
 
 func (o *Optimizer) maintenanceStep() {
+	// Native ZSETs use aggressive payload headroom while growing. Once the
+	// foreground optimizer queue is empty, opportunistically compact sampled
+	// indexed ZSETs back to their normal reserve before starting generic sample
+	// recovery work.
+	if len(o.queue) == 0 {
+		for _, key := range o.store.SampleKeys(2048) {
+			o.store.CompactIndexedZSet(key)
+		}
+	}
+
 	// Periodic sampling guarantees eventual recovery for dropped write-time
 	// queue attempts and lets JSON values be reconsidered after shared-shape
 	// admission matures. Avoid generating more catch-up work while a meaningful
