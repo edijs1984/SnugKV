@@ -109,20 +109,20 @@ func (o *Optimizer) foregroundQuietFor(d time.Duration) bool {
 }
 
 func (o *Optimizer) waitForForegroundQuiet() bool {
-	const quietWindow = 2 * time.Millisecond
-	const maxDeferral = 50 * time.Millisecond
-	deadline := time.Now().Add(maxDeferral)
+	const quietWindow = 5 * time.Millisecond
 
 	for {
 		last := atomic.LoadInt64(&o.lastForegroundWrite)
 		if last == 0 || time.Since(time.Unix(0, last)) >= quietWindow {
 			return true
 		}
-		if !time.Now().Before(deadline) {
-			return true
+
+		remaining := quietWindow - time.Since(time.Unix(0, last))
+		if remaining <= 0 {
+			continue
 		}
 
-		timer := time.NewTimer(quietWindow)
+		timer := time.NewTimer(remaining)
 		select {
 		case <-o.ctx.Done():
 			timer.Stop()
@@ -308,10 +308,9 @@ func (o *Optimizer) worker() {
 			start := time.Now()
 
 			// Foreground writes own the machine. During an active write burst,
-			// defer expensive representation work briefly instead of competing
-			// for the same cores and shard locks. Continuous workloads still
-			// make bounded progress after maxDeferral; burst workloads switch
-			// to full-speed catch-up almost immediately after writes stop.
+			// do not run representation rewrites at all: they contend for the
+			// same cores, shard locks and arena bandwidth as SET. Once writes have
+			// been quiet for a few milliseconds, workers immediately catch up.
 			if !o.waitForForegroundQuiet() {
 				return
 			}
