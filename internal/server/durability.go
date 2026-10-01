@@ -371,12 +371,12 @@ func (s *Server) executeAuthorizedConcurrentSet(args [][]byte) (response []byte,
 
 	key := string(args[1])
 	if s.optimizer != nil {
-		// Signal the background optimizer before mutating the shard so its
-		// workers yield during sustained foreground SET bursts and catch up
-		// once the write burst goes quiet.
-		s.optimizer.NoteForegroundWrite()
+		s.optimizer.BeginForegroundWrite()
 	}
 	setErr := s.store.SetPlain(key, args[2])
+	if s.optimizer != nil {
+		s.optimizer.EndForegroundWrite()
+	}
 	s.durableMu.RUnlock()
 
 	atomic.AddUint64(&s.commands, 1)
@@ -455,7 +455,7 @@ func (s *Server) executeAuthorizedConcurrentSetBatch(keys, values [][]byte) (han
 	}
 
 	if s.optimizer != nil {
-		s.optimizer.NoteForegroundWrite()
+		s.optimizer.BeginForegroundWrite()
 	}
 
 	batched, setErr := s.store.SetPlainBatchFresh(keys, values)
@@ -467,10 +467,7 @@ func (s *Server) executeAuthorizedConcurrentSetBatch(keys, values [][]byte) (han
 		}
 	}
 	if s.optimizer != nil {
-		// Refresh the foreground timestamp after the whole batch completes.
-		// A large P256 batch can itself span the quiet window; without this,
-		// optimizer workers may wake in the middle of sustained pipeline traffic.
-		s.optimizer.NoteForegroundWrite()
+		s.optimizer.EndForegroundWrite()
 	}
 	s.durableMu.RUnlock()
 
