@@ -45,6 +45,46 @@ func isZSetCommand(args [][]byte) bool {
 }
 
 func parseZSetScore(arg []byte) (float64, error) {
+	// Integer scores are extremely common for ranks, timestamps and benchmark
+	// workloads. Parse exactly representable integers directly from bytes to
+	// avoid string allocation and the generic floating-point parser.
+	if len(arg) > 0 {
+		negative := false
+		i := 0
+		if arg[0] == '-' || arg[0] == '+' {
+			negative = arg[0] == '-'
+			i = 1
+		}
+		if i < len(arg) {
+			var value uint64
+			digits := 0
+			for ; i < len(arg); i++ {
+				ch := arg[i]
+				if ch < '0' || ch > '9' {
+					digits = 0
+					break
+				}
+				digit := uint64(ch - '0')
+				if value > (1<<53-digit)/10 {
+					digits = 0
+					break
+				}
+				value = value*10 + digit
+				digits++
+			}
+			if digits > 0 {
+				score := float64(value)
+				if negative {
+					score = -score
+				}
+				if score == 0 {
+					score = 0
+				}
+				return score, nil
+			}
+		}
+	}
+
 	text := strings.ToLower(string(arg))
 	var score float64
 	var err error
@@ -187,6 +227,22 @@ func (s *Server) executeZSet(args [][]byte) ([]byte, error) {
 	key := string(args[1])
 	switch cmd {
 	case "ZADD":
+		// Plain ZADD key score member is the dominant single-member hot path.
+		// Avoid option probing/string uppercasing and temporary pair-slice
+		// growth when no options can be present.
+		if len(args) == 4 {
+			score, err := parseZSetScore(args[2])
+			if err != nil {
+				return nil, err
+			}
+			pair := [1]engine.ZSetItem{{Score: score, Member: args[3]}}
+			count, _, _, err := s.store.ZSetAdd(key, pair[:], engine.ZSetAddOptions{})
+			if err != nil {
+				return nil, err
+			}
+			return integer(count), nil
+		}
+
 		options := engine.ZSetAddOptions{}
 		i := 2
 		for i < len(args) {
