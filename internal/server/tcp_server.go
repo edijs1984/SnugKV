@@ -1114,8 +1114,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 
 		if borrowedSet && !s.adminOnly && !txSession.multi &&
 			!(clientSession.protocolVersion() == 2 && pubSession.active()) &&
-			((s.server.journal == nil && s.server.replication.primaryHasReplicas()) ||
-				(s.server.journal != nil && s.server.journalUsesAlwaysFsync())) &&
+			(s.server.journal == nil || s.server.journalUsesAlwaysFsync()) &&
 			atomic.LoadUint32(&s.server.metricsEnabled) == 0 &&
 			s.server.store.MaxMemory() == 0 &&
 			reader.Buffered() > 0 {
@@ -1178,9 +1177,12 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				if s.server.journal != nil {
 					durabilitySequence, handled, fastErr =
 						s.server.executeAuthorizedSerializedAOFSetBatch(keys, values)
-				} else {
+				} else if s.server.replication.primaryHasReplicas() {
 					replicationOffset, handled, fastErr =
 						s.server.executeAuthorizedSerializedReplicatedSetBatch(keys, values)
+				} else {
+					handled, fastErr =
+						s.server.executeAuthorizedConcurrentSetBatch(keys, values)
 				}
 
 				if handled {
@@ -1196,7 +1198,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 						}
 						if s.server.journal != nil {
 							clientSession.durabilitySequence.Store(durabilitySequence)
-						} else {
+						} else if replicationOffset > 0 {
 							clientSession.replicationOffset.Store(replicationOffset)
 						}
 						for i := range keys {
