@@ -3,7 +3,9 @@ package server
 import (
 	"bytes"
 	"errors"
+	"snugkv/internal/engine"
 	"snugkv/internal/persistence"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -260,6 +262,86 @@ func (s *Server) executeAuthorizedConcurrentGet(args [][]byte) (response []byte,
 // without passing through the generic function/blocking/pressure dispatch stack.
 // It is only used when persistence, metrics, WATCH and maxmemory semantics do not
 // require the ordinary durability/pressure path.
+func integerReply(value int64) []byte {
+	out := make([]byte, 1, 24)
+	out[0] = ':'
+	out = strconv.AppendInt(out, value, 10)
+	out = append(out, '\r', '\n')
+	return out
+}
+
+// executeAuthorizedConcurrentNativeMutation serves the exact single-item native
+// mutation forms used by ordinary Redis clients without routing them through
+// the generic command dispatcher. Authorization and failover fencing have
+// already happened at the TCP layer; persistence/replication/WATCH/maxmemory
+// configurations deliberately fall back to the conservative path.
+func (s *Server) executeAuthorizedConcurrentNativeMutation(args [][]byte) (response []byte, handled bool, err error) {
+	if s.clusterEnabled ||
+		s.journal != nil ||
+		s.replication.primaryHasReplicas() ||
+		atomic.LoadUint32(&s.metricsEnabled) != 0 ||
+		s.store.MaxMemory() != 0 {
+		return nil, false, nil
+	}
+
+	var kind byte
+	switch {
+	case len(args) == 4 && bytes.EqualFold(args[0], []byte("HSET")):
+		kind = 'h'
+	case len(args) == 3 && bytes.EqualFold(args[0], []byte("RPUSH")):
+		kind = 'l'
+	case len(args) == 3 && bytes.EqualFold(args[0], []byte("SADD")):
+		kind = 's'
+	case len(args) == 4 && bytes.EqualFold(args[0], []byte("ZADD")):
+		kind = 'z'
+	default:
+		return nil, false, nil
+	}
+
+	if s.replication.isReadOnlyReplica() {
+		return nil, true, errors.New("READONLY You can't write against a read only replica.")
+	}
+
+	var score float64
+	if kind == 'z' {
+		var scoreErr error
+		score, scoreErr = parseZSetScore(args[2])
+		if scoreErr != nil {
+			return nil, true, scoreErr
+		}
+	}
+
+	s.durableMu.RLock()
+	if s.hasWatchSessionsLocked() {
+		s.durableMu.RUnlock()
+		return nil, false, nil
+	}
+
+	var result int64
+	switch kind {
+	case 'h':
+		fields := [1][]byte{args[2]}
+		values := [1][]byte{args[3]}
+		result, err = s.store.HashSet(string(args[1]), fields[:], values[:])
+	case 'l':
+		values := [1][]byte{args[2]}
+		result, err = s.store.ListPushRight(string(args[1]), values[:])
+	case 's':
+		members := [1][]byte{args[2]}
+		result, err = s.store.SetAdd(string(args[1]), members[:])
+	case 'z':
+		pairs := [1]engine.ZSetItem{{Member: args[3], Score: score}}
+		result, _, _, err = s.store.ZSetAdd(string(args[1]), pairs[:], engine.ZSetAddOptions{})
+	}
+	s.durableMu.RUnlock()
+
+	atomic.AddUint64(&s.commands, 1)
+	if err != nil {
+		return nil, true, err
+	}
+	return integerReply(result), true, nil
+}
+
 func (s *Server) executeAuthorizedConcurrentSet(args [][]byte) (response []byte, handled bool, err error) {
 	if s.clusterEnabled {
 		return nil, false, nil
