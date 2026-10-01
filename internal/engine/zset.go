@@ -720,6 +720,41 @@ func (s *Store) ZSetRange(key string, start, stop int64, reverse bool) ([]ZSetIt
 	return out, nil
 }
 
+// CompactIndexedZSet rewrites an indexed ZSET with normal compact payload
+// headroom. It is intended for background maintenance after an aggressive
+// growth phase has completed.
+func (s *Store) CompactIndexedZSet(key string) bool {
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	e, ok := sh.get(key)
+	if !ok || sh.expired(key, e, s.now()) || e.valueType != TypeZSet {
+		return false
+	}
+	physical := sh.encoded(e)
+	if !isIndexedZSet(physical) {
+		return false
+	}
+	items, err := decodeIndexedZSet(physical)
+	if err != nil {
+		return false
+	}
+	compact, err := encodeIndexedZSetCompact(items)
+	if err != nil || len(compact) >= len(physical) {
+		return false
+	}
+	updated := preparedEntry{
+		entry: entry{entryData: entryData{
+			valueType: TypeZSet,
+			rawLength: uint32(len(compact)),
+		}},
+		data: compact,
+		expiresAt: sh.expirationAt(key, e),
+	}
+	return s.publish(sh, key, updated) == nil
+}
+
 func (s *Store) ZSetStorageStats(key string) (ZSetStats, bool, error) {
 	sh := s.shardFor(key)
 	sh.mu.RLock()
