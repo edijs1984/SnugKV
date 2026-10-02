@@ -302,6 +302,81 @@ func (s *Store) SetPlainBatchFresh(keys [][]byte, values [][]byte) (bool, error)
 	return true, nil
 }
 
+
+// SetPlainBatchFreshShardLocal applies a fresh plain-SET batch as independent
+// shard-local sub-batches. It is intended for the non-durable concurrent SET
+// fast path where maxmemory is disabled, so cross-shard atomic admission is not
+// required. Each sub-batch still uses SetPlainBatchFresh and therefore retains
+// its exact per-shard duplicate/existence checks, accounting, arena allocation,
+// and publication semantics while avoiding a giant cross-shard lock set.
+func (s *Store) SetPlainBatchFreshShardLocal(keys [][]byte, values [][]byte) (bool, error) {
+	if len(keys) == 0 || len(keys) != len(values) {
+		return false, nil
+	}
+
+	// Fast reject deterministic value-size errors before publishing any shard.
+	for i := range values {
+		if len(values[i]) > 32<<20 {
+			return true, errors.New("ERR value exceeds 32 MiB limit")
+		}
+	}
+
+	// Count keys per shard first. Keys that compare equal necessarily hash to
+	// the same shard, so duplicate detection remains local to the sub-batch.
+	counts := make([]int, len(s.shards))
+	hashes := make([]uint64, len(keys))
+	for i := range keys {
+		hash := index.Hash(string(keys[i]))
+		hashes[i] = hash
+		counts[int((hash>>32)&uint64(len(s.shards)-1))]++
+	}
+
+	offsets := make([]int, len(s.shards)+1)
+	for i := range counts {
+		offsets[i+1] = offsets[i] + counts[i]
+	}
+	next := append([]int(nil), offsets[:len(s.shards)]...)
+
+	orderedKeys := make([][]byte, len(keys))
+	orderedValues := make([][]byte, len(values))
+	for i := range keys {
+		shardIndex := int((hashes[i] >> 32) & uint64(len(s.shards)-1))
+		pos := next[shardIndex]
+		next[shardIndex]++
+		orderedKeys[pos] = keys[i]
+		orderedValues[pos] = values[i]
+	}
+
+	// Publish one shard at a time. The ordinary batch helper sees only one
+	// shard here, so it takes one shard mutex rather than holding a large set of
+	// unrelated shard locks simultaneously.
+	for shardIndex, n := range counts {
+		if n == 0 {
+			continue
+		}
+		start := offsets[shardIndex]
+		end := start + n
+		batched, err := s.SetPlainBatchFresh(
+			orderedKeys[start:end],
+			orderedValues[start:end],
+		)
+		if err != nil {
+			return true, err
+		}
+		if !batched {
+			// A duplicate key or pre-existing key requires ordinary sequential
+			// SET semantics for this shard-local group.
+			for i := start; i < end; i++ {
+				if err := s.SetPlain(string(orderedKeys[i]), orderedValues[i]); err != nil {
+					return true, err
+				}
+			}
+		}
+	}
+
+	return true, nil
+}
+
 func (s *Store) SetWithOptions(
 	key string,
 	value []byte,
