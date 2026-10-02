@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"runtime"
+	"runtime/debug"
 	"snugkv/internal/codec"
 	"snugkv/internal/engine"
 	"sync"
@@ -223,11 +224,13 @@ func shouldCompactEntries(capacity, live uint64, queueDepth int) bool {
 }
 
 func (o *Optimizer) maintenanceStep() {
+	quiet := o.foregroundQuietFor(2 * time.Second)
+
 	// Native ZSETs use aggressive payload headroom while growing. Once the
 	// foreground optimizer queue is empty, opportunistically compact sampled
 	// indexed ZSETs back to their normal reserve before starting generic sample
 	// recovery work.
-	if len(o.queue) == 0 && o.foregroundQuietFor(2*time.Second) {
+	if len(o.queue) == 0 && quiet {
 		for _, key := range o.store.SampleKeys(2048) {
 			o.store.CompactIndexedZSet(key)
 		}
@@ -243,9 +246,18 @@ func (o *Optimizer) maintenanceStep() {
 
 	m := o.store.Memory()
 	layout := o.store.Layout()
-	if shouldCompactArena(m.ArenaBytes, m.ArenaLiveBlockBytes, len(o.queue)) ||
-		shouldCompactEntries(layout.EntryCapacity, layout.EntryCount, len(o.queue)) {
-		o.store.Compact(uint64(o.config.MaxScratchBytes))
+	if quiet &&
+		(shouldCompactArena(m.ArenaBytes, m.ArenaLiveBlockBytes, len(o.queue)) ||
+			shouldCompactEntries(layout.EntryCapacity, layout.EntryCount, len(o.queue))) {
+		if compacted := o.store.Compact(uint64(o.config.MaxScratchBytes)); compacted > 0 {
+			// Compaction replaces shard arenas and dense storage with fresh
+			// allocations. The old backing pages are then unreachable, but Go may
+			// retain them in the heap and keep process RSS near the pre-compaction
+			// high-water mark. During a verified foreground-quiet window, force a
+			// scavenging cycle so the OS sees the same memory reduction that
+			// SnugKV's internal accounting already reports.
+			debug.FreeOSMemory()
+		}
 	}
 }
 
