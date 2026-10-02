@@ -12,9 +12,9 @@ func TestConcurrentScalarCommandIncludesSimpleNativeWrites(t *testing.T) {
 		want bool
 	}{
 		{"hset-simple", [][]byte{[]byte("HSET"), []byte("h"), []byte("f"), []byte("v")}, true},
-		{"rpush-simple", [][]byte{[]byte("RPUSH"), []byte("l"), []byte("v")}, true},
+		{"rpush-simple", [][]byte{[]byte("RPUSH"), []byte("l"), []byte("v")}, false},
 		{"sadd-simple", [][]byte{[]byte("SADD"), []byte("s"), []byte("m")}, true},
-		{"zadd-simple", [][]byte{[]byte("ZADD"), []byte("z"), []byte("1"), []byte("m")}, true},
+		{"zadd-simple", [][]byte{[]byte("ZADD"), []byte("z"), []byte("1"), []byte("m")}, false},
 		{"hset-multi", [][]byte{[]byte("HSET"), []byte("h"), []byte("f1"), []byte("v1"), []byte("f2"), []byte("v2")}, false},
 		{"rpush-multi", [][]byte{[]byte("RPUSH"), []byte("l"), []byte("a"), []byte("b")}, false},
 		{"sadd-multi", [][]byte{[]byte("SADD"), []byte("s"), []byte("a"), []byte("b")}, false},
@@ -38,9 +38,7 @@ func TestConcurrentNativeMutationFastPath(t *testing.T) {
 		want string
 	}{
 		{"hset", [][]byte{[]byte("HSET"), []byte("h"), []byte("f"), []byte("v")}, ":1\r\n"},
-		{"rpush", [][]byte{[]byte("RPUSH"), []byte("l"), []byte("v")}, ":1\r\n"},
 		{"sadd", [][]byte{[]byte("SADD"), []byte("s"), []byte("m")}, ":1\r\n"},
-		{"zadd", [][]byte{[]byte("ZADD"), []byte("z"), []byte("1"), []byte("m")}, ":1\r\n"},
 	}
 
 	for _, tc := range tests {
@@ -57,6 +55,19 @@ func TestConcurrentNativeMutationFastPath(t *testing.T) {
 				t.Fatalf("reply=%q want=%q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestConcurrentNativeMutationFastPathDefersBlockingCapableWrites(t *testing.T) {
+	s := New(engine.New())
+	tests := [][][]byte{
+		{[]byte("RPUSH"), []byte("l"), []byte("v")},
+		{[]byte("ZADD"), []byte("z"), []byte("1"), []byte("m")},
+	}
+	for _, args := range tests {
+		if _, handled, err := s.executeAuthorizedConcurrentNativeMutation(args); err != nil || handled {
+			t.Fatalf("blocking-capable form handled=%v err=%v args=%q", handled, err, args)
+		}
 	}
 }
 
