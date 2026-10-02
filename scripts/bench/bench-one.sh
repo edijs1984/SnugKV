@@ -8,7 +8,7 @@ Usage:
 
 Examples:
   bash scripts/bench/bench-one.sh uuid -p 6390
-  bash scripts/bench/bench-one.sh cache-json -p 6383 -s snug-opt
+  bash scripts/bench/bench-one.sh cache-json -p 6383 -s snug
   bash scripts/bench/bench-one.sh counter -p 6379 -s redis -k 1000000
 
 Profiles:
@@ -29,7 +29,7 @@ Options:
   -w, --workers N          Concurrent workers (default: 8)
   -P, --pipeline N         Pipeline depth (default: 256)
       --settle-ms N        Wait after LOAD before convergence check (default: 0)
-      --converge-ms N      Max convergence wait; snug-opt defaults to -1 (until complete), others 0
+      --converge-ms N      Max convergence wait; snug defaults to -1 (until complete), others 0
       --seed N             Deterministic seed (default: 1)
   -o, --output DIR         Output directory
       --no-build           Reuse /tmp/rediswirebench instead of rebuilding it
@@ -140,7 +140,7 @@ case "$PROFILE" in
 esac
 
 if [[ -z "$CONVERGE_MS" ]]; then
-  if [[ "$SERVER" == "snug-opt" ]]; then
+  if [[ "$SERVER" == "snug" ]]; then
     CONVERGE_MS="-1"
   else
     CONVERGE_MS="0"
