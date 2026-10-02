@@ -52,7 +52,11 @@ test("same-tick commands are sent as one automatic pipeline", async () => {
     assert.equal(two, "OK");
     assert.equal(three?.toString(), "three");
     assert.equal(countCommands(received), 3);
-    assert.equal(dataEvents, 1);
+    const stats = client.stats();
+    assert.equal(stats.commands, 3);
+    assert.equal(stats.socketWrites, 1);
+    assert.equal(stats.autoPipelineBatches, 1);
+    assert.equal(stats.batchedCommands, 3);
   } finally {
     await client.close();
     await new Promise<void>((resolve, reject) =>
@@ -70,11 +74,12 @@ test("autoPipeline false writes commands immediately", async () => {
       dataEvents++;
       received = Buffer.concat([received, chunk]);
       const commands = countCommands(received);
-      while ((socket as net.Socket & { _replied?: number })._replied! < commands) {
-        const state = socket as net.Socket & { _replied?: number };
-        state._replied = (state._replied ?? 0) + 1;
+      const state = socket as net.Socket & { _replied?: number };
+      const replied = state._replied ?? 0;
+      for (let i = replied; i < commands; i++) {
         socket.write("+OK\r\n");
       }
+      state._replied = commands;
     });
   });
 
@@ -93,7 +98,11 @@ test("autoPipeline false writes commands immediately", async () => {
     await client.set("one", "1");
     await client.set("two", "2");
     assert.equal(countCommands(received), 2);
-    assert.ok(dataEvents >= 2);
+    const stats = client.stats();
+    assert.equal(stats.commands, 2);
+    assert.equal(stats.socketWrites, 2);
+    assert.equal(stats.autoPipelineBatches, 0);
+    assert.equal(stats.batchedCommands, 0);
   } finally {
     await client.close();
     await new Promise<void>((resolve, reject) =>
