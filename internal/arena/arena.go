@@ -417,6 +417,39 @@ func (a *Arena) View(ref Ref) ([]byte, error) {
 }
 
 
+// ViewKnownLive returns the payload for a ref that the caller has already
+// obtained from a live arena-backed entry while holding the owning shard lock.
+// It retains structural bounds checks but skips the generation-header reload:
+// under that lock the entry cannot be freed/reused concurrently. Callers must
+// not use this for arbitrary or externally supplied refs.
+func (a *Arena) ViewKnownLive(ref Ref) ([]byte, error) {
+	if ref.IsInline() {
+		out, ok := ref.InlineInto(nil)
+		if !ok {
+			return nil, errors.New("invalid inline reference")
+		}
+		return out, nil
+	}
+	if ref.generation == 0 {
+		if ref.length() == 0 {
+			return []byte{}, nil
+		}
+		return nil, errors.New("invalid empty reference")
+	}
+	seg := ref.segment()
+	if int(seg) >= len(a.segments) {
+		return nil, errors.New("invalid segment")
+	}
+	data := a.segments[seg].data
+	start := uint64(ref.offset()) + 8
+	end := start + uint64(ref.length())
+	if end > uint64(len(data)) {
+		return nil, errors.New("invalid arena reference")
+	}
+	return data[start:end:end], nil
+}
+
+
 func (a *Arena) Free(ref Ref) {
 	if ref.IsInline() {
 		return
