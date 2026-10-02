@@ -1,0 +1,321 @@
+import { performance } from "node:perf_hooks";
+import Redis from "ioredis";
+import { createClient } from "redis";
+import { SnugKV } from "../dist/src/index.js";
+
+const HOST = process.env.HOST ?? "127.0.0.1";
+const SNUG_PORT = Number(process.env.SNUG_PORT ?? 6383);
+const REDIS_PORT = Number(process.env.REDIS_PORT ?? 6390);
+const OPS = Number(process.env.OPS ?? 100000);
+const REPEATS = Number(process.env.REPEATS ?? 3);
+const KEYSPACE = Number(process.env.KEYSPACE ?? 50000);
+const MIXED_WRITE_PERCENT = Number(process.env.MIXED_WRITE_PERCENT ?? 20);
+
+const VALUE_SIZES = (process.env.VALUE_BYTES ?? "64,256,1024,4096")
+  .split(",")
+  .map(Number)
+  .filter((n) => Number.isInteger(n) && n > 0);
+
+const CONCURRENCIES = (process.env.CONCURRENCY ?? "32,128,512")
+  .split(",")
+  .map(Number)
+  .filter((n) => Number.isInteger(n) && n > 0);
+
+const WORKLOADS = (process.env.WORKLOADS ?? "set,get,mixed")
+  .split(",")
+  .map((s) => s.trim())
+  .filter((s) => ["set", "get", "mixed"].includes(s));
+
+function buildOperations(workload, ops, keyspace) {
+  const out = new Array(ops);
+  for (let i = 0; i < ops; i++) {
+    const key = `stack-bench:${i % keyspace}`;
+    if (workload === "set") {
+      out[i] = { type: "set", key };
+    } else if (workload === "get") {
+      out[i] = { type: "get", key };
+    } else {
+      const write =
+        ((i * 1103515245 + 12345) >>> 0) % 100 < MIXED_WRITE_PERCENT;
+      out[i] = { type: write ? "set" : "get", key };
+    }
+  }
+  return out;
+}
+
+async function runConcurrent(client, operations, concurrency, value, setFn, getFn) {
+  const started = performance.now();
+
+  for (let start = 0; start < operations.length; start += concurrency) {
+    const end = Math.min(start + concurrency, operations.length);
+    const promises = [];
+
+    for (let i = start; i < end; i++) {
+      const op = operations[i];
+      promises.push(
+        op.type === "set"
+          ? setFn(client, op.key, value)
+          : getFn(client, op.key),
+      );
+    }
+
+    await Promise.all(promises);
+  }
+
+  const elapsedMs = performance.now() - started;
+  return {
+    elapsed_ms: Number(elapsedMs.toFixed(2)),
+    ops_per_second: Math.round(operations.length / (elapsedMs / 1000)),
+  };
+}
+
+async function preload(client, keyspace, concurrency, value, setFn, prefix) {
+  for (let start = 0; start < keyspace; start += concurrency) {
+    const end = Math.min(start + concurrency, keyspace);
+    const promises = [];
+
+    for (let i = start; i < end; i++) {
+      promises.push(setFn(client, `${prefix}:${i}`, value));
+    }
+
+    await Promise.all(promises);
+  }
+}
+
+async function runSnug(ctx) {
+  const client = new SnugKV({
+    host: HOST,
+    port: SNUG_PORT,
+    autoPipeline: true,
+    autoPipelineMaxCommands: 128,
+  });
+
+  await client.connect();
+  await client.command(["FLUSHALL"]);
+
+  if (ctx.workload !== "set") {
+    await preload(
+      client,
+      KEYSPACE,
+      ctx.concurrency,
+      ctx.value,
+      (c, key, value) => c.set(key, value),
+      "stack-bench",
+    );
+  }
+
+  const before = client.stats();
+  const result = await runConcurrent(
+    client,
+    ctx.operations,
+    ctx.concurrency,
+    ctx.value,
+    (c, key, value) => c.set(key, value),
+    (c, key) => c.get(key),
+  );
+  const after = client.stats();
+
+  await client.close();
+
+  return {
+    label: "snugkv+snug-client",
+    server: "snugkv",
+    client: "@snugkv/client",
+    ...result,
+    socket_writes: after.socketWrites - before.socketWrites,
+  };
+}
+
+async function runRedisIORedis(ctx) {
+  const client = new Redis({
+    host: HOST,
+    port: REDIS_PORT,
+    enableAutoPipelining: true,
+    enableReadyCheck: false,
+    lazyConnect: true,
+    maxRetriesPerRequest: null,
+  });
+
+  await client.connect();
+  await client.flushall();
+
+  if (ctx.workload !== "set") {
+    await preload(
+      client,
+      KEYSPACE,
+      ctx.concurrency,
+      ctx.value,
+      (c, key, value) => c.set(key, value),
+      "stack-bench",
+    );
+  }
+
+  const result = await runConcurrent(
+    client,
+    ctx.operations,
+    ctx.concurrency,
+    ctx.value,
+    (c, key, value) => c.set(key, value),
+    (c, key) => c.get(key),
+  );
+
+  client.disconnect();
+
+  return {
+    label: "redis+ioredis-auto",
+    server: "redis",
+    client: "ioredis",
+    ...result,
+  };
+}
+
+async function runRedisNodeRedis(ctx) {
+  const client = createClient({
+    socket: {
+      host: HOST,
+      port: REDIS_PORT,
+      reconnectStrategy: false,
+    },
+  });
+
+  client.on("error", () => {});
+  await client.connect();
+  await client.flushAll();
+
+  if (ctx.workload !== "set") {
+    await preload(
+      client,
+      KEYSPACE,
+      ctx.concurrency,
+      ctx.value,
+      (c, key, value) => c.set(key, value),
+      "stack-bench",
+    );
+  }
+
+  const result = await runConcurrent(
+    client,
+    ctx.operations,
+    ctx.concurrency,
+    ctx.value,
+    (c, key, value) => c.set(key, value),
+    (c, key) => c.get(key),
+  );
+
+  await client.close();
+
+  return {
+    label: "redis+node-redis",
+    server: "redis",
+    client: "node-redis",
+    ...result,
+  };
+}
+
+const labels = [
+  "snugkv+snug-client",
+  "redis+ioredis-auto",
+  "redis+node-redis",
+];
+
+const rows = [];
+
+for (const valueBytes of VALUE_SIZES) {
+  const value = "x".repeat(valueBytes);
+
+  for (const concurrency of CONCURRENCIES) {
+    for (const workload of WORKLOADS) {
+      const operations = buildOperations(workload, OPS, KEYSPACE);
+      const ctx = { workload, concurrency, value, operations };
+
+      const runners = [
+        { label: "snugkv+snug-client", run: () => runSnug(ctx) },
+        { label: "redis+ioredis-auto", run: () => runRedisIORedis(ctx) },
+        { label: "redis+node-redis", run: () => runRedisNodeRedis(ctx) },
+      ];
+
+      for (let repeat = 1; repeat <= REPEATS; repeat++) {
+        const offset = (repeat - 1) % runners.length;
+        const ordered = [
+          ...runners.slice(offset),
+          ...runners.slice(0, offset),
+        ];
+
+        for (const entry of ordered) {
+          try {
+            const result = await entry.run();
+            const row = {
+              repeat,
+              workload,
+              concurrency,
+              value_bytes: valueBytes,
+              ops: OPS,
+              keyspace: KEYSPACE,
+              ...result,
+            };
+            rows.push(row);
+            console.log(JSON.stringify(row));
+          } catch (error) {
+            const row = {
+              repeat,
+              workload,
+              concurrency,
+              value_bytes: valueBytes,
+              label: entry.label,
+              error: error instanceof Error ? error.message : String(error),
+            };
+            rows.push(row);
+            console.log(JSON.stringify(row));
+          }
+        }
+      }
+    }
+  }
+}
+
+console.log("\nsummary");
+for (const valueBytes of VALUE_SIZES) {
+  for (const concurrency of CONCURRENCIES) {
+    for (const workload of WORKLOADS) {
+      for (const label of labels) {
+        const selected = rows.filter(
+          (row) =>
+            row.value_bytes === valueBytes &&
+            row.concurrency === concurrency &&
+            row.workload === workload &&
+            row.label === label &&
+            typeof row.ops_per_second === "number",
+        );
+
+        if (selected.length === 0) continue;
+
+        const avg =
+          selected.reduce((sum, row) => sum + row.ops_per_second, 0) /
+          selected.length;
+
+        const min = Math.min(...selected.map((row) => row.ops_per_second));
+        const max = Math.max(...selected.map((row) => row.ops_per_second));
+
+        const summary = {
+          value_bytes: valueBytes,
+          concurrency,
+          workload,
+          label,
+          repeats: selected.length,
+          avg_ops_per_second: Math.round(avg),
+          min_ops_per_second: min,
+          max_ops_per_second: max,
+        };
+
+        if (label === "snugkv+snug-client") {
+          summary.avg_socket_writes = Math.round(
+            selected.reduce((sum, row) => sum + row.socket_writes, 0) /
+              selected.length,
+          );
+        }
+
+        console.log(JSON.stringify(summary));
+      }
+    }
+  }
+}
