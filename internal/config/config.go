@@ -63,7 +63,30 @@ type Config struct {
 }
 
 func Default() Config {
-	return Config{AdminAddr: "127.0.0.1:6381", FailoverDiscoveryIntervalMS: 5000, EvictionPolicy: "noeviction", Fsync: "everysec", OptimizerMode: "dedicated", ListenAddr: "127.0.0.1:6380", Shards: 256, MaxConnections: 10000, ReadTimeoutMS: 30000, WriteTimeoutMS: 30000, MaxRequestBytes: 64 << 20, MaxBulkBytes: 32 << 20, MaxArguments: 1024, CleanupIntervalMS: 100, FailoverPriority: 100}
+	return Config{
+		AdminAddr:                       "127.0.0.1:6381",
+		FailoverDiscoveryIntervalMS:     5000,
+		EvictionPolicy:                  "noeviction",
+		Fsync:                           "everysec",
+		OptimizerMode:                   "dedicated",
+		ListenAddr:                      "127.0.0.1:6380",
+		Shards:                          256,
+		MaxConnections:                  10000,
+		ReadTimeoutMS:                   30000,
+		WriteTimeoutMS:                  30000,
+		MaxRequestBytes:                 64 << 20,
+		MaxBulkBytes:                    32 << 20,
+		MaxArguments:                    1024,
+		CleanupIntervalMS:               100,
+		FailoverPriority:                100,
+		// SnugKV has one adaptive storage mode by default. Values begin in the
+		// cheapest safe representation and background optimization rewrites only
+		// when it produces a verified memory win; incompressible values converge
+		// to terminal RAW and retain the direct read path.
+		Encoding:    true,
+		Compression: true,
+		JSONShape:   true,
+	}
 }
 func (c Config) Limits() resp.Limits {
 	return resp.Limits{MaxRequestBytes: c.MaxRequestBytes, MaxBulkBytes: c.MaxBulkBytes, MaxArguments: c.MaxArguments}
