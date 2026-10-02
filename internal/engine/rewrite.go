@@ -105,7 +105,6 @@ func (s *Store) MarkRawStable(key string, generation uint64) bool {
 			return false
 		}
 		e.entryMeta = nil
-		sh.setMeta(sh.dataMustGet(key), nil)
 		s.memory.mu.Lock()
 		if s.memory.used >= entryMetaBytes {
 			s.memory.used -= entryMetaBytes
