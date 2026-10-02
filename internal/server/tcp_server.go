@@ -320,7 +320,7 @@ func (s *TCPServer) handleConn(conn net.Conn) {
 	s.handleConnRaw(conn, conn)
 }
 
-func setBatchLimit() int {
+var configuredSetBatchLimit = func() int {
 	const defaultLimit = 256
 	raw := os.Getenv("SNUG_SET_BATCH")
 	if raw == "" {
@@ -331,7 +331,7 @@ func setBatchLimit() int {
 		return defaultLimit
 	}
 	return n
-}
+}()
 
 func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 	// Pub/Sub delivery can write from a publisher's goroutine while this
@@ -1151,7 +1151,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			atomic.LoadUint32(&s.server.metricsEnabled) == 0 &&
 			s.server.store.MaxMemory() == 0 &&
 			reader.Buffered() > 0 {
-			maxSetBatch := setBatchLimit()
+			maxSetBatch := configuredSetBatchLimit
 
 			keys := make([][]byte, 0, maxSetBatch)
 			values := make([][]byte, 0, maxSetBatch)
