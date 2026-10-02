@@ -26,7 +26,7 @@ new SnugKV({
   host: "127.0.0.1",
   port: 6383,
   autoPipeline: true,
-  autoPipelineMaxCommands: 256,
+  autoPipelineMaxCommands: 128,
   autoPipelineMaxBytes: 1024 * 1024,
 });
 ```
@@ -69,3 +69,8 @@ REPEATS=3 \
 BATCHES=32,64,128,256,512 \
 npm run bench:autopipeline
 ```
+
+
+## Default automatic pipeline size
+
+The default automatic pipeline cap is 128 commands. Local 1 KiB SET benchmarks at concurrency 512 showed the best combined throughput around 64-128 commands, with 128 reducing 200,000 logical commands to roughly 1,563 socket writes while avoiding the throughput drop observed at 256 and 512.
