@@ -74,3 +74,18 @@ npm run bench:autopipeline
 ## Default automatic pipeline size
 
 The default automatic pipeline cap is 128 commands. Local 1 KiB SET benchmarks at concurrency 512 showed the best combined throughput around 64-128 commands, with 128 reducing 200,000 logical commands to roughly 1,563 socket writes while avoiding the throughput drop observed at 256 and 512.
+
+
+## Local client benchmark snapshot
+
+Environment: SnugKV server on localhost, Node.js 20, 200,000 operations per workload, concurrency 128, 1 KiB values, 50,000-key read keyspace, three repetitions.
+
+| Workload | @snugkv/client auto-128 | ioredis auto | ioredis no-auto | node-redis |
+| --- | ---: | ---: | ---: | ---: |
+| SET | 73,825 ops/s | 55,688 ops/s | 33,379 ops/s | 30,293 ops/s |
+| GET | 93,701 ops/s | 66,178 ops/s | 39,845 ops/s | 33,900 ops/s |
+| 80% GET / 20% SET | 78,262 ops/s | 50,345 ops/s | 30,831 ops/s | 31,729 ops/s |
+
+In this specific local benchmark, `@snugkv/client` was approximately 33% faster on SET, 42% faster on GET, and 55% faster on the mixed workload than ioredis with automatic pipelining enabled. These are benchmark-specific measurements rather than general claims across all workloads or environments.
+
+The Snug client also reduced 200,000 logical commands to roughly 1,563 socket writes in each workload through same-tick batching.
