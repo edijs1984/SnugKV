@@ -20,7 +20,8 @@
     "bench:autopipeline": "npm run build && node benchmarks/autopipeline.mjs",
     "bench:latency": "npm run build && node benchmarks/latency.mjs",
     "bench:clients": "npm run build && node benchmarks/clients.mjs",
-    "bench:client-matrix": "npm run build && node benchmarks/client-matrix.mjs"
+    "bench:client-matrix": "npm run build && node benchmarks/client-matrix.mjs",
+    "bench:stack-matrix": "npm run build && node benchmarks/stack-matrix.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
