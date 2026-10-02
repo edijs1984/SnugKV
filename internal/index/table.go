@@ -139,31 +139,6 @@ func (t *Table[V]) GrowthBytes(additional int) uint64 {
 	return uint64(t.capacityFor(int(t.count)+additional)-len(t.slots)) * slotBytes[V]()
 }
 
-// ReserveAdditional grows the table once for a known batch of future inserts.
-// Callers must provide the same synchronization required by SetKnownHashed.
-// It intentionally uses the same capacityFor calculation as GrowthBytes so
-// physical capacity changes exactly match the memory already projected by the
-// caller.
-func (t *Table[V]) ReserveAdditional(additional int) {
-	if additional <= 0 {
-		return
-	}
-	capacity := t.capacityFor(int(t.count) + additional)
-	if capacity == len(t.slots) {
-		return
-	}
-	old := t.slots
-	t.slots = make([]slot[V], capacity)
-	t.count = 0
-	t.tinyFilter = 0
-	for i := range old {
-		s := &old[i]
-		if s.state() == stateLive {
-			t.insert(s.key(), s.value())
-		}
-	}
-}
-
 func (t *Table[V]) Get(key string) (V, bool) {
 	return t.GetHashed(key, Hash(key))
 }
