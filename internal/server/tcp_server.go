@@ -986,8 +986,6 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				}
 				continue
 			}
-
-			rawGetStarted := time.Now()
 			if handled, fastErr := s.server.executeAuthorizedConcurrentRawGet(
 				msg,
 				writeBulkProtocol,
@@ -1317,7 +1315,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			msg,
 			writer.writeBulkBuffered,
 		); handled {
-			s.server.recordSlowlogForClient(clientSession, msg, time.Since(rawGetStarted))
+			s.server.recordSlowlogForClient(clientSession, msg, time.Since(requestNow))
 			if fastErr != nil {
 				return
 			}
