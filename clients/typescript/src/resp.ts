@@ -23,7 +23,7 @@ export function encodeCommand(args: readonly (string | Buffer | number)[]): Buff
 }
 
 export class RespDecoder {
-  private buffer = Buffer.alloc(0);
+  private buffer: Buffer<ArrayBufferLike> = Buffer.alloc(0);
 
   push(chunk: Buffer): RespValue[] {
     if (chunk.length === 0) return [];
