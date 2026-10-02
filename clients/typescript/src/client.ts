@@ -1,5 +1,13 @@
 import net from "node:net";
-import { encodeCommand, RespDecoder, RespError, type RespValue } from "./resp.js";
+import {
+  encodeCommand,
+  encodeCommands,
+  encodedCommandLength,
+  RespDecoder,
+  RespError,
+  type RespCommandArg,
+  type RespValue,
+} from "./resp.js";
 
 export interface SnugKVOptions {
   host?: string;
@@ -17,10 +25,11 @@ export interface SnugKVClientStats {
   batchedCommands: number;
 }
 
-type CommandArg = string | Buffer | number;
+type CommandArg = RespCommandArg;
 
 interface PendingCommand {
-  encoded: Buffer;
+  args: readonly CommandArg[];
+  encodedLength: number;
   resolve: (value: RespValue) => void;
   reject: (error: Error) => void;
 }
@@ -124,19 +133,19 @@ export class SnugKV {
       return Promise.reject(new Error("SnugKV client is not connected"));
     }
 
-    const encoded = encodeCommand(args);
+    const encodedLength = encodedCommandLength(args);
     this.commandCount++;
     return new Promise<RespValue>((resolve, reject) => {
-      const pending: PendingCommand = { encoded, resolve, reject };
+      const pending: PendingCommand = { args, encodedLength, resolve, reject };
       if (!this.autoPipeline) {
         this.pendingReplies.push(pending);
         this.socketWriteCount++;
-        this.socket!.write(encoded);
+        this.socket!.write(encodeCommand(args));
         return;
       }
 
       this.queue.push(pending);
-      this.queueBytes += encoded.length;
+      this.queueBytes += encodedLength;
 
       if (this.queue.length >= this.maxCommands || this.queueBytes >= this.maxBytes) {
         this.flush(true);
@@ -185,10 +194,10 @@ export class SnugKV {
 
     this.commandCount += commands.length;
     const promises = commands.map((args) => {
-      const encoded = encodeCommand(args);
+      const encodedLength = encodedCommandLength(args);
       return new Promise<RespValue>((resolve, reject) => {
-        this.queue.push({ encoded, resolve, reject });
-        this.queueBytes += encoded.length;
+        this.queue.push({ args, encodedLength, resolve, reject });
+        this.queueBytes += encodedLength;
       });
     });
     this.flush(false);
@@ -213,7 +222,7 @@ export class SnugKV {
       this.autoPipelineBatchCount++;
       this.batchedCommandCount += batch.length;
     }
-    this.socket.write(Buffer.concat(batch.map((pending) => pending.encoded)));
+    this.socket.write(encodeCommands(batch.map((pending) => pending.args)));
   }
 
   private onData(chunk: Buffer): void {
