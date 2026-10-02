@@ -260,31 +260,6 @@ func (s *Store) GetStringBytesInto(key []byte, dst []byte) (value []byte, found 
 	return s.GetStringBytesIntoAt(key, dst, s.now())
 }
 
-// GetStringBytesIntoAtReadOnly is an experimental read-only GET path used to
-// isolate the cost of access-metadata mutation in mixed workloads. It preserves
-// lookup, expiry, type checking, and decode semantics, but deliberately does
-// not update entryMeta reads/lastAccess. Because no shard state is mutated, it
-// can hold a shared shard lock instead of an exclusive lock.
-func (s *Store) GetStringBytesIntoAtReadOnly(key []byte, dst []byte, now time.Time) (value []byte, found bool, wrongType bool) {
-	hash := index.HashBytes(key)
-	sh := s.shardForHash(hash)
-	sh.mu.RLock()
-	defer sh.mu.RUnlock()
-
-	e, ok := sh.getHashedBytes(key, hash)
-	if !ok {
-		return nil, false, false
-	}
-	if e.hasExpiry && sh.expired(string(key), e, now) {
-		return nil, false, false
-	}
-	if isNativeContainerType(e.valueType) {
-		return nil, false, true
-	}
-
-	return s.decodeInto(sh, e, dst), true, false
-}
-
 func (s *Store) GetStringBytesIntoAt(key []byte, dst []byte, now time.Time) (value []byte, found bool, wrongType bool) {
 	hash := index.HashBytes(key)
 	sh := s.shardForHash(hash)
