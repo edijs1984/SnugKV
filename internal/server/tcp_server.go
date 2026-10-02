@@ -1,6 +1,7 @@
 package server
 
 import (
+	"os"
 	"bufio"
 	"bytes"
 	"errors"
@@ -317,6 +318,19 @@ func recoverConnectionPanic() {
 
 func (s *TCPServer) handleConn(conn net.Conn) {
 	s.handleConnRaw(conn, conn)
+}
+
+func setBatchLimit() int {
+	const defaultLimit = 256
+	raw := os.Getenv("SNUG_SET_BATCH")
+	if raw == "" {
+		return defaultLimit
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 || n > defaultLimit {
+		return defaultLimit
+	}
+	return n
 }
 
 func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
@@ -1137,7 +1151,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			atomic.LoadUint32(&s.server.metricsEnabled) == 0 &&
 			s.server.store.MaxMemory() == 0 &&
 			reader.Buffered() > 0 {
-			const maxSetBatch = 256
+			maxSetBatch := setBatchLimit()
 
 			keys := make([][]byte, 0, maxSetBatch)
 			values := make([][]byte, 0, maxSetBatch)
