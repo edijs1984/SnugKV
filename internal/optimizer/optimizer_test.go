@@ -268,3 +268,80 @@ func TestMaintenanceSamplingConvergesDroppedCandidate(t *testing.T) {
 	}
 	t.Fatalf("maintenance sampling did not converge candidate: %+v", o.Stats())
 }
+
+
+func TestForegroundWriteDefersOptimizerDuringBurstThenResumes(t *testing.T) {
+	store, err := engine.NewWithOptions(engine.Options{
+		Shards:      1,
+		Encoding:    true,
+		Compression: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	value := bytes.Repeat([]byte("foreground-priority"), 1024)
+	if err := store.Set("k", value, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	config := Default()
+	config.Workers = 1
+	config.MinRewriteInterval = 0
+	config.MinAttemptInterval = 0
+
+	o, err := New(store, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer o.Close()
+
+	// The current foreground-priority design is timestamp based: repeated
+	// writes keep refreshing the quiet-window clock, while the optimizer is
+	// still guaranteed bounded progress after maxDeferral.
+	stopWrites := make(chan struct{})
+	writesStopped := make(chan struct{})
+	go func() {
+		defer close(writesStopped)
+		ticker := time.NewTicker(time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopWrites:
+				return
+			case <-ticker.C:
+				o.NoteForegroundWrite()
+			}
+		}
+	}()
+
+	o.NoteForegroundWrite()
+	if !o.Queue("k") {
+		close(stopWrites)
+		<-writesStopped
+		t.Fatal("queue rejected")
+	}
+
+	// waitForForegroundQuiet intentionally caps deferral at 50 ms so sustained
+	// traffic cannot starve background convergence forever. We therefore only
+	// require the queued rewrite to be deferred for a short burst, not blocked
+	// indefinitely.
+	time.Sleep(20 * time.Millisecond)
+	if got := o.Stats().Rewritten; got != 0 {
+		close(stopWrites)
+		<-writesStopped
+		t.Fatalf("optimizer rewrote before foreground deferral elapsed: %d", got)
+	}
+
+	close(stopWrites)
+	<-writesStopped
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if o.Stats().Rewritten != 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("optimizer did not resume after foreground quiet: %+v", o.Stats())
+}

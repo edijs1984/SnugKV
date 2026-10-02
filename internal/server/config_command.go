@@ -80,9 +80,7 @@ var runtimeConfigEntries = []runtimeConfigEntry{
 	{
 		name: "slowlog-log-slower-than",
 		value: func(s *Server) string {
-			s.slowlogMu.Lock()
-			defer s.slowlogMu.Unlock()
-			return strconv.FormatInt(s.slowlogThresholdMicros, 10)
+			return strconv.FormatInt(s.slowlogThresholdMicros.Load(), 10)
 		},
 	},
 	{
@@ -385,9 +383,7 @@ func (s *Server) prepareConfigSet(
 			)
 		}
 		return func() error {
-			s.slowlogMu.Lock()
-			s.slowlogThresholdMicros = threshold
-			s.slowlogMu.Unlock()
+			s.slowlogThresholdMicros.Store(threshold)
 			return nil
 		}, nil
 

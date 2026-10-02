@@ -296,6 +296,118 @@ func (d *Decoder) ReadBufferedSET(keyScratch, valueScratch []byte) (key, value [
 	return keyScratch, valueScratch, true, nil
 }
 
+// ReadBufferedNativeMutation decodes simple native mutation frames already
+// buffered by bufio.Reader. Partial or complex commands consume nothing and
+// fall back to ReadCommand. Scratch storage is retained by the caller.
+func (d *Decoder) ReadBufferedNativeMutation(
+	scratch *[3][]byte,
+) (cmd string, args [3][]byte, argc int, ok bool, err error) {
+	buffered := d.reader.Buffered()
+	if buffered < 24 {
+		return "", args, 0, false, nil
+	}
+	if buffered > d.limits.MaxRequestBytes {
+		buffered = d.limits.MaxRequestBytes
+	}
+	buf, err := d.reader.Peek(buffered)
+	if err != nil {
+		return "", args, 0, false, nil
+	}
+	if len(buf) < 13 || buf[0] != '*' || buf[2] != '\r' || buf[3] != '\n' {
+		return "", args, 0, false, nil
+	}
+
+	arrayCount := int(buf[1] - '0')
+	if buf[1] < '0' || buf[1] > '9' || (arrayCount != 3 && arrayCount != 4) {
+		return "", args, 0, false, nil
+	}
+
+	parseBulk := func(pos int) (payloadStart, payloadLen, next int, complete bool) {
+		if pos >= len(buf) || buf[pos] != byte(36) {
+			return 0, 0, 0, false
+		}
+		pos++
+		n := 0
+		digits := 0
+		for pos < len(buf) {
+			b := buf[pos]
+			if b == '\r' {
+				if digits == 0 || pos+1 >= len(buf) || buf[pos+1] != '\n' {
+					return 0, 0, 0, false
+				}
+				pos += 2
+				break
+			}
+			if b < '0' || b > '9' || digits >= 20 {
+				return 0, 0, 0, false
+			}
+			digit := int(b - '0')
+			if n > d.limits.MaxBulkBytes/10 ||
+				n == d.limits.MaxBulkBytes/10 && digit > d.limits.MaxBulkBytes%10 {
+				return 0, 0, 0, false
+			}
+			n = n*10 + digit
+			digits++
+			pos++
+		}
+		if digits == 0 || pos+n+2 > len(buf) {
+			return 0, 0, 0, false
+		}
+		if buf[pos+n] != '\r' || buf[pos+n+1] != '\n' {
+			return 0, 0, 0, false
+		}
+		return pos, n, pos + n + 2, true
+	}
+
+	commandStart, commandLen, pos, complete := parseBulk(4)
+	if !complete {
+		return "", args, 0, false, nil
+	}
+	command := buf[commandStart : commandStart+commandLen]
+
+	switch {
+	case arrayCount == 4 && bytes.EqualFold(command, []byte("HSET")):
+		cmd, argc = "HSET", 3
+	case arrayCount == 3 && bytes.EqualFold(command, []byte("RPUSH")):
+		cmd, argc = "RPUSH", 2
+	case arrayCount == 3 && bytes.EqualFold(command, []byte("SADD")):
+		cmd, argc = "SADD", 2
+	case arrayCount == 4 && bytes.EqualFold(command, []byte("ZADD")):
+		cmd, argc = "ZADD", 3
+	default:
+		return "", args, 0, false, nil
+	}
+
+	if d.limits.MaxArguments < arrayCount {
+		return "", args, 0, false, nil
+	}
+
+	for i := 0; i < argc; i++ {
+		start, n, next, complete := parseBulk(pos)
+		if !complete {
+			return "", args, 0, false, nil
+		}
+		dst := scratch[i]
+		if cap(dst) < n {
+			dst = make([]byte, n)
+		} else {
+			dst = dst[:n]
+		}
+		copy(dst, buf[start:start+n])
+		args[i] = dst
+		scratch[i] = dst
+		pos = next
+	}
+
+	if pos > d.limits.MaxRequestBytes {
+		return "", args, 0, false, nil
+	}
+	if _, err := d.reader.Discard(pos); err != nil {
+		return "", args, 0, false, err
+	}
+	return cmd, args, argc, true, nil
+}
+
 // ReadCommand accepts only nonempty, flat arrays of non-null bulk strings.
 // io.EOF means clean end of stream; truncated requests return io.ErrUnexpectedEOF.
 // After any other error the stream must be closed, not resynchronized.

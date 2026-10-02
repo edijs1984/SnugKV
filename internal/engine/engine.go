@@ -414,3 +414,18 @@ func (s *Store) Stats() DatasetStats {
 	}
 	return result
 }
+
+// PhysicalKeyCount returns the number of indexed keys without walking entries.
+// It may include keys whose TTL has elapsed but which have not yet been cleaned;
+// callers that only need a conservative sizing estimate can use this instead of
+// the O(dataset) Stats traversal.
+func (s *Store) PhysicalKeyCount() uint64 {
+	var keys uint64
+	for i := range s.shards {
+		sh := &s.shards[i]
+		sh.mu.RLock()
+		keys += uint64(sh.data.Len())
+		sh.mu.RUnlock()
+	}
+	return keys
+}

@@ -81,3 +81,93 @@ func TestSetPlainBatchFreshExistingKeyFallsBackWithoutPartialMutation(t *testing
 		t.Fatalf("existing value got=%q found=%t wrongType=%t", got, found, wrongType)
 	}
 }
+
+
+func TestSetPlainBatchFreshKeepsTerminalScalarsMetadataFree(t *testing.T) {
+	counterStore, err := NewWithOptions(Options{
+		Shards:        256,
+		Encoding:      true,
+		ShapeEncoding: true,
+		Compression:   true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	counterKeys := [][]byte{
+		[]byte("counter:a"),
+		[]byte("counter:b"),
+	}
+	counterValues := [][]byte{
+		[]byte("1234567890"),
+		[]byte("9876543210"),
+	}
+
+	batched, err := counterStore.SetPlainBatchFresh(counterKeys, counterValues)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !batched {
+		t.Fatal("counter batch unexpectedly fell back")
+	}
+
+	counterMem := counterStore.Memory()
+	if counterMem.MetaBytes != 0 {
+		t.Fatalf("counter batch metadata=%d want=0", counterMem.MetaBytes)
+	}
+	if counterMem.ArenaPayloadBytes != 0 {
+		t.Fatalf("counter batch arena payload=%d want=0", counterMem.ArenaPayloadBytes)
+	}
+	if counterMem.ArenaLiveBlockBytes != 0 {
+		t.Fatalf("counter batch arena live blocks=%d want=0", counterMem.ArenaLiveBlockBytes)
+	}
+
+	for i := range counterKeys {
+		got, found, wrongType := counterStore.GetString(string(counterKeys[i]))
+		if wrongType || !found || string(got) != string(counterValues[i]) {
+			t.Fatalf("counter key %q got=%q found=%t wrongType=%t", counterKeys[i], got, found, wrongType)
+		}
+	}
+
+	uuidStore, err := NewWithOptions(Options{
+		Shards:        256,
+		Encoding:      true,
+		ShapeEncoding: true,
+		Compression:   true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	uuidKeys := [][]byte{
+		[]byte("uuid:a"),
+		[]byte("uuid:b"),
+	}
+	uuidValues := [][]byte{
+		[]byte("550e8400-e29b-41d4-a716-446655440000"),
+		[]byte("123e4567-e89b-12d3-a456-426614174000"),
+	}
+
+	batched, err = uuidStore.SetPlainBatchFresh(uuidKeys, uuidValues)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !batched {
+		t.Fatal("uuid batch unexpectedly fell back")
+	}
+
+	uuidMem := uuidStore.Memory()
+	if uuidMem.MetaBytes != 0 {
+		t.Fatalf("uuid batch metadata=%d want=0", uuidMem.MetaBytes)
+	}
+	if uuidMem.ArenaPayloadBytes == 0 {
+		t.Fatal("uuid batch unexpectedly used no arena payload")
+	}
+
+	for i := range uuidKeys {
+		got, found, wrongType := uuidStore.GetString(string(uuidKeys[i]))
+		if wrongType || !found || string(got) != string(uuidValues[i]) {
+			t.Fatalf("uuid key %q got=%q found=%t wrongType=%t", uuidKeys[i], got, found, wrongType)
+		}
+	}
+}

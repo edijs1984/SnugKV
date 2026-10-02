@@ -720,6 +720,49 @@ func (s *Store) ZSetRange(key string, start, stop int64, reverse bool) ([]ZSetIt
 	return out, nil
 }
 
+// CompactIndexedZSet rewrites an indexed ZSET with normal compact payload
+// headroom. It is intended for background maintenance after an aggressive
+// growth phase has completed.
+func (s *Store) CompactIndexedZSet(key string) bool {
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	e, ok := sh.get(key)
+	if !ok || sh.expired(key, e, s.now()) || e.valueType != TypeZSet {
+		return false
+	}
+	physical := sh.encoded(e)
+	if !isIndexedZSet(physical) {
+		return false
+	}
+
+	_, _, used, dataStart, err := indexedZSetMeta(physical)
+	if err != nil {
+		return false
+	}
+
+	// Keep the existing slot table and live records byte-for-byte. Once the
+	// foreground burst is over, append reserve has no value and can keep the
+	// payload in a larger arena allocation class. Trim to exact live bytes;
+	// a later write can rebuild growth headroom on demand.
+	targetLen := dataStart + used
+	if targetLen >= len(physical) {
+		return false
+	}
+
+	compact := append([]byte(nil), physical[:targetLen]...)
+	updated := preparedEntry{
+		entry: entry{entryData: entryData{
+			valueType: TypeZSet,
+			rawLength: e.rawLength,
+		}},
+		data: compact,
+		expiresAt: sh.expirationAt(key, e),
+	}
+	return s.publish(sh, key, updated) == nil
+}
+
 func (s *Store) ZSetStorageStats(key string) (ZSetStats, bool, error) {
 	sh := s.shardFor(key)
 	sh.mu.RLock()

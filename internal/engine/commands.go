@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 	"math/bits"
+	"snugkv/internal/arena"
 	"snugkv/internal/index"
 	"sort"
 	"strconv"
@@ -179,7 +180,11 @@ func (s *Store) SetPlainBatchFresh(keys [][]byte, values [][]byte) (bool, error)
 			return false, nil
 		}
 		item.entry = s.makeEntryForShard(sh, item.value)
-		if s.shouldTrackActivity(item.entry.entry) {
+		// Specialized scalar encodings (integer/UUID/timestamp/float/bool)
+		// are already in their terminal representation and are never queued for
+		// background optimization. Keep those entries metadata-free so tiny
+		// scalars remain inline and compact scalar codecs avoid a sidecar.
+		if s.OptimizationClassForValue(item.value) != OptimizationNone {
 			item.entry.entryMeta = &entryMeta{}
 		}
 	}
@@ -198,8 +203,12 @@ func (s *Store) SetPlainBatchFresh(keys [][]byte, values [][]byte) (bool, error)
 		item := &items[i]
 		keyBytes += uint64(len(item.key))
 		metaBytes += metadataCharge(item.entry.entry)
-		allocationLens[i] = len(item.entry.data)
-		if !shouldInlinePrepared(item.entry) {
+		if shouldInlinePrepared(item.entry) {
+			// Inline scalars live entirely inside arena.Ref. They must not
+			// participate in arena growth planning or payload accounting.
+			allocationLens[i] = 0
+		} else {
+			allocationLens[i] = len(item.entry.data)
 			arenaPayload += uint64(len(item.entry.data))
 		}
 	}
@@ -223,6 +232,14 @@ func (s *Store) SetPlainBatchFresh(keys [][]byte, values [][]byte) (bool, error)
 		start = end
 	}
 
+	var liveBlocks uint64
+	for i := range items {
+		item := &items[i]
+		if !shouldInlinePrepared(item.entry) {
+			liveBlocks += arena.AllocationBytesForLength(len(item.entry.data))
+		}
+	}
+
 	s.memory.mu.Lock()
 	next := s.memory.used +
 		keyBytes +
@@ -243,28 +260,27 @@ func (s *Store) SetPlainBatchFresh(keys [][]byte, values [][]byte) (bool, error)
 	s.memory.metas += metaBytes
 	s.memory.index += extraIndex
 	s.memory.arenas += extraArena
+	s.memory.arenaPayload += arenaPayload
+	s.memory.arenaLiveBlocks += liveBlocks
+	s.memory.mu.Unlock()
 
-	var liveBlocks uint64
+	// Physical arena mutation is protected by the owning shard locks above.
+	// Keep the global memory-accounting mutex out of the copy/allocation loop so
+	// independent SET workers do not serialize while writing payload bytes.
 	for i := range items {
 		item := &items[i]
 		sh := &s.shards[item.shardIndex]
 		if shouldInlinePrepared(item.entry) {
 			ref, ok := sh.arena.AllocInline(item.entry.data)
 			if !ok {
-				s.memory.mu.Unlock()
 				unlock()
 				panic("inline scalar admission invariant")
 			}
 			item.entry.ref = ref
 		} else {
 			item.entry.ref = sh.arena.Alloc(item.entry.data)
-			liveBlocks += sh.arena.AllocationBytes(item.entry.ref)
 		}
 	}
-
-	s.memory.arenaPayload += arenaPayload
-	s.memory.arenaLiveBlocks += liveBlocks
-	s.memory.mu.Unlock()
 
 	now := s.now()
 	for i := range items {
@@ -283,6 +299,95 @@ func (s *Store) SetPlainBatchFresh(keys [][]byte, values [][]byte) (bool, error)
 	}
 
 	unlock()
+	return true, nil
+}
+
+
+// SetPlainBatchFreshShardLocal applies a fresh plain-SET batch as independent
+// shard-local sub-batches. It is intended for the non-durable concurrent SET
+// fast path where maxmemory is disabled, so cross-shard atomic admission is not
+// required. Each sub-batch still uses SetPlainBatchFresh and therefore retains
+// its exact per-shard duplicate/existence checks, accounting, arena allocation,
+// and publication semantics while avoiding a giant cross-shard lock set.
+func (s *Store) SetPlainBatchFreshShardLocal(keys [][]byte, values [][]byte) (bool, error) {
+	if len(keys) == 0 || len(keys) != len(values) {
+		return false, nil
+	}
+
+	items := make([]plainBatchItem, len(keys))
+	counts := make([]int, len(s.shards))
+
+	// Hash and classify every command exactly once. Stable bucketing below keeps
+	// commands targeting the same shard in their original pipeline order.
+	for i := range keys {
+		if len(values[i]) > 32<<20 {
+			return true, errors.New("ERR value exceeds 32 MiB limit")
+		}
+		key := string(keys[i])
+		hash := index.Hash(key)
+		shardIndex := int((hash >> 32) & uint64(len(s.shards)-1))
+		items[i] = plainBatchItem{
+			key:        key,
+			value:      values[i],
+			hash:       hash,
+			shardIndex: shardIndex,
+		}
+		counts[shardIndex]++
+	}
+
+	offsets := make([]int, len(s.shards)+1)
+	for i := range counts {
+		offsets[i+1] = offsets[i] + counts[i]
+	}
+	next := append([]int(nil), offsets[:len(s.shards)]...)
+	ordered := make([]plainBatchItem, len(items))
+	for i := range items {
+		shardIndex := items[i].shardIndex
+		pos := next[shardIndex]
+		next[shardIndex]++
+		ordered[pos] = items[i]
+	}
+
+	for shardIndex, n := range counts {
+		if n == 0 {
+			continue
+		}
+
+		sh := &s.shards[shardIndex]
+		sh.mu.Lock()
+		start := offsets[shardIndex]
+		end := start + n
+
+		for i := start; i < end; i++ {
+			item := &ordered[i]
+			old, exists := sh.getHashed(item.key, item.hash)
+			if exists && old.hasExpiry && sh.expired(item.key, old, s.now()) {
+				s.remove(sh, item.key)
+				old = entry{}
+				exists = false
+			}
+
+			e := s.makeEntryForShard(sh, item.value)
+			if s.OptimizationClassForValue(item.value) != OptimizationNone {
+				e.entryMeta = &entryMeta{}
+			}
+			if err := s.publishRecordKnownHashed(
+				sh,
+				item.key,
+				item.hash,
+				e,
+				enforceMemoryLimit,
+				old,
+				exists,
+			); err != nil {
+				sh.mu.Unlock()
+				return true, err
+			}
+		}
+
+		sh.mu.Unlock()
+	}
+
 	return true, nil
 }
 

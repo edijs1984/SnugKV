@@ -132,7 +132,7 @@ type Server struct {
 	slowlogMu              sync.Mutex
 	slowlogEntries         []slowlogEntry
 	slowlogNextID          int64
-	slowlogThresholdMicros int64
+	slowlogThresholdMicros atomic.Int64
 	slowlogMaxLen          int
 
 	aofRewritePath    string
@@ -164,11 +164,11 @@ func New(store *engine.Store) *Server {
 		searchDictionaries: make(map[string]map[string]struct{}),
 		searchSuggestions:  make(map[string]map[string]searchSuggestion),
 		searchSynonyms:     make(map[string]map[string][]string),
-		slowlogThresholdMicros: 10000,
 		slowlogMaxLen:          128,
 		failoverDiscovered:      make(map[string]failoverDiscoveredPeer),
 	}
 	s.lastSaveUnix.Store(time.Now().Unix())
+	s.slowlogThresholdMicros.Store(10000)
 	s.replication.init()
 	return s
 }

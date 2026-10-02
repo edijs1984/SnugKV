@@ -1,6 +1,7 @@
 package server
 
 import (
+	"os"
 	"bufio"
 	"bytes"
 	"errors"
@@ -73,14 +74,16 @@ func commandIsWrite(args [][]byte) bool {
 }
 
 func (s *TCPServer) waitClientPause(args [][]byte) {
+	// CLIENT PAUSE is normally inactive. Avoid command parsing/string folding on
+	// every hot-path command when there is nothing to wait for.
+	until := s.pauseUntil.Load()
+	if until == 0 {
+		return
+	}
 	if clientPauseBypass(args) {
 		return
 	}
 	for {
-		until := s.pauseUntil.Load()
-		if until == 0 {
-			return
-		}
 		if s.pauseWriteOnly.Load() && !commandIsWrite(args) {
 			return
 		}
@@ -93,6 +96,11 @@ func (s *TCPServer) waitClientPause(args [][]byte) {
 			remaining = 10 * time.Millisecond
 		}
 		time.Sleep(remaining)
+
+		until = s.pauseUntil.Load()
+		if until == 0 {
+			return
+		}
 	}
 }
 
@@ -319,6 +327,28 @@ func (s *TCPServer) handleConn(conn net.Conn) {
 	s.handleConnRaw(conn, conn)
 }
 
+var (
+	commandGETBytes = []byte("GET")
+	commandSETBytes = []byte("SET")
+)
+
+var configuredSetBatchLimit = func() int {
+	const defaultLimit = 256
+	raw := os.Getenv("SNUG_SET_BATCH")
+	if raw == "" {
+		return defaultLimit
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 || n > defaultLimit {
+		return defaultLimit
+	}
+	return n
+}()
+
+var configuredShardLocalSet = func() bool {
+	return os.Getenv("SNUG_SHARD_LOCAL_SET") == "1"
+}()
+
 func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 	// Pub/Sub delivery can write from a publisher's goroutine while this
 	// connection goroutine is blocked reading the next subscriber command.
@@ -328,6 +358,14 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 	var getKeyScratch []byte
 	var setKeyScratch []byte
 	var setValueScratch []byte
+	var nativeScratch [3][]byte
+	var borrowedGET [2][]byte
+	var borrowedSET [3][]byte
+	var borrowedNative [4][]byte
+	var setBatchKeys [][]byte
+	var setBatchValues [][]byte
+	var setBatchKeyArena []byte
+	var setBatchValueArena []byte
 	const maxRetainedGetScratch = 64 << 10
 	const maxRetainedGetKeyScratch = 64 << 10
 	const maxRetainedSetKeyScratch = 64 << 10
@@ -461,15 +499,13 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				return
 			}
 		}
-		var borrowedGET [2][]byte
-		var borrowedSET [3][]byte
 		var msg [][]byte
 		borrowedKey, borrowed, borrowErr := decoder.ReadBufferedGET(getKeyScratch)
 		if borrowErr != nil {
 			return
 		}
 		if borrowed {
-			borrowedGET[0] = []byte("GET")
+			borrowedGET[0] = commandGETBytes
 			borrowedGET[1] = borrowedKey
 			msg = borrowedGET[:]
 			if cap(borrowedKey) <= maxRetainedGetKeyScratch {
@@ -486,7 +522,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				return
 			}
 			if ok {
-				borrowedSET[0] = []byte("SET")
+				borrowedSET[0] = commandSETBytes
 				borrowedSET[1] = setKey
 				borrowedSET[2] = setValue
 				msg = borrowedSET[:]
@@ -504,8 +540,25 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			}
 		}
 
+		borrowedNativeMutation := false
+		if !borrowed && !borrowedSet && !txSession.multi {
+			cmd, args, argc, ok, nativeErr :=
+				decoder.ReadBufferedNativeMutation(&nativeScratch)
+			if nativeErr != nil {
+				return
+			}
+			if ok {
+				borrowedNative[0] = []byte(cmd)
+				for i := 0; i < argc; i++ {
+					borrowedNative[i+1] = args[i]
+				}
+				msg = borrowedNative[:argc+1]
+				borrowedNativeMutation = true
+			}
+		}
+
 		var err error
-		if !borrowed && !borrowedSet {
+		if !borrowed && !borrowedSet && !borrowedNativeMutation {
 			msg, err = decoder.ReadCommand()
 		}
 		if err != nil {
@@ -830,12 +883,11 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				}
 			}
 
-			rawGetStarted := time.Now()
 			if handled, fastErr := s.server.executeAuthorizedConcurrentRawGet(
 				msg,
 				writeBulkProtocol,
 			); handled {
-				s.server.recordSlowlogForClient(clientSession, msg, time.Since(rawGetStarted))
+				s.server.recordSlowlogForClient(clientSession, msg, time.Since(requestNow))
 				if fastErr != nil {
 					return
 				}
@@ -843,9 +895,8 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				continue
 			}
 
-			knownGetStarted := time.Now()
 			if value, found, handled, fastErr := s.server.executeAuthorizedConcurrentKnownGetIntoAt(msg[1], getScratch, requestNow); handled {
-				s.server.recordSlowlogForClient(clientSession, msg, time.Since(knownGetStarted))
+				s.server.recordSlowlogForClient(clientSession, msg, time.Since(requestNow))
 				if fastErr != nil {
 					if writeProtocol(msg, errorResponse(fastErr)) != nil {
 						return
@@ -935,13 +986,11 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				}
 				continue
 			}
-
-			rawGetStarted := time.Now()
 			if handled, fastErr := s.server.executeAuthorizedConcurrentRawGet(
 				msg,
 				writeBulkProtocol,
 			); handled {
-				s.server.recordSlowlogForClient(clientSession, msg, time.Since(rawGetStarted))
+				s.server.recordSlowlogForClient(clientSession, msg, time.Since(requestNow))
 				if fastErr != nil {
 					return
 				}
@@ -1114,31 +1163,44 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 
 		if borrowedSet && !s.adminOnly && !txSession.multi &&
 			!(clientSession.protocolVersion() == 2 && pubSession.active()) &&
-			((s.server.journal == nil && s.server.replication.primaryHasReplicas()) ||
-				(s.server.journal != nil && s.server.journalUsesAlwaysFsync())) &&
+			(s.server.journal == nil || s.server.journalUsesAlwaysFsync()) &&
 			atomic.LoadUint32(&s.server.metricsEnabled) == 0 &&
 			s.server.store.MaxMemory() == 0 &&
 			reader.Buffered() > 0 {
-			const maxSetBatch = 256
+			maxSetBatch := configuredSetBatchLimit
 
-			keys := make([][]byte, 0, maxSetBatch)
-			values := make([][]byte, 0, maxSetBatch)
-			keyArena := make([]byte, 0, 4<<10)
-			valueArena := make([]byte, 0, 32<<10)
+			if cap(setBatchKeys) < maxSetBatch {
+				setBatchKeys = make([][]byte, 0, maxSetBatch)
+			} else {
+				setBatchKeys = setBatchKeys[:0]
+			}
+			if cap(setBatchValues) < maxSetBatch {
+				setBatchValues = make([][]byte, 0, maxSetBatch)
+			} else {
+				setBatchValues = setBatchValues[:0]
+			}
+			setBatchKeyArena = setBatchKeyArena[:0]
+			setBatchValueArena = setBatchValueArena[:0]
+			if cap(setBatchKeyArena) < 4<<10 {
+				setBatchKeyArena = make([]byte, 0, 4<<10)
+			}
+			if cap(setBatchValueArena) < 32<<10 {
+				setBatchValueArena = make([]byte, 0, 32<<10)
+			}
 			var pendingAuthErr error
 
 			appendOwned := func(key, value []byte) {
-				keyStart := len(keyArena)
-				keyArena = append(keyArena, key...)
-				keys = append(keys, keyArena[keyStart:len(keyArena)])
+				keyStart := len(setBatchKeyArena)
+				setBatchKeyArena = append(setBatchKeyArena, key...)
+				setBatchKeys = append(setBatchKeys, setBatchKeyArena[keyStart:len(setBatchKeyArena)])
 
-				valueStart := len(valueArena)
-				valueArena = append(valueArena, value...)
-				values = append(values, valueArena[valueStart:len(valueArena)])
+				valueStart := len(setBatchValueArena)
+				setBatchValueArena = append(setBatchValueArena, value...)
+				setBatchValues = append(setBatchValues, setBatchValueArena[valueStart:len(setBatchValueArena)])
 			}
 			appendOwned(msg[1], msg[2])
 
-			for len(keys) < maxSetBatch && reader.Buffered() > 0 {
+			for len(setBatchKeys) < maxSetBatch && reader.Buffered() > 0 {
 				nextKey, nextValue, ok, setErr :=
 					decoder.ReadBufferedSET(setKeyScratch, setValueScratch)
 				if setErr != nil {
@@ -1169,7 +1231,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				}
 			}
 
-			if len(keys) > 1 {
+			if len(setBatchKeys) > 1 {
 				var handled bool
 				var fastErr error
 				var replicationOffset int64
@@ -1177,10 +1239,13 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 
 				if s.server.journal != nil {
 					durabilitySequence, handled, fastErr =
-						s.server.executeAuthorizedSerializedAOFSetBatch(keys, values)
-				} else {
+						s.server.executeAuthorizedSerializedAOFSetBatch(setBatchKeys, setBatchValues)
+				} else if s.server.replication.primaryHasReplicas() {
 					replicationOffset, handled, fastErr =
-						s.server.executeAuthorizedSerializedReplicatedSetBatch(keys, values)
+						s.server.executeAuthorizedSerializedReplicatedSetBatch(setBatchKeys, setBatchValues)
+				} else {
+					handled, fastErr =
+						s.server.executeAuthorizedConcurrentSetBatch(setBatchKeys, setBatchValues)
 				}
 
 				if handled {
@@ -1189,19 +1254,19 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 							return
 						}
 					} else {
-						for range keys {
+						for range setBatchKeys {
 							if writer.writeBuffered([]byte("+OK\r\n")) != nil {
 								return
 							}
 						}
 						if s.server.journal != nil {
 							clientSession.durabilitySequence.Store(durabilitySequence)
-						} else {
+						} else if replicationOffset > 0 {
 							clientSession.replicationOffset.Store(replicationOffset)
 						}
-						for i := range keys {
-							s.server.feedMonitor(clientSession, [][]byte{[]byte("SET"), keys[i], values[i]}, nil)
-							s.invalidateTrackingKeys(clientSession, [][]byte{[]byte("SET"), keys[i], values[i]})
+						for i := range setBatchKeys {
+							s.server.feedMonitor(clientSession, [][]byte{[]byte("SET"), setBatchKeys[i], setBatchValues[i]}, nil)
+							s.invalidateTrackingKeys(clientSession, [][]byte{[]byte("SET"), setBatchKeys[i], setBatchValues[i]})
 						}
 					}
 					if pendingAuthErr != nil {
@@ -1214,9 +1279,8 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			}
 		}
 
-		aofSetStarted := time.Now()
 		if result, durabilitySequence, handled, fastErr := s.server.executeAuthorizedConcurrentAOFSet(msg); handled {
-			s.server.recordSlowlogForClient(clientSession, msg, time.Since(aofSetStarted))
+			s.server.recordSlowlogForClient(clientSession, msg, time.Since(requestNow))
 			if fastErr != nil {
 				result = errorResponse(fastErr)
 			}
@@ -1231,9 +1295,8 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			continue
 		}
 
-		replicatedSetStarted := time.Now()
 		if result, replicationOffset, handled, fastErr := s.server.executeAuthorizedSerializedReplicatedSet(msg); handled {
-			s.server.recordSlowlogForClient(clientSession, msg, time.Since(replicatedSetStarted))
+			s.server.recordSlowlogForClient(clientSession, msg, time.Since(requestNow))
 			if fastErr != nil {
 				result = errorResponse(fastErr)
 			}
@@ -1248,12 +1311,11 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			continue
 		}
 
-		rawGetStarted := time.Now()
 		if handled, fastErr := s.server.executeAuthorizedConcurrentRawGet(
 			msg,
 			writer.writeBulkBuffered,
 		); handled {
-			s.server.recordSlowlogForClient(clientSession, msg, time.Since(rawGetStarted))
+			s.server.recordSlowlogForClient(clientSession, msg, time.Since(requestNow))
 			if fastErr != nil {
 				return
 			}
@@ -1261,9 +1323,8 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			continue
 		}
 
-		concurrentGetStarted := time.Now()
 		if value, found, handled, fastErr := s.server.executeAuthorizedConcurrentGetInto(msg, getScratch); handled {
-			s.server.recordSlowlogForClient(clientSession, msg, time.Since(concurrentGetStarted))
+			s.server.recordSlowlogForClient(clientSession, msg, time.Since(requestNow))
 			if fastErr != nil {
 				if writeProtocol(msg, errorResponse(fastErr)) != nil {
 					return
@@ -1286,9 +1347,23 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			continue
 		}
 
-		concurrentSetStarted := time.Now()
 		if result, handled, fastErr := s.server.executeAuthorizedConcurrentSet(msg); handled {
-			s.server.recordSlowlogForClient(clientSession, msg, time.Since(concurrentSetStarted))
+			s.server.recordSlowlogForClient(clientSession, msg, time.Since(requestNow))
+			if fastErr != nil {
+				result = errorResponse(fastErr)
+			}
+			commandSucceeded := fastErr == nil
+			if writeProtocol(msg, result) != nil {
+				return
+			}
+			if commandSucceeded {
+				s.invalidateTrackingKeys(clientSession, msg)
+			}
+			continue
+		}
+
+		if result, handled, fastErr := s.server.executeAuthorizedConcurrentNativeMutation(msg); handled {
+			s.server.recordSlowlogForClient(clientSession, msg, time.Since(requestNow))
 			if fastErr != nil {
 				result = errorResponse(fastErr)
 			}
@@ -1458,8 +1533,8 @@ func (s *TCPServer) OptimizeSample() {
 	if stats.Dropped > s.optimizerDroppedSeen {
 		s.optimizerDroppedSeen = stats.Dropped
 
-		keys := s.server.store.Stats().Keys
-		target := uint64(keys) * 2
+		keys := s.server.store.PhysicalKeyCount()
+		target := keys * 2
 		if target < 4096 {
 			target = 4096
 		}

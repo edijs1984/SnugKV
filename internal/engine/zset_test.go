@@ -312,3 +312,55 @@ func TestIndexedZSetPromotionAddScoreTTLAndPersistence(t *testing.T) {
 		t.Fatalf("restored tail score=%v found=%v err=%v", score, found, err)
 	}
 }
+
+
+func TestCompactIndexedZSetReducesGrowthSlack(t *testing.T) {
+	s := New()
+	for i := 0; i < 1000; i++ {
+		member := []byte(fmt.Sprintf("m:%06d", i))
+		if _, _, _, err := s.ZSetAdd(
+			"compact-zset",
+			[]ZSetItem{{Member: member, Score: float64(i)}},
+			ZSetAddOptions{},
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	sh := s.shardFor("compact-zset")
+	sh.mu.RLock()
+	beforeEntry, ok := sh.get("compact-zset")
+	if !ok {
+		sh.mu.RUnlock()
+		t.Fatal("missing zset")
+	}
+	beforeBytes := len(sh.encoded(beforeEntry))
+	sh.mu.RUnlock()
+
+	if !s.CompactIndexedZSet("compact-zset") {
+		t.Fatal("expected indexed zset compaction")
+	}
+
+	sh.mu.RLock()
+	afterEntry, ok := sh.get("compact-zset")
+	if !ok {
+		sh.mu.RUnlock()
+		t.Fatal("missing zset after compaction")
+	}
+	afterBytes := len(sh.encoded(afterEntry))
+	sh.mu.RUnlock()
+
+	if afterBytes >= beforeBytes {
+		t.Fatalf("compaction bytes=%d before=%d", afterBytes, beforeBytes)
+	}
+	if card, err := s.ZSetCard("compact-zset"); err != nil || card != 1000 {
+		t.Fatalf("card=%d err=%v", card, err)
+	}
+	for _, i := range []int{0, 127, 511, 999} {
+		member := []byte(fmt.Sprintf("m:%06d", i))
+		score, found, err := s.ZSetScore("compact-zset", member)
+		if err != nil || !found || score != float64(i) {
+			t.Fatalf("member=%q score=%v found=%v err=%v", member, score, found, err)
+		}
+	}
+}

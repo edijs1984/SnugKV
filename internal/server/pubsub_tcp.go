@@ -64,35 +64,37 @@ func (w *serializedResponseWriter) writeBulkBuffered(payload []byte) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	// RESP bulk header fits in this stack buffer for every supported value size.
+	const maxBulkHeaderBytes = 32
+	totalUpperBound := len(payload) + maxBulkHeaderBytes + 2
+	if totalUpperBound <= cap(w.buf) {
+		if totalUpperBound > cap(w.buf)-len(w.buf) {
+			if err := w.flushLocked(); err != nil {
+				return err
+			}
+		}
+		w.buf = append(w.buf, '$')
+		w.buf = strconv.AppendInt(w.buf, int64(len(payload)), 10)
+		w.buf = append(w.buf, '\r', '\n')
+		w.buf = append(w.buf, payload...)
+		w.buf = append(w.buf, '\r', '\n')
+		return nil
+	}
+
 	var header [32]byte
-	header[0] = 36
+	header[0] = '$'
 	framed := strconv.AppendInt(header[:1], int64(len(payload)), 10)
-	framed = append(framed, 13, 10)
+	framed = append(framed, '\r', '\n')
 
-	total := len(framed) + len(payload) + 2
-	if total > cap(w.buf) {
-		if err := w.flushLocked(); err != nil {
-			return err
-		}
-		if err := w.server.write(w.conn, framed); err != nil {
-			return err
-		}
-		if err := w.server.write(w.conn, payload); err != nil {
-			return err
-		}
-		return w.server.write(w.conn, []byte{13, 10})
+	if err := w.flushLocked(); err != nil {
+		return err
 	}
-	if total > cap(w.buf)-len(w.buf) {
-		if err := w.flushLocked(); err != nil {
-			return err
-		}
+	if err := w.server.write(w.conn, framed); err != nil {
+		return err
 	}
-
-	w.buf = append(w.buf, framed...)
-	w.buf = append(w.buf, payload...)
-	w.buf = append(w.buf, 13, 10)
-	return nil
+	if err := w.server.write(w.conn, payload); err != nil {
+		return err
+	}
+	return w.server.write(w.conn, []byte{'\r', '\n'})
 }
 
 func (w *serializedResponseWriter) flush() error {
@@ -111,3 +113,4 @@ func (w *serializedResponseWriter) flushLocked() error {
 	w.buf = w.buf[:0]
 	return nil
 }
+

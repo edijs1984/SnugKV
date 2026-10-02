@@ -198,10 +198,44 @@ func (s *Store) makeEntryForShard(_ *shard, value []byte) preparedEntry {
 }
 
 func (s *Store) decodeInto(sh *shard, e entry, dst []byte) []byte {
-	var inline [8]byte
-	encoded := sh.encodedInto(e, inline[:0])
+	var encoded []byte
+	if e.ref.IsInline() {
+		var inline [8]byte
+		value, ok := e.ref.InlineInto(inline[:0])
+		if !ok {
+			panic("invalid inline reference")
+		}
+		encoded = value
+	} else if e.codecID == codec.Raw {
+		value, err := sh.arena.ViewKnownLive(e.ref)
+		if err != nil {
+			panic(err)
+		}
+		encoded = value
+	} else {
+		encoded = sh.encoded(e)
+	}
+
 	if e.valueType == TypeHash && isShapedHash(encoded) {
 		return s.decode(sh, e)
+	}
+
+	// Raw values dominate ordinary cache GETs. Bypass the generic codec
+	// registry for this representation: raw decode is only a length check plus
+	// a copy into caller-owned scratch. The copy is still required because the
+	// arena view cannot escape the shard lock.
+	if e.codecID == codec.Raw {
+		n := int(e.rawLength)
+		if len(encoded) != n {
+			panic("invalid raw length")
+		}
+		if cap(dst) < n {
+			dst = make([]byte, n)
+		} else {
+			dst = dst[:n]
+		}
+		copy(dst, encoded)
+		return dst
 	}
 
 	var schema *jsonshape.Schema
