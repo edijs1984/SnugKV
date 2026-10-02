@@ -266,16 +266,9 @@ func (s *Store) GetStringBytesIntoAt(key []byte, dst []byte, now time.Time) (val
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
 
-	id, ok := sh.data.GetHashedBytes(key, hash)
+	e, ok := sh.getHashedBytes(key, hash)
 	if !ok {
 		return nil, false, false
-	}
-	if int(id) >= len(sh.entries) {
-		panic("invalid entry id")
-	}
-	e := entry{entryData: sh.entries[id]}
-	if sh.metas != nil {
-		e.entryMeta = sh.metas.slots[id]
 	}
 
 	if e.hasExpiry && sh.expired(string(key), e, now) {
