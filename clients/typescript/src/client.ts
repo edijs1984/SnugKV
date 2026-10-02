@@ -59,7 +59,7 @@ export class SnugKV {
     this.host = options.host ?? "127.0.0.1";
     this.port = options.port ?? 6383;
     this.autoPipeline = options.autoPipeline ?? true;
-    this.maxCommands = options.autoPipelineMaxCommands ?? 256;
+    this.maxCommands = options.autoPipelineMaxCommands ?? 128;
     this.maxBytes = options.autoPipelineMaxBytes ?? 1024 * 1024;
     this.connectTimeoutMs = options.connectTimeoutMs ?? 5000;
   }
