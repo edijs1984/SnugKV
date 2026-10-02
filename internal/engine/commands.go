@@ -264,6 +264,23 @@ func (s *Store) SetPlainBatchFresh(keys [][]byte, values [][]byte) (bool, error)
 	s.memory.arenaLiveBlocks += liveBlocks
 	s.memory.mu.Unlock()
 
+	// The accounting pass above already projected final index/entry capacities
+	// for every touched shard. Materialize those capacities once before the
+	// publish loop so each insertion does not repeatedly grow, copy and rehash
+	// the same shard-local structures.
+	for start := 0; start < len(items); {
+		shardIndex := items[start].shardIndex
+		end := start + 1
+		for end < len(items) && items[end].shardIndex == shardIndex {
+			end++
+		}
+		sh := &s.shards[shardIndex]
+		n := end - start
+		sh.data.ReserveAdditional(n)
+		sh.reserveEntries(n)
+		start = end
+	}
+
 	// Physical arena mutation is protected by the owning shard locks above.
 	// Keep the global memory-accounting mutex out of the copy/allocation loop so
 	// independent SET workers do not serialize while writing payload bytes.
