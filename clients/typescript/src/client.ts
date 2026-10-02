@@ -96,7 +96,7 @@ export class SnugKV {
   async close(): Promise<void> {
     this.closing = true;
     try {
-      this.flush();
+      this.flush(true);
       if (!this.socket) return;
       const socket = this.socket;
       await new Promise<void>((resolve) => {
@@ -139,7 +139,7 @@ export class SnugKV {
       this.queueBytes += encoded.length;
 
       if (this.queue.length >= this.maxCommands || this.queueBytes >= this.maxBytes) {
-        this.flush();
+        this.flush(true);
         return;
       }
 
@@ -147,7 +147,7 @@ export class SnugKV {
         this.flushScheduled = true;
         queueMicrotask(() => {
           this.flushScheduled = false;
-          this.flush();
+          this.flush(true);
         });
       }
     });
@@ -191,11 +191,11 @@ export class SnugKV {
         this.queueBytes += encoded.length;
       });
     });
-    this.flush();
+    this.flush(false);
     return Promise.all(promises);
   }
 
-  flush(): void {
+  flush(auto = true): void {
     if (this.queue.length === 0) return;
     if (!this.socket || !this.connected) {
       const error = new Error("SnugKV client is not connected");
@@ -209,7 +209,7 @@ export class SnugKV {
     this.queueBytes = 0;
     this.pendingReplies.push(...batch);
     this.socketWriteCount++;
-    if (batch.length > 1) {
+    if (auto && batch.length > 1) {
       this.autoPipelineBatchCount++;
       this.batchedCommandCount += batch.length;
     }
