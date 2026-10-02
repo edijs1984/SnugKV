@@ -314,21 +314,25 @@ func (s *Store) SetPlainBatchFreshShardLocal(keys [][]byte, values [][]byte) (bo
 		return false, nil
 	}
 
-	// Fast reject deterministic value-size errors before publishing any shard.
-	for i := range values {
+	items := make([]plainBatchItem, len(keys))
+	counts := make([]int, len(s.shards))
+
+	// Hash and classify every command exactly once. Stable bucketing below keeps
+	// commands targeting the same shard in their original pipeline order.
+	for i := range keys {
 		if len(values[i]) > 32<<20 {
 			return true, errors.New("ERR value exceeds 32 MiB limit")
 		}
-	}
-
-	// Count keys per shard first. Keys that compare equal necessarily hash to
-	// the same shard, so duplicate detection remains local to the sub-batch.
-	counts := make([]int, len(s.shards))
-	hashes := make([]uint64, len(keys))
-	for i := range keys {
-		hash := index.Hash(string(keys[i]))
-		hashes[i] = hash
-		counts[int((hash>>32)&uint64(len(s.shards)-1))]++
+		key := string(keys[i])
+		hash := index.Hash(key)
+		shardIndex := int((hash >> 32) & uint64(len(s.shards)-1))
+		items[i] = plainBatchItem{
+			key:        key,
+			value:      values[i],
+			hash:       hash,
+			shardIndex: shardIndex,
+		}
+		counts[shardIndex]++
 	}
 
 	offsets := make([]int, len(s.shards)+1)
@@ -336,42 +340,52 @@ func (s *Store) SetPlainBatchFreshShardLocal(keys [][]byte, values [][]byte) (bo
 		offsets[i+1] = offsets[i] + counts[i]
 	}
 	next := append([]int(nil), offsets[:len(s.shards)]...)
-
-	orderedKeys := make([][]byte, len(keys))
-	orderedValues := make([][]byte, len(values))
-	for i := range keys {
-		shardIndex := int((hashes[i] >> 32) & uint64(len(s.shards)-1))
+	ordered := make([]plainBatchItem, len(items))
+	for i := range items {
+		shardIndex := items[i].shardIndex
 		pos := next[shardIndex]
 		next[shardIndex]++
-		orderedKeys[pos] = keys[i]
-		orderedValues[pos] = values[i]
+		ordered[pos] = items[i]
 	}
 
-	// Publish one shard at a time. The ordinary batch helper sees only one
-	// shard here, so it takes one shard mutex rather than holding a large set of
-	// unrelated shard locks simultaneously.
 	for shardIndex, n := range counts {
 		if n == 0 {
 			continue
 		}
+
+		sh := &s.shards[shardIndex]
+		sh.mu.Lock()
 		start := offsets[shardIndex]
 		end := start + n
-		batched, err := s.SetPlainBatchFresh(
-			orderedKeys[start:end],
-			orderedValues[start:end],
-		)
-		if err != nil {
-			return true, err
-		}
-		if !batched {
-			// A duplicate key or pre-existing key requires ordinary sequential
-			// SET semantics for this shard-local group.
-			for i := start; i < end; i++ {
-				if err := s.SetPlain(string(orderedKeys[i]), orderedValues[i]); err != nil {
-					return true, err
-				}
+
+		for i := start; i < end; i++ {
+			item := &ordered[i]
+			old, exists := sh.getHashed(item.key, item.hash)
+			if exists && old.hasExpiry && sh.expired(item.key, old, s.now()) {
+				s.remove(sh, item.key)
+				old = entry{}
+				exists = false
+			}
+
+			e := s.makeEntryForShard(sh, item.value)
+			if s.OptimizationClassForValue(item.value) != OptimizationNone {
+				e.entryMeta = &entryMeta{}
+			}
+			if err := s.publishRecordKnownHashed(
+				sh,
+				item.key,
+				item.hash,
+				e,
+				enforceMemoryLimit,
+				old,
+				exists,
+			); err != nil {
+				sh.mu.Unlock()
+				return true, err
 			}
 		}
+
+		sh.mu.Unlock()
 	}
 
 	return true, nil
