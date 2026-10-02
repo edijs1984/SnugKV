@@ -347,6 +347,10 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 	var setKeyScratch []byte
 	var setValueScratch []byte
 	var nativeScratch [3][]byte
+	var setBatchKeys [][]byte
+	var setBatchValues [][]byte
+	var setBatchKeyArena []byte
+	var setBatchValueArena []byte
 	const maxRetainedGetScratch = 64 << 10
 	const maxRetainedGetKeyScratch = 64 << 10
 	const maxRetainedSetKeyScratch = 64 << 10
@@ -1157,24 +1161,38 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			reader.Buffered() > 0 {
 			maxSetBatch := configuredSetBatchLimit
 
-			keys := make([][]byte, 0, maxSetBatch)
-			values := make([][]byte, 0, maxSetBatch)
-			keyArena := make([]byte, 0, 4<<10)
-			valueArena := make([]byte, 0, 32<<10)
+			if cap(setBatchKeys) < maxSetBatch {
+				setBatchKeys = make([][]byte, 0, maxSetBatch)
+			} else {
+				setBatchKeys = setBatchKeys[:0]
+			}
+			if cap(setBatchValues) < maxSetBatch {
+				setBatchValues = make([][]byte, 0, maxSetBatch)
+			} else {
+				setBatchValues = setBatchValues[:0]
+			}
+			setBatchKeyArena = setBatchKeyArena[:0]
+			setBatchValueArena = setBatchValueArena[:0]
+			if cap(setBatchKeyArena) < 4<<10 {
+				setBatchKeyArena = make([]byte, 0, 4<<10)
+			}
+			if cap(setBatchValueArena) < 32<<10 {
+				setBatchValueArena = make([]byte, 0, 32<<10)
+			}
 			var pendingAuthErr error
 
 			appendOwned := func(key, value []byte) {
-				keyStart := len(keyArena)
-				keyArena = append(keyArena, key...)
-				keys = append(keys, keyArena[keyStart:len(keyArena)])
+				keyStart := len(setBatchKeyArena)
+				setBatchKeyArena = append(setBatchKeyArena, key...)
+				setBatchKeys = append(setBatchKeys, setBatchKeyArena[keyStart:len(setBatchKeyArena)])
 
-				valueStart := len(valueArena)
-				valueArena = append(valueArena, value...)
-				values = append(values, valueArena[valueStart:len(valueArena)])
+				valueStart := len(setBatchValueArena)
+				setBatchValueArena = append(setBatchValueArena, value...)
+				setBatchValues = append(setBatchValues, setBatchValueArena[valueStart:len(setBatchValueArena)])
 			}
 			appendOwned(msg[1], msg[2])
 
-			for len(keys) < maxSetBatch && reader.Buffered() > 0 {
+			for len(setBatchKeys) < maxSetBatch && reader.Buffered() > 0 {
 				nextKey, nextValue, ok, setErr :=
 					decoder.ReadBufferedSET(setKeyScratch, setValueScratch)
 				if setErr != nil {
@@ -1205,7 +1223,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				}
 			}
 
-			if len(keys) > 1 {
+			if len(setBatchKeys) > 1 {
 				var handled bool
 				var fastErr error
 				var replicationOffset int64
@@ -1213,13 +1231,13 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 
 				if s.server.journal != nil {
 					durabilitySequence, handled, fastErr =
-						s.server.executeAuthorizedSerializedAOFSetBatch(keys, values)
+						s.server.executeAuthorizedSerializedAOFSetBatch(setBatchKeys, setBatchValues)
 				} else if s.server.replication.primaryHasReplicas() {
 					replicationOffset, handled, fastErr =
-						s.server.executeAuthorizedSerializedReplicatedSetBatch(keys, values)
+						s.server.executeAuthorizedSerializedReplicatedSetBatch(setBatchKeys, setBatchValues)
 				} else {
 					handled, fastErr =
-						s.server.executeAuthorizedConcurrentSetBatch(keys, values)
+						s.server.executeAuthorizedConcurrentSetBatch(setBatchKeys, setBatchValues)
 				}
 
 				if handled {
@@ -1228,7 +1246,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 							return
 						}
 					} else {
-						for range keys {
+						for range setBatchKeys {
 							if writer.writeBuffered([]byte("+OK\r\n")) != nil {
 								return
 							}
@@ -1238,9 +1256,9 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 						} else if replicationOffset > 0 {
 							clientSession.replicationOffset.Store(replicationOffset)
 						}
-						for i := range keys {
-							s.server.feedMonitor(clientSession, [][]byte{[]byte("SET"), keys[i], values[i]}, nil)
-							s.invalidateTrackingKeys(clientSession, [][]byte{[]byte("SET"), keys[i], values[i]})
+						for i := range setBatchKeys {
+							s.server.feedMonitor(clientSession, [][]byte{[]byte("SET"), setBatchKeys[i], setBatchValues[i]}, nil)
+							s.invalidateTrackingKeys(clientSession, [][]byte{[]byte("SET"), setBatchKeys[i], setBatchValues[i]})
 						}
 					}
 					if pendingAuthErr != nil {
