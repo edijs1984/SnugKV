@@ -127,6 +127,24 @@ func (sh *shard) metaSlotGrowthBytes(additional int, needMeta bool) uint64 {
 	return uint64(nextEntryCap-cap(sh.metas.slots)) * uint64(unsafe.Sizeof((*entryMeta)(nil)))
 }
 
+// reserveEntries grows dense entry storage once for a known batch of inserts.
+// Free IDs are accounted for by entryCapacityFor, so this reserves only the
+// additional backing capacity that the batch can actually consume.
+func (sh *shard) reserveEntries(additional int) {
+	if additional <= 0 {
+		return
+	}
+	next := sh.entryCapacityFor(additional)
+	if next <= cap(sh.entries) {
+		return
+	}
+	entries := make([]entryData, len(sh.entries), next)
+	copy(entries, sh.entries)
+	sh.entries = entries
+	sh.growMetaSlots(next)
+}
+
+
 func (sh *shard) get(key string) (entry, bool) {
 	return sh.getHashed(key, index.Hash(key))
 }
