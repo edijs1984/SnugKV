@@ -103,6 +103,11 @@ func (s *Server) recordSlowlogForClient(client *clientSession, args [][]byte, el
 		return
 	}
 	duration := elapsed.Microseconds()
+	threshold := s.slowlogThresholdMicros.Load()
+	if threshold < 0 || duration < threshold {
+		return
+	}
+
 	var peer, name string
 	if client != nil {
 		client.mu.RLock()
@@ -112,10 +117,6 @@ func (s *Server) recordSlowlogForClient(client *clientSession, args [][]byte, el
 
 	s.slowlogMu.Lock()
 	defer s.slowlogMu.Unlock()
-
-	if s.slowlogThresholdMicros < 0 || duration < s.slowlogThresholdMicros {
-		return
-	}
 	entry := slowlogEntry{
 		id:        s.slowlogNextID,
 		timestamp: time.Now().Unix(),
