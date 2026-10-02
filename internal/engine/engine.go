@@ -17,12 +17,28 @@ type entryMeta struct {
 	reads, writes                                    uint8
 }
 
-type entryData struct {
+// SnugValue is the single physical value descriptor used by SnugKV.
+//
+// Logical Redis types remain unchanged, but every stored entry chooses its own
+// physical representation. Raw/incompressible values stay codec.Raw and can use
+// the direct arena fast path; compressible or structured values may be rewritten
+// asynchronously to a compact codec without changing command semantics.
+//
+// Keep this descriptor compact: it is embedded directly in every entryData.
+type SnugValue struct {
 	ref       arena.Ref
 	rawLength uint32
 	codecID   codec.ID
 	valueType ValueType
 	hasExpiry bool
+}
+
+func (v SnugValue) isRaw() bool {
+	return v.codecID == codec.Raw
+}
+
+type entryData struct {
+	SnugValue
 }
 
 // entry is a transient view over compact stored entry data plus optional
@@ -182,10 +198,15 @@ func (s *Store) Get(key string) ([]byte, bool) {
 	return s.decode(sh, e), true
 }
 
-// VisitRawString exposes an immutable raw string only for stores with encoding
-// disabled. The visitor runs while the owning shard is read-locked, so the arena
-// bytes stay valid without cloning. Missing, expired, encoded and native
-// container values return handled=false and use the ordinary GET path.
+// VisitRawString exposes an immutable string when that specific value is stored
+// in SnugKV's RAW physical representation.
+//
+// Optimization is deliberately not a global read-mode switch: an adaptive store
+// can contain RAW and compact values at the same time. RAW values therefore keep
+// the direct arena path even when encoding/compression/shape optimization is
+// enabled. The visitor runs while the owning shard is read-locked, so the arena
+// bytes stay valid without cloning. Encoded and native-container values fall
+// back to the ordinary decode/type-check path.
 func (s *Store) VisitRawString(key string, visit func([]byte) error) (handled bool, err error) {
 	return s.VisitRawStringBytes([]byte(key), visit)
 }
@@ -195,10 +216,6 @@ func (s *Store) VisitRawString(key string, visit func([]byte) error) (handled bo
 // string before hashing and lookup. Expiring entries still convert only when
 // the expiration table must be consulted.
 func (s *Store) VisitRawStringBytes(key []byte, visit func([]byte) error) (handled bool, err error) {
-	if s.encoding {
-		return false, nil
-	}
-
 	hash := index.HashBytes(key)
 	sh := s.shardForHash(hash)
 	sh.mu.RLock()
@@ -211,11 +228,18 @@ func (s *Store) VisitRawStringBytes(key []byte, visit func([]byte) error) (handl
 	if e.hasExpiry && sh.expired(string(key), e, s.now()) {
 		return false, nil
 	}
-	if isNativeContainerType(e.valueType) || e.codecID != codec.Raw {
+	if isNativeContainerType(e.valueType) || !e.SnugValue.isRaw() {
 		return false, nil
 	}
 
-	return true, visit(sh.encoded(e))
+	if e.ref.IsInline() {
+		return false, nil
+	}
+	value, viewErr := sh.arena.ViewKnownLive(e.ref)
+	if viewErr != nil {
+		panic(viewErr)
+	}
+	return true, visit(value)
 }
 
 // GetString performs the Redis string GET type check and value lookup under one
