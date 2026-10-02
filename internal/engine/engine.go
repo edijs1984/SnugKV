@@ -37,9 +37,10 @@ func (v SnugValue) isRaw() bool {
 	return v.codecID == codec.Raw
 }
 
-type entryData struct {
-	SnugValue
-}
+// entryData remains as an internal compatibility alias while the engine moves
+// to SnugValue terminology. The alias preserves existing compact keyed literals
+// without adding another layer or byte to stored entries.
+type entryData = SnugValue
 
 // entry is a transient view over compact stored entry data plus optional
 // metadata. Shards store entryData densely and keep metadata pointers in a
@@ -228,7 +229,7 @@ func (s *Store) VisitRawStringBytes(key []byte, visit func([]byte) error) (handl
 	if e.hasExpiry && sh.expired(string(key), e, s.now()) {
 		return false, nil
 	}
-	if isNativeContainerType(e.valueType) || !e.SnugValue.isRaw() {
+	if isNativeContainerType(e.valueType) || !e.isRaw() {
 		return false, nil
 	}
 
