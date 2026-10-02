@@ -30,7 +30,7 @@ type client struct {
 func main() {
 	server := flag.String("server", "server", "label for JSON output")
 	addr := flag.String("addr", "127.0.0.1:6379", "server address")
-	workload := flag.String("workload", "load", "load, get, get-seq, mixed, ttl")
+	workload := flag.String("workload", "load", "load, get, get-seq, mixed, mixed-pipe, ttl")
 	keys := flag.Int("keys", 1000000, "dataset key count")
 	ops := flag.Int("ops", 1000000, "operations for get/mixed/ttl")
 	workers := flag.Int("workers", runtime.NumCPU(), "concurrent workers")
@@ -49,9 +49,9 @@ func main() {
 		fatalf("keys, ops, workers, value-bytes and pipeline must be positive")
 	}
 	switch *workload {
-	case "load", "get", "get-seq", "mixed", "ttl":
+	case "load", "get", "get-seq", "mixed", "mixed-pipe", "ttl":
 	default:
-		fatalf("workload must be load, get, get-seq, mixed, or ttl")
+		fatalf("workload must be load, get, get-seq, mixed, mixed-pipe, or ttl")
 	}
 	switch *valueShape {
 	case "random", "repetitive", "json", "session-json", "api-json", "cache-json", "counter", "uuid", "text", "compressed":
@@ -107,6 +107,8 @@ func main() {
 		elapsed, samples, errs = runPipelinedGet(*addr, *keys, *ops, *workers, *pipeline, *seed)
 	case "get-seq":
 		elapsed, samples, errs = runConcurrent(*addr, "get", *keys, *ops, *workers, *valueBytes, *valueShape, *seed)
+	case "mixed-pipe":
+		elapsed, samples, errs = runPipelinedMixed(*addr, *keys, *ops, *workers, *valueBytes, *valueShape, *pipeline, *seed)
 	case "mixed", "ttl":
 		elapsed, samples, errs = runConcurrent(*addr, *workload, *keys, *ops, *workers, *valueBytes, *valueShape, *seed)
 	}
