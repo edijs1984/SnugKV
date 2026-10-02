@@ -214,6 +214,24 @@ func (s *Store) decodeInto(sh *shard, e entry, dst []byte) []byte {
 		return s.decode(sh, e)
 	}
 
+	// Raw values dominate ordinary cache GETs. Bypass the generic codec
+	// registry for this representation: raw decode is only a length check plus
+	// a copy into caller-owned scratch. The copy is still required because the
+	// arena view cannot escape the shard lock.
+	if e.codecID == codec.Raw {
+		n := int(e.rawLength)
+		if len(encoded) != n {
+			panic("invalid raw length")
+		}
+		if cap(dst) < n {
+			dst = make([]byte, n)
+		} else {
+			dst = dst[:n]
+		}
+		copy(dst, encoded)
+		return dst
+	}
+
 	var schema *jsonshape.Schema
 	if e.entryMeta != nil && e.entryMeta.schemaID != 0 {
 		if shapes := s.loadShapeStore(); shapes != nil {
