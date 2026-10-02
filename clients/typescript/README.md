@@ -121,3 +121,32 @@ CONCURRENCY=32,128 \
 WORKLOADS=set,get,mixed \
 npm run bench:client-matrix
 ```
+
+
+## Full client matrix snapshot
+
+A 36-cell local matrix covered four payload sizes (64 B, 256 B, 1 KiB, 4 KiB), three concurrency levels (32, 128, 512), and SET / GET / 80% GET + 20% SET workloads, with three repetitions per cell.
+
+In that matrix, `@snugkv/client` with the 128-command automatic pipeline cap had the highest average throughput in all 36 cells. Relative to ioredis with automatic pipelining enabled, the lead ranged from roughly 19% to 127%, with a simple average of about 58% across the 36 cells.
+
+Average relative lead versus ioredis-auto by dimension:
+
+```text
+Payload size:
+  64 B    ~52.6%
+  256 B   ~62.3%
+  1 KiB   ~60.4%
+  4 KiB   ~56.7%
+
+Concurrency:
+  32      ~44.8%
+  128     ~42.7%
+  512     ~86.5%
+
+Workload:
+  SET     ~58.0%
+  GET     ~51.8%
+  mixed   ~64.2%
+```
+
+These figures describe this local SnugKV-server benchmark only; they are not universal claims about every Redis-compatible server, machine, network, workload, or client configuration. The matrix benchmark rotates client execution order across repetitions to reduce systematic order bias.
