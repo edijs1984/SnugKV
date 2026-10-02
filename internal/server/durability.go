@@ -120,10 +120,11 @@ func (s *Server) executeWithCancelSession(
 	return s.executeDurableForSession(args, session)
 }
 
-// executeAuthorizedConcurrentRawGet keeps the raw value in the engine arena and
-// lets the TCP layer frame it directly into its existing connection buffer.
-// It is intentionally limited to encoding-disabled stores; encoded values keep
-// the ordinary GET path and its activity/codec semantics.
+// executeAuthorizedConcurrentRawGet keeps a value that is physically RAW in
+// the engine arena and lets the TCP layer frame it directly into its existing
+// connection buffer. Adaptive SnugKV stores may contain RAW and compact values
+// simultaneously, so eligibility is decided per value rather than by a global
+// encoding mode.
 func (s *Server) executeAuthorizedConcurrentRawGet(
 	args [][]byte,
 	writeBulk func([]byte) error,
