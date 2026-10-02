@@ -5,13 +5,13 @@ set -euo pipefail
 #
 # Defaults are intentionally modest:
 # - one server process/container at a time;
-# - Redis, raw SnugKV, and optimized SnugKV sequentially;
+# - Redis and adaptive SnugKV sequentially;
 # - one run per profile;
 # - LOAD + GET only;
 # - fixed post-load settle instead of waiting up to 120s for "stability".
 #
 # Opt into the expensive cases when needed:
-#   SERVERS="redis snug-opt snug-raw"
+#   SERVERS="redis snug"
 #   WORKLOADS="load get mixed ttl"
 #   RUNS=3
 #   MIXED_OPS=1000000 TTL_OPS=1000000
@@ -24,19 +24,17 @@ WORKERS="${WORKERS:-8}"
 PIPELINE="${PIPELINE:-256}"
 RUNS="${RUNS:-1}"
 SETTLE_MS="${SETTLE_MS:-10000}"
-SERVERS="${SERVERS:-redis snug-raw snug-opt}"
+SERVERS="${SERVERS:-redis snug}"
 WORKLOADS="${WORKLOADS:-load get}"
 ROOT_OUT="${ROOT_OUT:-benchmark-results/realistic-$(date +%Y%m%d-%H%M%S)}"
 BUILD_IMAGE="${BUILD_IMAGE:-1}"
 PROFILE="${PROFILE:-}"
 
 REDIS_ADDR="${REDIS_ADDR:-127.0.0.1:6390}"
-SNUG_RAW_ADDR="${SNUG_RAW_ADDR:-127.0.0.1:6382}"
-SNUG_OPT_ADDR="${SNUG_OPT_ADDR:-127.0.0.1:6383}"
+SNUG_ADDR="${SNUG_ADDR:-127.0.0.1:6383}"
 
 REDIS_CONTAINER="${REDIS_CONTAINER:-snug-bench-redis}"
-SNUG_RAW_CONTAINER="${SNUG_RAW_CONTAINER:-snug-bench-snugkv-raw}"
-SNUG_OPT_CONTAINER="${SNUG_OPT_CONTAINER:-snug-bench-snugkv-opt}"
+SNUG_CONTAINER="${SNUG_CONTAINER:-snug-bench-snugkv}"
 
 profiles=(
   "session-json:384"
@@ -82,8 +80,7 @@ fi
 server_addr() {
   case "$1" in
     redis) echo "$REDIS_ADDR" ;;
-    snug-raw) echo "$SNUG_RAW_ADDR" ;;
-    snug-opt) echo "$SNUG_OPT_ADDR" ;;
+    snug) echo "$SNUG_ADDR" ;;
     *) echo "unknown server $1" >&2; exit 2 ;;
   esac
 }
@@ -91,16 +88,14 @@ server_addr() {
 server_label() {
   case "$1" in
     redis) echo "redis" ;;
-    snug-raw) echo "snug_raw" ;;
-    snug-opt) echo "snug_opt" ;;
+    snug) echo "snug" ;;
   esac
 }
 
 container_name() {
   case "$1" in
     redis) echo "$REDIS_CONTAINER" ;;
-    snug-raw) echo "$SNUG_RAW_CONTAINER" ;;
-    snug-opt) echo "$SNUG_OPT_CONTAINER" ;;
+    snug) echo "$SNUG_CONTAINER" ;;
   esac
 }
 
@@ -198,8 +193,7 @@ echo "  build_image: $BUILD_IMAGE"
 #   for each profile/run:
 #     kill all benchmark servers
 #     start Redis -> run -> kill
-#     start Snug raw -> run -> kill
-#     start Snug optimized -> run -> kill
+#     start adaptive SnugKV -> run -> kill
 #
 # Only the servers selected in $SERVERS are executed, but every selected server
 # gets a completely fresh process/container. No database process is left resident
@@ -237,7 +231,7 @@ for spec in "${profiles[@]}"; do
 done
 
 # Leave the machine clean even if the selected server list changes later.
-docker rm -f "$REDIS_CONTAINER" "$SNUG_RAW_CONTAINER" "$SNUG_OPT_CONTAINER" >/dev/null 2>&1 || true
+docker rm -f "$REDIS_CONTAINER" "$SNUG_CONTAINER" >/dev/null 2>&1 || true
 
 python3 - "$ROOT_OUT" <<'PY'
 import json, pathlib, statistics, sys
