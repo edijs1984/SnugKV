@@ -1513,8 +1513,8 @@ func (s *TCPServer) OptimizeSample() {
 	if stats.Dropped > s.optimizerDroppedSeen {
 		s.optimizerDroppedSeen = stats.Dropped
 
-		keys := s.server.store.Stats().Keys
-		target := uint64(keys) * 2
+		keys := s.server.store.PhysicalKeyCount()
+		target := keys * 2
 		if target < 4096 {
 			target = 4096
 		}
