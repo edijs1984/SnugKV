@@ -1,6 +1,6 @@
 package optimizer
 
-import (
+import (\n\t"runtime"
 	"bytes"
 	"snugkv/internal/engine"
 	"strconv"
@@ -299,42 +299,23 @@ func TestForegroundWriteDefersOptimizerDuringBurstThenResumes(t *testing.T) {
 	// The current foreground-priority design is timestamp based: repeated
 	// writes keep refreshing the quiet-window clock, while the optimizer is
 	// still guaranteed bounded progress after maxDeferral.
-	stopWrites := make(chan struct{})
-	writesStopped := make(chan struct{})
-	go func() {
-		defer close(writesStopped)
-		ticker := time.NewTicker(time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-stopWrites:
-				return
-			case <-ticker.C:
-				o.NoteForegroundWrite()
-			}
-		}
-	}()
-
 	o.NoteForegroundWrite()
 	if !o.Queue("k") {
-		close(stopWrites)
-		<-writesStopped
 		t.Fatal("queue rejected")
 	}
 
-	// waitForForegroundQuiet intentionally caps deferral at 50 ms so sustained
-	// traffic cannot starve background convergence forever. We therefore only
-	// require the queued rewrite to be deferred for a short burst, not blocked
-	// indefinitely.
-	time.Sleep(20 * time.Millisecond)
-	if got := o.Stats().Rewritten; got != 0 {
-		close(stopWrites)
-		<-writesStopped
-		t.Fatalf("optimizer rewrote before foreground deferral elapsed: %d", got)
+	// Keep the foreground timestamp continuously fresh for a bounded burst.
+	// A ticker is intentionally avoided here: under scheduler pressure a 1 ms
+	// ticker may be delivered more than quietWindow late, which makes the worker
+	// correctly observe a quiet gap and turns this into a flaky timing test.
+	burstDeadline := time.Now().Add(20 * time.Millisecond)
+	for time.Now().Before(burstDeadline) {
+		o.NoteForegroundWrite()
+		runtime.Gosched()
+		if got := o.Stats().Rewritten; got != 0 {
+			t.Fatalf("optimizer rewrote before foreground deferral elapsed: %d", got)
+		}
 	}
-
-	close(stopWrites)
-	<-writesStopped
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
