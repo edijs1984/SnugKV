@@ -32,3 +32,40 @@ new SnugKV({
 ```
 
 Automatic pipelining is enabled by default. A batch flushes on the next microtask, or immediately when a configured command/byte threshold is reached.
+
+
+## Auto-pipeline observability
+
+`client.stats()` exposes client-side transport counters:
+
+```ts
+{
+  commands,
+  socketWrites,
+  autoPipelineBatches,
+  batchedCommands,
+}
+```
+
+These counters make it possible to verify how effectively application traffic is being coalesced without changing command semantics.
+
+## Benchmark
+
+With SnugKV listening on `127.0.0.1:6383`:
+
+```bash
+npm run bench:autopipeline
+```
+
+The benchmark clears the database before every case, runs three repetitions by default, and compares immediate writes, automatic pipeline caps of 32/64/128/256/512, and an explicit 256-command pipeline.
+
+Environment overrides:
+
+```bash
+OPS=200000 \
+CONCURRENCY=512 \
+VALUE_BYTES=1024 \
+REPEATS=3 \
+BATCHES=32,64,128,256,512 \
+npm run bench:autopipeline
+```
