@@ -64,9 +64,6 @@ func (w *serializedResponseWriter) writeBulkBuffered(payload []byte) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	// Ordinary bulk replies fit in the retained per-connection buffer. Build
-	// the RESP header directly into that buffer so the temporary header slice
-	// cannot escape and allocate on every GET.
 	const maxBulkHeaderBytes = 32
 	totalUpperBound := len(payload) + maxBulkHeaderBytes + 2
 	if totalUpperBound <= cap(w.buf) {
@@ -83,8 +80,6 @@ func (w *serializedResponseWriter) writeBulkBuffered(payload []byte) error {
 		return nil
 	}
 
-	// Oversized replies bypass the retained buffer. This path is uncommon and
-	// intentionally keeps the small stack header used by large-value writes.
 	var header [32]byte
 	header[0] = '$'
 	framed := strconv.AppendInt(header[:1], int64(len(payload)), 10)
@@ -118,63 +113,4 @@ func (w *serializedResponseWriter) flushLocked() error {
 	w.buf = w.buf[:0]
 	return nil
 }
-)
-		w.buf = strconv.AppendInt(w.buf, int64(len(payload)), 10)
-		w.buf = append(w.buf, '\r', '\n')
-		w.buf = append(w.buf, payload...)
-		w.buf = append(w.buf, '\r', '\n')
-		return nil
-	}
 
-	// Oversized replies bypass the retained buffer. This path is uncommon and
-	// intentionally keeps the small stack header used by large-value writes.
-	var header [32]byte
-	header[0] = '
-func (w *serializedResponseWriter) flush() error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.flushLocked()
-}
-
-func (w *serializedResponseWriter) flushLocked() error {
-	if len(w.buf) == 0 {
-		return nil
-	}
-	if err := w.server.write(w.conn, w.buf); err != nil {
-		return err
-	}
-	w.buf = w.buf[:0]
-	return nil
-}
-
-	framed := strconv.AppendInt(header[:1], int64(len(payload)), 10)
-	framed = append(framed, '\r', '\n')
-
-	if err := w.flushLocked(); err != nil {
-		return err
-	}
-	if err := w.server.write(w.conn, framed); err != nil {
-		return err
-	}
-	if err := w.server.write(w.conn, payload); err != nil {
-		return err
-	}
-	return w.server.write(w.conn, []byte{'\r', '\n'})
-}
-
-func (w *serializedResponseWriter) flush() error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.flushLocked()
-}
-
-func (w *serializedResponseWriter) flushLocked() error {
-	if len(w.buf) == 0 {
-		return nil
-	}
-	if err := w.server.write(w.conn, w.buf); err != nil {
-		return err
-	}
-	w.buf = w.buf[:0]
-	return nil
-}
