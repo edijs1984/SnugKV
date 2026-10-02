@@ -17,7 +17,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test dist/test/*.test.js",
-    "bench:autopipeline": "npm run build && node benchmarks/autopipeline.mjs"
+    "bench:autopipeline": "npm run build && node benchmarks/autopipeline.mjs",
+    "bench:latency": "npm run build && node benchmarks/latency.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
