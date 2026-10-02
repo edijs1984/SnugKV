@@ -10,6 +10,13 @@ export interface SnugKVOptions {
   connectTimeoutMs?: number;
 }
 
+export interface SnugKVClientStats {
+  commands: number;
+  socketWrites: number;
+  autoPipelineBatches: number;
+  batchedCommands: number;
+}
+
 type CommandArg = string | Buffer | number;
 
 interface PendingCommand {
@@ -34,6 +41,10 @@ export class SnugKV {
   private flushScheduled = false;
   private connected = false;
   private closing = false;
+  private commandCount = 0;
+  private socketWriteCount = 0;
+  private autoPipelineBatchCount = 0;
+  private batchedCommandCount = 0;
 
   constructor(options: SnugKVOptions = {}) {
     this.host = options.host ?? "127.0.0.1";
@@ -99,16 +110,27 @@ export class SnugKV {
     }
   }
 
+  stats(): SnugKVClientStats {
+    return {
+      commands: this.commandCount,
+      socketWrites: this.socketWriteCount,
+      autoPipelineBatches: this.autoPipelineBatchCount,
+      batchedCommands: this.batchedCommandCount,
+    };
+  }
+
   command(args: readonly CommandArg[]): Promise<RespValue> {
     if (!this.connected || !this.socket) {
       return Promise.reject(new Error("SnugKV client is not connected"));
     }
 
     const encoded = encodeCommand(args);
+    this.commandCount++;
     return new Promise<RespValue>((resolve, reject) => {
       const pending: PendingCommand = { encoded, resolve, reject };
       if (!this.autoPipeline) {
         this.pendingReplies.push(pending);
+        this.socketWriteCount++;
         this.socket!.write(encoded);
         return;
       }
@@ -161,6 +183,7 @@ export class SnugKV {
     }
     if (commands.length === 0) return [];
 
+    this.commandCount += commands.length;
     const promises = commands.map((args) => {
       const encoded = encodeCommand(args);
       return new Promise<RespValue>((resolve, reject) => {
@@ -185,6 +208,11 @@ export class SnugKV {
     const batch = this.queue.splice(0);
     this.queueBytes = 0;
     this.pendingReplies.push(...batch);
+    this.socketWriteCount++;
+    if (batch.length > 1) {
+      this.autoPipelineBatchCount++;
+      this.batchedCommandCount += batch.length;
+    }
     this.socket.write(Buffer.concat(batch.map((pending) => pending.encoded)));
   }
 
