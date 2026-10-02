@@ -288,13 +288,9 @@ func (s *Server) executeAuthorizedConcurrentNativeMutation(args [][]byte) (respo
 	switch {
 	case len(args) == 4 && bytes.EqualFold(args[0], []byte("HSET")):
 		kind = 'h'
-	case len(args) == 3 && bytes.EqualFold(args[0], []byte("RPUSH")):
-		kind = 'l'
-	case len(args) == 3 && bytes.EqualFold(args[0], []byte("SADD")):
+		case len(args) == 3 && bytes.EqualFold(args[0], []byte("SADD")):
 		kind = 's'
-	case len(args) == 4 && bytes.EqualFold(args[0], []byte("ZADD")):
-		kind = 'z'
-	default:
+		default:
 		return nil, false, nil
 	}
 
@@ -345,16 +341,6 @@ func (s *Server) executeAuthorizedConcurrentNativeMutation(args [][]byte) (respo
 	}
 
 	response = integerReply(result)
-	// The generic durable path signals blocked list/zset clients after a
-	// successful mutation. Preserve the same semantics on the direct native
-	// fast path; otherwise RPUSH/ZADD can publish data without waking BLPOP,
-	// BRPOPLPUSH, BZPOPMIN, and related waiters.
-	switch kind {
-	case 'l':
-		s.signalListAvailability(args, response)
-	case 'z':
-		s.signalZSetAvailability(args, response)
-	}
 	return response, true, nil
 }
 
@@ -1078,14 +1064,10 @@ func isConcurrentScalarCommand(args [][]byte) bool {
 	// they do not need the process-wide exclusive durability lock. Keep the
 	// fast path deliberately narrow: complex option/multi-value forms continue
 	// through the conservative serialized path until separately audited.
-	if len(args) == 4 &&
-		(bytes.EqualFold(args[0], []byte("HSET")) ||
-			bytes.EqualFold(args[0], []byte("ZADD"))) {
+	if len(args) == 4 && bytes.EqualFold(args[0], []byte("HSET")) {
 		return true
 	}
-	if len(args) == 3 &&
-		(bytes.EqualFold(args[0], []byte("RPUSH")) ||
-			bytes.EqualFold(args[0], []byte("SADD"))) {
+	if len(args) == 3 && bytes.EqualFold(args[0], []byte("SADD")) {
 		return true
 	}
 
