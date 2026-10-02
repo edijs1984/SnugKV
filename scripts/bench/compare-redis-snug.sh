@@ -17,8 +17,9 @@ WORKERS="${WORKERS:-4}"
 PIPELINE="${PIPELINE:-256}"
 RUNS="${RUNS:-3}"
 
-REDIS_CONTAINER="${REDIS_CONTAINER:-snug-bench-redis}"
-SNUG_CONTAINER="${SNUG_CONTAINER:-snug-bench-snugkv}"
+REDIS_PIDFILE="${REDIS_PIDFILE:-/tmp/snug-bench-redis.pid}"
+SNUG_PIDFILE="${SNUG_PIDFILE:-/tmp/snug-bench-snug.pid}"
+SNUG_BIN="${SNUG_BIN:-/tmp/snugkv-bench}"
 
 PPROF_URL="${PPROF_URL:-http://127.0.0.1:6060/debug/pprof/heap}"
 CAPTURE_HEAP="${CAPTURE_HEAP:-1}"
@@ -30,40 +31,22 @@ mkdir -p "$OUT_DIR"
 echo "Building rediswirebench..."
 go build -o /tmp/rediswirebench ./cmd/rediswirebench
 
-container_bytes() {
-  local container="$1"
-  if ! docker inspect "$container" >/dev/null 2>&1; then
+process_rss_bytes() {
+  local pidfile="$1"
+  if [[ ! -f "$pidfile" ]]; then
     echo 0
     return
   fi
 
-  local raw
-  raw="$(docker stats --no-stream --format '{{.MemUsage}}' "$container" | awk -F/ '{gsub(/^ +| +$/, "", $1); print $1}')"
+  local pid
+  pid="$(cat "$pidfile" 2>/dev/null || true)"
+  if [[ -z "$pid" || ! -r "/proc/$pid/status" ]]; then
+    echo 0
+    return
+  fi
 
-  python3 - "$raw" <<'PY'
-import re, sys
-s=sys.argv[1].strip()
-m=re.fullmatch(r"([0-9.]+)([KMGTP]?i?B)", s)
-if not m:
-    print(0)
-    raise SystemExit
-n=float(m.group(1))
-u=m.group(2)
-mult={
-    "B":1,
-    "KB":1000,
-    "MB":1000**2,
-    "GB":1000**3,
-    "TB":1000**4,
-    "KiB":1024,
-    "MiB":1024**2,
-    "GiB":1024**3,
-    "TiB":1024**4,
+  awk '/^VmRSS:/{print $2 * 1024; exit}' "/proc/$pid/status"
 }
-print(int(n*mult[u]))
-PY
-}
-
 server_used_memory() {
   local addr="$1"
   redis-cli -h "${addr%:*}" -p "${addr##*:}" --raw INFO memory \
@@ -142,9 +125,9 @@ with open(p) as f:
     d=json.load(f)
 b=int(sys.argv[2])
 a=int(sys.argv[3])
-d["container_memory_before"]=b
-d["container_memory_after"]=a
-d["container_memory_delta"]=max(0,a-b)
+d["process_rss_before"]=b
+d["process_rss_after"]=a
+d["process_rss_delta"]=max(0,a-b)
 with open(p,"w") as f:
     json.dump(d,f,separators=(",",":"))
 PY
@@ -176,13 +159,13 @@ run_one() {
   local name="$1"
   local addr="$2"
   local run="$3"
-  local container="$4"
+  local pidfile="$4"
 
   redis-cli -h "${addr%:*}" -p "${addr##*:}" FLUSHDB >/dev/null
   sleep 0.2
 
   local mem_before mem_after
-  mem_before="$(container_bytes "$container")"
+  mem_before="$(process_rss_bytes "$pidfile")"
 
   echo
   echo "===== $name run $run/$RUNS: load ====="
@@ -209,7 +192,7 @@ PY
   read -r settled_memory settle_actual_ms < <(wait_for_memory_stable "$addr" "$name")
   annotate_settled_memory "$OUT_DIR/${name}-run${run}-load.json" "$settled_memory" "$settle_actual_ms"
 
-  mem_after="$(container_bytes "$container")"
+  mem_after="$(process_rss_bytes "$pidfile")"
   annotate_memory "$OUT_DIR/${name}-run${run}-load.json" "$mem_before" "$mem_after"
   capture_heap_profile "$name" "$run"
   cat "$OUT_DIR/${name}-run${run}-load.json"
@@ -244,11 +227,11 @@ for run in $(seq 1 "$RUNS"); do
   if [[ "$FRESH_SERVERS" == "1" ]]; then
     echo
     echo "===== restarting benchmark servers for run $run/$RUNS ====="
-    BUILD_IMAGE=0 bash scripts/bench/start-fair-servers.sh >/dev/null
+    BUILD_SNUG=1 SNUG_BIN="$SNUG_BIN" bash scripts/bench/start-fair-servers.sh >/dev/null
   fi
 
-  run_one redis "$REDIS_ADDR" "$run" "$REDIS_CONTAINER"
-  run_one snug "$SNUG_ADDR" "$run" "$SNUG_CONTAINER"
+  run_one redis "$REDIS_ADDR" "$run" "$REDIS_PIDFILE"
+  run_one snug "$SNUG_ADDR" "$run" "$SNUG_PIDFILE"
 done
 
 python3 - "$OUT_DIR" <<'PY'
@@ -278,8 +261,8 @@ for (server, workload), items in sorted(groups.items()):
     if workload == "load":
         entry["bytes_per_key_delta_median"] = statistics.median(x["bytes_per_key_delta"] for x in items)
         entry["used_memory_after_median"] = statistics.median(x["used_memory_after"] for x in items)
-        entry["container_memory_after_median"] = statistics.median(x.get("container_memory_after",0) for x in items)
-        entry["container_memory_delta_median"] = statistics.median(x.get("container_memory_delta",0) for x in items)
+        entry["process_rss_after_median"] = statistics.median(x.get("process_rss_after",0) for x in items)
+        entry["process_rss_delta_median"] = statistics.median(x.get("process_rss_delta",0) for x in items)
     summary.append(entry)
 
 with (root / "summary.json").open("w") as f:
