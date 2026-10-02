@@ -333,6 +333,10 @@ var configuredSetBatchLimit = func() int {
 	return n
 }()
 
+var configuredShardLocalSet = func() bool {
+	return os.Getenv("SNUG_SHARD_LOCAL_SET") == "1"
+}()
+
 func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 	// Pub/Sub delivery can write from a publisher's goroutine while this
 	// connection goroutine is blocked reading the next subscriber command.
