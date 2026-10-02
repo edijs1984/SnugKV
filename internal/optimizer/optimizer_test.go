@@ -1,6 +1,7 @@
 package optimizer
 
-import (\n\t"runtime"
+import (
+	"runtime"
 	"bytes"
 	"snugkv/internal/engine"
 	"strconv"
