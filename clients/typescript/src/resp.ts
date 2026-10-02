@@ -1,16 +1,17 @@
-export type RespValue =
-  | string
-  | number
-  | Buffer
-  | null
-  | RespValue[];
-
 export class RespError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "RespError";
   }
 }
+
+export type RespValue =
+  | string
+  | number
+  | Buffer
+  | null
+  | RespError
+  | RespValue[];
 
 export function encodeCommand(args: readonly (string | Buffer | number)[]): Buffer {
   const parts: Buffer[] = [Buffer.from(`*${args.length}\r\n`)];
@@ -51,7 +52,7 @@ export class RespDecoder {
       case 43:
         return { value: line!.text, next: line!.next };
       case 45:
-        return { value: new RespError(line!.text) as unknown as RespValue, next: line!.next };
+        return { value: new RespError(line!.text), next: line!.next };
       case 58:
         return { value: Number(line!.text), next: line!.next };
       case 36: {
