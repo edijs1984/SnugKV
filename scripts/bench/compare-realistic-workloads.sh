@@ -1,20 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Fast realistic comparison.
-#
-# Defaults are intentionally modest:
-# - one server process/container at a time;
-# - Redis and adaptive SnugKV sequentially;
-# - one run per profile;
-# - LOAD + GET only;
-# - fixed post-load settle instead of waiting up to 120s for "stability".
-#
-# Opt into the expensive cases when needed:
-#   SERVERS="redis snug"
-#   WORKLOADS="load get mixed ttl"
-#   RUNS=3
-#   MIXED_OPS=1000000 TTL_OPS=1000000
+# Isolated native Redis vs adaptive SnugKV benchmark.
+# One database process is resident at a time.
 
 KEYS="${KEYS:-1000000}"
 GET_OPS="${GET_OPS:-2000000}"
@@ -27,14 +15,14 @@ SETTLE_MS="${SETTLE_MS:-10000}"
 SERVERS="${SERVERS:-redis snug}"
 WORKLOADS="${WORKLOADS:-load get}"
 ROOT_OUT="${ROOT_OUT:-benchmark-results/realistic-$(date +%Y%m%d-%H%M%S)}"
-BUILD_IMAGE="${BUILD_IMAGE:-1}"
+BUILD_SNUG="${BUILD_SNUG:-1}"
 PROFILE="${PROFILE:-}"
 
 REDIS_ADDR="${REDIS_ADDR:-127.0.0.1:6390}"
 SNUG_ADDR="${SNUG_ADDR:-127.0.0.1:6383}"
-
-REDIS_CONTAINER="${REDIS_CONTAINER:-snug-bench-redis}"
-SNUG_CONTAINER="${SNUG_CONTAINER:-snug-bench-snugkv}"
+REDIS_PIDFILE="${REDIS_PIDFILE:-/tmp/snug-bench-redis.pid}"
+SNUG_PIDFILE="${SNUG_PIDFILE:-/tmp/snug-bench-snug.pid}"
+SNUG_BIN="${SNUG_BIN:-/tmp/snugkv-bench}"
 
 profiles=(
   "session-json:384"
@@ -67,14 +55,9 @@ fi
 mkdir -p "$ROOT_OUT"
 go build -o /tmp/rediswirebench ./cmd/rediswirebench
 
-# Build SnugKV exactly once before any measurements so benchmark containers
-# always use the current checkout. Individual server starts then reuse this
-# fresh image to avoid rebuilding between isolated runs.
-if [[ "$BUILD_IMAGE" == "1" ]]; then
-  echo "Building fresh SnugKV benchmark image from current checkout..."
-  docker build -t "${SNUG_IMAGE:-snugkv-bench:local}" .
-else
-  echo "WARNING: BUILD_IMAGE=0; reusing existing SnugKV benchmark image"
+if [[ "$BUILD_SNUG" == "1" ]]; then
+  echo "Building fresh native SnugKV benchmark binary..."
+  go build -trimpath -o "$SNUG_BIN" ./cmd/snugkv
 fi
 
 server_addr() {
@@ -85,58 +68,67 @@ server_addr() {
   esac
 }
 
-server_label() {
+server_pidfile() {
   case "$1" in
-    redis) echo "redis" ;;
-    snug) echo "snug" ;;
+    redis) echo "$REDIS_PIDFILE" ;;
+    snug) echo "$SNUG_PIDFILE" ;;
+    *) echo "unknown server $1" >&2; exit 2 ;;
   esac
 }
 
-container_name() {
-  case "$1" in
-    redis) echo "$REDIS_CONTAINER" ;;
-    snug) echo "$SNUG_CONTAINER" ;;
-  esac
-}
-
-container_bytes() {
-  local container="$1"
-  if ! docker inspect "$container" >/dev/null 2>&1; then
+process_rss_bytes() {
+  local pidfile="$1"
+  if [[ ! -f "$pidfile" ]]; then
     echo 0
     return
   fi
-  local raw
-  raw="$(docker stats --no-stream --format '{{.MemUsage}}' "$container" | awk -F/ '{gsub(/^ +| +$/, "", $1); print $1}')"
-  python3 - "$raw" <<'PY'
-import re, sys
-s=sys.argv[1].strip()
-m=re.fullmatch(r"([0-9.]+)([KMGTP]?i?B)", s)
-if not m:
-    print(0); raise SystemExit
-n=float(m.group(1)); u=m.group(2)
-mult={"B":1,"KB":1000,"MB":1000**2,"GB":1000**3,"TB":1000**4,
-      "KiB":1024,"MiB":1024**2,"GiB":1024**3,"TiB":1024**4}
-print(int(n*mult[u]))
-PY
+  local pid
+  pid="$(cat "$pidfile" 2>/dev/null || true)"
+  if [[ -z "$pid" || ! -r "/proc/$pid/status" ]]; then
+    echo 0
+    return
+  fi
+  awk '/^VmRSS:/{print $2 * 1024; exit}' "/proc/$pid/status"
 }
 
-annotate_container_memory() {
+stop_server() {
+  local server="$1"
+  local pidfile
+  pidfile="$(server_pidfile "$server")"
+  if [[ ! -f "$pidfile" ]]; then
+    return
+  fi
+  local pid
+  pid="$(cat "$pidfile" 2>/dev/null || true)"
+  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    for _ in $(seq 1 50); do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.02
+    done
+    kill -9 "$pid" 2>/dev/null || true
+  fi
+  rm -f "$pidfile"
+}
+
+annotate_process_memory() {
   local path="$1" bytes="$2"
   python3 - "$path" "$bytes" <<'PY'
 import json, sys
 p=sys.argv[1]
-with open(p) as f: d=json.load(f)
-d["container_memory_after"]=int(sys.argv[2])
-with open(p,"w") as f: json.dump(d,f,separators=(",",":"))
+with open(p) as f:
+    d=json.load(f)
+d["process_rss_after"]=int(float(sys.argv[2]))
+with open(p,"w") as f:
+    json.dump(d,f,separators=(",",":"))
 PY
 }
 
 run_workload() {
   local server="$1" profile="$2" bytes="$3" workload="$4" run="$5"
-  local addr label ops out
+  local addr ops out
   addr="$(server_addr "$server")"
-  label="$(server_label "$server")"
-  out="$ROOT_OUT/$profile/${label}-run${run}-${workload}.json"
+  out="$ROOT_OUT/$profile/${server}-run${run}-${workload}.json"
   mkdir -p "$ROOT_OUT/$profile"
 
   case "$workload" in
@@ -147,10 +139,10 @@ run_workload() {
     *) echo "unknown workload $workload" >&2; exit 2 ;;
   esac
 
-  echo "===== $profile | $label | run $run/$RUNS | $workload ====="
+  echo "===== $profile | $server | run $run/$RUNS | $workload ====="
 
   args=(
-    -server "$label"
+    -server "$server"
     -addr "$addr"
     -workload "$workload"
     -keys "$KEYS"
@@ -169,35 +161,32 @@ run_workload() {
   /tmp/rediswirebench "${args[@]}" > "$out"
 
   if [[ "$workload" == "load" ]]; then
-    annotate_container_memory "$out" "$(container_bytes "$(container_name "$server")")"
+    annotate_process_memory "$out" "$(process_rss_bytes "$(server_pidfile "$server")")"
   fi
 
   cat "$out"
 }
 
-echo "Realistic benchmark"
-echo "  servers:   $SERVERS"
-echo "  workloads: $WORKLOADS"
-echo "  profiles:  ${#profiles[@]}"
-[[ -n "$PROFILE" ]] && echo "  profile:   $PROFILE"
-echo "  runs:      $RUNS"
-echo "  keys:      $KEYS"
-echo "  get_ops:   $GET_OPS"
-echo "  mixed_ops: $MIXED_OPS"
-echo "  ttl_ops:   $TTL_OPS"
-echo "  settle_ms: $SETTLE_MS"
-echo "  output:    $ROOT_OUT"
-echo "  build_image: $BUILD_IMAGE"
+cleanup() {
+  stop_server redis
+  stop_server snug
+}
+trap cleanup EXIT INT TERM
 
-# Strict isolation model:
-#   for each profile/run:
-#     kill all benchmark servers
-#     start Redis -> run -> kill
-#     start adaptive SnugKV -> run -> kill
-#
-# Only the servers selected in $SERVERS are executed, but every selected server
-# gets a completely fresh process/container. No database process is left resident
-# while another database is benchmarked.
+echo "Native realistic benchmark"
+echo "  servers:    $SERVERS"
+echo "  workloads:  $WORKLOADS"
+echo "  profiles:   ${#profiles[@]}"
+[[ -n "$PROFILE" ]] && echo "  profile:    $PROFILE"
+echo "  runs:       $RUNS"
+echo "  keys:       $KEYS"
+echo "  get_ops:    $GET_OPS"
+echo "  workers:    $WORKERS"
+echo "  pipeline:   $PIPELINE"
+echo "  settle_ms:  $SETTLE_MS"
+echo "  output:     $ROOT_OUT"
+echo "  snug_bin:   $SNUG_BIN"
+
 for spec in "${profiles[@]}"; do
   profile="${spec%%:*}"
   bytes="${spec##*:}"
@@ -210,13 +199,10 @@ for spec in "${profiles[@]}"; do
   for run in $(seq 1 "$RUNS"); do
     for server in $SERVERS; do
       echo
-      echo "---- fresh $server | profile=$profile | run $run/$RUNS ----"
+      echo "---- fresh native $server | profile=$profile | run $run/$RUNS ----"
 
-      # start-one-server.sh begins by removing all Redis/Snug benchmark containers.
-      BUILD_IMAGE=0 bash scripts/bench/start-one-server.sh "$server"
+      BUILD_SNUG=0 SNUG_BIN="$SNUG_BIN" bash scripts/bench/start-one-server.sh "$server"
 
-      # LOAD must precede reads/mutations. If LOAD is omitted explicitly,
-      # preload once so GET/mixed/ttl still have a dataset.
       if [[ " $WORKLOADS " != *" load "* ]]; then
         run_workload "$server" "$profile" "$bytes" load "$run" >/dev/null
       fi
@@ -225,13 +211,10 @@ for spec in "${profiles[@]}"; do
         run_workload "$server" "$profile" "$bytes" "$workload" "$run"
       done
 
-      docker rm -f "$(container_name "$server")" >/dev/null 2>&1 || true
+      stop_server "$server"
     done
   done
 done
-
-# Leave the machine clean even if the selected server list changes later.
-docker rm -f "$REDIS_CONTAINER" "$SNUG_CONTAINER" >/dev/null 2>&1 || true
 
 python3 - "$ROOT_OUT" <<'PY'
 import json, pathlib, statistics, sys
@@ -263,17 +246,18 @@ for (profile,server,workload),items in sorted(groups.items()):
     if workload=="load":
         e["bytes_per_key_delta_median"]=statistics.median(x["bytes_per_key_delta"] for x in items)
         e["used_memory_after_median"]=statistics.median(x["used_memory_after"] for x in items)
-        e["container_memory_after_median"]=statistics.median(x.get("container_memory_after",0) for x in items)
+        e["process_rss_after_median"]=statistics.median(x.get("process_rss_after",0) for x in items)
     summary.append(e)
 
 out=root/"matrix-summary.json"
-with out.open("w") as f: json.dump(summary,f,indent=2)
+with out.open("w") as f:
+    json.dump(summary,f,indent=2)
 
 print("\n===== SUMMARY =====")
 for r in summary:
     extra=""
     if r["workload"]=="load":
-        extra=f' bpk={r["bytes_per_key_delta_median"]:.2f}'
+        extra=f' bpk={r["bytes_per_key_delta_median"]:.2f} rss={r["process_rss_after_median"]/1024/1024:.1f}MiB'
     print(f'{r["profile"]:14} {r["server"]:9} {r["workload"]:5} '
           f'{r["ops_per_second_median"]:10.0f}/s p95={r["p95_us_median"]:8.2f}us{extra}')
 print("\ncombined summary:",out)
