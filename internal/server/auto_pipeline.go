@@ -1,6 +1,8 @@
 package server
 
 import (
+	"runtime"
+	"snugkv/internal/index"
 	"sync"
 	"time"
 )
@@ -16,13 +18,18 @@ type autoSetResult struct {
 	err     error
 }
 
+type autoSetBatchLane struct {
+	server   *Server
+	maxBatch int
+	maxWait  time.Duration
+	queue    chan *autoSetRequest
+	stop     chan struct{}
+	stopped  chan struct{}
+}
+
 type autoSetBatcher struct {
-	server    *Server
-	maxBatch  int
-	maxWait   time.Duration
-	queue     chan *autoSetRequest
-	stop      chan struct{}
-	stopped   chan struct{}
+	lanes     []*autoSetBatchLane
+	laneMask  uint64
 	closeOnce sync.Once
 }
 
@@ -33,15 +40,36 @@ func newAutoSetBatcher(server *Server, maxBatch int, maxWait time.Duration) *aut
 	if maxWait <= 0 {
 		maxWait = 25 * time.Microsecond
 	}
-	b := &autoSetBatcher{
-		server:   server,
-		maxBatch: maxBatch,
-		maxWait:  maxWait,
-		queue:    make(chan *autoSetRequest, maxBatch*64),
-		stop:     make(chan struct{}),
-		stopped:  make(chan struct{}),
+
+	laneCount := runtime.GOMAXPROCS(0)
+	if laneCount < 1 {
+		laneCount = 1
 	}
-	go b.run()
+	// Keep lane selection as a cheap mask while avoiding excessive scheduler
+	// fragmentation on large machines. Four lanes on a four-core host preserve
+	// shard parallelism while still leaving enough concurrent requests to batch.
+	pow2 := 1
+	for pow2 < laneCount && pow2 < 16 {
+		pow2 <<= 1
+	}
+	laneCount = pow2
+
+	b := &autoSetBatcher{
+		lanes:    make([]*autoSetBatchLane, laneCount),
+		laneMask: uint64(laneCount - 1),
+	}
+	for i := range b.lanes {
+		lane := &autoSetBatchLane{
+			server:   server,
+			maxBatch: maxBatch,
+			maxWait:  maxWait,
+			queue:    make(chan *autoSetRequest, maxBatch*16),
+			stop:     make(chan struct{}),
+			stopped:  make(chan struct{}),
+		}
+		b.lanes[i] = lane
+		go lane.run()
+	}
 	return b
 }
 
@@ -50,32 +78,42 @@ func (b *autoSetBatcher) close() {
 		return
 	}
 	b.closeOnce.Do(func() {
-		close(b.stop)
-		<-b.stopped
+		for _, lane := range b.lanes {
+			close(lane.stop)
+		}
+		for _, lane := range b.lanes {
+			<-lane.stopped
+		}
 	})
 }
 
 func (b *autoSetBatcher) submit(key, value []byte) (bool, error) {
+	if b == nil || len(b.lanes) == 0 {
+		return false, nil
+	}
+	hash := index.HashBytes(key)
+	lane := b.lanes[(hash>>32)&b.laneMask]
+
 	req := &autoSetRequest{
 		key:   key,
 		value: value,
 		done:  make(chan autoSetResult, 1),
 	}
 	select {
-	case b.queue <- req:
-	case <-b.stop:
+	case lane.queue <- req:
+	case <-lane.stop:
 		return false, nil
 	}
 
 	select {
 	case result := <-req.done:
 		return result.handled, result.err
-	case <-b.stop:
+	case <-lane.stop:
 		return false, nil
 	}
 }
 
-func (b *autoSetBatcher) run() {
+func (b *autoSetBatchLane) run() {
 	defer close(b.stopped)
 
 	batch := make([]*autoSetRequest, 0, b.maxBatch)
@@ -102,7 +140,8 @@ func (b *autoSetBatcher) run() {
 		timer.Reset(b.maxWait)
 	collect:
 		for len(batch) < b.maxBatch {
-			// Drain requests already queued before paying timer/select overhead.
+			// Drain already queued work first. This is the hot heavy-load path
+			// and avoids a timer/select round trip for every request.
 			select {
 			case req := <-b.queue:
 				batch = append(batch, req)
@@ -158,7 +197,7 @@ func (b *autoSetBatcher) run() {
 	}
 }
 
-func (b *autoSetBatcher) failPending() {
+func (b *autoSetBatchLane) failPending() {
 	for {
 		select {
 		case req := <-b.queue:
