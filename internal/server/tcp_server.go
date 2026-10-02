@@ -31,7 +31,6 @@ type TCPServer struct {
 	optimizerMaintainTicks   uint64
 	optimizerDroppedSeen     uint64
 	optimizerRecoveryBudget  uint64
-	autoSetBatcher           *autoSetBatcher
 	listener                 net.Listener
 	server                   *Server
 	config                   config.Config
@@ -241,13 +240,6 @@ func ListenWithJournal(c config.Config, store *engine.Store, journal Journal) (*
 	}
 	s.server.eviction = c.EvictionPolicy
 	s.server.SetJournal(journal)
-	if configuredAutoPipeline {
-		s.autoSetBatcher = newAutoSetBatcher(
-			s.server,
-			configuredAutoPipelineBatch,
-			configuredAutoPipelineWait,
-		)
-	}
 	s.wg.Add(1)
 	go s.serve()
 	return s, nil
@@ -268,9 +260,6 @@ func (s *TCPServer) Close() error {
 		s.mu.Unlock()
 		if child != nil {
 			child.Close()
-		}
-		if s.autoSetBatcher != nil {
-			s.autoSetBatcher.close()
 		}
 		s.wg.Wait()
 		s.server.waitPersistenceJobs()
@@ -346,36 +335,6 @@ var configuredSetBatchLimit = func() int {
 
 var configuredShardLocalSet = func() bool {
 	return os.Getenv("SNUG_SHARD_LOCAL_SET") == "1"
-}()
-
-var configuredAutoPipeline = func() bool {
-	return os.Getenv("SNUG_AUTO_PIPELINE") == "1"
-}()
-
-var configuredAutoPipelineBatch = func() int {
-	const defaultBatch = 64
-	raw := os.Getenv("SNUG_AUTO_PIPELINE_BATCH")
-	if raw == "" {
-		return defaultBatch
-	}
-	n, err := strconv.Atoi(raw)
-	if err != nil || n < 2 || n > 256 {
-		return defaultBatch
-	}
-	return n
-}()
-
-var configuredAutoPipelineWait = func() time.Duration {
-	const defaultWaitUS = 25
-	raw := os.Getenv("SNUG_AUTO_PIPELINE_WAIT_US")
-	if raw == "" {
-		return defaultWaitUS * time.Microsecond
-	}
-	n, err := strconv.Atoi(raw)
-	if err != nil || n < 1 || n > 1000 {
-		return defaultWaitUS * time.Microsecond
-	}
-	return time.Duration(n) * time.Microsecond
 }()
 
 func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
@@ -1291,42 +1250,6 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 					}
 					continue
 				}
-			}
-		}
-
-		// A lone plain SET has no client-side pipeline to amortize execution.
-		// When auto-pipelining is enabled, briefly coalesce it with eligible SETs
-		// arriving on other connections. Explicit socket pipelines keep the
-		// existing per-connection batch path above and never pay this wait.
-		if borrowedSet &&
-			s.autoSetBatcher != nil &&
-			!s.adminOnly &&
-			!txSession.multi &&
-			reader.Buffered() == 0 &&
-			len(msg) == 3 &&
-			len(msg[2]) <= 32<<20 &&
-			!(clientSession.protocolVersion() == 2 && pubSession.active()) &&
-			s.server.journal == nil &&
-			!s.server.replication.primaryHasReplicas() &&
-			atomic.LoadUint32(&s.server.metricsEnabled) == 0 &&
-			s.server.store.MaxMemory() == 0 &&
-			s.server.watchSessions.Load() == 0 &&
-			!s.server.clusterEnabledSnapshot() {
-			autoStarted := time.Now()
-			handled, autoErr := s.autoSetBatcher.submit(msg[1], msg[2])
-			if handled {
-				s.server.recordSlowlogForClient(clientSession, msg, time.Since(autoStarted))
-				result := []byte("+OK\r\n")
-				if autoErr != nil {
-					result = errorResponse(autoErr)
-				}
-				if writeProtocol(msg, result) != nil {
-					return
-				}
-				if autoErr == nil {
-					s.invalidateTrackingKeys(clientSession, msg)
-				}
-				continue
 			}
 		}
 
