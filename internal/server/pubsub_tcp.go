@@ -75,7 +75,33 @@ func (w *serializedResponseWriter) writeBulkBuffered(payload []byte) error {
 				return err
 			}
 		}
-		w.buf = append(w.buf, '
+		w.buf = append(w.buf, '$')
+		w.buf = strconv.AppendInt(w.buf, int64(len(payload)), 10)
+		w.buf = append(w.buf, '\r', '\n')
+		w.buf = append(w.buf, payload...)
+		w.buf = append(w.buf, '\r', '\n')
+		return nil
+	}
+
+	// Oversized replies bypass the retained buffer. This path is uncommon and
+	// intentionally keeps the small stack header used by large-value writes.
+	var header [32]byte
+	header[0] = '$'
+	framed := strconv.AppendInt(header[:1], int64(len(payload)), 10)
+	framed = append(framed, '\r', '\n')
+
+	if err := w.flushLocked(); err != nil {
+		return err
+	}
+	if err := w.server.write(w.conn, framed); err != nil {
+		return err
+	}
+	if err := w.server.write(w.conn, payload); err != nil {
+		return err
+	}
+	return w.server.write(w.conn, []byte{'\r', '\n'})
+}
+
 func (w *serializedResponseWriter) flush() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
