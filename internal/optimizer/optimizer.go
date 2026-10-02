@@ -343,10 +343,12 @@ func (o *Optimizer) worker() {
 				candidateScratch = nil
 			}
 
+			class := o.store.OptimizationClassForValue(candidate.Value)
+
 			// JSON-shape learning belongs off the foreground SET path. Observe the
 			// dequeued value once here; once the admission threshold is reached,
 			// EncodeCandidate below can immediately select the shared shape.
-			if o.store.OptimizationClassForValue(candidate.Value) == engine.OptimizationJSON {
+			if class == engine.OptimizationJSON {
 				o.store.ObserveJSONShape(candidate.Key, candidate.Value)
 			}
 
@@ -374,6 +376,13 @@ func (o *Optimizer) worker() {
 			}
 			requiredSaving := 16 + additionalMetadataBytes
 			if saving < requiredSaving || saving*8 < candidate.EncodedBytes {
+				// Plain compression candidates that fail the savings threshold
+				// have now been classified. Finalize that exact generation as
+				// terminal RAW so future reads take the zero-copy raw path and
+				// periodic sampling does not keep paying compression cost.
+				if class == engine.OptimizationCompress {
+					o.store.MarkRawStable(candidate.Key, candidate.Version)
+				}
 				atomic.AddUint64(&o.skipped, 1)
 				o.release(rawBytes)
 				continue
