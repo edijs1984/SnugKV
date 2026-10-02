@@ -148,7 +148,7 @@ func TestAuthorizedConcurrentRawGetFastPath(t *testing.T) {
 	}
 }
 
-func TestAuthorizedConcurrentRawGetFallsBackWhenEncodingEnabled(t *testing.T) {
+func TestAuthorizedConcurrentRawGetFastPathWithAdaptiveEncoding(t *testing.T) {
 	store, err := engine.NewWithOptions(engine.Options{
 		Shards:   256,
 		Encoding: true,
@@ -162,10 +162,42 @@ func TestAuthorizedConcurrentRawGetFallsBackWhenEncodingEnabled(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	var payload []byte
+	handled, err := s.executeAuthorizedConcurrentRawGet(
+		[][]byte{[]byte("GET"), []byte("key")},
+		func(value []byte) error {
+			payload = append(payload, value...)
+			return nil
+		},
+	)
+	if err != nil || !handled {
+		t.Fatalf("handled=%t err=%v", handled, err)
+	}
+	if string(payload) != "value" {
+		t.Fatalf("payload=%q", payload)
+	}
+}
+
+func TestAuthorizedConcurrentRawGetFallsBackForEncodedValue(t *testing.T) {
+	store, err := engine.NewWithOptions(engine.Options{
+		Shards:   256,
+		Encoding: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New(store)
+
+	// Numeric strings use the synchronous scalar encoding path, so this value
+	// must not be exposed through the RAW arena visitor.
+	if err := store.Set("key", []byte("123456"), 0); err != nil {
+		t.Fatal(err)
+	}
+
 	handled, err := s.executeAuthorizedConcurrentRawGet(
 		[][]byte{[]byte("GET"), []byte("key")},
 		func([]byte) error {
-			t.Fatal("encoded store unexpectedly used raw visitor")
+			t.Fatal("encoded value unexpectedly used raw visitor")
 			return nil
 		},
 	)
