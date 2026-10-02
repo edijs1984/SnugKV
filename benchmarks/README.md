@@ -86,7 +86,7 @@ so this figure is not presented as a Redis comparison.
 The optimized SET path reached this point through allocation and hot-path work
 rather than disabling memory features: plain SET borrows transient request bytes
 until arena ownership, complete pipelined SET frames use reusable connection
-scratch, optimizer candidates reuse per-worker scratch and borrowed raw fallbacks,
+scratch, optimizer candidates reuse per-worker scratch and borrowed unencoded fallbacks,
 known key hashes are carried into indexed publication, and background optimization
 yields more aggressively under sustained queue pressure. In profiling of the
 random workload, temporary allocation traffic fell from roughly 1.38 GB to about
@@ -293,7 +293,7 @@ not start, stop, kill, inspect, or configure server processes or containers.
 
 ```sh
 bash scripts/bench/bench-one.sh uuid -p 6390
-bash scripts/bench/bench-one.sh counter -p 6383 -s snug-opt
+bash scripts/bench/bench-one.sh counter -p 6383 -s snug
 bash scripts/bench/bench-one.sh cache-json -p 6379 -s redis
 ```
 
@@ -308,7 +308,7 @@ Useful options include `-h/--host`, `-s/--server`, `-k/--keys`,
 For deeper diagnostics, opt in explicitly:
 
 ```sh
-SERVERS="redis snug-opt snug-raw" \
+SERVERS="redis snug" \
 WORKLOADS="load get mixed ttl" \
 RUNS=3 \
 MIXED_OPS=1000000 \
