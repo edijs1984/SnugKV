@@ -13,13 +13,65 @@ export type RespValue =
   | RespError
   | RespValue[];
 
-export function encodeCommand(args: readonly (string | Buffer | number)[]): Buffer {
-  const parts: Buffer[] = [Buffer.from(`*${args.length}\r\n`)];
+export type RespCommandArg = string | Buffer | number;
+
+function argByteLength(arg: RespCommandArg): number {
+  return Buffer.isBuffer(arg) ? arg.length : Buffer.byteLength(String(arg));
+}
+
+export function encodedCommandLength(args: readonly RespCommandArg[]): number {
+  let total = Buffer.byteLength(`*${args.length}\r\n`);
   for (const arg of args) {
-    const value = Buffer.isBuffer(arg) ? arg : Buffer.from(String(arg));
-    parts.push(Buffer.from(`$${value.length}\r\n`), value, Buffer.from("\r\n"));
+    const len = argByteLength(arg);
+    total += Buffer.byteLength(`${len}\r\n`) + len + 2;
   }
-  return Buffer.concat(parts);
+  return total;
+}
+
+function writeCommand(
+  target: Buffer,
+  offset: number,
+  args: readonly RespCommandArg[],
+): number {
+  offset += target.write(`*${args.length}\r\n`, offset, "ascii");
+
+  for (const arg of args) {
+    const isBuffer = Buffer.isBuffer(arg);
+    const text = isBuffer ? "" : String(arg);
+    const len = isBuffer ? arg.length : Buffer.byteLength(text);
+
+    offset += target.write(`${len}\r\n`, offset, "ascii");
+
+    if (isBuffer) {
+      arg.copy(target, offset);
+      offset += arg.length;
+    } else {
+      offset += target.write(text, offset, len, "utf8");
+    }
+
+    target[offset++] = 13;
+    target[offset++] = 10;
+  }
+
+  return offset;
+}
+
+export function encodeCommand(args: readonly RespCommandArg[]): Buffer {
+  const out = Buffer.allocUnsafe(encodedCommandLength(args));
+  writeCommand(out, 0, args);
+  return out;
+}
+
+export function encodeCommands(
+  commands: readonly (readonly RespCommandArg[])[],
+): Buffer {
+  let total = 0;
+  for (const args of commands) total += encodedCommandLength(args);
+
+  const out = Buffer.allocUnsafe(total);
+  let offset = 0;
+  for (const args of commands) offset = writeCommand(out, offset, args);
+  return out;
 }
 
 export class RespDecoder {
