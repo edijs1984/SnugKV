@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"errors"
+	"os"
 	"snugkv/internal/engine"
 	"snugkv/internal/persistence"
 	"strconv"
@@ -14,6 +15,11 @@ import (
 type Journal interface {
 	Append([]persistence.Record) error
 }
+
+// Benchmark-only experiment. When enabled, encoded GETs skip access metadata
+// mutation so the engine can use a shared shard lock. Default behavior and
+// optimizer semantics remain unchanged unless this environment variable is set.
+var configuredReadOnlyGet = os.Getenv("SNUG_GET_READONLY") == "1"
 
 type durabilityJournal interface {
 	Journal
@@ -176,7 +182,12 @@ func (s *Server) executeAuthorizedConcurrentKnownGetIntoAt(
 	}
 
 	var wrongType bool
-	if now.IsZero() {
+	if configuredReadOnlyGet {
+		if now.IsZero() {
+			now = time.Now()
+		}
+		value, found, wrongType = s.store.GetStringBytesIntoAtReadOnly(key, dst, now)
+	} else if now.IsZero() {
 		value, found, wrongType = s.store.GetStringBytesInto(key, dst)
 	} else {
 		value, found, wrongType = s.store.GetStringBytesIntoAt(key, dst, now)
