@@ -31,6 +31,7 @@ type SnugValue struct {
 	codecID   codec.ID
 	valueType ValueType
 	hasExpiry bool
+	rawStable bool
 }
 
 func (v SnugValue) isRaw() bool {
@@ -77,7 +78,7 @@ func isNativeContainerType(t ValueType) bool {
 }
 
 func (s *Store) shouldTrackActivity(e entry) bool {
-	return s.encoding && !isNativeContainerType(e.valueType)
+	return s.encoding && !e.rawStable && !isNativeContainerType(e.valueType)
 }
 
 func (sh *shard) encoded(e entry) []byte {
@@ -230,6 +231,12 @@ func (s *Store) VisitRawStringBytes(key []byte, visit func([]byte) error) (handl
 		return false, nil
 	}
 	if isNativeContainerType(e.valueType) || !e.isRaw() {
+		return false, nil
+	}
+	// Fresh RAW values that still carry optimizer metadata need the ordinary
+	// GET path so their heat/activity remains accurate. Once the optimizer
+	// confirms RAW is the terminal representation, rawStable removes that tax.
+	if s.encoding && !e.rawStable && e.entryMeta != nil {
 		return false, nil
 	}
 
