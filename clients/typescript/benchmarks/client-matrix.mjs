@@ -218,14 +218,24 @@ for (const valueBytes of VALUE_SIZES) {
       const ctx = { workload, concurrency, value, operations };
 
       const runners = [
-        () => runSnug(ctx),
-        () => runIORedis(ctx, false),
-        () => runIORedis(ctx, true),
-        () => runNodeRedis(ctx),
+        { label: "snug-auto-128", run: () => runSnug(ctx) },
+        { label: "ioredis-no-auto", run: () => runIORedis(ctx, false) },
+        { label: "ioredis-auto", run: () => runIORedis(ctx, true) },
+        { label: "node-redis-auto", run: () => runNodeRedis(ctx) },
       ];
 
       for (let repeat = 1; repeat <= REPEATS; repeat++) {
-        for (const run of runners) {
+        // Rotate client order on every repetition so a fixed execution order
+        // cannot systematically benefit one client through cache warmth,
+        // optimizer state, GC timing, or thermal effects.
+        const offset = (repeat - 1) % runners.length;
+        const ordered = [
+          ...runners.slice(offset),
+          ...runners.slice(0, offset),
+        ];
+
+        for (const entry of ordered) {
+          const run = entry.run;
           try {
             const result = await run();
             const row = {
@@ -245,7 +255,7 @@ for (const valueBytes of VALUE_SIZES) {
               workload,
               concurrency,
               value_bytes: valueBytes,
-              label: run.name || "client",
+              label: entry.label,
               error: error instanceof Error ? error.message : String(error),
             };
             rows.push(row);
