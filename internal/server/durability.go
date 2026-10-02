@@ -456,7 +456,7 @@ func (s *Server) executeAuthorizedConcurrentSetBatch(keys, values [][]byte) (han
 		s.optimizer.NoteForegroundWrite()
 	}
 
-	batched, setErr := s.store.SetPlainBatchFresh(keys, values)
+	batched, setErr := s.store.SetPlainBatchFreshShardLocal(keys, values)
 	if !batched {
 		for i := range keys {
 			if setErr = s.store.SetPlain(string(keys[i]), values[i]); setErr != nil {
