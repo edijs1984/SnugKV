@@ -23,7 +23,7 @@ export function encodedCommandLength(args: readonly RespCommandArg[]): number {
   let total = Buffer.byteLength(`*${args.length}\r\n`);
   for (const arg of args) {
     const len = argByteLength(arg);
-    total += Buffer.byteLength(`${len}\r\n`) + len + 2;
+    total += Buffer.byteLength("$" + len + "\r\n") + len + 2;
   }
   return total;
 }
@@ -40,7 +40,7 @@ function writeCommand(
     const text = isBuffer ? "" : String(arg);
     const len = isBuffer ? arg.length : Buffer.byteLength(text);
 
-    offset += target.write(`${len}\r\n`, offset, "ascii");
+    offset += target.write("$" + len + "\r\n", offset, "ascii");
 
     if (isBuffer) {
       arg.copy(target, offset);
