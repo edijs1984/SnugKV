@@ -17,6 +17,10 @@ func TestDefaults(t *testing.T) {
 	if cfg.Shards&(cfg.Shards-1) != 0 {
 		t.Fatal("expected default shard count to be a power of two")
 	}
+	if !cfg.Encoding || !cfg.Compression || !cfg.JSONShape {
+		t.Fatalf("expected adaptive SnugKV defaults, got encoding=%t compression=%t json_shape=%t",
+			cfg.Encoding, cfg.Compression, cfg.JSONShape)
+	}
 }
 
 func TestValidateRejectsNonPowerOfTwoShards(t *testing.T) {
