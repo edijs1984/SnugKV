@@ -2,8 +2,7 @@
 set -euo pipefail
 
 REDIS_ADDR="${REDIS_ADDR:-127.0.0.1:6390}"
-SNUG_RAW_ADDR="${SNUG_RAW_ADDR:-127.0.0.1:6382}"
-SNUG_OPT_ADDR="${SNUG_OPT_ADDR:-127.0.0.1:6383}"
+SNUG_ADDR="${SNUG_ADDR:-127.0.0.1:6383}"
 
 KEYS="${KEYS:-1000000}"
 OPS="${OPS:-1000000}"
@@ -19,14 +18,12 @@ PIPELINE="${PIPELINE:-256}"
 RUNS="${RUNS:-3}"
 
 REDIS_CONTAINER="${REDIS_CONTAINER:-snug-bench-redis}"
-SNUG_RAW_CONTAINER="${SNUG_RAW_CONTAINER:-snug-bench-snugkv-raw}"
-SNUG_OPT_CONTAINER="${SNUG_OPT_CONTAINER:-snug-bench-snugkv-opt}"
+SNUG_CONTAINER="${SNUG_CONTAINER:-snug-bench-snugkv}"
 
-PPROF_RAW_URL="${PPROF_RAW_URL:-http://127.0.0.1:6060/debug/pprof/heap}"
-PPROF_OPT_URL="${PPROF_OPT_URL:-http://127.0.0.1:6061/debug/pprof/heap}"
+PPROF_URL="${PPROF_URL:-http://127.0.0.1:6060/debug/pprof/heap}"
 CAPTURE_HEAP="${CAPTURE_HEAP:-1}"
 
-OUT_DIR="${OUT_DIR:-benchmark-results/redis-vs-snug-modes-$(date +%Y%m%d-%H%M%S)}"
+OUT_DIR="${OUT_DIR:-benchmark-results/redis-vs-snug-$(date +%Y%m%d-%H%M%S)}"
 
 mkdir -p "$OUT_DIR"
 
@@ -163,8 +160,7 @@ capture_heap_profile() {
   fi
 
   case "$name" in
-    snug_raw) url="$PPROF_RAW_URL" ;;
-    snug_opt) url="$PPROF_OPT_URL" ;;
+    snug) url="$PPROF_URL" ;;
     *) return ;;
   esac
 
@@ -240,8 +236,7 @@ PY
 }
 
 echo "Redis:       $REDIS_ADDR"
-echo "SnugKV raw:  $SNUG_RAW_ADDR"
-echo "SnugKV opt:  $SNUG_OPT_ADDR"
+echo "SnugKV:      $SNUG_ADDR"
 echo "keys=$KEYS ops=$OPS value_bytes=$VALUE_BYTES value_shape=$VALUE_SHAPE settle_ms=$SETTLE_MS stable_samples=$SETTLE_STABLE_SAMPLES settle_max_ms=$SETTLE_MAX_MS fresh_servers=$FRESH_SERVERS workers=$WORKERS pipeline=$PIPELINE runs=$RUNS capture_heap=$CAPTURE_HEAP"
 echo "results=$OUT_DIR"
 
@@ -253,8 +248,7 @@ for run in $(seq 1 "$RUNS"); do
   fi
 
   run_one redis "$REDIS_ADDR" "$run" "$REDIS_CONTAINER"
-  run_one snug_raw "$SNUG_RAW_ADDR" "$run" "$SNUG_RAW_CONTAINER"
-  run_one snug_opt "$SNUG_OPT_ADDR" "$run" "$SNUG_OPT_CONTAINER"
+  run_one snug "$SNUG_ADDR" "$run" "$SNUG_CONTAINER"
 done
 
 python3 - "$OUT_DIR" <<'PY'
@@ -295,5 +289,5 @@ print("\n===== MEDIAN SUMMARY =====")
 for row in summary:
     print(row)
 print("\nsummary:", root / "summary.json")
-print("heap reports:", root / "snug_raw-run*-heap-top.txt", "and", root / "snug_opt-run*-heap-top.txt")
+print("heap reports:", root / "snug-run*-heap-top.txt")
 PY
