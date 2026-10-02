@@ -26,7 +26,7 @@ if len(profiles) != 1:
     raise SystemExit(f"expected exactly one profile, found: {profiles}")
 profile = profiles[0]
 
-servers = ("redis", "snug_raw", "snug_opt")
+servers = ("redis", "snug")
 by = {}
 for server in servers:
     for workload in ("load", "get"):
@@ -49,17 +49,13 @@ record = {
     "pipeline": int(first["pipeline"]),
     "runs": max(1, len([r for r in rows if r["server"] == "redis" and r["workload"] == "load"])),
     "redis_load": by[("redis", "load")]["ops"],
-    "raw_load": by[("snug_raw", "load")]["ops"],
-    "opt_load": by[("snug_opt", "load")]["ops"],
+    "snug_load": by[("snug", "load")]["ops"],
     "redis_get": by[("redis", "get")]["ops"],
-    "raw_get": by[("snug_raw", "get")]["ops"],
-    "opt_get": by[("snug_opt", "get")]["ops"],
+    "snug_get": by[("snug", "get")]["ops"],
     "redis_bpk": by[("redis", "load")]["bpk"],
-    "raw_bpk": by[("snug_raw", "load")]["bpk"],
-    "opt_bpk": by[("snug_opt", "load")]["bpk"],
+    "snug_bpk": by[("snug", "load")]["bpk"],
     "redis_get_p95_us": by[("redis", "get")]["p95_us"],
-    "raw_get_p95_us": by[("snug_raw", "get")]["p95_us"],
-    "opt_get_p95_us": by[("snug_opt", "get")]["p95_us"],
+    "snug_get_p95_us": by[("snug", "get")]["p95_us"],
 }
 
 json_path = pathlib.Path("benchmarks/realistic-profile-results.json")
@@ -87,21 +83,23 @@ names = {
 lines = [
     "# Realistic profile benchmark scoreboard",
     "",
-    "Latest retained manual result for each profile. Each row is replaced when that profile is rerun.",
-    "Defaults are 1,000,000 keys, Redis -> Snug raw -> Snug optimized in fresh isolated containers, LOAD + pipelined GET.",
+    "Latest retained adaptive-mode result for each profile. Each row is replaced when that profile is rerun.",
+    "Defaults are 1,000,000 keys, Redis -> SnugKV in fresh isolated containers, LOAD + pipelined GET.",
     "",
-    "| Profile | Value | Date | Redis SET/s | Raw SET/s | Opt SET/s | Redis GET/s | Raw GET/s | Opt GET/s | Redis B/key | Raw B/key | Opt B/key |",
-    "|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+    "| Profile | Value | Date | Redis SET/s | Snug SET/s | Redis GET/s | Snug GET/s | Redis B/key | Snug B/key |",
+    "|---|---:|---|---:|---:|---:|---:|---:|---:|",
 ]
 for p in order:
     if p not in data:
         continue
     r = data[p]
+    if not all(k in r for k in ("snug_load", "snug_get", "snug_bpk")):
+        continue
     lines.append(
         f"| {names.get(p,p)} (`{p}`) | {r['value_bytes']} B | {r['date']} | "
-        f"{r['redis_load']:,.0f} | {r['raw_load']:,.0f} | {r['opt_load']:,.0f} | "
-        f"{r['redis_get']:,.0f} | {r['raw_get']:,.0f} | {r['opt_get']:,.0f} | "
-        f"{r['redis_bpk']:.2f} | {r['raw_bpk']:.2f} | {r['opt_bpk']:.2f} |"
+        f"{r['redis_load']:,.0f} | {r['snug_load']:,.0f} | "
+        f"{r['redis_get']:,.0f} | {r['snug_get']:,.0f} | "
+        f"{r['redis_bpk']:.2f} | {r['snug_bpk']:.2f} |"
     )
 
 lines += [
@@ -109,7 +107,7 @@ lines += [
     "## Reproduce one row",
     "",
     "```bash",
-    "bash scripts/bench/bench-one.sh cache-json",
+    "bash scripts/bench/bench-one.sh cache-json -p 6383 -s snug",
     "```",
     "",
     "Override defaults with environment variables such as `KEYS`, `GET_OPS`, `WORKERS`, `PIPELINE`, or `RUNS`.",
