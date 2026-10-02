@@ -74,14 +74,16 @@ func commandIsWrite(args [][]byte) bool {
 }
 
 func (s *TCPServer) waitClientPause(args [][]byte) {
+	// CLIENT PAUSE is normally inactive. Avoid command parsing/string folding on
+	// every hot-path command when there is nothing to wait for.
+	until := s.pauseUntil.Load()
+	if until == 0 {
+		return
+	}
 	if clientPauseBypass(args) {
 		return
 	}
 	for {
-		until := s.pauseUntil.Load()
-		if until == 0 {
-			return
-		}
 		if s.pauseWriteOnly.Load() && !commandIsWrite(args) {
 			return
 		}
@@ -94,6 +96,11 @@ func (s *TCPServer) waitClientPause(args [][]byte) {
 			remaining = 10 * time.Millisecond
 		}
 		time.Sleep(remaining)
+
+		until = s.pauseUntil.Load()
+		if until == 0 {
+			return
+		}
 	}
 }
 
