@@ -206,6 +206,12 @@ func (s *Store) decodeInto(sh *shard, e entry, dst []byte) []byte {
 			panic("invalid inline reference")
 		}
 		encoded = value
+	} else if e.codecID == codec.Raw {
+		value, err := sh.arena.ViewKnownLive(e.ref)
+		if err != nil {
+			panic(err)
+		}
+		encoded = value
 	} else {
 		encoded = sh.encoded(e)
 	}
