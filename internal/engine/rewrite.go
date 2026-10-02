@@ -41,7 +41,7 @@ func (s *Store) OptimizationEligible(
 
 	now := s.now()
 	e, ok := sh.get(key)
-	if !ok || sh.expired(key, e, now) || isNativeContainerType(e.valueType) {
+	if !ok || sh.expired(key, e, now) || isNativeContainerType(e.valueType) || e.rawStable {
 		return 0, false
 	}
 
@@ -75,6 +75,50 @@ func (s *Store) OptimizationEligible(
 // MarkOptimizationAttempt atomically rechecks eligibility and records the
 // attempt after optimizer resources have already been reserved. This prevents
 // duplicate queued samples from starting expensive work on the same key.
+// MarkRawStable turns an unchanged RAW value into a terminal adaptive
+// representation after background optimization has proven that compression is
+// not worth its cost. The candidate generation prevents a stale optimizer
+// result from classifying a newer foreground value.
+//
+// Stable RAW values no longer need optimizer activity metadata. Dropping that
+// sidecar restores both the raw read path and its memory footprint while the
+// SnugValue flag prevents periodic sampling from retrying the same bytes.
+func (s *Store) MarkRawStable(key string, generation uint64) bool {
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	e, ok := sh.get(key)
+	if !ok || e.codecID != codec.Raw || e.ref.Generation() != generation ||
+		isNativeContainerType(e.valueType) {
+		return false
+	}
+	if e.rawStable {
+		return true
+	}
+
+	e.rawStable = true
+	if e.entryMeta != nil {
+		// RAW records cannot own a shape schema; structured JSON candidates are
+		// intentionally never finalized through this method.
+		if e.entryMeta.schemaID != 0 {
+			return false
+		}
+		e.entryMeta = nil
+		sh.setMeta(sh.dataMustGet(key), nil)
+		s.memory.mu.Lock()
+		if s.memory.used >= entryMetaBytes {
+			s.memory.used -= entryMetaBytes
+		}
+		if s.memory.metas >= entryMetaBytes {
+			s.memory.metas -= entryMetaBytes
+		}
+		s.memory.mu.Unlock()
+	}
+	sh.set(key, e)
+	return true
+}
+
 func (s *Store) MarkOptimizationAttempt(
 	key string,
 	rewriteInterval time.Duration,
@@ -87,7 +131,7 @@ func (s *Store) MarkOptimizationAttempt(
 
 	now := s.now()
 	e, ok := sh.get(key)
-	if !ok || sh.expired(key, e, now) || isNativeContainerType(e.valueType) {
+	if !ok || sh.expired(key, e, now) || isNativeContainerType(e.valueType) || e.rawStable {
 		return false
 	}
 
