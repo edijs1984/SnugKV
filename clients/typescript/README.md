@@ -89,3 +89,35 @@ Environment: SnugKV server on localhost, Node.js 20, 200,000 operations per work
 In this specific local benchmark, `@snugkv/client` was approximately 33% faster on SET, 42% faster on GET, and 55% faster on the mixed workload than ioredis with automatic pipelining enabled. These are benchmark-specific measurements rather than general claims across all workloads or environments.
 
 The Snug client also reduced 200,000 logical commands to roughly 1,563 socket writes in each workload through same-tick batching.
+
+
+## Client matrix benchmark
+
+Run the full value-size/concurrency/workload matrix:
+
+```bash
+npm run bench:client-matrix
+```
+
+Defaults:
+
+```text
+OPS=100000
+REPEATS=3
+VALUE_BYTES=64,256,1024,4096
+CONCURRENCY=32,128,512
+WORKLOADS=set,get,mixed
+KEYSPACE=50000
+MIXED_WRITE_PERCENT=20
+```
+
+For a faster smoke pass before the full matrix:
+
+```bash
+OPS=20000 \
+REPEATS=1 \
+VALUE_BYTES=64,1024 \
+CONCURRENCY=32,128 \
+WORKLOADS=set,get,mixed \
+npm run bench:client-matrix
+```
