@@ -344,7 +344,7 @@ func (s *Server) executeAuthorizedConcurrentNativeMutation(args [][]byte) (respo
 		return nil, true, err
 	}
 
-	response := integerReply(result)
+	response = integerReply(result)
 	// The generic durable path signals blocked list/zset clients after a
 	// successful mutation. Preserve the same semantics on the direct native
 	// fast path; otherwise RPUSH/ZADD can publish data without waking BLPOP,
