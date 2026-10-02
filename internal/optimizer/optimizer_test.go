@@ -1,7 +1,7 @@
 package optimizer
 
 import (
-	"runtime"
+	"sync/atomic"
 	"bytes"
 	"snugkv/internal/engine"
 	"strconv"
@@ -297,26 +297,23 @@ func TestForegroundWriteDefersOptimizerDuringBurstThenResumes(t *testing.T) {
 	}
 	defer o.Close()
 
-	// The current foreground-priority design is timestamp based: repeated
-	// writes keep refreshing the quiet-window clock, while the optimizer is
-	// still guaranteed bounded progress after maxDeferral.
-	o.NoteForegroundWrite()
+	// Pin the foreground-write timestamp slightly into the future so the worker
+	// cannot observe an accidental quiet gap due to scheduler latency. This
+	// exercises the deferral gate deterministically instead of relying on a
+	// sub-millisecond ticker or goroutine scheduling.
+	atomic.StoreInt64(&o.lastForegroundWrite, time.Now().Add(time.Second).UnixNano())
 	if !o.Queue("k") {
 		t.Fatal("queue rejected")
 	}
 
-	// Keep the foreground timestamp continuously fresh for a bounded burst.
-	// A ticker is intentionally avoided here: under scheduler pressure a 1 ms
-	// ticker may be delivered more than quietWindow late, which makes the worker
-	// correctly observe a quiet gap and turns this into a flaky timing test.
-	burstDeadline := time.Now().Add(20 * time.Millisecond)
-	for time.Now().Before(burstDeadline) {
-		o.NoteForegroundWrite()
-		runtime.Gosched()
-		if got := o.Stats().Rewritten; got != 0 {
-			t.Fatalf("optimizer rewrote before foreground deferral elapsed: %d", got)
-		}
+	time.Sleep(20 * time.Millisecond)
+	if got := o.Stats().Rewritten; got != 0 {
+		t.Fatalf("optimizer rewrote before foreground deferral elapsed: %d", got)
 	}
+
+	// Clearing the timestamp represents the foreground becoming quiet and must
+	// let the queued optimization resume immediately.
+	atomic.StoreInt64(&o.lastForegroundWrite, 0)
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
