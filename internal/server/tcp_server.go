@@ -320,6 +320,11 @@ func (s *TCPServer) handleConn(conn net.Conn) {
 	s.handleConnRaw(conn, conn)
 }
 
+var (
+	commandGETBytes = []byte("GET")
+	commandSETBytes = []byte("SET")
+)
+
 var configuredSetBatchLimit = func() int {
 	const defaultLimit = 256
 	raw := os.Getenv("SNUG_SET_BATCH")
@@ -347,6 +352,9 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 	var setKeyScratch []byte
 	var setValueScratch []byte
 	var nativeScratch [3][]byte
+	var borrowedGET [2][]byte
+	var borrowedSET [3][]byte
+	var borrowedNative [4][]byte
 	var setBatchKeys [][]byte
 	var setBatchValues [][]byte
 	var setBatchKeyArena []byte
@@ -484,16 +492,13 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				return
 			}
 		}
-		var borrowedGET [2][]byte
-		var borrowedSET [3][]byte
-		var borrowedNative [4][]byte
 		var msg [][]byte
 		borrowedKey, borrowed, borrowErr := decoder.ReadBufferedGET(getKeyScratch)
 		if borrowErr != nil {
 			return
 		}
 		if borrowed {
-			borrowedGET[0] = []byte("GET")
+			borrowedGET[0] = commandGETBytes
 			borrowedGET[1] = borrowedKey
 			msg = borrowedGET[:]
 			if cap(borrowedKey) <= maxRetainedGetKeyScratch {
@@ -510,7 +515,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				return
 			}
 			if ok {
-				borrowedSET[0] = []byte("SET")
+				borrowedSET[0] = commandSETBytes
 				borrowedSET[1] = setKey
 				borrowedSET[2] = setValue
 				msg = borrowedSET[:]
