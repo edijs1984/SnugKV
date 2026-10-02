@@ -45,6 +45,13 @@ func (s *Store) OptimizationEligible(
 		return 0, false
 	}
 
+	// An admitted JSON-shape representation is terminal until a foreground
+	// write publishes a fresh value. Reconsidering it every rewrite interval
+	// only creates arena churn without discovering a smaller representation.
+	if e.entryMeta != nil && e.entryMeta.schemaID != 0 {
+		return 0, false
+	}
+
 	// LZ4/Zstd records are terminal for the normal background pass. Keeping
 	// compression rewrites metadata-free avoids a permanent 24-byte sidecar
 	// per compressed key. A subsequent foreground write publishes a fresh
@@ -131,6 +138,10 @@ func (s *Store) MarkOptimizationAttempt(
 	now := s.now()
 	e, ok := sh.get(key)
 	if !ok || sh.expired(key, e, now) || isNativeContainerType(e.valueType) || e.rawStable {
+		return false
+	}
+
+	if e.entryMeta != nil && e.entryMeta.schemaID != 0 {
 		return false
 	}
 
