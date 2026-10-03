@@ -289,12 +289,8 @@ func (s *Server) executeAuthorizedConcurrentNativeMutation(args [][]byte) (respo
 	switch {
 	case len(args) == 4 && bytes.EqualFold(args[0], []byte("HSET")):
 		kind = 'h'
-	case len(args) == 3 && bytes.EqualFold(args[0], []byte("RPUSH")):
-		kind = 'l'
 	case len(args) == 3 && bytes.EqualFold(args[0], []byte("SADD")):
 		kind = 's'
-	case len(args) == 4 && bytes.EqualFold(args[0], []byte("ZADD")):
-		kind = 'z'
 	default:
 		return nil, false, nil
 	}
@@ -1078,13 +1074,7 @@ func isConcurrentScalarCommand(args [][]byte) bool {
 	if len(args) == 4 && bytes.EqualFold(args[0], []byte("HSET")) {
 		return true
 	}
-	if len(args) == 3 && bytes.EqualFold(args[0], []byte("RPUSH")) {
-		return true
-	}
 	if len(args) == 3 && bytes.EqualFold(args[0], []byte("SADD")) {
-		return true
-	}
-	if len(args) == 4 && bytes.EqualFold(args[0], []byte("ZADD")) {
 		return true
 	}
 
