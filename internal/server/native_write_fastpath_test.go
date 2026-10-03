@@ -355,26 +355,43 @@ func TestConcurrentHashGetBatchFastPath(t *testing.T) {
 		[]byte("b"),
 	}
 
-	values, found, handled, err := s.executeAuthorizedConcurrentHashGetBatch(keys, fields)
+	results := make([]engine.HashGetResult, len(keys))
+	out, handled, err := s.executeAuthorizedConcurrentHashGetBatchInto(
+		keys,
+		fields,
+		nil,
+		results,
+	)
 	if err != nil {
 		t.Fatalf("batch error: %v", err)
 	}
 	if !handled {
 		t.Fatal("HGET batch fast path did not handle commands")
 	}
+
+	found := make([]bool, len(results))
+	got := make([]string, len(results))
+	for i, result := range results {
+		found[i] = result.Found
+		if !result.Found {
+			continue
+		}
+		start := int(result.Offset)
+		end := start + int(result.Length)
+		got[i] = string(out[start:end])
+	}
+
 	wantFound := []bool{true, false, true, true}
 	if !reflect.DeepEqual(found, wantFound) {
 		t.Fatalf("found=%v want=%v", found, wantFound)
 	}
-	got := []string{string(values[0]), string(values[1]), string(values[2]), string(values[3])}
 	want := []string{"1", "", "3", "2"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("values=%v want=%v", got, want)
 	}
 }
 
-
-func TestConcurrentHashGetBatchRegroupsInterleavedKeys(t *testing.T) {
+func TestConcurrentHashGetBatchPreservesInterleavedOrder(t *testing.T) {
 	s := New(engine.New())
 	if _, err := s.store.HashSet(
 		"h1",
@@ -404,7 +421,13 @@ func TestConcurrentHashGetBatchRegroupsInterleavedKeys(t *testing.T) {
 		[]byte("missing"),
 	}
 
-	values, found, handled, err := s.executeAuthorizedConcurrentHashGetBatch(keys, fields)
+	results := make([]engine.HashGetResult, len(keys))
+	out, handled, err := s.executeAuthorizedConcurrentHashGetBatchInto(
+		keys,
+		fields,
+		nil,
+		results,
+	)
 	if err != nil {
 		t.Fatalf("batch error: %v", err)
 	}
@@ -412,16 +435,21 @@ func TestConcurrentHashGetBatchRegroupsInterleavedKeys(t *testing.T) {
 		t.Fatal("HGET batch fast path did not handle commands")
 	}
 
+	found := make([]bool, len(results))
+	got := make([]string, len(results))
+	for i, result := range results {
+		found[i] = result.Found
+		if !result.Found {
+			continue
+		}
+		start := int(result.Offset)
+		end := start + int(result.Length)
+		got[i] = string(out[start:end])
+	}
+
 	wantFound := []bool{true, true, true, false}
 	if !reflect.DeepEqual(found, wantFound) {
 		t.Fatalf("found=%v want=%v", found, wantFound)
-	}
-
-	got := []string{
-		string(values[0]),
-		string(values[1]),
-		string(values[2]),
-		string(values[3]),
 	}
 	want := []string{"1", "3", "2", ""}
 	if !reflect.DeepEqual(got, want) {
