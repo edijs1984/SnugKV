@@ -268,3 +268,62 @@ func TestHotHashSlotGrowthFlushReturnsToStructuralBaseline(t *testing.T) {
 		t.Fatalf("HOT hash bytes after FLUSHDB = %d, want 0", after.HotHashBytes)
 	}
 }
+
+
+func TestMediumPipelinedHashStaysCold(t *testing.T) {
+	s := New()
+
+	fields := make([][]byte, 100)
+	values := make([][]byte, 100)
+	for i := range fields {
+		fields[i] = []byte(fmt.Sprintf("field:%03d", i))
+		values[i] = []byte("value")
+	}
+	if _, err := s.HashSetResults("medium-pipeline", fields, values); err != nil {
+		t.Fatal(err)
+	}
+
+	sh := s.shardFor("medium-pipeline")
+	sh.mu.RLock()
+	e, ok := sh.get("medium-pipeline")
+	sh.mu.RUnlock()
+	if !ok {
+		t.Fatal("missing medium pipeline hash")
+	}
+	if e.isHotHash() {
+		t.Fatal("100-field hash should remain cold")
+	}
+}
+
+func TestActiveLargeHotHashSurvivesGenericCompaction(t *testing.T) {
+	s := New()
+
+	fields := make([][]byte, hotHashPromoteFields)
+	values := make([][]byte, hotHashPromoteFields)
+	for i := range fields {
+		fields[i] = []byte(fmt.Sprintf("field:%03d", i))
+		values[i] = []byte("0123456789abcdef")
+	}
+	if _, err := s.HashSetResults("large-hot", fields, values); err != nil {
+		t.Fatal(err)
+	}
+
+	sh := s.shardFor("large-hot")
+	sh.mu.RLock()
+	e, ok := sh.get("large-hot")
+	isHot := ok && e.isHotHash()
+	sh.mu.RUnlock()
+	if !isHot {
+		t.Fatal("large pipelined hash did not promote HOT")
+	}
+
+	_ = s.Compact(1 << 30)
+
+	sh.mu.RLock()
+	e, ok = sh.get("large-hot")
+	stillHot := ok && e.isHotHash()
+	sh.mu.RUnlock()
+	if !stillHot {
+		t.Fatal("active large HOT hash should not freeze during generic compaction")
+	}
+}
