@@ -371,7 +371,7 @@ func (s *Store) HashGetDel(key string, fields [][]byte) ([][]byte, []bool, error
 		var freezeErr error
 		e, freezeErr = s.freezeHotHashAndReloadLocked(sh, key, e)
 		if freezeErr != nil {
-			return nil, freezeErr
+			return nil, nil, freezeErr
 		}
 	}
 
@@ -445,7 +445,7 @@ func (s *Store) HashGetEx(key string, fields [][]byte, options HashGetExOptions)
 		var freezeErr error
 		e, freezeErr = s.freezeHotHashAndReloadLocked(sh, key, e)
 		if freezeErr != nil {
-			return nil, freezeErr
+			return nil, nil, freezeErr
 		}
 	}
 
@@ -534,6 +534,13 @@ func (s *Store) HashSetEx(key string, fields, values [][]byte, options HashSetEx
 	if exists {
 		if e.valueType != TypeHash {
 			return false, hashWrongType()
+		}
+		if e.isHotHash() {
+			var freezeErr error
+			e, freezeErr = s.freezeHotHashAndReloadLocked(sh, key, e)
+			if freezeErr != nil {
+				return false, freezeErr
+			}
 		}
 		var err error
 		pairs, err = decodePackedHash(s.decode(sh, e))
