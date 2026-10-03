@@ -32,10 +32,15 @@ type SnugValue struct {
 	valueType ValueType
 	hasExpiry bool
 	rawStable bool
+	hot       bool
 }
 
 func (v SnugValue) isRaw() bool {
 	return v.codecID == codec.Raw
+}
+
+func (v SnugValue) isHotHash() bool {
+	return v.hot && v.valueType == TypeHash
 }
 
 // entryData remains as an internal compatibility alias while the engine moves
