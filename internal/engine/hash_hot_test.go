@@ -230,3 +230,41 @@ func TestHotHashCompactionReturnsToIndexedAndAccountingStaysSane(t *testing.T) {
 		t.Fatalf("accounting wrapped after flush: %d", final.AccountedBytes)
 	}
 }
+
+
+func TestHotHashSlotGrowthFlushReturnsToStructuralBaseline(t *testing.T) {
+	s, err := NewWithShards(8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline := s.Memory().AccountedBytes
+
+	fields := make([][]byte, 100)
+	values := make([][]byte, 100)
+	for i := range fields {
+		fields[i] = []byte(fmt.Sprintf("f:%03d", i))
+		values[i] = []byte("0123456789abcdef0123456789abcdef")
+	}
+
+	for i := 0; i < 200; i++ {
+		key := fmt.Sprintf("hot-grow:%03d", i)
+		if _, err := s.HashSetResults(key, fields, values); err != nil {
+			t.Fatalf("key %d: %v", i, err)
+		}
+	}
+
+	before := s.Memory()
+	if before.HotHashBytes == 0 {
+		t.Fatal("expected HOT hash accounting before flush")
+	}
+
+	s.FlushDB()
+
+	after := s.Memory()
+	if after.AccountedBytes != baseline {
+		t.Fatalf("accounted after FLUSHDB = %d, want structural baseline %d", after.AccountedBytes, baseline)
+	}
+	if after.HotHashBytes != 0 {
+		t.Fatalf("HOT hash bytes after FLUSHDB = %d, want 0", after.HotHashBytes)
+	}
+}
