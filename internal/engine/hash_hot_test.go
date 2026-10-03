@@ -21,12 +21,16 @@ func TestHotHashMutationReadLifecycle(t *testing.T) {
 		t.Fatal("first HSET should remain cold")
 	}
 
-	if added, err := s.HashSet(
+	results, err := s.HashSetResults(
 		"hot",
 		[][]byte{[]byte("b"), []byte("a")},
 		[][]byte{[]byte("2"), []byte("3")},
-	); err != nil || added != 1 {
-		t.Fatalf("second HSET added=%d err=%v", added, err)
+	)
+	if err != nil {
+		t.Fatalf("batched HSET err=%v", err)
+	}
+	if len(results) != 2 || results[0] != 1 || results[1] != 0 {
+		t.Fatalf("batched HSET results=%v", results)
 	}
 
 	sh.mu.RLock()
