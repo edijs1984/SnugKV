@@ -129,9 +129,15 @@ func decodeIndexedHash(data []byte) ([]HashPair,error) {
 	return pairs,nil
 }
 
-func indexedHashLookupKnown(data,target []byte,slots,used,start int)([]byte,bool,error){
+func indexedHashLookupViewKnown(data,target []byte,slots,used,start int)([]byte,bool,error){
 	_,pos,found,err:=indexedHashFindKnown(data,target,slots,used,start); if err!=nil||!found { return nil,found,err }
 	_,v,_,err:=indexedHashRecordKnown(data,pos,used,start); if err!=nil{return nil,false,err}
+	return v,true,nil
+}
+
+func indexedHashLookupKnown(data,target []byte,slots,used,start int)([]byte,bool,error){
+	v,found,err:=indexedHashLookupViewKnown(data,target,slots,used,start)
+	if err!=nil||!found { return nil,found,err }
 	return append([]byte(nil),v...),true,nil
 }
 
