@@ -1363,31 +1363,100 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			appendOwnedHSET := func(key, field, value []byte) {
 				keyStart := len(hsetBatchKeyArena)
 				hsetBatchKeyArena = append(hsetBatchKeyArena, key...)
-				hsetBatchKeys = append(hsetBatchKeys, hsetBatchKeyArena[keyStart:len(hsetBatchKeyArena)])
+				hsetBatchKeys = append(
+					hsetBatchKeys,
+					hsetBatchKeyArena[keyStart:len(hsetBatchKeyArena)],
+				)
 
 				fieldStart := len(hsetBatchFieldArena)
 				hsetBatchFieldArena = append(hsetBatchFieldArena, field...)
-				hsetBatchFields = append(hsetBatchFields, hsetBatchFieldArena[fieldStart:len(hsetBatchFieldArena)])
+				hsetBatchFields = append(
+					hsetBatchFields,
+					hsetBatchFieldArena[fieldStart:len(hsetBatchFieldArena)],
+				)
 
 				valueStart := len(hsetBatchValueArena)
 				hsetBatchValueArena = append(hsetBatchValueArena, value...)
-				hsetBatchValues = append(hsetBatchValues, hsetBatchValueArena[valueStart:len(hsetBatchValueArena)])
+				hsetBatchValues = append(
+					hsetBatchValues,
+					hsetBatchValueArena[valueStart:len(hsetBatchValueArena)],
+				)
 			}
 			appendOwnedHSET(msg[1], msg[2], msg[3])
 
 			nextBufferedIsHSET := func() bool {
-				const prefixLen = len("*4\r\n$4\r\nHSET\r\n")
-				if reader.Buffered() < prefixLen {
+				const prefix = "*4\r\n$4\r\nHSET\r\n"
+				if reader.Buffered() < len(prefix) {
 					return false
 				}
-				prefix, peekErr := reader.Peek(prefixLen)
+				buf, peekErr := reader.Peek(len(prefix))
 				if peekErr != nil {
 					return false
 				}
-				return len(prefix) == prefixLen &&
-					prefix[0] == '*' && prefix[1] == '4' &&
-					prefix[2] == '\r' && prefix[3] == '\n' &&
-					prefix[4] == '			!s.adminOnly && !txSession.multi &&
+				return bytes.EqualFold(buf, []byte(prefix))
+			}
+
+			for len(hsetBatchKeys) < maxBatch && nextBufferedIsHSET() {
+				cmd, args, argc, ok, nativeErr :=
+					decoder.ReadBufferedNativeMutation(&nativeScratch)
+				if nativeErr != nil {
+					return
+				}
+				if !ok || cmd != "HSET" || argc != 3 {
+					break
+				}
+
+				nextMsg := [][]byte{[]byte("HSET"), args[0], args[1], args[2]}
+				if authErr := s.server.authorizeConnectionCommand(authSession, nextMsg); authErr != nil {
+					pendingAuthErr = authErr
+					break
+				}
+
+				clientSession.touch(nextMsg)
+				appendOwnedHSET(args[0], args[1], args[2])
+			}
+
+			if len(hsetBatchKeys) > 1 {
+				results, handled, fastErr :=
+					s.server.executeAuthorizedConcurrentHashSetBatch(
+						hsetBatchKeys,
+						hsetBatchFields,
+						hsetBatchValues,
+					)
+				if handled {
+					if fastErr != nil {
+						if writer.writeBuffered(errorResponse(fastErr)) != nil {
+							return
+						}
+					} else {
+						for i, result := range results {
+							if writer.writeBuffered(integerReply(result)) != nil {
+								return
+							}
+							command := [][]byte{
+								[]byte("HSET"),
+								hsetBatchKeys[i],
+								hsetBatchFields[i],
+								hsetBatchValues[i],
+							}
+							s.server.feedMonitor(clientSession, command, nil)
+							s.invalidateTrackingKeys(clientSession, command)
+						}
+					}
+					if pendingAuthErr != nil {
+						if writer.writeBuffered(errorResponse(pendingAuthErr)) != nil {
+							return
+						}
+					}
+					continue
+				}
+			}
+		}
+
+		if borrowedNativeMutation &&
+			len(msg) == 3 &&
+			bytes.EqualFold(msg[0], []byte("SADD")) &&
+			!s.adminOnly && !txSession.multi &&
 			!(clientSession.protocolVersion() == 2 && pubSession.active()) &&
 			s.server.journal == nil &&
 			!s.server.replication.primaryHasReplicas() &&
@@ -1419,11 +1488,17 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			appendOwnedSADD := func(key, member []byte) {
 				keyStart := len(saddBatchKeyArena)
 				saddBatchKeyArena = append(saddBatchKeyArena, key...)
-				saddBatchKeys = append(saddBatchKeys, saddBatchKeyArena[keyStart:len(saddBatchKeyArena)])
+				saddBatchKeys = append(
+					saddBatchKeys,
+					saddBatchKeyArena[keyStart:len(saddBatchKeyArena)],
+				)
 
 				memberStart := len(saddBatchMemberArena)
 				saddBatchMemberArena = append(saddBatchMemberArena, member...)
-				saddBatchMembers = append(saddBatchMembers, saddBatchMemberArena[memberStart:len(saddBatchMemberArena)])
+				saddBatchMembers = append(
+					saddBatchMembers,
+					saddBatchMemberArena[memberStart:len(saddBatchMemberArena)],
+				)
 			}
 			appendOwnedSADD(msg[1], msg[2])
 
@@ -1460,7 +1535,10 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 
 			if len(saddBatchKeys) > 1 {
 				results, handled, fastErr :=
-					s.server.executeAuthorizedConcurrentSetAddBatch(saddBatchKeys, saddBatchMembers)
+					s.server.executeAuthorizedConcurrentSetAddBatch(
+						saddBatchKeys,
+						saddBatchMembers,
+					)
 				if handled {
 					if fastErr != nil {
 						if writer.writeBuffered(errorResponse(fastErr)) != nil {
@@ -1471,7 +1549,11 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 							if writer.writeBuffered(integerReply(result)) != nil {
 								return
 							}
-							command := [][]byte{[]byte("SADD"), saddBatchKeys[i], saddBatchMembers[i]}
+							command := [][]byte{
+								[]byte("SADD"),
+								saddBatchKeys[i],
+								saddBatchMembers[i],
+							}
 							s.server.feedMonitor(clientSession, command, nil)
 							s.invalidateTrackingKeys(clientSession, command)
 						}
