@@ -187,6 +187,66 @@ func indexedSetContains(data,target []byte)(bool,error) {
 	return found,err
 }
 
+func indexedSetAddResults(data []byte, members [][]byte) (results []int64, rebuilt []byte, err error) {
+	count, slots, used, start, err := indexedSetMeta(data)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	results = make([]int64, len(members))
+	for i, member := range members {
+		slot, _, found, e := indexedSetFindKnown(data, member, slots, used, start)
+		if e != nil {
+			return nil, nil, e
+		}
+		if found {
+			continue
+		}
+
+		recordLen := setUvarintLen(uint64(len(member))) + len(member)
+		needRehash := (count+1)*10 >= slots*7
+		if needRehash || start+used+recordLen > len(data) {
+			current, e := decodeIndexedSet(data)
+			if e != nil {
+				return nil, nil, e
+			}
+
+			seen := make(map[string]struct{}, len(current)+len(members)-i)
+			for _, v := range current {
+				seen[string(v)] = struct{}{}
+			}
+			for j := i; j < len(members); j++ {
+				key := string(members[j])
+				if _, ok := seen[key]; ok {
+					continue
+				}
+				seen[key] = struct{}{}
+				current = append(current, append([]byte(nil), members[j]...))
+				results[j] = 1
+			}
+
+			rebuilt, e = encodeIndexedSet(current)
+			return results, rebuilt, e
+		}
+
+		recordStart := start + used
+		var varintBuf [binary.MaxVarintLen64]byte
+		n := binary.PutUvarint(varintBuf[:], uint64(len(member)))
+		copy(data[recordStart:recordStart+n], varintBuf[:n])
+		copy(data[recordStart+n:recordStart+n+len(member)], member)
+		binary.LittleEndian.PutUint32(
+			data[indexedSetFixed+slot*4:indexedSetFixed+slot*4+4],
+			uint32(used+1),
+		)
+		used += recordLen
+		count++
+		results[i] = 1
+		binary.LittleEndian.PutUint32(data[3:7], uint32(count))
+		binary.LittleEndian.PutUint32(data[11:15], uint32(used))
+	}
+	return results, nil, nil
+}
+
 func indexedSetAdd(data []byte, members [][]byte) (added int64, rebuilt []byte, err error) {
 	count,slots,used,start,err := indexedSetMeta(data)
 	if err != nil {
