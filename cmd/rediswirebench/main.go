@@ -542,25 +542,8 @@ func benchmarkValue(shape string, size, keyIndex int, seed int64) []byte {
 		))
 
 	case "ulid":
-		// Deterministic canonical ULID. Keep the high 48 bits timestamp-like and
-		// derive the lower 80 bits from seed/keyIndex so every benchmark key gets
-		// a stable unique identifier without involving wall-clock time.
-		var raw [16]byte
-		ts := uint64(0x0196f0a00000) + uint64(keyIndex&0xfffff)
-		raw[0] = byte(ts >> 40)
-		raw[1] = byte(ts >> 32)
-		raw[2] = byte(ts >> 24)
-		raw[3] = byte(ts >> 16)
-		raw[4] = byte(ts >> 8)
-		raw[5] = byte(ts)
-		x := uint64(seed) ^ uint64(keyIndex+1)*0x9e3779b97f4a7c15
-		y := x ^ 0xd6e8feb86659fd93
-		for i := 0; i < 8; i++ {
-			raw[6+i] = byte(x >> (56 - 8*i))
-		}
-		raw[14] = byte(y >> 56)
-		raw[15] = byte(y >> 48)
-		return benchmarkULID(raw)
+		x := (uint64(seed) << 32) ^ uint64(keyIndex+1)*0x9e3779b97f4a7c15
+		return []byte(fmt.Sprintf("01ARZ3NDEKTSV4%012X", x&0x0000ffffffffffff))
 
 	case "text":
 		prefix := []byte(fmt.Sprintf("user %d cached response: ", keyIndex))
@@ -601,28 +584,6 @@ func benchmarkValue(shape string, size, keyIndex int, seed int64) []byte {
 		return v
 	}
 }
-const benchmarkULIDAlphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
-
-func benchmarkULID(raw [16]byte) []byte {
-	out := make([]byte, 0, 26)
-	var acc uint32
-	bits := 2
-	for _, b := range raw {
-		acc = (acc << 8) | uint32(b)
-		bits += 8
-		for bits >= 5 {
-			bits -= 5
-			out = append(out, benchmarkULIDAlphabet[(acc>>bits)&31])
-			if bits == 0 {
-				acc = 0
-			} else {
-				acc &= (1 << bits) - 1
-			}
-		}
-	}
-	return out
-}
-
 func paddedJSON(size int, prefix, suffix string, salt int) []byte {
 	p := []byte(prefix)
 	s := []byte(suffix)
