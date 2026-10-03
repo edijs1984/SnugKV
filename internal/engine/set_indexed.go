@@ -32,6 +32,11 @@ func indexedSetMeta(data []byte) (count, slots, used, dataStart int, err error) 
 	return
 }
 
+func setUvarintLen(value uint64) int {
+	var buf [binary.MaxVarintLen64]byte
+	return binary.PutUvarint(buf[:], value)
+}
+
 func nextSetPow2(n int) int {
 	p := 8
 	for p < n {
@@ -195,9 +200,9 @@ func indexedSetAdd(data []byte, members [][]byte) (added int64, rebuilt []byte, 
 		if found {
 			continue
 		}
-		rec := indexedSetRecordBytes(member)
+		recordLen := setUvarintLen(uint64(len(member))) + len(member)
 		needRehash := (count+1)*10 >= slots*7
-		if needRehash || start+used+len(rec) > len(data) {
+		if needRehash || start+used+recordLen > len(data) {
 			current,e := decodeIndexedSet(data)
 			if e != nil {
 				return added,nil,e
@@ -218,9 +223,13 @@ func indexedSetAdd(data []byte, members [][]byte) (added int64, rebuilt []byte, 
 			return added,rebuilt,e
 		}
 
-		copy(data[start+used:],rec)
+		recordStart := start + used
+		var varintBuf [binary.MaxVarintLen64]byte
+		n := binary.PutUvarint(varintBuf[:], uint64(len(member)))
+		copy(data[recordStart:recordStart+n], varintBuf[:n])
+		copy(data[recordStart+n:recordStart+n+len(member)], member)
 		binary.LittleEndian.PutUint32(data[indexedSetFixed+slot*4:indexedSetFixed+slot*4+4],uint32(used+1))
-		used += len(rec)
+		used += recordLen
 		count++
 		added++
 		binary.LittleEndian.PutUint32(data[3:7],uint32(count))
