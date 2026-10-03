@@ -85,3 +85,75 @@ func TestConcurrentNativeMutationFastPathRejectsComplexForms(t *testing.T) {
 		}
 	}
 }
+
+
+func TestConcurrentBlockingCapableNativeMutationFastPath(t *testing.T) {
+	tests := []struct {
+		name string
+		args [][]byte
+		want string
+	}{
+		{"rpush", [][]byte{[]byte("RPUSH"), []byte("l"), []byte("v")}, ":1\r\n"},
+		{"zadd", [][]byte{[]byte("ZADD"), []byte("z"), []byte("1"), []byte("m")}, ":1\r\n"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := New(engine.New())
+			got, handled, err := s.executeAuthorizedConcurrentBlockingCapableNativeMutation(tc.args)
+			if err != nil {
+				t.Fatalf("fast path error: %v", err)
+			}
+			if !handled {
+				t.Fatal("blocking-aware fast path did not handle simple native mutation")
+			}
+			if string(got) != tc.want {
+				t.Fatalf("reply=%q want=%q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestConcurrentBlockingCapableNativeMutationSignalsWaiters(t *testing.T) {
+	t.Run("list", func(t *testing.T) {
+		s := New(engine.New())
+		waiter, ok := s.registerListWaiter([]string{"l"})
+		if !ok {
+			t.Fatal("could not register list waiter")
+		}
+		defer s.unregisterListWaiter(waiter)
+
+		if _, handled, err := s.executeAuthorizedConcurrentBlockingCapableNativeMutation(
+			[][]byte{[]byte("RPUSH"), []byte("l"), []byte("v")},
+		); err != nil || !handled {
+			t.Fatalf("RPUSH handled=%v err=%v", handled, err)
+		}
+
+		select {
+		case <-waiter.ch:
+		default:
+			t.Fatal("RPUSH fast path did not signal list waiter")
+		}
+	})
+
+	t.Run("zset", func(t *testing.T) {
+		s := New(engine.New())
+		waiter, ok := s.registerZSetWaiter([]string{"z"})
+		if !ok {
+			t.Fatal("could not register zset waiter")
+		}
+		defer s.unregisterZSetWaiter(waiter)
+
+		if _, handled, err := s.executeAuthorizedConcurrentBlockingCapableNativeMutation(
+			[][]byte{[]byte("ZADD"), []byte("z"), []byte("1"), []byte("m")},
+		); err != nil || !handled {
+			t.Fatalf("ZADD handled=%v err=%v", handled, err)
+		}
+
+		select {
+		case <-waiter.ch:
+		default:
+			t.Fatal("ZADD fast path did not signal zset waiter")
+		}
+	})
+}
