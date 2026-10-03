@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -135,5 +136,97 @@ func TestCompactFreezesHotHash(t *testing.T) {
 	value, found, err := s.HashGet("compact-hot", []byte("b"))
 	if err != nil || !found || string(value) != "2" {
 		t.Fatalf("post-compact b=%q found=%v err=%v", value, found, err)
+	}
+}
+
+
+func TestTinyPipelinedHashStaysCold(t *testing.T) {
+	s := New()
+
+	fields := make([][]byte, 10)
+	values := make([][]byte, 10)
+	for i := range fields {
+		fields[i] = []byte{byte('a' + i)}
+		values[i] = []byte("value")
+	}
+	if _, err := s.HashSetResults("tiny-pipeline", fields, values); err != nil {
+		t.Fatal(err)
+	}
+
+	sh := s.shardFor("tiny-pipeline")
+	sh.mu.RLock()
+	e, ok := sh.get("tiny-pipeline")
+	sh.mu.RUnlock()
+	if !ok {
+		t.Fatal("missing tiny pipeline hash")
+	}
+	if e.isHotHash() {
+		t.Fatal("tiny pipeline hash should remain cold")
+	}
+}
+
+func TestHotHashCompactionReturnsToIndexedAndAccountingStaysSane(t *testing.T) {
+	s := New()
+
+	fields := make([][]byte, 100)
+	values := make([][]byte, 100)
+	for i := range fields {
+		fields[i] = []byte(fmt.Sprintf("field:%03d", i))
+		values[i] = []byte("0123456789abcdef0123456789abcdef")
+	}
+	if _, err := s.HashSetResults("hot-indexed", fields, values); err != nil {
+		t.Fatal(err)
+	}
+
+	sh := s.shardFor("hot-indexed")
+	sh.mu.RLock()
+	e, ok := sh.get("hot-indexed")
+	isHot := ok && e.isHotHash()
+	sh.mu.RUnlock()
+	if !isHot {
+		t.Fatal("expected medium pipelined hash to promote HOT")
+	}
+
+	before := s.Memory()
+	if before.AccountedBytes == 0 || before.AccountedBytes > 1<<40 {
+		t.Fatalf("invalid accounted memory before compact: %d", before.AccountedBytes)
+	}
+
+	if compacted := s.Compact(1 << 30); compacted == 0 {
+		t.Fatal("expected compaction")
+	}
+
+	sh.mu.RLock()
+	e, ok = sh.get("hot-indexed")
+	if !ok {
+		sh.mu.RUnlock()
+		t.Fatal("hash missing after compaction")
+	}
+	isHot = e.isHotHash()
+	var physical []byte
+	if !isHot {
+		physical = append([]byte(nil), sh.encoded(e)...)
+	}
+	sh.mu.RUnlock()
+
+	if isHot {
+		t.Fatal("compaction should freeze HOT hash")
+	}
+	if !isIndexedHash(physical) {
+		t.Fatalf("compaction froze HOT hash to non-indexed encoding: %x", physical[:min(4, len(physical))])
+	}
+
+	after := s.Memory()
+	if after.AccountedBytes == 0 || after.AccountedBytes > 1<<40 {
+		t.Fatalf("invalid accounted memory after compact: %d", after.AccountedBytes)
+	}
+	if after.HotHashBytes != 0 {
+		t.Fatalf("HOT hash bytes after compact = %d, want 0", after.HotHashBytes)
+	}
+
+	s.FlushDB()
+	final := s.Memory()
+	if final.AccountedBytes > 1<<40 {
+		t.Fatalf("accounting wrapped after flush: %d", final.AccountedBytes)
 	}
 }
