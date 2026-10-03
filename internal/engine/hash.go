@@ -519,6 +519,53 @@ func (s *Store) HashGet(key string, field []byte) ([]byte, bool, error) {
 	return packedHashLookup(s.decode(sh, e), field, s.now().UnixMilli())
 }
 
+// HashGetResults answers multiple HGET field probes for one key under
+// a single shard read lock and a single key lookup.
+func (s *Store) HashGetResults(key string, fields [][]byte) (values [][]byte, found []bool, err error) {
+	values = make([][]byte, len(fields))
+	found = make([]bool, len(fields))
+	if len(fields) == 0 {
+		return values, found, nil
+	}
+
+	sh := s.shardFor(key)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
+
+	e, ok := sh.get(key)
+	if !ok || sh.expired(key, e, s.now()) {
+		return values, found, nil
+	}
+	if e.valueType != TypeHash {
+		return nil, nil, hashWrongType()
+	}
+
+	physical := sh.encoded(e)
+	if isIndexedHash(physical) {
+		for i, field := range fields {
+			value, ok, lookupErr := indexedHashLookup(physical, field)
+			if lookupErr != nil {
+				return nil, nil, lookupErr
+			}
+			values[i] = value
+			found[i] = ok
+		}
+		return values, found, nil
+	}
+
+	nowMS := s.now().UnixMilli()
+	decoded := s.decode(sh, e)
+	for i, field := range fields {
+		value, ok, lookupErr := packedHashLookup(decoded, field, nowMS)
+		if lookupErr != nil {
+			return nil, nil, lookupErr
+		}
+		values[i] = value
+		found[i] = ok
+	}
+	return values, found, nil
+}
+
 func (s *Store) HashLen(key string) (int64, error) {
 	sh := s.shardFor(key)
 	sh.mu.RLock()
