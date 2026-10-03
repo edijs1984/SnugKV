@@ -376,6 +376,8 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 	var hsetBatchValueArena []byte
 	var hgetBatchKeys [][]byte
 	var hgetBatchFields [][]byte
+	var hgetBatchBytes []byte
+	var hgetBatchResults []engine.HashGetResult
 	var saddBatchKeys [][]byte
 	var saddBatchMembers [][]byte
 	var saddBatchKeyArena []byte
@@ -1801,24 +1803,46 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			}
 
 			if len(hgetBatchKeys) > 1 {
-				values, found, handled, fastErr :=
-					s.server.executeAuthorizedConcurrentHashGetBatch(
+				if cap(hgetBatchResults) < len(hgetBatchKeys) {
+					hgetBatchResults = make([]engine.HashGetResult, len(hgetBatchKeys))
+				} else {
+					hgetBatchResults = hgetBatchResults[:len(hgetBatchKeys)]
+					for i := range hgetBatchResults {
+						hgetBatchResults[i] = engine.HashGetResult{}
+					}
+				}
+				hgetBatchBytes = hgetBatchBytes[:0]
+
+				out, handled, fastErr :=
+					s.server.executeAuthorizedConcurrentHashGetBatchInto(
 						hgetBatchKeys,
 						hgetBatchFields,
+						hgetBatchBytes,
+						hgetBatchResults,
 					)
+				hgetBatchBytes = out
 				if handled {
 					if fastErr != nil {
 						if writeProtocol(msg, errorResponse(fastErr)) != nil {
 							return
 						}
 					} else {
-						for i := range values {
+						for i, result := range hgetBatchResults {
 							command := [][]byte{
 								[]byte("HGET"),
 								hgetBatchKeys[i],
 								hgetBatchFields[i],
 							}
-							if writeProtocol(command, optionalBulk(values[i], found[i])) != nil {
+							if result.Found {
+								start := int(result.Offset)
+								end := start + int(result.Length)
+								if start < 0 || end < start || end > len(hgetBatchBytes) {
+									return
+								}
+								if writeProtocol(command, formatBulkString(hgetBatchBytes[start:end])) != nil {
+									return
+								}
+							} else if writeProtocol(command, nullBulk()) != nil {
 								return
 							}
 							s.trackCommandRead(clientSession, command)
