@@ -339,8 +339,12 @@ func (s *Store) publishRecordKnownWithHash(
 	exists bool,
 ) error {
 	var oldCost uint64
+	var oldHotBytes uint64
 	if exists {
 		oldCost = entryCharge(key, old)
+		if h, _, ok := sh.hotHashForKey(key); ok && h != nil {
+			oldHotBytes = h.memoryBytes()
+		}
 	}
 
 	newCost := entryCharge(key, e)
@@ -392,7 +396,8 @@ func (s *Store) publishRecordKnownWithHash(
 
 	next := s.memory.used -
 		oldCost -
-		oldMetaCost +
+		oldMetaCost -
+		oldHotBytes +
 		newCost +
 		newMetaCost +
 		extraIndex +
@@ -425,6 +430,9 @@ func (s *Store) publishRecordKnownWithHash(
 	}
 
 	s.memory.used = next
+	if oldHotBytes != 0 {
+		s.memory.hotHashes -= oldHotBytes
+	}
 	s.memory.entries =
 		s.memory.entries - oldCost + newCost + extraEntries + extraMetaSlots
 	s.memory.metas = s.memory.metas - oldMetaCost + newMetaCost
@@ -522,7 +530,12 @@ func (s *Store) remove(sh *shard, key string) {
 		}
 		cost := entryCharge(key, e)
 		metaCost := metadataCharge(e)
-		s.memory.used -= cost + metaCost
+		hotBytes := uint64(0)
+		if h, _, found := sh.hotHashForKey(key); found && h != nil {
+			hotBytes = h.memoryBytes()
+		}
+		s.memory.used -= cost + metaCost + hotBytes
+		s.memory.hotHashes -= hotBytes
 		s.memory.used += freeGrowth
 		s.memory.entries -= cost
 		s.memory.metas -= metaCost
