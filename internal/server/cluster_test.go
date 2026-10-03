@@ -114,6 +114,31 @@ func TestClusterRoutingAllowsLocalSlot(t *testing.T) {
 	}
 }
 
+func TestClusterReplicaNeverServesStaleLocalOwner(t *testing.T) {
+	s := New(engine.New())
+	local := "127.0.0.1:7000"
+	primaryHost := "127.0.0.1"
+	primaryPort := 7001
+	key := []byte("foo")
+	slot := clusterKeySlot(key)
+
+	if err := s.configureClusterSlots(true, local, map[string]string{
+		fmt.Sprintf("%d", slot): local,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate a restarted node whose cluster table still says "I own this
+	// slot" after REPLICAOF has already demoted it to a replica.
+	s.replication.setReplica(primaryHost, primaryPort)
+
+	_, err := s.execute([][]byte{[]byte("GET"), key})
+	want := fmt.Sprintf("MOVED %d %s:%d", slot, primaryHost, primaryPort)
+	if err == nil || err.Error() != want {
+		t.Fatalf("err=%v want=%q", err, want)
+	}
+}
+
 func TestClusterRoutingReturnsMoved(t *testing.T) {
 	s := New(engine.New())
 	key := []byte("foo")
