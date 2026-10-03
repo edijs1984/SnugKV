@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"reflect"
 	"fmt"
 	"bytes"
 	"testing"
@@ -239,3 +240,28 @@ func TestIndexedSetPromotionAddContainsTTLAndPersistence(t *testing.T) {
 }
 
 
+
+
+func TestSetAddResultsPreservesSequentialSemantics(t *testing.T) {
+	s := New()
+	results, err := s.SetAddResults("batch-set", [][]byte{
+		[]byte("a"),
+		[]byte("a"),
+		[]byte("b"),
+		[]byte("c"),
+		[]byte("b"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int64{1, 0, 1, 1, 0}
+	if !reflect.DeepEqual(results, want) {
+		t.Fatalf("results=%v want=%v", results, want)
+	}
+	for _, member := range []string{"a", "b", "c"} {
+		found, err := s.SetContains("batch-set", []byte(member))
+		if err != nil || !found {
+			t.Fatalf("member=%q found=%v err=%v", member, found, err)
+		}
+	}
+}
