@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"sort"
+	"unsafe"
 
 	"snugkv/internal/arena"
 	"snugkv/internal/index"
@@ -44,8 +45,9 @@ func (h *hotHash) memoryBytes() uint64 {
 	if h == nil {
 		return 0
 	}
-	return uint64(cap(h.slots))*4 +
-		uint64(cap(h.records))*24 +
+	return uint64(unsafe.Sizeof(hotHash{})) +
+		uint64(cap(h.slots))*uint64(unsafe.Sizeof(uint32(0))) +
+		uint64(cap(h.records))*uint64(unsafe.Sizeof(hotHashRecord{})) +
 		uint64(cap(h.payload))
 }
 
@@ -273,6 +275,12 @@ func (s *Store) thawHotHashLocked(sh *shard, key string, e entry) (*hotHash, boo
 	}
 	h := newHotHash(pairs)
 	hotBytes := h.memoryBytes()
+	sidecarBytes := uint64(0)
+	if sh.hotHashes == nil {
+		sidecarBytes =
+			uint64(unsafe.Sizeof(hotHashSidecar{})) +
+			uint64(cap(sh.entries))*uint64(unsafe.Sizeof((*hotHash)(nil)))
+	}
 
 	oldPayload := uint64(0)
 	oldBlock := uint64(0)
@@ -284,8 +292,8 @@ func (s *Store) thawHotHashLocked(sh *shard, key string, e entry) (*hotHash, boo
 	}
 
 	s.memory.mu.Lock()
-	s.memory.used += hotBytes + freeGrowth
-	s.memory.hotHashes += hotBytes
+	s.memory.used += hotBytes + sidecarBytes + freeGrowth
+	s.memory.hotHashes += hotBytes + sidecarBytes
 	s.memory.arenas += freeGrowth
 	if oldPayload != 0 {
 		s.memory.arenaPayload -= oldPayload
