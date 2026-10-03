@@ -399,7 +399,7 @@ func (s *Store) resetForRecovery() {
 			s.remove(sh, key)
 		}
 		s.memory.mu.Lock()
-		arenaBytes := sh.arena.MemoryBytes()
+		arenaBytes := sh.arena.TotalMemoryBytes()
 		indexBytes := sh.data.CapacityBytes()
 		hotSidecarBytes := hotHashSidecarBytes(sh)
 		entryBytes := uint64(cap(sh.entries)) * entryStructBytes
