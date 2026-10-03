@@ -511,12 +511,19 @@ func (s *Server) executeAuthorizedConcurrentSetAddBatch(keys, members [][]byte) 
 	}
 
 	results = make([]int64, len(keys))
-	for i := range keys {
-		one := [1][]byte{members[i]}
-		results[i], err = s.store.SetAdd(string(keys[i]), one[:])
-		if err != nil {
+	for i := 0; i < len(keys); {
+		j := i + 1
+		for j < len(keys) && bytes.Equal(keys[j], keys[i]) {
+			j++
+		}
+
+		groupResults, groupErr := s.store.SetAddResults(string(keys[i]), members[i:j])
+		if groupErr != nil {
+			err = groupErr
 			break
 		}
+		copy(results[i:j], groupResults)
+		i = j
 	}
 	s.durableMu.RUnlock()
 
