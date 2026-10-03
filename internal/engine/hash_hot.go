@@ -220,3 +220,110 @@ func (h *hotHash) packed() ([]byte, error) {
 	}
 	return encodePackedHash(h.pairs())
 }
+
+
+func (s *Store) accountHotHashResize(oldBytes, newBytes uint64) {
+	if oldBytes == newBytes {
+		return
+	}
+	s.memory.mu.Lock()
+	if newBytes >= oldBytes {
+		delta := newBytes - oldBytes
+		s.memory.used += delta
+		s.memory.hotHashes += delta
+	} else {
+		delta := oldBytes - newBytes
+		s.memory.used -= delta
+		s.memory.hotHashes -= delta
+	}
+	s.memory.mu.Unlock()
+}
+
+func (s *Store) hotHashForKeyLocked(sh *shard, key string) (*hotHash, uint32, bool) {
+	return sh.hotHashForKey(key)
+}
+
+func (s *Store) installHotHashLocked(sh *shard, key string, h *hotHash) bool {
+	if h == nil || s.memory.max.Load() != 0 {
+		return false
+	}
+	_, id, ok := sh.hotHashForKey(key)
+	if !ok {
+		return false
+	}
+	if current := sh.hotHashByID(id); current != nil {
+		return true
+	}
+	bytes := h.memoryBytes()
+	s.memory.mu.Lock()
+	s.memory.used += bytes
+	s.memory.hotHashes += bytes
+	s.memory.mu.Unlock()
+	sh.setHotHash(id, h)
+	return true
+}
+
+func (s *Store) dropHotHashByIDLocked(sh *shard, id uint32) {
+	h := sh.hotHashByID(id)
+	if h == nil {
+		return
+	}
+	bytes := h.memoryBytes()
+	s.memory.mu.Lock()
+	s.memory.used -= bytes
+	s.memory.hotHashes -= bytes
+	s.memory.mu.Unlock()
+	sh.setHotHash(id, nil)
+}
+
+func (s *Store) thawHotHashLocked(sh *shard, key string, e entry) (*hotHash, bool, error) {
+	if h, _, ok := sh.hotHashForKey(key); ok && h != nil {
+		return h, true, nil
+	}
+	if s.memory.max.Load() != 0 {
+		return nil, false, nil
+	}
+	pairs, err := decodePackedHash(s.decode(sh, e))
+	if err != nil {
+		return nil, false, err
+	}
+	pairs = liveHashPairs(pairs, s.now().UnixMilli())
+	for _, pair := range pairs {
+		if pair.ExpiresAtMS != 0 {
+			return nil, false, nil
+		}
+	}
+	h := newHotHash(pairs)
+	if !s.installHotHashLocked(sh, key, h) {
+		return nil, false, nil
+	}
+	return h, true, nil
+}
+
+func (s *Store) freezeHotHashLocked(sh *shard, key string, e entry) error {
+	h, id, ok := sh.hotHashForKey(key)
+	if !ok || h == nil {
+		return nil
+	}
+	pairs := h.pairs()
+	packed, err := encodePackedHash(pairs)
+	if err != nil {
+		return err
+	}
+	updated := s.hashEntry(pairs, packed)
+	updated.expiresAt = sh.expirationAt(key, e)
+	// publish clears the sidecar slot; memory accounting for the HOT object is
+	// released by the generic publish path before replacement.
+	if err := s.publish(sh, key, updated); err != nil {
+		return err
+	}
+	_ = id
+	return nil
+}
+
+func (s *Store) mutateHotHashLocked(h *hotHash, mutate func()) {
+	before := h.memoryBytes()
+	mutate()
+	after := h.memoryBytes()
+	s.accountHotHashResize(before, after)
+}
