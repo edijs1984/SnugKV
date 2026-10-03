@@ -192,3 +192,34 @@ func TestConcurrentZSetScoreFastPath(t *testing.T) {
 		t.Fatalf("missing reply=%q", got)
 	}
 }
+
+
+func TestConcurrentSetContainsFastPath(t *testing.T) {
+	s := New(engine.New())
+	if _, err := s.store.SetAdd("s", [][]byte{[]byte("m")}); err != nil {
+		t.Fatalf("seed set: %v", err)
+	}
+
+	got, handled, err := s.executeAuthorizedConcurrentSetContains(
+		[][]byte{[]byte("SISMEMBER"), []byte("s"), []byte("m")},
+	)
+	if err != nil {
+		t.Fatalf("fast path error: %v", err)
+	}
+	if !handled {
+		t.Fatal("SISMEMBER fast path did not handle command")
+	}
+	if string(got) != ":1\r\n" {
+		t.Fatalf("reply=%q", got)
+	}
+
+	got, handled, err = s.executeAuthorizedConcurrentSetContains(
+		[][]byte{[]byte("SISMEMBER"), []byte("s"), []byte("missing")},
+	)
+	if err != nil || !handled {
+		t.Fatalf("missing member handled=%v err=%v", handled, err)
+	}
+	if string(got) != ":0\r\n" {
+		t.Fatalf("missing reply=%q", got)
+	}
+}
