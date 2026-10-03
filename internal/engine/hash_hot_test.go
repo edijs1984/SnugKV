@@ -182,8 +182,12 @@ func TestHotHashCompactionReturnsToIndexedAndAccountingStaysSane(t *testing.T) {
 	sh.mu.RLock()
 	e, ok := sh.get("hot-indexed")
 	isHot := ok && e.isHotHash()
+	var h *hotHash
+	if isHot {
+		h, _, _ = sh.hotHashForKey("hot-indexed")
+	}
 	sh.mu.RUnlock()
-	if !isHot {
+	if !isHot || h == nil {
 		t.Fatal("expected large pipelined hash to promote HOT")
 	}
 
@@ -192,8 +196,24 @@ func TestHotHashCompactionReturnsToIndexedAndAccountingStaysSane(t *testing.T) {
 		t.Fatalf("invalid accounted memory before compact: %d", before.AccountedBytes)
 	}
 
+	// Active HOT hashes intentionally block generic compaction.
+	if compacted := s.Compact(1 << 30); compacted != 0 {
+		t.Fatalf("active HOT hash compacted = %d, want 0", compacted)
+	}
+
+	// Once the hash is truly idle, generic compaction may freeze it back to
+	// indexed cold storage.
+	sh.mu.Lock()
+	h, _, ok = sh.hotHashForKey("hot-indexed")
+	if !ok || h == nil {
+		sh.mu.Unlock()
+		t.Fatal("HOT hash disappeared before idle compaction")
+	}
+	h.lastMutation = s.now().Add(-hotHashIdleFreeze - time.Second).UnixMilli()
+	sh.mu.Unlock()
+
 	if compacted := s.Compact(1 << 30); compacted == 0 {
-		t.Fatal("expected compaction")
+		t.Fatal("expected idle HOT hash compaction")
 	}
 
 	sh.mu.RLock()
@@ -210,10 +230,10 @@ func TestHotHashCompactionReturnsToIndexedAndAccountingStaysSane(t *testing.T) {
 	sh.mu.RUnlock()
 
 	if isHot {
-		t.Fatal("compaction should freeze HOT hash")
+		t.Fatal("idle compaction should freeze HOT hash")
 	}
 	if !isIndexedHash(physical) {
-		t.Fatalf("compaction froze HOT hash to non-indexed encoding: %x", physical[:min(4, len(physical))])
+		t.Fatalf("idle compaction froze HOT hash to non-indexed encoding: %x", physical[:min(4, len(physical))])
 	}
 
 	after := s.Memory()
@@ -230,7 +250,6 @@ func TestHotHashCompactionReturnsToIndexedAndAccountingStaysSane(t *testing.T) {
 		t.Fatalf("accounting wrapped after flush: %d", final.AccountedBytes)
 	}
 }
-
 
 func TestHotHashSlotGrowthFlushReturnsToStructuralBaseline(t *testing.T) {
 	s, err := NewWithShards(8)
