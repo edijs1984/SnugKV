@@ -265,3 +265,35 @@ func TestSetAddResultsPreservesSequentialSemantics(t *testing.T) {
 		}
 	}
 }
+
+
+func TestIndexedSetAddResultsSingleProbeSemantics(t *testing.T) {
+	s := New()
+	for i := 0; i < indexedSetPromoteMembers; i++ {
+		member := []byte(fmt.Sprintf("seed:%03d", i))
+		if _, err := s.SetAdd("indexed-batch", [][]byte{member}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	results, err := s.SetAddResults("indexed-batch", [][]byte{
+		[]byte("seed:000"),
+		[]byte("new:a"),
+		[]byte("new:a"),
+		[]byte("new:b"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int64{0, 1, 0, 1}
+	if !reflect.DeepEqual(results, want) {
+		t.Fatalf("results=%v want=%v", results, want)
+	}
+
+	for _, member := range []string{"seed:000", "new:a", "new:b"} {
+		found, err := s.SetContains("indexed-batch", []byte(member))
+		if err != nil || !found {
+			t.Fatalf("member=%q found=%v err=%v", member, found, err)
+		}
+	}
+}
