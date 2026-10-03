@@ -247,6 +247,17 @@ func (s *Server) enforceClusterRoutingForClientMode(args [][]byte, client *clien
 	}
 
 	if owner == nodeAddr {
+		// A node that has already transitioned to replica role must never serve
+		// a slot locally solely because its cluster-owner table is stale. During
+		// restart/rejoin there can be a short control-plane window where the
+		// persisted/configured owner still points at this node even though
+		// REPLICAOF has established a healthy upstream. Serving locally in that
+		// state can return a false nil from an empty/rebuilding replica.
+		repl := s.replication.snapshot()
+		if repl.role == replicationReplica && repl.masterHost != "" && repl.masterPort > 0 {
+			return fmt.Errorf("MOVED %d %s", slot, net.JoinHostPort(repl.masterHost, strconv.Itoa(repl.masterPort)))
+		}
+
 		if migrating != "" && len(keys) == 1 {
 			if s.store.Exists([]string{string(keys[0].value)}) == 0 {
 				return fmt.Errorf("ASK %d %s", slot, migrating)
