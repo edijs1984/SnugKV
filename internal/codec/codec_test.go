@@ -256,3 +256,43 @@ func TestEncodeGeneralBorrowedRawAliasesInput(t *testing.T) {
 		t.Fatal("ownership-preserving EncodeGeneral aliased input")
 	}
 }
+
+
+func TestRegistryUUIDFastPath(t *testing.T) {
+	r := NewRegistry()
+	const value = "550e8400-e29b-41d4-a716-446655440000"
+
+	rec := r.Encode([]byte(value))
+	if rec.ID != UUID {
+		t.Fatalf("codec=%v want UUID", rec.ID)
+	}
+	if rec.RawLength != len(value) {
+		t.Fatalf("raw length=%d want %d", rec.RawLength, len(value))
+	}
+	if len(rec.Data) != 16 {
+		t.Fatalf("encoded length=%d want 16", len(rec.Data))
+	}
+
+	got, err := r.DecodeInto(rec, len(value), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != value {
+		t.Fatalf("decoded=%q want %q", got, value)
+	}
+}
+
+func TestRegistryUUIDFastPathRejectsNonCanonicalText(t *testing.T) {
+	r := NewRegistry()
+	cases := []string{
+		"550E8400-e29b-41d4-a716-446655440000",
+		"550e8400e29b-41d4-a716-4466554400000",
+		"550e8400-e29b-41d4-a716-44665544000g",
+	}
+	for _, value := range cases {
+		rec := r.Encode([]byte(value))
+		if rec.ID == UUID {
+			t.Fatalf("non-canonical %q encoded as UUID", value)
+		}
+	}
+}
