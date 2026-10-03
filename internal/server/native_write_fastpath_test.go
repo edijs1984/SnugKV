@@ -372,3 +372,59 @@ func TestConcurrentHashGetBatchFastPath(t *testing.T) {
 		t.Fatalf("values=%v want=%v", got, want)
 	}
 }
+
+
+func TestConcurrentHashGetBatchRegroupsInterleavedKeys(t *testing.T) {
+	s := New(engine.New())
+	if _, err := s.store.HashSet(
+		"h1",
+		[][]byte{[]byte("a"), []byte("b")},
+		[][]byte{[]byte("1"), []byte("2")},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.store.HashSet(
+		"h2",
+		[][]byte{[]byte("x")},
+		[][]byte{[]byte("3")},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	keys := [][]byte{
+		[]byte("h1"),
+		[]byte("h2"),
+		[]byte("h1"),
+		[]byte("h2"),
+	}
+	fields := [][]byte{
+		[]byte("a"),
+		[]byte("x"),
+		[]byte("b"),
+		[]byte("missing"),
+	}
+
+	values, found, handled, err := s.executeAuthorizedConcurrentHashGetBatch(keys, fields)
+	if err != nil {
+		t.Fatalf("batch error: %v", err)
+	}
+	if !handled {
+		t.Fatal("HGET batch fast path did not handle commands")
+	}
+
+	wantFound := []bool{true, true, true, false}
+	if !reflect.DeepEqual(found, wantFound) {
+		t.Fatalf("found=%v want=%v", found, wantFound)
+	}
+
+	got := []string{
+		string(values[0]),
+		string(values[1]),
+		string(values[2]),
+		string(values[3]),
+	}
+	want := []string{"1", "3", "2", ""}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("values=%v want=%v", got, want)
+	}
+}
