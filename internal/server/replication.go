@@ -218,6 +218,31 @@ func (r *replicationState) currentOffset() int64 {
 	return r.offset
 }
 
+func (r *replicationState) debugAckOffsets() (ackMin, ackMax, aofMin, aofMax int64) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	ackMin, aofMin = -1, -1
+	for id := range r.replicas {
+		ack := r.replicaAckOffsets[id]
+		aof := r.replicaAOFOffsets[id]
+		if ackMin < 0 || ack < ackMin {
+			ackMin = ack
+		}
+		if ack > ackMax {
+			ackMax = ack
+		}
+		if aofMin < 0 || aof < aofMin {
+			aofMin = aof
+		}
+		if aof > aofMax {
+			aofMax = aof
+		}
+	}
+	return ackMin, ackMax, aofMin, aofMax
+}
+
+
 func (r *replicationState) requestReplicaACKs() {
 	payload := []byte("*3\r\n$8\r\nREPLCONF\r\n$6\r\nGETACK\r\n$1\r\n*\r\n")
 
