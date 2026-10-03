@@ -314,7 +314,7 @@ func (s *Store) thawHotHashLocked(sh *shard, key string, e entry) (*hotHash, boo
 	if !e.ref.IsInline() {
 		sh.arena.Free(e.ref)
 	}
-	e.hot = true
+	e.rawStable = true
 	e.ref = arena.Ref{}
 	sh.entries[id] = e.entryData
 	sh.setHotHash(id, h)
