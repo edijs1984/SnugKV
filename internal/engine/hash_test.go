@@ -442,3 +442,32 @@ func TestHashSetResultsPreservesSequentialSemantics(t *testing.T) {
 		t.Fatalf("b=%q found=%v err=%v", value, found, err)
 	}
 }
+
+
+func TestHashGetResults(t *testing.T) {
+	s := New()
+	if _, err := s.HashSet(
+		"batch-read-hash",
+		[][]byte{[]byte("a"), []byte("b"), []byte("c")},
+		[][]byte{[]byte("1"), []byte("2"), []byte("3")},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	values, found, err := s.HashGetResults(
+		"batch-read-hash",
+		[][]byte{[]byte("a"), []byte("missing"), []byte("c"), []byte("a")},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantFound := []bool{true, false, true, true}
+	if !reflect.DeepEqual(found, wantFound) {
+		t.Fatalf("found=%v want=%v", found, wantFound)
+	}
+	got := []string{string(values[0]), string(values[1]), string(values[2]), string(values[3])}
+	want := []string{"1", "", "3", "1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("values=%v want=%v", got, want)
+	}
+}
