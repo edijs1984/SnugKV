@@ -374,6 +374,8 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 	var hsetBatchKeyArena []byte
 	var hsetBatchFieldArena []byte
 	var hsetBatchValueArena []byte
+	var hgetBatchKeys [][]byte
+	var hgetBatchFields [][]byte
 	var saddBatchKeys [][]byte
 	var saddBatchMembers [][]byte
 	var saddBatchKeyArena []byte
@@ -1746,6 +1748,93 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			}
 			s.trackCommandRead(clientSession, msg)
 			continue
+		}
+
+		if len(msg) == 3 &&
+			bytes.EqualFold(msg[0], []byte("HGET")) &&
+			!s.adminOnly && !txSession.multi &&
+			!(clientSession.protocolVersion() == 2 && pubSession.active()) &&
+			!s.server.clusterEnabled &&
+			s.server.journal == nil &&
+			atomic.LoadUint32(&s.server.metricsEnabled) == 0 &&
+			reader.Buffered() > 0 {
+
+			maxBatch := configuredSetBatchLimit
+			if cap(hgetBatchKeys) < maxBatch {
+				hgetBatchKeys = make([][]byte, 0, maxBatch)
+				hgetBatchFields = make([][]byte, 0, maxBatch)
+			} else {
+				hgetBatchKeys = hgetBatchKeys[:0]
+				hgetBatchFields = hgetBatchFields[:0]
+			}
+			hgetBatchKeys = append(hgetBatchKeys, msg[1])
+			hgetBatchFields = append(hgetBatchFields, msg[2])
+			var pendingAuthErr error
+
+			nextBufferedIsHGET := func() bool {
+				const prefix = "*3\r\n$4\r\nHGET\r\n"
+				if reader.Buffered() < len(prefix) {
+					return false
+				}
+				buf, peekErr := reader.Peek(len(prefix))
+				if peekErr != nil {
+					return false
+				}
+				return bytes.EqualFold(buf, []byte(prefix))
+			}
+
+			for len(hgetBatchKeys) < maxBatch && nextBufferedIsHGET() {
+				nextMsg, readErr := decoder.ReadCommand()
+				if readErr != nil {
+					return
+				}
+				if len(nextMsg) != 3 || !bytes.EqualFold(nextMsg[0], []byte("HGET")) {
+					break
+				}
+				if authErr := s.server.authorizeConnectionCommand(authSession, nextMsg); authErr != nil {
+					pendingAuthErr = authErr
+					break
+				}
+				clientSession.touch(nextMsg)
+				hgetBatchKeys = append(hgetBatchKeys, nextMsg[1])
+				hgetBatchFields = append(hgetBatchFields, nextMsg[2])
+			}
+
+			if len(hgetBatchKeys) > 1 {
+				values, found, handled, fastErr :=
+					s.server.executeAuthorizedConcurrentHashGetBatch(
+						hgetBatchKeys,
+						hgetBatchFields,
+					)
+				if handled {
+					if fastErr != nil {
+						if writeProtocol(msg, errorResponse(fastErr)) != nil {
+							return
+						}
+					} else {
+						for i := range values {
+							command := [][]byte{
+								[]byte("HGET"),
+								hgetBatchKeys[i],
+								hgetBatchFields[i],
+							}
+							if writeProtocol(command, optionalBulk(values[i], found[i])) != nil {
+								return
+							}
+							s.trackCommandRead(clientSession, command)
+						}
+					}
+					if pendingAuthErr != nil {
+						if writeProtocol(
+							[][]byte{[]byte("HGET")},
+							errorResponse(pendingAuthErr),
+						) != nil {
+							return
+						}
+					}
+					continue
+				}
+			}
 		}
 
 		if result, handled, fastErr := s.server.executeAuthorizedConcurrentSetContains(msg); handled {
