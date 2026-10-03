@@ -1,3 +1,35 @@
+## Adaptive HASH HOT/COLD milestone — 2026-10-03
+
+HASH storage is frozen for the current first-release performance pass.
+
+- SnugKV now uses an adaptive native HASH representation rather than forcing one
+  physical layout for every workload.
+- HASHes below 256 fields stay COLD/indexed. Large pipelined/write-active HASHes
+  may promote to a compact mutable HOT sidecar, and idle HOT HASHes freeze back
+  to indexed COLD storage after the idle window.
+- The 24-byte `SnugValue` descriptor remains unchanged; the HOT state reuses the
+  native HASH representation bit and sidecar storage.
+- Generic scalar optimization excludes native containers. Persistence/export,
+  compaction, FLUSHDB/reset, field-TTL fallback, HSCAN, numeric mutation, rename,
+  and memory accounting all understand HOT HASH state.
+- FLUSHDB was changed from per-key teardown to atomic shard reset, removing the
+  free-table/accounting underflow path seen in repeated structure benchmarks.
+- The large-only promotion rule is enforced centrally in `thawHotHashLocked`,
+  including incremental one-field pipelined growth.
+
+Validated 1,000,000-item / 8-worker / pipeline-256 SnugKV results:
+
+| Profile | WRITE | READ | Active bytes/item | Idle/final bytes/item |
+|---|---:|---:|---:|---:|
+| hash-100 | 467,881/s | 531,098/s | 118.42 | 118.42 |
+| hash-1000 | 501,726/s | 488,073/s | 141.50 | ~109.43 after HOT->COLD |
+
+The hash-1000 dataset was observed at 109,478,411 used bytes after 70 seconds of
+idle time, confirming the maintenance-driven HOT -> indexed COLD transition.
+The focused engine/server test suites passed after the final threshold/lifecycle
+changes. Further HASH micro-tuning is intentionally deferred; future work should
+return to the release validation matrix and other first-release items.
+
 ## Phase F SLOWLOG / Persistence Controls — 2026-09-27
 
 Implemented and operator-validated through 88f5907: SLOWLOG syntax/count/help, self-recording and stable IDs, TCP identity, persistence commands, disabled-journal export/recovery, active-rewrite serialization, INFO results, and bidirectional save/rewrite scheduling. The operator reported full race tests, vet, and RESP fuzz passing. Live Redis reference was 8.10.2; Redis 8.2 source informed six-field replies and scheduling rules. PR/CI review remains separate. Detailed evidence and outstanding lifecycle/fast-path limitations: `docs/SLOWLOG-PERSISTENCE-AUDIT.md`.
