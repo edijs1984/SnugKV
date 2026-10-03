@@ -328,8 +328,9 @@ func (s *TCPServer) handleConn(conn net.Conn) {
 }
 
 var (
-	commandGETBytes = []byte("GET")
-	commandSETBytes = []byte("SET")
+	commandGETBytes       = []byte("GET")
+	commandSETBytes       = []byte("SET")
+	commandSISMEMBERBytes = []byte("SISMEMBER")
 )
 
 var configuredSetBatchLimit = func() int {
@@ -362,6 +363,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 	var borrowedGET [2][]byte
 	var borrowedSET [3][]byte
 	var borrowedNative [4][]byte
+	var borrowedSISMEMBER [3][]byte
 	var setBatchKeys [][]byte
 	var setBatchValues [][]byte
 	var setBatchKeyArena []byte
@@ -372,6 +374,12 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 	var saddBatchMemberArena []byte
 	var saddKeyScratch []byte
 	var saddMemberScratch []byte
+	var sismemberBatchKeys [][]byte
+	var sismemberBatchMembers [][]byte
+	var sismemberBatchKeyArena []byte
+	var sismemberBatchMemberArena []byte
+	var sismemberKeyScratch []byte
+	var sismemberMemberScratch []byte
 	const maxRetainedGetScratch = 64 << 10
 	const maxRetainedGetKeyScratch = 64 << 10
 	const maxRetainedSetKeyScratch = 64 << 10
@@ -563,8 +571,34 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			}
 		}
 
+		borrowedSetContains := false
+		if !borrowed && !borrowedSet && !borrowedNativeMutation && !txSession.multi {
+			key, member, ok, containsErr :=
+				decoder.ReadBufferedSISMEMBER(sismemberKeyScratch, sismemberMemberScratch)
+			if containsErr != nil {
+				return
+			}
+			if ok {
+				borrowedSISMEMBER[0] = commandSISMEMBERBytes
+				borrowedSISMEMBER[1] = key
+				borrowedSISMEMBER[2] = member
+				msg = borrowedSISMEMBER[:]
+				borrowedSetContains = true
+				if cap(key) <= maxRetainedSetKeyScratch {
+					sismemberKeyScratch = key[:0]
+				} else {
+					sismemberKeyScratch = nil
+				}
+				if cap(member) <= maxRetainedSetValueScratch {
+					sismemberMemberScratch = member[:0]
+				} else {
+					sismemberMemberScratch = nil
+				}
+			}
+		}
+
 		var err error
-		if !borrowed && !borrowedSet && !borrowedNativeMutation {
+		if !borrowed && !borrowedSet && !borrowedNativeMutation && !borrowedSetContains {
 			msg, err = decoder.ReadCommand()
 		}
 		if err != nil {
@@ -1375,6 +1409,118 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 							command := [][]byte{[]byte("SADD"), saddBatchKeys[i], saddBatchMembers[i]}
 							s.server.feedMonitor(clientSession, command, nil)
 							s.invalidateTrackingKeys(clientSession, command)
+						}
+					}
+					if pendingAuthErr != nil {
+						if writer.writeBuffered(errorResponse(pendingAuthErr)) != nil {
+							return
+						}
+					}
+					continue
+				}
+			}
+		}
+
+		if borrowedSetContains &&
+			!s.adminOnly && !txSession.multi &&
+			!(clientSession.protocolVersion() == 2 && pubSession.active()) &&
+			!s.server.clusterEnabled &&
+			s.server.journal == nil &&
+			atomic.LoadUint32(&s.server.metricsEnabled) == 0 &&
+			reader.Buffered() > 0 {
+
+			maxBatch := configuredSetBatchLimit
+			if cap(sismemberBatchKeys) < maxBatch {
+				sismemberBatchKeys = make([][]byte, 0, maxBatch)
+			} else {
+				sismemberBatchKeys = sismemberBatchKeys[:0]
+			}
+			if cap(sismemberBatchMembers) < maxBatch {
+				sismemberBatchMembers = make([][]byte, 0, maxBatch)
+			} else {
+				sismemberBatchMembers = sismemberBatchMembers[:0]
+			}
+			sismemberBatchKeyArena = sismemberBatchKeyArena[:0]
+			sismemberBatchMemberArena = sismemberBatchMemberArena[:0]
+			if cap(sismemberBatchKeyArena) < 4<<10 {
+				sismemberBatchKeyArena = make([]byte, 0, 4<<10)
+			}
+			if cap(sismemberBatchMemberArena) < 32<<10 {
+				sismemberBatchMemberArena = make([]byte, 0, 32<<10)
+			}
+			var pendingAuthErr error
+
+			appendOwnedSISMEMBER := func(key, member []byte) {
+				keyStart := len(sismemberBatchKeyArena)
+				sismemberBatchKeyArena = append(sismemberBatchKeyArena, key...)
+				sismemberBatchKeys = append(
+					sismemberBatchKeys,
+					sismemberBatchKeyArena[keyStart:len(sismemberBatchKeyArena)],
+				)
+
+				memberStart := len(sismemberBatchMemberArena)
+				sismemberBatchMemberArena = append(sismemberBatchMemberArena, member...)
+				sismemberBatchMembers = append(
+					sismemberBatchMembers,
+					sismemberBatchMemberArena[memberStart:len(sismemberBatchMemberArena)],
+				)
+			}
+			appendOwnedSISMEMBER(msg[1], msg[2])
+
+			for len(sismemberBatchKeys) < maxBatch && reader.Buffered() > 0 {
+				nextKey, nextMember, ok, containsErr :=
+					decoder.ReadBufferedSISMEMBER(sismemberKeyScratch, sismemberMemberScratch)
+				if containsErr != nil {
+					return
+				}
+				if !ok {
+					break
+				}
+
+				nextMsg := [][]byte{commandSISMEMBERBytes, nextKey, nextMember}
+				if authErr := s.server.authorizeConnectionCommand(authSession, nextMsg); authErr != nil {
+					pendingAuthErr = authErr
+					break
+				}
+
+				clientSession.touch(nextMsg)
+				appendOwnedSISMEMBER(nextKey, nextMember)
+
+				if cap(nextKey) <= maxRetainedSetKeyScratch {
+					sismemberKeyScratch = nextKey[:0]
+				} else {
+					sismemberKeyScratch = nil
+				}
+				if cap(nextMember) <= maxRetainedSetValueScratch {
+					sismemberMemberScratch = nextMember[:0]
+				} else {
+					sismemberMemberScratch = nil
+				}
+			}
+
+			if len(sismemberBatchKeys) > 1 {
+				results, handled, fastErr :=
+					s.server.executeAuthorizedConcurrentSetContainsBatch(
+						sismemberBatchKeys,
+						sismemberBatchMembers,
+					)
+				if handled {
+					if fastErr != nil {
+						if writer.writeBuffered(errorResponse(fastErr)) != nil {
+							return
+						}
+					} else {
+						for i, result := range results {
+							if writer.writeBuffered(integerReply(result)) != nil {
+								return
+							}
+							command := [][]byte{
+								commandSISMEMBERBytes,
+								sismemberBatchKeys[i],
+								sismemberBatchMembers[i],
+							}
+							s.server.feedMonitor(clientSession, command, nil)
+							s.trackCommandRead(clientSession, command)
 						}
 					}
 					if pendingAuthErr != nil {
