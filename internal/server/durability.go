@@ -483,6 +483,50 @@ func (s *Server) executeAuthorizedConcurrentBlockingCapableNativeMutation(args [
 	return integerReply(result), true, nil
 }
 
+// executeAuthorizedConcurrentSetAddBatch executes a buffered run of exact
+// single-member SADD commands under one durability read lock. Each SET still
+// owns its shard lock and returns its own Redis integer result, preserving
+// command order while amortizing process-wide coordination across a pipeline.
+func (s *Server) executeAuthorizedConcurrentSetAddBatch(keys, members [][]byte) (results []int64, handled bool, err error) {
+	if s.clusterEnabled ||
+		len(keys) < 2 || len(keys) != len(members) ||
+		s.journal != nil ||
+		s.replication.primaryHasReplicas() ||
+		atomic.LoadUint32(&s.metricsEnabled) != 0 ||
+		s.store.MaxMemory() != 0 {
+		return nil, false, nil
+	}
+	if s.replication.isReadOnlyReplica() {
+		return nil, true, errors.New("READONLY You can't write against a read only replica.")
+	}
+
+	s.durableMu.RLock()
+	if s.hasWatchSessionsLocked() {
+		s.durableMu.RUnlock()
+		return nil, false, nil
+	}
+
+	if s.optimizer != nil {
+		s.optimizer.NoteForegroundWrite()
+	}
+
+	results = make([]int64, len(keys))
+	for i := range keys {
+		one := [1][]byte{members[i]}
+		results[i], err = s.store.SetAdd(string(keys[i]), one[:])
+		if err != nil {
+			break
+		}
+	}
+	s.durableMu.RUnlock()
+
+	atomic.AddUint64(&s.commands, uint64(len(keys)))
+	if err != nil {
+		return results, true, err
+	}
+	return results, true, nil
+}
+
 func (s *Server) executeAuthorizedConcurrentSet(args [][]byte) (response []byte, handled bool, err error) {
 	if s.clusterEnabled {
 		return nil, false, nil
