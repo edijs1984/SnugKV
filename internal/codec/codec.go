@@ -21,6 +21,7 @@ const (
 	Timestamp       ID = 4
 	Float64         ID = 6
 	Boolean         ID = 7
+	ULID            ID = 12
 )
 
 type Record struct {
@@ -47,6 +48,7 @@ func NewRegistry() *Registry {
 		integerCodec{},
 		unsignedIntegerCodec{},
 		uuidCodec{},
+		ulidCodec{},
 		timestampCodec{},
 		float64Codec{},
 		boolCodec{},
@@ -86,6 +88,15 @@ func (r *Registry) Encode(src []byte) Record {
 	if len(src) == 36 {
 		if data, ok := (uuidCodec{}).Encode(src); ok {
 			return Record{ID: UUID, RawLength: len(src), Data: data}
+		}
+	}
+
+	// Canonical ULID text is exactly 26 uppercase Crockford Base32 characters.
+	// Like UUID, this is a terminal 128-bit identifier representation: validate
+	// and encode directly instead of cloning RAW data and scanning scalar codecs.
+	if len(src) == 26 {
+		if data, ok := (ulidCodec{}).Encode(src); ok {
+			return Record{ID: ULID, RawLength: len(src), Data: data}
 		}
 	}
 
@@ -143,6 +154,8 @@ func (r *Registry) DecodeInto(rec Record, max int, dst []byte) ([]byte, error) {
 		out, err = (rawCodec{}).DecodeInto(rec.Data, rec.RawLength, dst)
 	case UUID:
 		out, err = (uuidCodec{}).DecodeInto(rec.Data, rec.RawLength, dst)
+	case ULID:
+		out, err = (ulidCodec{}).DecodeInto(rec.Data, rec.RawLength, dst)
 	case RepeatByte:
 		out, err = (repeatByteCodec{}).DecodeInto(rec.Data, rec.RawLength, dst)
 	case LZ4:
@@ -510,6 +523,121 @@ func (uuidCodec) DecodeInto(src []byte, _ int, dst []byte) ([]byte, error) {
 			dst = append(dst, '-')
 		}
 		dst = appendUUIDHex(dst, b)
+	}
+	return dst, nil
+}
+
+
+type ulidCodec struct{}
+
+func (ulidCodec) ID() ID       { return ULID }
+func (ulidCodec) Name() string { return "ulid" }
+
+const ulidAlphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+func ulidDecodeValue(b byte) (byte, bool) {
+	switch {
+	case b >= '0' && b <= '9':
+		return b - '0', true
+	case b >= 'A' && b <= 'H':
+		return b - 'A' + 10, true
+	case b >= 'J' && b <= 'K':
+		return b - 'J' + 18, true
+	case b >= 'M' && b <= 'N':
+		return b - 'M' + 20, true
+	case b >= 'P' && b <= 'T':
+		return b - 'P' + 22, true
+	case b >= 'V' && b <= 'Z':
+		return b - 'V' + 27, true
+	default:
+		return 0, false
+	}
+}
+
+func (ulidCodec) Encode(src []byte) ([]byte, bool) {
+	if len(src) != 26 {
+		return nil, false
+	}
+
+	first, ok := ulidDecodeValue(src[0])
+	if !ok || first > 7 {
+		return nil, false
+	}
+
+	out := make([]byte, 16)
+	var acc uint32 = uint32(first)
+	bits := 3
+	oi := 0
+
+	for i := 1; i < len(src); i++ {
+		v, ok := ulidDecodeValue(src[i])
+		if !ok {
+			return nil, false
+		}
+		acc = (acc << 5) | uint32(v)
+		bits += 5
+
+		for bits >= 8 {
+			bits -= 8
+			out[oi] = byte(acc >> bits)
+			oi++
+			if bits == 0 {
+				acc = 0
+			} else {
+				acc &= (1 << bits) - 1
+			}
+		}
+	}
+
+	if oi != 16 || bits != 0 {
+		return nil, false
+	}
+	return out, true
+}
+
+func appendULIDEncoded(dst []byte, src []byte) []byte {
+	var acc uint32
+	bits := 2 // ULID text has two leading zero padding bits: 26*5 = 130.
+	for _, b := range src {
+		acc = (acc << 8) | uint32(b)
+		bits += 8
+		for bits >= 5 {
+			bits -= 5
+			dst = append(dst, ulidAlphabet[(acc>>bits)&31])
+			if bits == 0 {
+				acc = 0
+			} else {
+				acc &= (1 << bits) - 1
+			}
+		}
+	}
+	return dst
+}
+
+func (ulidCodec) Decode(src []byte, _ int) ([]byte, error) {
+	if len(src) != 16 {
+		return nil, errors.New("invalid ULID")
+	}
+	out := make([]byte, 0, 26)
+	out = appendULIDEncoded(out, src)
+	if len(out) != 26 {
+		return nil, errors.New("invalid ULID encoding")
+	}
+	return out, nil
+}
+
+func (ulidCodec) DecodeInto(src []byte, _ int, dst []byte) ([]byte, error) {
+	if len(src) != 16 {
+		return nil, errors.New("invalid ULID")
+	}
+	if cap(dst) < 26 {
+		dst = make([]byte, 0, 26)
+	} else {
+		dst = dst[:0]
+	}
+	dst = appendULIDEncoded(dst, src)
+	if len(dst) != 26 {
+		return nil, errors.New("invalid ULID encoding")
 	}
 	return dst, nil
 }
