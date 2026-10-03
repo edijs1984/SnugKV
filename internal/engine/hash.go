@@ -525,8 +525,22 @@ func (s *Store) HashSetResults(key string, fields, values [][]byte) ([]int64, er
 		return nil, err
 	}
 	if current, ok := sh.get(key); ok && !current.isHotHash() {
-		if _, _, err := s.thawHotHashLocked(sh, key, current); err != nil {
-			return nil, err
+		shouldPromote := false
+		if isIndexedHash(sh.encoded(current)) {
+			if _, _, used, _, err := indexedHashMeta(sh.encoded(current)); err == nil {
+				shouldPromote = used >= indexedHashPromoteFields
+			}
+		} else {
+			pairs, err := decodePackedHash(s.decode(sh, current))
+			if err != nil {
+				return nil, err
+			}
+			shouldPromote = len(liveHashPairs(pairs, now.UnixMilli())) >= indexedHashPromoteFields
+		}
+		if shouldPromote {
+			if _, _, err := s.thawHotHashLocked(sh, key, current); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return results, nil
