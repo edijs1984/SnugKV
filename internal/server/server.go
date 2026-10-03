@@ -1665,6 +1665,13 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			arenaDeadWaste = m.ArenaBytes - m.ArenaLiveBlockBytes
 		}
 
+		repl := s.replication.snapshot()
+		replicaAckMin, replicaAckMax, replicaAOFMin, replicaAOFMax := s.replication.debugAckOffsets()
+		localReplicaFACK := int64(-1)
+		if offset, ok := s.replicaAOFFsyncedOffset(); ok {
+			localReplicaFACK = offset
+		}
+
 		var optimizerQueued, optimizerRewritten, optimizerSkipped uint64
 		var optimizerStale, optimizerDropped uint64
 		var optimizerQueueDepth, optimizerQueueCapacity int
@@ -1698,7 +1705,13 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 				"optimizer_stale:%d\n"+
 				"optimizer_dropped:%d\n"+
 				"optimizer_queue_depth:%d\n"+
-				"optimizer_queue_capacity:%d\n",
+				"optimizer_queue_capacity:%d\n"+
+				"replication_offset:%d\n"+
+				"replication_replica_ack_min:%d\n"+
+				"replication_replica_ack_max:%d\n"+
+				"replication_replica_aof_ack_min:%d\n"+
+				"replication_replica_aof_ack_max:%d\n"+
+				"replication_local_replica_fack:%d\n",
 			m.AccountedBytes,
 			m.IndexReservedBytes,
 			m.EntryBytes,
@@ -1718,6 +1731,12 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			optimizerDropped,
 			optimizerQueueDepth,
 			optimizerQueueCapacity,
+			repl.offset,
+			replicaAckMin,
+			replicaAckMax,
+			replicaAOFMin,
+			replicaAOFMax,
+			localReplicaFACK,
 		))), nil
 	case "PING":
 		if len(args) == 2 {
