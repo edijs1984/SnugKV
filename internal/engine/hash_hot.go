@@ -42,11 +42,10 @@ func newHotHash(pairs []HashPair) *hotHash {
 }
 
 func hotHashSidecarBytes(sh *shard) uint64 {
-	if sh.hotHashes == nil {
+	if sh.metas == nil || sh.metas.hotHashes == nil {
 		return 0
 	}
-	return uint64(unsafe.Sizeof(hotHashSidecar{})) +
-		uint64(cap(sh.hotHashes.slots))*uint64(unsafe.Sizeof((*hotHash)(nil)))
+	return uint64(cap(sh.metas.hotHashes)) * uint64(unsafe.Sizeof((*hotHash)(nil)))
 }
 
 func (h *hotHash) memoryBytes() uint64 {
@@ -284,10 +283,12 @@ func (s *Store) thawHotHashLocked(sh *shard, key string, e entry) (*hotHash, boo
 	h := newHotHash(pairs)
 	hotBytes := h.memoryBytes()
 	sidecarBytes := uint64(0)
-	if sh.hotHashes == nil {
-		sidecarBytes =
-			uint64(unsafe.Sizeof(hotHashSidecar{})) +
-			uint64(cap(sh.entries))*uint64(unsafe.Sizeof((*hotHash)(nil)))
+	if sh.metas == nil {
+		sidecarBytes += uint64(unsafe.Sizeof(entryMetaSidecar{})) +
+			uint64(cap(sh.entries))*entryMetaSlotBytes
+	}
+	if sh.metas == nil || sh.metas.hotHashes == nil {
+		sidecarBytes += uint64(cap(sh.entries))*uint64(unsafe.Sizeof((*hotHash)(nil)))
 	}
 
 	oldPayload := uint64(0)
