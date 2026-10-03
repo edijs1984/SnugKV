@@ -393,37 +393,46 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 func (s *Store) resetForRecovery() {
 	unlock := s.lockAll()
 	defer unlock()
+
+	// FLUSHDB discards the complete primary dataset. Reset shard-owned
+	// allocators directly instead of deleting keys one by one: per-key removal
+	// mutates the same index being iterated and makes accounting depend on
+	// allocator free-growth side effects.
 	for i := range s.shards {
 		sh := &s.shards[i]
-		for key := range sh.all() {
-			s.remove(sh, key)
-		}
-		s.memory.mu.Lock()
-		arenaBytes := sh.arena.TotalMemoryBytes()
-		indexBytes := sh.data.CapacityBytes()
-		hotSidecarBytes := hotHashSidecarBytes(sh)
-		entryBytes := uint64(cap(sh.entries)) * entryStructBytes
-		if sh.metas != nil {
-			entryBytes += uint64(unsafe.Sizeof(entryMetaSidecar{})) +
-				uint64(cap(sh.metas.slots))*entryMetaSlotBytes
-		}
-
-		s.memory.used -= arenaBytes + indexBytes + entryBytes + hotSidecarBytes
-		s.memory.hotHashes -= hotSidecarBytes
-		s.memory.arenas -= arenaBytes
-		s.memory.index -= indexBytes
-		s.memory.entries -= entryBytes
-		s.memory.mu.Unlock()
 		sh.arena = arena.Arena{}
 		sh.data = *index.New[uint32]()
 		sh.entries = nil
 		sh.metas = nil
 		sh.freeIDs = nil
 		sh.expiration = expirationQueue{}
+		sh.shapes = nil
 	}
 
+	if manager := s.getSearchManager(); manager != nil {
+		manager.resetDocuments()
+	}
+
+	// Learned shape catalogs are dataset-derived and must not survive FLUSHDB.
 	s.dropGlobalShapeStoreLocked()
 	s.dropGlobalHashShapeStoreLocked()
+
+	// The empty engine has one deterministic accounting baseline: fixed shard
+	// structs. All dynamic shard/index/arena/meta/HOT/schema storage above was
+	// discarded atomically, so reset the buckets coherently instead of trying
+	// to replay every historical allocation/free delta.
+	base := structuralMemoryBytes(len(s.shards))
+	s.memory.mu.Lock()
+	s.memory.used = base
+	s.memory.index = base
+	s.memory.entries = 0
+	s.memory.arenas = 0
+	s.memory.arenaPayload = 0
+	s.memory.arenaLiveBlocks = 0
+	s.memory.schemas = 0
+	s.memory.metas = 0
+	s.memory.hotHashes = 0
+	s.memory.mu.Unlock()
 }
 func (s *Store) FlushDB() {
 	s.resetForRecovery()
