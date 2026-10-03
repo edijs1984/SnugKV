@@ -287,3 +287,39 @@ func TestConcurrentSetContainsBatchFastPath(t *testing.T) {
 		t.Fatalf("results=%v want=%v", results, want)
 	}
 }
+
+
+func TestConcurrentHashSetBatchFastPath(t *testing.T) {
+	s := New(engine.New())
+
+	keys := [][]byte{
+		[]byte("h1"),
+		[]byte("h1"),
+		[]byte("h2"),
+		[]byte("h1"),
+	}
+	fields := [][]byte{
+		[]byte("a"),
+		[]byte("a"),
+		[]byte("x"),
+		[]byte("b"),
+	}
+	values := [][]byte{
+		[]byte("1"),
+		[]byte("2"),
+		[]byte("3"),
+		[]byte("4"),
+	}
+
+	results, handled, err := s.executeAuthorizedConcurrentHashSetBatch(keys, fields, values)
+	if err != nil {
+		t.Fatalf("batch error: %v", err)
+	}
+	if !handled {
+		t.Fatal("HSET batch fast path did not handle commands")
+	}
+	want := []int64{1, 0, 1, 1}
+	if !reflect.DeepEqual(results, want) {
+		t.Fatalf("results=%v want=%v", results, want)
+	}
+}
