@@ -276,6 +276,9 @@ func (s *Store) thawHotHashLocked(sh *shard, key string, e entry) (*hotHash, boo
 		return nil, false, err
 	}
 	pairs = liveHashPairs(pairs, s.now().UnixMilli())
+	if len(pairs) < hotHashPromoteFields {
+		return nil, false, nil
+	}
 	for _, pair := range pairs {
 		if pair.ExpiresAtMS != 0 {
 			return nil, false, nil
