@@ -42,11 +42,23 @@ func (s *Store) Export(keys []string) []persistence.Record {
 		} else {
 			switch e.valueType {
 			case TypeHash:
-				logical, err := s.hashLogicalValue(sh, e)
-				if err != nil {
-					panic(err)
+				if e.isHotHash() {
+					h, _, ok := sh.hotHashForKey(key)
+					if !ok || h == nil {
+						panic("HOT hash sidecar invariant")
+					}
+					logical, err := h.packed()
+					if err != nil {
+						panic(err)
+					}
+					record.Value = logical
+				} else {
+					logical, err := s.hashLogicalValue(sh, e)
+					if err != nil {
+						panic(err)
+					}
+					record.Value = logical
 				}
-				record.Value = logical
 			case TypeSet:
 				logical, err := s.setLogicalValue(sh, e)
 				if err != nil {
@@ -404,6 +416,7 @@ func (s *Store) resetForRecovery() {
 		sh.data = *index.New[uint32]()
 		sh.entries = nil
 		sh.metas = nil
+		sh.hotHashes = nil
 		sh.freeIDs = nil
 		sh.expiration = expirationQueue{}
 	}
