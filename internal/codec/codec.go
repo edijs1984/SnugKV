@@ -535,51 +535,63 @@ func (ulidCodec) Name() string { return "ulid" }
 
 const ulidAlphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
-var ulidDecodeTable = func() [256]byte {
-	var table [256]byte
-	for i := range table {
-		table[i] = 0xff
+func ulidDecodeValue(b byte) (byte, bool) {
+	switch {
+	case b >= '0' && b <= '9':
+		return b - '0', true
+	case b >= 'A' && b <= 'H':
+		return b - 'A' + 10, true
+	case b >= 'J' && b <= 'K':
+		return b - 'J' + 18, true
+	case b >= 'M' && b <= 'N':
+		return b - 'M' + 20, true
+	case b >= 'P' && b <= 'T':
+		return b - 'P' + 22, true
+	case b >= 'V' && b <= 'Z':
+		return b - 'V' + 27, true
+	default:
+		return 0, false
 	}
-	for i := 0; i < len(ulidAlphabet); i++ {
-		table[ulidAlphabet[i]] = byte(i)
-	}
-	return table
-}()
+}
 
 func (ulidCodec) Encode(src []byte) ([]byte, bool) {
 	if len(src) != 26 {
 		return nil, false
 	}
 
-	var v [26]byte
-	for i, b := range src {
-		n := ulidDecodeTable[b]
-		if n == 0xff {
-			return nil, false
-		}
-		v[i] = n
-	}
-	if v[0] > 7 {
+	first, ok := ulidDecodeValue(src[0])
+	if !ok || first > 7 {
 		return nil, false
 	}
 
 	out := make([]byte, 16)
-	out[0] = v[0]<<5 | v[1]
-	out[1] = v[2]<<3 | v[3]>>2
-	out[2] = v[3]<<6 | v[4]<<1 | v[5]>>4
-	out[3] = v[5]<<4 | v[6]>>1
-	out[4] = v[6]<<7 | v[7]<<2 | v[8]>>3
-	out[5] = v[8]<<5 | v[9]
-	out[6] = v[10]<<3 | v[11]>>2
-	out[7] = v[11]<<6 | v[12]<<1 | v[13]>>4
-	out[8] = v[13]<<4 | v[14]>>1
-	out[9] = v[14]<<7 | v[15]<<2 | v[16]>>3
-	out[10] = v[16]<<5 | v[17]
-	out[11] = v[18]<<3 | v[19]>>2
-	out[12] = v[19]<<6 | v[20]<<1 | v[21]>>4
-	out[13] = v[21]<<4 | v[22]>>1
-	out[14] = v[22]<<7 | v[23]<<2 | v[24]>>3
-	out[15] = v[24]<<5 | v[25]
+	var acc uint32 = uint32(first)
+	bits := 3
+	oi := 0
+
+	for i := 1; i < len(src); i++ {
+		v, ok := ulidDecodeValue(src[i])
+		if !ok {
+			return nil, false
+		}
+		acc = (acc << 5) | uint32(v)
+		bits += 5
+
+		for bits >= 8 {
+			bits -= 8
+			out[oi] = byte(acc >> bits)
+			oi++
+			if bits == 0 {
+				acc = 0
+			} else {
+				acc &= (1 << bits) - 1
+			}
+		}
+	}
+
+	if oi != 16 || bits != 0 {
+		return nil, false
+	}
 	return out, true
 }
 
