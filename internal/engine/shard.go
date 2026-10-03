@@ -9,11 +9,8 @@ import (
 )
 
 type entryMetaSidecar struct {
-	slots []*entryMeta
-}
-
-type hotHashSidecar struct {
-	slots []*hotHash
+	slots     []*entryMeta
+	hotHashes []*hotHash
 }
 
 type shard struct {
@@ -23,9 +20,8 @@ type shard struct {
 
 	data    index.Table[uint32]
 	entries []entryData
-	metas    *entryMetaSidecar
-	hotHashes *hotHashSidecar
-	freeIDs  []uint32
+	metas   *entryMetaSidecar
+	freeIDs []uint32
 
 	expiration expirationQueue
 	shapes     *jsonshape.Store
@@ -118,29 +114,33 @@ func (sh *shard) setMeta(id uint32, meta *entryMeta) {
 }
 
 func (sh *shard) ensureHotHashSlots() {
-	if sh.hotHashes != nil {
+	if sh.metas == nil {
+		sh.metas = &entryMetaSidecar{
+			slots:     make([]*entryMeta, len(sh.entries), cap(sh.entries)),
+			hotHashes: make([]*hotHash, len(sh.entries), cap(sh.entries)),
+		}
 		return
 	}
-	sh.hotHashes = &hotHashSidecar{
-		slots: make([]*hotHash, len(sh.entries), cap(sh.entries)),
+	if sh.metas.hotHashes == nil {
+		sh.metas.hotHashes = make([]*hotHash, len(sh.entries), cap(sh.entries))
 	}
 }
 
 func (sh *shard) growHotHashSlots(capacity int) {
-	if sh.hotHashes == nil || capacity <= cap(sh.hotHashes.slots) {
+	if sh.metas == nil || sh.metas.hotHashes == nil || capacity <= cap(sh.metas.hotHashes) {
 		return
 	}
-	current := sh.hotHashes.slots
+	current := sh.metas.hotHashes
 	next := make([]*hotHash, len(current), capacity)
 	copy(next, current)
-	sh.hotHashes.slots = next
+	sh.metas.hotHashes = next
 }
 
 func (sh *shard) hotHashByID(id uint32) *hotHash {
-	if sh.hotHashes == nil || int(id) >= len(sh.hotHashes.slots) {
+	if sh.metas == nil || sh.metas.hotHashes == nil || int(id) >= len(sh.metas.hotHashes) {
 		return nil
 	}
-	return sh.hotHashes.slots[id]
+	return sh.metas.hotHashes[id]
 }
 
 func (sh *shard) hotHashForKey(key string) (*hotHash, uint32, bool) {
@@ -152,11 +152,11 @@ func (sh *shard) hotHashForKey(key string) (*hotHash, uint32, bool) {
 }
 
 func (sh *shard) setHotHash(id uint32, h *hotHash) {
-	if h != nil && sh.hotHashes == nil {
+	if h != nil {
 		sh.ensureHotHashSlots()
 	}
-	if sh.hotHashes != nil {
-		sh.hotHashes.slots[id] = h
+	if sh.metas != nil && sh.metas.hotHashes != nil {
+		sh.metas.hotHashes[id] = h
 	}
 }
 
@@ -238,10 +238,10 @@ func (sh *shard) insertEntry(key string, hash uint64, e entry, hashKnown bool) {
 		}
 		sh.entries = append(sh.entries, e.entryData)
 		if sh.metas != nil {
-				sh.metas.slots = append(sh.metas.slots, nil)
-		}
-		if sh.hotHashes != nil {
-			sh.hotHashes.slots = append(sh.hotHashes.slots, nil)
+			sh.metas.slots = append(sh.metas.slots, nil)
+			if sh.metas.hotHashes != nil {
+				sh.metas.hotHashes = append(sh.metas.hotHashes, nil)
+			}
 		}
 		sh.setMeta(id, e.entryMeta)
 	}
@@ -268,8 +268,8 @@ func (sh *shard) delete(key string) bool {
 	if sh.metas != nil {
 		sh.metas.slots[id] = nil
 	}
-	if sh.hotHashes != nil {
-		sh.hotHashes.slots[id] = nil
+	if sh.metas != nil && sh.metas.hotHashes != nil {
+		sh.metas.hotHashes[id] = nil
 	}
 	sh.freeIDs = append(sh.freeIDs, id)
 
