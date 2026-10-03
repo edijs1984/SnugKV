@@ -200,9 +200,13 @@ func decodePackedHash(data []byte) ([]HashPair, error) {
 	return pairs, nil
 }
 
-func packedHashLookup(data, target []byte, nowMS int64) ([]byte, bool, error) {
+func packedHashLookupView(data, target []byte, nowMS int64) ([]byte, bool, error) {
 	if isIndexedHash(data) {
-		return indexedHashLookup(data, target)
+		_, slots, used, start, err := indexedHashMeta(data)
+		if err != nil {
+			return nil, false, err
+		}
+		return indexedHashLookupViewKnown(data, target, slots, used, start)
 	}
 	count, err := packedHashCount(data)
 	if err != nil {
@@ -251,16 +255,23 @@ func packedHashLookup(data, target []byte, nowMS int64) ([]byte, bool, error) {
 			if expiresAtMS != 0 && expiresAtMS <= nowMS {
 				return nil, false, nil
 			}
-			return append([]byte(nil), data[offset:valueEnd]...), true, nil
+			return data[offset:valueEnd], true, nil
 		}
 		if cmp > 0 {
 			return nil, false, nil
 		}
-
 		offset = valueEnd
 	}
 
 	return nil, false, nil
+}
+
+func packedHashLookup(data, target []byte, nowMS int64) ([]byte, bool, error) {
+	value, found, err := packedHashLookupView(data, target, nowMS)
+	if err != nil || !found {
+		return nil, found, err
+	}
+	return append([]byte(nil), value...), true, nil
 }
 
 func (s *Store) hashEntry(pairs []HashPair, packed []byte) preparedEntry {
@@ -497,6 +508,82 @@ func (s *Store) hashLogicalValue(sh *shard, e entry) ([]byte, error) {
 		return nil, err
 	}
 	return encodePackedHash(pairs)
+}
+
+// VisitHashFieldsBytes visits HGET results for one key while holding the
+// owning shard read lock. Returned value slices alias the live arena allocation
+// and are valid only for the duration of visit.
+func (s *Store) VisitHashFieldsBytes(
+	key []byte,
+	fields [][]byte,
+	visit func(index int, value []byte, found bool) error,
+) error {
+	if len(fields) == 0 {
+		return nil
+	}
+
+	hash := index.HashBytes(key)
+	sh := s.shardForHash(hash)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
+
+	e, ok := sh.getHashedBytes(key, hash)
+	if !ok {
+		for i := range fields {
+			if err := visit(i, nil, false); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if e.hasExpiry && sh.expired(string(key), e, s.now()) {
+		for i := range fields {
+			if err := visit(i, nil, false); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if e.valueType != TypeHash {
+		return hashWrongType()
+	}
+
+	physical := sh.encoded(e)
+	nowMS := s.now().UnixMilli()
+	if isIndexedHash(physical) {
+		_, slots, used, start, err := indexedHashMeta(physical)
+		if err != nil {
+			return err
+		}
+		for i, field := range fields {
+			value, found, lookupErr := indexedHashLookupViewKnown(
+				physical,
+				field,
+				slots,
+				used,
+				start,
+			)
+			if lookupErr != nil {
+				return lookupErr
+			}
+			if err := visit(i, value, found); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	decoded := s.decode(sh, e)
+	for i, field := range fields {
+		value, found, lookupErr := packedHashLookupView(decoded, field, nowMS)
+		if lookupErr != nil {
+			return lookupErr
+		}
+		if err := visit(i, value, found); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) HashGet(key string, field []byte) ([]byte, bool, error) {
