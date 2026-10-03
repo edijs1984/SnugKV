@@ -345,6 +345,82 @@ func (s *Server) executeAuthorizedConcurrentNativeMutation(args [][]byte) (respo
 	return response, true, nil
 }
 
+// executeAuthorizedConcurrentBlockingCapableNativeMutation handles the exact
+// single-item RPUSH and ZADD forms used by ordinary clients while preserving
+// blocking-command wakeups. The data mutation is serialized by the target
+// shard; the blocking registries have their own mutexes, so we can avoid the
+// process-wide durableMu write lock without losing BLPOP/BZPOP wakeups.
+//
+// Persistence, replication, WATCH, maxmemory and cluster configurations still
+// use the conservative serialized path.
+func (s *Server) executeAuthorizedConcurrentBlockingCapableNativeMutation(args [][]byte) (response []byte, handled bool, err error) {
+	if s.clusterEnabled ||
+		s.journal != nil ||
+		s.replication.primaryHasReplicas() ||
+		atomic.LoadUint32(&s.metricsEnabled) != 0 ||
+		s.store.MaxMemory() != 0 {
+		return nil, false, nil
+	}
+
+	var kind byte
+	switch {
+	case len(args) == 3 && bytes.EqualFold(args[0], []byte("RPUSH")):
+		kind = 'l'
+	case len(args) == 4 && bytes.EqualFold(args[0], []byte("ZADD")):
+		kind = 'z'
+	default:
+		return nil, false, nil
+	}
+
+	if s.replication.isReadOnlyReplica() {
+		return nil, true, errors.New("READONLY You can't write against a read only replica.")
+	}
+
+	var score float64
+	if kind == 'z' {
+		var scoreErr error
+		score, scoreErr = parseZSetScore(args[2])
+		if scoreErr != nil {
+			return nil, true, scoreErr
+		}
+	}
+
+	s.durableMu.RLock()
+	if s.hasWatchSessionsLocked() {
+		s.durableMu.RUnlock()
+		return nil, false, nil
+	}
+
+	if s.optimizer != nil {
+		s.optimizer.NoteForegroundWrite()
+	}
+
+	key := string(args[1])
+	var result int64
+	switch kind {
+	case 'l':
+		values := [1][]byte{args[2]}
+		result, err = s.store.ListPushRight(key, values[:])
+	case 'z':
+		pairs := [1]engine.ZSetItem{{Member: args[3], Score: score}}
+		result, _, _, err = s.store.ZSetAdd(key, pairs[:], engine.ZSetAddOptions{})
+	}
+	s.durableMu.RUnlock()
+
+	atomic.AddUint64(&s.commands, 1)
+	if err != nil {
+		return nil, true, err
+	}
+
+	if kind == 'l' {
+		s.signalListKey(key)
+	} else {
+		s.signalZSetKey(key)
+	}
+
+	return integerReply(result), true, nil
+}
+
 func (s *Server) executeAuthorizedConcurrentSet(args [][]byte) (response []byte, handled bool, err error) {
 	if s.clusterEnabled {
 		return nil, false, nil
