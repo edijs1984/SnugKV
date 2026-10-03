@@ -296,3 +296,62 @@ func TestRegistryUUIDFastPathRejectsNonCanonicalText(t *testing.T) {
 		}
 	}
 }
+
+
+func TestRegistryULIDFastPath(t *testing.T) {
+	r := NewRegistry()
+	const value = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+
+	rec := r.Encode([]byte(value))
+	if rec.ID != ULID {
+		t.Fatalf("codec=%v want ULID", rec.ID)
+	}
+	if rec.RawLength != len(value) {
+		t.Fatalf("raw length=%d want %d", rec.RawLength, len(value))
+	}
+	if len(rec.Data) != 16 {
+		t.Fatalf("encoded length=%d want 16", len(rec.Data))
+	}
+
+	got, err := r.DecodeInto(rec, len(value), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != value {
+		t.Fatalf("decoded=%q want %q", got, value)
+	}
+}
+
+func TestRegistryULIDFastPathRejectsNonCanonicalOrOverflowText(t *testing.T) {
+	r := NewRegistry()
+	cases := []string{
+		"01arz3ndektsv4rrffq69g5fav",
+		"81ARZ3NDEKTSV4RRFFQ69G5FAV",
+		"01ARZ3NDEKTSV4RRFFQ69G5FAI",
+		"01ARZ3NDEKTSV4RRFFQ69G5FAO",
+		"01ARZ3NDEKTSV4RRFFQ69G5FAU",
+	}
+	for _, value := range cases {
+		rec := r.Encode([]byte(value))
+		if rec.ID == ULID {
+			t.Fatalf("non-canonical or invalid %q encoded as ULID", value)
+		}
+	}
+}
+
+func TestULIDMaximumCanonicalValueRoundTrips(t *testing.T) {
+	r := NewRegistry()
+	const value = "7ZZZZZZZZZZZZZZZZZZZZZZZZZ"
+
+	rec := r.Encode([]byte(value))
+	if rec.ID != ULID {
+		t.Fatalf("codec=%v want ULID", rec.ID)
+	}
+	got, err := r.Decode(rec, len(value))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != value {
+		t.Fatalf("decoded=%q want %q", got, value)
+	}
+}
