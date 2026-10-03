@@ -168,8 +168,8 @@ func TestTinyPipelinedHashStaysCold(t *testing.T) {
 func TestHotHashCompactionReturnsToIndexedAndAccountingStaysSane(t *testing.T) {
 	s := New()
 
-	fields := make([][]byte, 100)
-	values := make([][]byte, 100)
+	fields := make([][]byte, hotHashPromoteFields)
+	values := make([][]byte, hotHashPromoteFields)
 	for i := range fields {
 		fields[i] = []byte(fmt.Sprintf("field:%03d", i))
 		values[i] = []byte("0123456789abcdef0123456789abcdef")
@@ -184,7 +184,7 @@ func TestHotHashCompactionReturnsToIndexedAndAccountingStaysSane(t *testing.T) {
 	isHot := ok && e.isHotHash()
 	sh.mu.RUnlock()
 	if !isHot {
-		t.Fatal("expected medium pipelined hash to promote HOT")
+		t.Fatal("expected large pipelined hash to promote HOT")
 	}
 
 	before := s.Memory()
@@ -239,8 +239,8 @@ func TestHotHashSlotGrowthFlushReturnsToStructuralBaseline(t *testing.T) {
 	}
 	baseline := s.Memory().AccountedBytes
 
-	fields := make([][]byte, 100)
-	values := make([][]byte, 100)
+	fields := make([][]byte, hotHashPromoteFields)
+	values := make([][]byte, hotHashPromoteFields)
 	for i := range fields {
 		fields[i] = []byte(fmt.Sprintf("f:%03d", i))
 		values[i] = []byte("0123456789abcdef0123456789abcdef")
