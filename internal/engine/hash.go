@@ -426,9 +426,6 @@ func (s *Store) hashSetLocked(sh *shard, key string, fields, values [][]byte) (i
 	if err := s.publish(sh, key, updated); err != nil {
 		return 0, err
 	}
-	if current, ok := sh.get(key); ok {
-		_, _, _ = s.thawHotHashLocked(sh, key, current)
-	}
 	return added, nil
 }
 func (s *Store) HashSet(key string, fields, values [][]byte) (int64, error) {
@@ -527,6 +524,11 @@ func (s *Store) HashSetResults(key string, fields, values [][]byte) ([]int64, er
 
 	if _, err := s.hashSetLocked(sh, key, fields, values); err != nil {
 		return nil, err
+	}
+	if current, ok := sh.get(key); ok && !current.isHotHash() {
+		if _, _, err := s.thawHotHashLocked(sh, key, current); err != nil {
+			return nil, err
+		}
 	}
 	return results, nil
 }
