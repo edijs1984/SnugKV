@@ -4,7 +4,6 @@ package codec
 import (
 	"bytes"
 	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"math"
 	"snugkv/internal/codec/jsonshape"
@@ -80,6 +79,16 @@ func (r *Registry) Name(id ID) string {
 	return "unknown"
 }
 func (r *Registry) Encode(src []byte) Record {
+	// Canonical UUID text has an exact 36-byte shape. Handle it before creating
+	// the RAW fallback or trying unrelated scalar parsers. uuidCodec.Encode
+	// performs the full canonical validation, so a successful result is already
+	// safe to publish and does not need an encode->decode verification round trip.
+	if len(src) == 36 {
+		if data, ok := (uuidCodec{}).Encode(src); ok {
+			return Record{ID: UUID, RawLength: len(src), Data: data}
+		}
+	}
+
 	best := Record{ID: Raw, RawLength: len(src), Data: bytes.Clone(src)}
 
 	// No synchronous scalar codec can represent a canonical value longer
@@ -98,7 +107,7 @@ func (r *Registry) Encode(src []byte) Record {
 	}
 
 	for _, c := range r.order {
-		if c.ID() == Raw || c.ID() == 5 || c.ID() >= RepeatByte {
+		if c.ID() == Raw || c.ID() == UUID || c.ID() == 5 || c.ID() >= RepeatByte {
 			continue
 		}
 		data, ok := c.Encode(src)
@@ -132,6 +141,8 @@ func (r *Registry) DecodeInto(rec Record, max int, dst []byte) ([]byte, error) {
 	switch rec.ID {
 	case Raw:
 		out, err = (rawCodec{}).DecodeInto(rec.Data, rec.RawLength, dst)
+	case UUID:
+		out, err = (uuidCodec{}).DecodeInto(rec.Data, rec.RawLength, dst)
 	case RepeatByte:
 		out, err = (repeatByteCodec{}).DecodeInto(rec.Data, rec.RawLength, dst)
 	case LZ4:
@@ -428,46 +439,79 @@ type uuidCodec struct{}
 
 func (uuidCodec) ID() ID       { return UUID }
 func (uuidCodec) Name() string { return "uuid" }
+
+func uuidHexNibble(b byte) (byte, bool) {
+	switch {
+	case b >= '0' && b <= '9':
+		return b - '0', true
+	case b >= 'a' && b <= 'f':
+		return b - 'a' + 10, true
+	default:
+		return 0, false
+	}
+}
+
 func (uuidCodec) Encode(src []byte) ([]byte, bool) {
-	if len(src) != 36 {
+	if len(src) != 36 ||
+		src[8] != '-' || src[13] != '-' || src[18] != '-' || src[23] != '-' {
 		return nil, false
 	}
-	out := make([]byte, 0, 32)
-	for i, b := range src {
-		if i == 8 || i == 13 || i == 18 || i == 23 {
-			if b != '-' {
-				return nil, false
-			}
-			continue
+
+	out := make([]byte, 16)
+	si := 0
+	for oi := 0; oi < len(out); oi++ {
+		for si == 8 || si == 13 || si == 18 || si == 23 {
+			si++
 		}
-		if !(b >= '0' && b <= '9' || b >= 'a' && b <= 'f') {
+		hi, ok := uuidHexNibble(src[si])
+		if !ok {
 			return nil, false
 		}
-		out = append(out, b)
+		lo, ok := uuidHexNibble(src[si+1])
+		if !ok {
+			return nil, false
+		}
+		out[oi] = hi<<4 | lo
+		si += 2
 	}
-	decoded := make([]byte, 16)
-	if _, err := hex.Decode(decoded, out); err != nil {
-		return nil, false
-	}
-	return decoded, true
+	return out, true
 }
+
+func appendUUIDHex(dst []byte, b byte) []byte {
+	const digits = "0123456789abcdef"
+	return append(dst, digits[b>>4], digits[b&0x0f])
+}
+
 func (uuidCodec) Decode(src []byte, _ int) ([]byte, error) {
 	if len(src) != 16 {
 		return nil, errors.New("invalid UUID")
 	}
-	out := make([]byte, 36)
-	digits := make([]byte, 32)
-	hex.Encode(digits, src)
-	j := 0
-	for i := range out {
-		if i == 8 || i == 13 || i == 18 || i == 23 {
-			out[i] = '-'
-		} else {
-			out[i] = digits[j]
-			j++
+	out := make([]byte, 0, 36)
+	for i, b := range src {
+		if i == 4 || i == 6 || i == 8 || i == 10 {
+			out = append(out, '-')
 		}
+		out = appendUUIDHex(out, b)
 	}
 	return out, nil
+}
+
+func (uuidCodec) DecodeInto(src []byte, _ int, dst []byte) ([]byte, error) {
+	if len(src) != 16 {
+		return nil, errors.New("invalid UUID")
+	}
+	if cap(dst) < 36 {
+		dst = make([]byte, 0, 36)
+	} else {
+		dst = dst[:0]
+	}
+	for i, b := range src {
+		if i == 4 || i == 6 || i == 8 || i == 10 {
+			dst = append(dst, '-')
+		}
+		dst = appendUUIDHex(dst, b)
+	}
+	return dst, nil
 }
 
 type timestampCodec struct{}
