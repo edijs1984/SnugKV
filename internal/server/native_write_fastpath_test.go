@@ -1,6 +1,7 @@
 package server
 
 import (
+	"reflect"
 	"snugkv/internal/engine"
 	"testing"
 )
@@ -221,5 +222,33 @@ func TestConcurrentSetContainsFastPath(t *testing.T) {
 	}
 	if string(got) != ":0\r\n" {
 		t.Fatalf("missing reply=%q", got)
+	}
+}
+
+
+func TestConcurrentSetAddBatchFastPath(t *testing.T) {
+	s := New(engine.New())
+
+	keys := [][]byte{[]byte("a"), []byte("a"), []byte("b")}
+	members := [][]byte{[]byte("x"), []byte("x"), []byte("y")}
+	results, handled, err := s.executeAuthorizedConcurrentSetAddBatch(keys, members)
+	if err != nil {
+		t.Fatalf("batch error: %v", err)
+	}
+	if !handled {
+		t.Fatal("SADD batch fast path did not handle commands")
+	}
+	want := []int64{1, 0, 1}
+	if !reflect.DeepEqual(results, want) {
+		t.Fatalf("results=%v want=%v", results, want)
+	}
+
+	found, err := s.store.SetContains("a", []byte("x"))
+	if err != nil || !found {
+		t.Fatalf("a/x found=%v err=%v", found, err)
+	}
+	found, err = s.store.SetContains("b", []byte("y"))
+	if err != nil || !found {
+		t.Fatalf("b/y found=%v err=%v", found, err)
 	}
 }
