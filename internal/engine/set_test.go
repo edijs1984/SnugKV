@@ -297,3 +297,32 @@ func TestIndexedSetAddResultsSingleProbeSemantics(t *testing.T) {
 		}
 	}
 }
+
+
+func TestSetContainsResultsBytes(t *testing.T) {
+	s := New()
+	if _, err := s.SetAdd("batch-read", [][]byte{
+		[]byte("a"),
+		[]byte("b"),
+		[]byte("c"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := s.SetContainsResultsBytes(
+		[]byte("batch-read"),
+		[][]byte{
+			[]byte("a"),
+			[]byte("missing"),
+			[]byte("c"),
+			[]byte("a"),
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int64{1, 0, 1, 1}
+	if !reflect.DeepEqual(results, want) {
+		t.Fatalf("results=%v want=%v", results, want)
+	}
+}
