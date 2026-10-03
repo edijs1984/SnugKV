@@ -542,8 +542,18 @@ func (s *Store) HashGetResults(key string, fields [][]byte) (values [][]byte, fo
 
 	physical := sh.encoded(e)
 	if isIndexedHash(physical) {
+		_, slots, used, start, metaErr := indexedHashMeta(physical)
+		if metaErr != nil {
+			return nil, nil, metaErr
+		}
 		for i, field := range fields {
-			value, ok, lookupErr := indexedHashLookup(physical, field)
+			value, ok, lookupErr := indexedHashLookupKnown(
+				physical,
+				field,
+				slots,
+				used,
+				start,
+			)
 			if lookupErr != nil {
 				return nil, nil, lookupErr
 			}
