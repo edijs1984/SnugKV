@@ -13,7 +13,7 @@ Examples:
 
 Profiles:
   Strings:
-    session-json api-json cache-json counter uuid text repetitive compressed random
+    session-json api-json cache-json counter uuid ulid text repetitive compressed random
   Native structures:
     hash-small hash-medium hash-large
     list-small list-medium list-large
@@ -50,7 +50,7 @@ fi
 shift
 
 case "$PROFILE" in
-  session-json|api-json|cache-json|counter|uuid|text|repetitive|compressed|random|\
+  session-json|api-json|cache-json|counter|uuid|ulid|text|repetitive|compressed|random|\
   hash-small|hash-medium|hash-large|list-small|list-medium|list-large|\
   set-small|set-medium|set-large|zset-small|zset-medium|zset-large) ;;
   *)
@@ -124,6 +124,7 @@ case "$PROFILE" in
   cache-json) VALUE_BYTES=1024 ;;
   counter) VALUE_BYTES=10 ;;
   uuid) VALUE_BYTES=36 ;;
+  ulid) VALUE_BYTES=26 ;;
   text|repetitive|compressed|random) VALUE_BYTES=256 ;;
   hash-small) STRUCTURE_TYPE=hash; CARDINALITY=10; VALUE_BYTES=64 ;;
   hash-medium) STRUCTURE_TYPE=hash; CARDINALITY=100; VALUE_BYTES=64 ;;
