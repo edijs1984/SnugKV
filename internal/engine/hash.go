@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"sort"
+
+	"snugkv/internal/index"
 )
 
 const maxPackedHashBytes = 32 << 20
@@ -572,6 +574,72 @@ func (s *Store) HashGetResults(key string, fields [][]byte) (values [][]byte, fo
 		}
 		values[i] = value
 		found[i] = ok
+	}
+	return values, found, nil
+}
+
+// HashGetBatchBytes resolves a pipeline of HGET operations by shard.
+// Keys are hashed once, requests sharing a shard reuse one shard read lock,
+// and results are written back in the caller's original order.
+func (s *Store) HashGetBatchBytes(keys, fields [][]byte) (values [][]byte, found []bool, err error) {
+	if len(keys) != len(fields) {
+		return nil, nil, errors.New("ERR invalid hash field count")
+	}
+	values = make([][]byte, len(keys))
+	found = make([]bool, len(keys))
+	if len(keys) == 0 {
+		return values, found, nil
+	}
+
+	hashes := make([]uint64, len(keys))
+	groups := make(map[int][]int, len(keys))
+	shardMask := uint64(len(s.shards) - 1)
+	for i, key := range keys {
+		hash := index.HashBytes(key)
+		hashes[i] = hash
+		shardIndex := int((hash >> 32) & shardMask)
+		groups[shardIndex] = append(groups[shardIndex], i)
+	}
+
+	now := s.now()
+	nowMS := now.UnixMilli()
+	for shardIndex, indexes := range groups {
+		sh := &s.shards[shardIndex]
+		sh.mu.RLock()
+
+		for _, i := range indexes {
+			e, ok := sh.getHashedBytes(keys[i], hashes[i])
+			if !ok {
+				continue
+			}
+			if e.hasExpiry && sh.expired(string(keys[i]), e, now) {
+				continue
+			}
+			if e.valueType != TypeHash {
+				sh.mu.RUnlock()
+				return nil, nil, hashWrongType()
+			}
+
+			physical := sh.encoded(e)
+			var value []byte
+			var lookupErr error
+			if isIndexedHash(physical) {
+				value, found[i], lookupErr = indexedHashLookup(physical, fields[i])
+			} else {
+				value, found[i], lookupErr = packedHashLookup(
+					s.decode(sh, e),
+					fields[i],
+					nowMS,
+				)
+			}
+			if lookupErr != nil {
+				sh.mu.RUnlock()
+				return nil, nil, lookupErr
+			}
+			values[i] = value
+		}
+
+		sh.mu.RUnlock()
 	}
 	return values, found, nil
 }
