@@ -40,11 +40,7 @@ func nextSetPow2(n int) int {
 	return p
 }
 
-func indexedSetRecord(data []byte, pos int) (member []byte, end int, err error) {
-	_,_,used,start,e := indexedSetMeta(data)
-	if e != nil {
-		return nil,0,e
-	}
+func indexedSetRecordKnown(data []byte, pos, used, start int) (member []byte, end int, err error) {
 	if pos < 0 || pos >= used {
 		return nil,0,errors.New("invalid indexed set offset")
 	}
@@ -57,21 +53,25 @@ func indexedSetRecord(data []byte, pos int) (member []byte, end int, err error) 
 	return data[off:valueEnd], valueEnd-start, nil
 }
 
-func indexedSetFind(data, target []byte) (slot,pos int, found bool, err error) {
-	_,slots,_,_,e := indexedSetMeta(data)
+func indexedSetRecord(data []byte, pos int) (member []byte, end int, err error) {
+	_,_,used,start,e := indexedSetMeta(data)
 	if e != nil {
-		return 0,0,false,e
+		return nil,0,e
 	}
+	return indexedSetRecordKnown(data,pos,used,start)
+}
+
+func indexedSetFindKnown(data, target []byte, slots, used, dataStart int) (slot,pos int, found bool, err error) {
 	mask := slots-1
-	start := int(hashField64(target)) & mask
+	hashStart := int(hashField64(target)) & mask
 	for probe:=0; probe<slots; probe++ {
-		slot = (start+probe)&mask
+		slot = (hashStart+probe)&mask
 		raw := binary.LittleEndian.Uint32(data[indexedSetFixed+slot*4:indexedSetFixed+slot*4+4])
 		if raw == 0 {
 			return slot,0,false,nil
 		}
 		pos = int(raw-1)
-		member,_,e := indexedSetRecord(data,pos)
+		member,_,e := indexedSetRecordKnown(data,pos,used,dataStart)
 		if e != nil {
 			return 0,0,false,e
 		}
@@ -80,6 +80,14 @@ func indexedSetFind(data, target []byte) (slot,pos int, found bool, err error) {
 		}
 	}
 	return 0,0,false,errors.New("invalid indexed set table")
+}
+
+func indexedSetFind(data, target []byte) (slot,pos int, found bool, err error) {
+	_,slots,used,dataStart,e := indexedSetMeta(data)
+	if e != nil {
+		return 0,0,false,e
+	}
+	return indexedSetFindKnown(data,target,slots,used,dataStart)
 }
 
 func indexedSetRecordBytes(member []byte) []byte {
@@ -180,7 +188,7 @@ func indexedSetAdd(data []byte, members [][]byte) (added int64, rebuilt []byte, 
 		return 0,nil,err
 	}
 	for i,member := range members {
-		slot,_,found,e := indexedSetFind(data,member)
+		slot,_,found,e := indexedSetFindKnown(data,member,slots,used,start)
 		if e != nil {
 			return added,nil,e
 		}
