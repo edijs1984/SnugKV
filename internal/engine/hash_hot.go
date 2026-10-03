@@ -289,9 +289,14 @@ func (s *Store) thawHotHashLocked(sh *shard, key string, e entry) (*hotHash, boo
 			uint64(unsafe.Sizeof(entryMetaSidecar{})) +
 			uint64(cap(sh.entries))*entryMetaSlotBytes
 	}
-	if sh.metas == nil || sh.metas.hotHashes == nil {
+	oldHotCap := 0
+	if sh.metas != nil && sh.metas.hotHashes != nil {
+		oldHotCap = cap(sh.metas.hotHashes)
+	}
+	if cap(sh.entries) > oldHotCap {
 		hotSlotBytes =
-			uint64(cap(sh.entries))*uint64(unsafe.Sizeof((*hotHash)(nil)))
+			uint64(cap(sh.entries)-oldHotCap) *
+				uint64(unsafe.Sizeof((*hotHash)(nil)))
 	}
 
 	oldPayload := uint64(0)
