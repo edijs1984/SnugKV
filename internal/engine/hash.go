@@ -310,12 +310,28 @@ func (s *Store) hashSetLocked(sh *shard, key string, fields, values [][]byte) (i
 		old = entry{}
 	}
 
-	var pairs []HashPair
-	var expiresAt stamp
 	if exists {
 		if old.valueType != TypeHash {
 			return 0, hashWrongType()
 		}
+		if h, hot, err := s.thawHotHashLocked(sh, key, old); err != nil {
+			return 0, err
+		} else if hot {
+			before := h.memoryBytes()
+			var added int64
+			for i, field := range fields {
+				if h.set(field, values[i]) {
+					added++
+				}
+			}
+			s.accountHotHashResize(before, h.memoryBytes())
+			return added, nil
+		}
+	}
+
+	var pairs []HashPair
+	var expiresAt stamp
+	if exists {
 		expiresAt = sh.expirationAt(key, old)
 		physical := sh.encoded(old)
 		if isIndexedHash(physical) {
@@ -331,11 +347,14 @@ func (s *Store) hashSetLocked(sh *shard, key string, fields, values [][]byte) (i
 					valueType: TypeHash,
 					rawLength: uint32(len(rebuilt)),
 				}},
-				data: rebuilt,
+				data:      rebuilt,
 				expiresAt: expiresAt,
 			}
 			if err := s.publish(sh, key, updated); err != nil {
 				return 0, err
+			}
+			if current, ok := sh.get(key); ok {
+				_, _, _ = s.thawHotHashLocked(sh, key, current)
 			}
 			return added, nil
 		}
@@ -373,11 +392,6 @@ func (s *Store) hashSetLocked(sh *shard, key string, fields, values [][]byte) (i
 	var updated preparedEntry
 	indexThreshold := indexedHashPromoteFields
 	if len(fields) == 1 {
-		// Incremental HSET workloads repeatedly rebuild the packed representation
-		// as each field is appended. Promote this narrow single-field mutation
-		// path earlier, while keeping multi-field writes on the existing shape-
-		// admission policy so shared HASH shapes and their accounting semantics
-		// remain unchanged.
 		indexThreshold = 16
 	}
 	canIndex := len(pairs) >= indexThreshold
@@ -412,10 +426,11 @@ func (s *Store) hashSetLocked(sh *shard, key string, fields, values [][]byte) (i
 	if err := s.publish(sh, key, updated); err != nil {
 		return 0, err
 	}
-
+	if current, ok := sh.get(key); ok {
+		_, _, _ = s.thawHotHashLocked(sh, key, current)
+	}
 	return added, nil
 }
-
 func (s *Store) HashSet(key string, fields, values [][]byte) (int64, error) {
 	if len(fields) == 0 || len(fields) != len(values) {
 		return 0, errors.New("ERR invalid hash field/value count")
@@ -450,6 +465,22 @@ func (s *Store) HashSetResults(key string, fields, values [][]byte) ([]int64, er
 	}
 	if exists && old.valueType != TypeHash {
 		return nil, hashWrongType()
+	}
+
+	if exists {
+		if h, hot, err := s.thawHotHashLocked(sh, key, old); err != nil {
+			return nil, err
+		} else if hot {
+			before := h.memoryBytes()
+			for i, field := range fields {
+				if _, found := h.get(field); !found {
+					results[i] = 1
+				}
+				h.set(field, values[i])
+			}
+			s.accountHotHashResize(before, h.memoryBytes())
+			return results, nil
+		}
 	}
 
 	existing := make(map[string]struct{})
@@ -499,7 +530,6 @@ func (s *Store) HashSetResults(key string, fields, values [][]byte) ([]int64, er
 	}
 	return results, nil
 }
-
 func (s *Store) hashLogicalValue(sh *shard, e entry) ([]byte, error) {
 	pairs, err := decodePackedHash(s.decode(sh, e))
 	if err != nil {
@@ -520,6 +550,17 @@ func (s *Store) HashGet(key string, field []byte) ([]byte, bool, error) {
 	if e.valueType != TypeHash {
 		return nil, false, hashWrongType()
 	}
+	if e.isHotHash() {
+		h, _, ok := sh.hotHashForKey(key)
+		if !ok || h == nil {
+			return nil, false, errors.New("HOT hash sidecar invariant")
+		}
+		value, found := h.get(field)
+		if !found {
+			return nil, false, nil
+		}
+		return append([]byte(nil), value...), true, nil
+	}
 
 	physical := sh.encoded(e)
 	if isIndexedHash(physical) {
@@ -527,17 +568,6 @@ func (s *Store) HashGet(key string, field []byte) ([]byte, bool, error) {
 	}
 	return packedHashLookup(s.decode(sh, e), field, s.now().UnixMilli())
 }
-
-// HashGetResult describes one field value copied into a caller-owned batch buffer.
-type HashGetResult struct {
-	Offset uint32
-	Length uint32
-	Found  bool
-}
-
-// HashGetResultsInto copies multiple HGET values for one key into caller-owned
-// storage while holding the shard lock, then lets the caller frame replies
-// after the lock is released. This avoids one heap allocation per returned value.
 func (s *Store) HashGetResultsInto(
 	key string,
 	fields [][]byte,
@@ -564,6 +594,28 @@ func (s *Store) HashGetResultsInto(
 	}
 	if e.valueType != TypeHash {
 		return dst, hashWrongType()
+	}
+
+	if e.isHotHash() {
+		h, _, ok := sh.hotHashForKey(key)
+		if !ok || h == nil {
+			return dst, errors.New("HOT hash sidecar invariant")
+		}
+		for i, field := range fields {
+			value, found := h.get(field)
+			if !found {
+				results[i] = HashGetResult{}
+				continue
+			}
+			offset := len(dst)
+			dst = append(dst, value...)
+			results[i] = HashGetResult{
+				Offset: uint32(offset),
+				Length: uint32(len(value)),
+				Found:  true,
+			}
+		}
+		return dst, nil
 	}
 
 	physical := sh.encoded(e)
@@ -615,9 +667,6 @@ func (s *Store) HashGetResultsInto(
 	}
 	return dst, nil
 }
-
-// HashGetResults answers multiple HGET field probes for one key under
-// a single shard read lock and a single key lookup.
 func (s *Store) HashGetResults(key string, fields [][]byte) (values [][]byte, found []bool, err error) {
 	values = make([][]byte, len(fields))
 	found = make([]bool, len(fields))
@@ -635,6 +684,19 @@ func (s *Store) HashGetResults(key string, fields [][]byte) (values [][]byte, fo
 	}
 	if e.valueType != TypeHash {
 		return nil, nil, hashWrongType()
+	}
+	if e.isHotHash() {
+		h, _, ok := sh.hotHashForKey(key)
+		if !ok || h == nil {
+			return nil, nil, errors.New("HOT hash sidecar invariant")
+		}
+		for i, field := range fields {
+			if value, ok := h.get(field); ok {
+				values[i] = append([]byte(nil), value...)
+				found[i] = true
+			}
+		}
+		return values, found, nil
 	}
 
 	physical := sh.encoded(e)
@@ -672,7 +734,6 @@ func (s *Store) HashGetResults(key string, fields [][]byte) (values [][]byte, fo
 	}
 	return values, found, nil
 }
-
 func (s *Store) HashLen(key string) (int64, error) {
 	sh := s.shardFor(key)
 	sh.mu.RLock()
@@ -685,6 +746,13 @@ func (s *Store) HashLen(key string) (int64, error) {
 	if e.valueType != TypeHash {
 		return 0, hashWrongType()
 	}
+	if e.isHotHash() {
+		h, _, ok := sh.hotHashForKey(key)
+		if !ok || h == nil {
+			return 0, errors.New("HOT hash sidecar invariant")
+		}
+		return int64(len(h.records)), nil
+	}
 
 	pairs, err := decodePackedHash(s.decode(sh, e))
 	if err != nil {
@@ -693,7 +761,6 @@ func (s *Store) HashLen(key string) (int64, error) {
 	pairs = liveHashPairs(pairs, s.now().UnixMilli())
 	return int64(len(pairs)), nil
 }
-
 func (s *Store) HashGetAll(key string) ([]HashPair, error) {
 	sh := s.shardFor(key)
 	sh.mu.RLock()
@@ -706,6 +773,13 @@ func (s *Store) HashGetAll(key string) ([]HashPair, error) {
 	if e.valueType != TypeHash {
 		return nil, hashWrongType()
 	}
+	if e.isHotHash() {
+		h, _, ok := sh.hotHashForKey(key)
+		if !ok || h == nil {
+			return nil, errors.New("HOT hash sidecar invariant")
+		}
+		return h.pairs(), nil
+	}
 
 	pairs, err := decodePackedHash(s.decode(sh, e))
 	if err != nil {
@@ -713,7 +787,6 @@ func (s *Store) HashGetAll(key string) ([]HashPair, error) {
 	}
 	return liveHashPairs(pairs, s.now().UnixMilli()), nil
 }
-
 func (s *Store) HashDel(key string, fields [][]byte) (int64, error) {
 	if len(fields) == 0 {
 		return 0, nil
@@ -732,6 +805,20 @@ func (s *Store) HashDel(key string, fields [][]byte) (int64, error) {
 	}
 	if e.valueType != TypeHash {
 		return 0, hashWrongType()
+	}
+
+	if e.isHotHash() {
+		h, _, ok := sh.hotHashForKey(key)
+		if !ok || h == nil {
+			return 0, errors.New("HOT hash sidecar invariant")
+		}
+		before := h.memoryBytes()
+		deleted := h.delete(fields)
+		s.accountHotHashResize(before, h.memoryBytes())
+		if deleted != 0 && len(h.records) == 0 {
+			s.remove(sh, key)
+		}
+		return deleted, nil
 	}
 
 	pairs, err := decodePackedHash(s.decode(sh, e))
@@ -775,7 +862,6 @@ func (s *Store) HashDel(key string, fields [][]byte) (int64, error) {
 
 	return deleted, nil
 }
-
 func (s *Store) HashStorageStats(key string) (HashStats, bool, error) {
 	sh := s.shardFor(key)
 	sh.mu.RLock()
@@ -787,6 +873,28 @@ func (s *Store) HashStorageStats(key string) (HashStats, bool, error) {
 	}
 	if e.valueType != TypeHash {
 		return HashStats{}, false, hashWrongType()
+	}
+	if e.isHotHash() {
+		h, _, ok := sh.hotHashForKey(key)
+		if !ok || h == nil {
+			return HashStats{}, false, errors.New("HOT hash sidecar invariant")
+		}
+		pairs := h.pairs()
+		packed, err := encodePackedHash(pairs)
+		if err != nil {
+			return HashStats{}, false, err
+		}
+		stats := HashStats{
+			Fields:      len(pairs),
+			PackedBytes: len(packed),
+			StoredBytes: int(h.memoryBytes()),
+			Encoding:    "hot",
+		}
+		for _, pair := range pairs {
+			stats.FieldBytes += len(pair.Field)
+			stats.ValueBytes += len(pair.Value)
+		}
+		return stats, true, nil
 	}
 
 	physical := sh.encoded(e)
