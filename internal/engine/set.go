@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"snugkv/internal/index"
 	"sort"
 )
 
@@ -474,12 +475,13 @@ func (s *Store) SetAdd(key string, members [][]byte) (int64, error) {
 	if len(members) == 0 {
 		return 0, errors.New("ERR invalid set member count")
 	}
-	sh := s.shardFor(key)
+	hash := index.Hash(key)
+	sh := s.shardForHash(hash)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
 
 	now := s.now()
-	old, exists := sh.get(key)
+	old, exists := sh.getHashed(key, hash)
 	if exists && sh.expired(key, old, now) {
 		s.remove(sh, key)
 		exists = false
@@ -647,18 +649,7 @@ func (s *Store) SetRemove(key string, members [][]byte) (int64, error) {
 	return removed, nil
 }
 
-func (s *Store) SetContains(key string, member []byte) (bool, error) {
-	sh := s.shardFor(key)
-	sh.mu.RLock()
-	defer sh.mu.RUnlock()
-	e, ok := sh.get(key)
-	if !ok || sh.expired(key, e, s.now()) {
-		return false, nil
-	}
-	if e.valueType != TypeSet {
-		return false, setWrongType()
-	}
-	physical := sh.encoded(e)
+func setContainsPhysical(physical []byte, e entry, member []byte) (bool, error) {
 	if isIndexedSet(physical) {
 		return indexedSetContains(physical, member)
 	}
@@ -672,11 +663,47 @@ func (s *Store) SetContains(key string, member []byte) (bool, error) {
 	return bytes.Equal(physical, member), nil
 }
 
-func (s *Store) SetLen(key string) (int64, error) {
-	sh := s.shardFor(key)
+func (s *Store) SetContains(key string, member []byte) (bool, error) {
+	hash := index.Hash(key)
+	sh := s.shardForHash(hash)
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
-	e, ok := sh.get(key)
+	e, ok := sh.getHashed(key, hash)
+	if !ok || sh.expired(key, e, s.now()) {
+		return false, nil
+	}
+	if e.valueType != TypeSet {
+		return false, setWrongType()
+	}
+	return setContainsPhysical(sh.encoded(e), e, member)
+}
+
+// SetContainsBytes avoids allocating a string for the common non-expiring TCP
+// SISMEMBER path. Expiring keys convert only when consulting the expiration map.
+func (s *Store) SetContainsBytes(key, member []byte) (bool, error) {
+	hash := index.HashBytes(key)
+	sh := s.shardForHash(hash)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
+	e, ok := sh.getHashedBytes(key, hash)
+	if !ok {
+		return false, nil
+	}
+	if e.hasExpiry && sh.expired(string(key), e, s.now()) {
+		return false, nil
+	}
+	if e.valueType != TypeSet {
+		return false, setWrongType()
+	}
+	return setContainsPhysical(sh.encoded(e), e, member)
+}
+
+func (s *Store) SetLen(key string) (int64, error) {
+	hash := index.Hash(key)
+	sh := s.shardForHash(hash)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
+	e, ok := sh.getHashed(key, hash)
 	if !ok || sh.expired(key, e, s.now()) {
 		return 0, nil
 	}
