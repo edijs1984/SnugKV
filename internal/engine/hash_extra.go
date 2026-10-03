@@ -75,9 +75,5 @@ func (s *Store) HashSetNX(key string, field, value []byte) (bool, error) {
 	if err := s.publish(sh, key, updated); err != nil {
 		return false, err
 	}
-	if current, ok := sh.get(key); ok {
-		_, _, _ = s.thawHotHashLocked(sh, key, current)
-	}
-
 	return true, nil
 }
