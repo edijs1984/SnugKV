@@ -55,6 +55,31 @@ func packedSetCount(data []byte) (int, error) {
 	return int(count), nil
 }
 
+func encodePackedSetSorted(members [][]byte) ([]byte, error) {
+	capacity := len(packedSetHeader) + binary.MaxVarintLen64
+	for i := range members {
+		if i > 0 && bytes.Compare(members[i-1], members[i]) >= 0 {
+			return nil, errors.New("duplicate or unsorted set member")
+		}
+		capacity += len(members[i]) + binary.MaxVarintLen64
+		if capacity > maxPackedSetBytes {
+			return nil, errors.New("ERR set exceeds 32 MiB limit")
+		}
+	}
+
+	out := make([]byte, 0, capacity)
+	out = append(out, packedSetHeader[:]...)
+	out = appendSetUvarint(out, uint64(len(members)))
+	for _, member := range members {
+		out = appendSetUvarint(out, uint64(len(member)))
+		out = append(out, member...)
+	}
+	if len(out) > maxPackedSetBytes {
+		return nil, errors.New("ERR set exceeds 32 MiB limit")
+	}
+	return out, nil
+}
+
 func encodePackedSet(input [][]byte) ([]byte, error) {
 	members := make([][]byte, len(input))
 	for i := range input {
@@ -437,7 +462,7 @@ func (s *Store) SetAdd(key string, members [][]byte) (int64, error) {
 			data: indexed,
 		}
 	} else {
-		packed, err := encodePackedSet(current)
+		packed, err := encodePackedSetSorted(current)
 		if err != nil {
 			return 0, err
 		}
