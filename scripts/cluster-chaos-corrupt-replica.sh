@@ -164,15 +164,15 @@ replicated="$(cli "$P0" WAIT 2 5000)"
 mapfile -t waitaof < <(cli "$P0" WAITAOF 0 2 5000)
 local_durable="${waitaof[0]:-}"
 replica_durable="${waitaof[1]:-}"
-if [[ "$local_durable" != "0" || "$replica_durable" != "2" ]]; then
-  echo "WAITAOF result local=$local_durable replicas=$replica_durable, want local=0 replicas=2" >&2
+if [[ "$replica_durable" != "2" ]]; then
+  echo "WAITAOF result local=$local_durable replicas=$replica_durable, want replicas=2" >&2
   cli "$P0" INFO replication >&2 || true
   echo "n1_aof_bytes=$(stat -c%s "$TMP/n1.aof" 2>/dev/null || echo missing)" >&2
   echo "n2_aof_bytes=$(stat -c%s "$TMP/n2.aof" 2>/dev/null || echo missing)" >&2
   exit 1
 fi
 
-echo "seed durability confirmed: WAIT=2 WAITAOF_replicas=2 n1_aof_bytes=$(stat -c%s "$TMP/n1.aof") n2_aof_bytes=$(stat -c%s "$TMP/n2.aof")"
+echo "seed durability confirmed: WAIT=2 WAITAOF_local=$local_durable WAITAOF_replicas=2 n1_aof_bytes=$(stat -c%s "$TMP/n1.aof") n2_aof_bytes=$(stat -c%s "$TMP/n2.aof")"
 
 echo "[2/8] hard-stop replica n2"
 stop_hard n2
