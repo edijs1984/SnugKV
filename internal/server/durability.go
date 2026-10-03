@@ -259,6 +259,36 @@ func (s *Server) executeAuthorizedConcurrentGet(args [][]byte) (response []byte,
 	return optionalBulk(value, found), true, nil
 }
 
+// executeAuthorizedConcurrentSetContains serves the exact SISMEMBER key member
+// read without traversing the generic command dispatcher.
+func (s *Server) executeAuthorizedConcurrentSetContains(args [][]byte) (response []byte, handled bool, err error) {
+	if s.clusterEnabled ||
+		len(args) != 3 ||
+		!bytes.EqualFold(args[0], []byte("SISMEMBER")) ||
+		s.journal != nil ||
+		atomic.LoadUint32(&s.metricsEnabled) != 0 {
+		return nil, false, nil
+	}
+
+	s.durableMu.RLock()
+	if s.hasWatchSessionsLocked() {
+		s.durableMu.RUnlock()
+		return nil, false, nil
+	}
+
+	found, err := s.store.SetContains(string(args[1]), args[2])
+	s.durableMu.RUnlock()
+
+	atomic.AddUint64(&s.commands, 1)
+	if err != nil {
+		return nil, true, err
+	}
+	if found {
+		return integerReply(1), true, nil
+	}
+	return integerReply(0), true, nil
+}
+
 // executeAuthorizedConcurrentZSetScore serves the exact ZSCORE key member
 // read without traversing the generic command dispatcher. The engine performs
 // the lookup under the target shard read lock; durableMu.RLock preserves
