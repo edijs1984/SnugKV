@@ -252,3 +252,38 @@ func TestConcurrentSetAddBatchFastPath(t *testing.T) {
 		t.Fatalf("b/y found=%v err=%v", found, err)
 	}
 }
+
+
+func TestConcurrentSetContainsBatchFastPath(t *testing.T) {
+	s := New(engine.New())
+	if _, err := s.store.SetAdd("a", [][]byte{[]byte("x"), []byte("y")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.store.SetAdd("b", [][]byte{[]byte("z")}); err != nil {
+		t.Fatal(err)
+	}
+
+	keys := [][]byte{
+		[]byte("a"),
+		[]byte("a"),
+		[]byte("b"),
+		[]byte("a"),
+	}
+	members := [][]byte{
+		[]byte("x"),
+		[]byte("missing"),
+		[]byte("z"),
+		[]byte("y"),
+	}
+	results, handled, err := s.executeAuthorizedConcurrentSetContainsBatch(keys, members)
+	if err != nil {
+		t.Fatalf("batch error: %v", err)
+	}
+	if !handled {
+		t.Fatal("SISMEMBER batch fast path did not handle commands")
+	}
+	want := []int64{1, 0, 1, 1}
+	if !reflect.DeepEqual(results, want) {
+		t.Fatalf("results=%v want=%v", results, want)
+	}
+}
