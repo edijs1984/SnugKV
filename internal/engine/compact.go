@@ -26,10 +26,24 @@ func (s *Store) Compact(scratch uint64) int {
 		sh.mu.Lock()
 
 		hotKeys := make([]string, 0)
+		activeHot := false
 		for key, e := range sh.all() {
-			if e.isHotHash() {
-				hotKeys = append(hotKeys, key)
+			if !e.isHotHash() {
+				continue
 			}
+			h, _, ok := sh.hotHashForKey(key)
+			if !ok || h == nil {
+				panic("HOT hash sidecar invariant")
+			}
+			if !s.hotHashIdle(h) {
+				activeHot = true
+				break
+			}
+			hotKeys = append(hotKeys, key)
+		}
+		if activeHot {
+			sh.mu.Unlock()
+			continue
 		}
 		for _, key := range hotKeys {
 			e, ok := sh.get(key)
