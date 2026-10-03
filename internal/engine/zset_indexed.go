@@ -130,7 +130,13 @@ func encodeIndexedZSetWithReserve(items []ZSetItem, aggressive bool) ([]byte,err
 	}
 	sort.Slice(canonical,func(i,j int)bool{return zsetLess(canonical[i],canonical[j])})
 
-	slots := nextZSetPow2(len(canonical)*2)
+	// Target at most 80% occupancy instead of reserving a fixed 2x slot
+	// table. For medium ZSETs (for example 100 members), 128 slots are enough
+	// and keep the compact representation below the next arena size class;
+	// large ZSETs still naturally round to the same 2048-slot table at 1000
+	// members.
+	slotTarget := (len(canonical)*5 + 3) / 4
+	slots := nextZSetPow2(slotTarget)
 	records := make([][]byte,len(canonical))
 	used := 0
 	for i,item := range canonical {
@@ -225,7 +231,10 @@ func indexedZSetAddSimple(data []byte, pairs []ZSetItem)(added int64, rebuilt []
 			continue
 		}
 		rec := indexedZSetRecordBytes(pair.Member,score)
-		needRehash := !found && (count+1)*10 >= slots*7
+		// Match the 80% occupancy target used by the encoder. Linear probing
+		// remains bounded while avoiding an early 2x table expansion for medium
+		// cardinalities such as 100 members.
+		needRehash := !found && (count+1)*5 >= slots*4
 		if needRehash || start+used+len(rec) > len(data) {
 			items,e := decodeIndexedZSet(data)
 			if e != nil {
