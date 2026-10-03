@@ -473,59 +473,46 @@ func TestHashGetResults(t *testing.T) {
 }
 
 
-func TestHashGetBatchBytesPreservesOrder(t *testing.T) {
+func TestVisitHashFieldsBytes(t *testing.T) {
 	s := New()
-
 	if _, err := s.HashSet(
-		"h1",
-		[][]byte{[]byte("a"), []byte("b")},
-		[][]byte{[]byte("1"), []byte("2")},
-	); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.HashSet(
-		"h2",
-		[][]byte{[]byte("x")},
-		[][]byte{[]byte("3")},
+		"visit-hash",
+		[][]byte{[]byte("a"), []byte("b"), []byte("c")},
+		[][]byte{[]byte("1"), []byte("2"), []byte("3")},
 	); err != nil {
 		t.Fatal(err)
 	}
 
-	values, found, err := s.HashGetBatchBytes(
-		[][]byte{
-			[]byte("h1"),
-			[]byte("h2"),
-			[]byte("h1"),
-			[]byte("missing"),
-		},
-		[][]byte{
-			[]byte("b"),
-			[]byte("x"),
-			[]byte("a"),
-			[]byte("z"),
+	fields := [][]byte{
+		[]byte("b"),
+		[]byte("missing"),
+		[]byte("a"),
+	}
+	got := make([]string, len(fields))
+	found := make([]bool, len(fields))
+	err := s.VisitHashFieldsBytes(
+		[]byte("visit-hash"),
+		fields,
+		func(i int, value []byte, ok bool) error {
+			found[i] = ok
+			if ok {
+				got[i] = string(value)
+			}
+			return nil
 		},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	wantFound := []bool{true, true, true, false}
+	wantFound := []bool{true, false, true}
 	if !reflect.DeepEqual(found, wantFound) {
 		t.Fatalf("found=%v want=%v", found, wantFound)
 	}
-
-	got := []string{
-		string(values[0]),
-		string(values[1]),
-		string(values[2]),
-		string(values[3]),
-	}
-	want := []string{"2", "3", "1", ""}
+	want := []string{"2", "", "1"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("values=%v want=%v", got, want)
 	}
 }
-
 
 func TestHashIncrementalPromotionThreshold(t *testing.T) {
 	s := New()
