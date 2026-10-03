@@ -185,3 +185,29 @@ func TestReadBufferedSADD(t *testing.T) {
 		t.Fatalf("buffered=%d", reader.Buffered())
 	}
 }
+
+
+func TestReadBufferedSISMEMBER(t *testing.T) {
+	raw := "*3\r\n$9\r\nSISMEMBER\r\n$3\r\nkey\r\n$6\r\nmember\r\n"
+	reader := bufio.NewReaderSize(strings.NewReader(raw), 1024)
+	if _, err := reader.Peek(len(raw)); err != nil {
+		t.Fatal(err)
+	}
+	decoder, err := NewDecoder(reader, DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, member, ok, err := decoder.ReadBufferedSISMEMBER(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected buffered SISMEMBER")
+	}
+	if string(key) != "key" || string(member) != "member" {
+		t.Fatalf("key=%q member=%q", key, member)
+	}
+	if reader.Buffered() != 0 {
+		t.Fatalf("buffered=%d", reader.Buffered())
+	}
+}
