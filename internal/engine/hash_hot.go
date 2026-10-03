@@ -41,6 +41,14 @@ func newHotHash(pairs []HashPair) *hotHash {
 	return h
 }
 
+func hotHashSidecarBytes(sh *shard) uint64 {
+	if sh.hotHashes == nil {
+		return 0
+	}
+	return uint64(unsafe.Sizeof(hotHashSidecar{})) +
+		uint64(cap(sh.hotHashes.slots))*uint64(unsafe.Sizeof((*hotHash)(nil)))
+}
+
 func (h *hotHash) memoryBytes() uint64 {
 	if h == nil {
 		return 0
