@@ -366,6 +366,12 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 	var setBatchValues [][]byte
 	var setBatchKeyArena []byte
 	var setBatchValueArena []byte
+	var saddBatchKeys [][]byte
+	var saddBatchMembers [][]byte
+	var saddBatchKeyArena []byte
+	var saddBatchMemberArena []byte
+	var saddKeyScratch []byte
+	var saddMemberScratch []byte
 	const maxRetainedGetScratch = 64 << 10
 	const maxRetainedGetKeyScratch = 64 << 10
 	const maxRetainedSetKeyScratch = 64 << 10
@@ -1267,6 +1273,108 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 						for i := range setBatchKeys {
 							s.server.feedMonitor(clientSession, [][]byte{[]byte("SET"), setBatchKeys[i], setBatchValues[i]}, nil)
 							s.invalidateTrackingKeys(clientSession, [][]byte{[]byte("SET"), setBatchKeys[i], setBatchValues[i]})
+						}
+					}
+					if pendingAuthErr != nil {
+						if writer.writeBuffered(errorResponse(pendingAuthErr)) != nil {
+							return
+						}
+					}
+					continue
+				}
+			}
+		}
+
+		if borrowedNativeMutation &&
+			len(msg) == 3 &&
+			bytes.EqualFold(msg[0], []byte("SADD")) &&
+			!s.adminOnly && !txSession.multi &&
+			!(clientSession.protocolVersion() == 2 && pubSession.active()) &&
+			s.server.journal == nil &&
+			!s.server.replication.primaryHasReplicas() &&
+			atomic.LoadUint32(&s.server.metricsEnabled) == 0 &&
+			s.server.store.MaxMemory() == 0 &&
+			reader.Buffered() > 0 {
+
+			maxBatch := configuredSetBatchLimit
+			if cap(saddBatchKeys) < maxBatch {
+				saddBatchKeys = make([][]byte, 0, maxBatch)
+			} else {
+				saddBatchKeys = saddBatchKeys[:0]
+			}
+			if cap(saddBatchMembers) < maxBatch {
+				saddBatchMembers = make([][]byte, 0, maxBatch)
+			} else {
+				saddBatchMembers = saddBatchMembers[:0]
+			}
+			saddBatchKeyArena = saddBatchKeyArena[:0]
+			saddBatchMemberArena = saddBatchMemberArena[:0]
+			if cap(saddBatchKeyArena) < 4<<10 {
+				saddBatchKeyArena = make([]byte, 0, 4<<10)
+			}
+			if cap(saddBatchMemberArena) < 32<<10 {
+				saddBatchMemberArena = make([]byte, 0, 32<<10)
+			}
+			var pendingAuthErr error
+
+			appendOwnedSADD := func(key, member []byte) {
+				keyStart := len(saddBatchKeyArena)
+				saddBatchKeyArena = append(saddBatchKeyArena, key...)
+				saddBatchKeys = append(saddBatchKeys, saddBatchKeyArena[keyStart:len(saddBatchKeyArena)])
+
+				memberStart := len(saddBatchMemberArena)
+				saddBatchMemberArena = append(saddBatchMemberArena, member...)
+				saddBatchMembers = append(saddBatchMembers, saddBatchMemberArena[memberStart:len(saddBatchMemberArena)])
+			}
+			appendOwnedSADD(msg[1], msg[2])
+
+			for len(saddBatchKeys) < maxBatch && reader.Buffered() > 0 {
+				nextKey, nextMember, ok, saddErr :=
+					decoder.ReadBufferedSADD(saddKeyScratch, saddMemberScratch)
+				if saddErr != nil {
+					return
+				}
+				if !ok {
+					break
+				}
+
+				nextMsg := [][]byte{[]byte("SADD"), nextKey, nextMember}
+				if authErr := s.server.authorizeConnectionCommand(authSession, nextMsg); authErr != nil {
+					pendingAuthErr = authErr
+					break
+				}
+
+				clientSession.touch(nextMsg)
+				appendOwnedSADD(nextKey, nextMember)
+
+				if cap(nextKey) <= maxRetainedSetKeyScratch {
+					saddKeyScratch = nextKey[:0]
+				} else {
+					saddKeyScratch = nil
+				}
+				if cap(nextMember) <= maxRetainedSetValueScratch {
+					saddMemberScratch = nextMember[:0]
+				} else {
+					saddMemberScratch = nil
+				}
+			}
+
+			if len(saddBatchKeys) > 1 {
+				results, handled, fastErr :=
+					s.server.executeAuthorizedConcurrentSetAddBatch(saddBatchKeys, saddBatchMembers)
+				if handled {
+					if fastErr != nil {
+						if writer.writeBuffered(errorResponse(fastErr)) != nil {
+							return
+						}
+					} else {
+						for i, result := range results {
+							if writer.writeBuffered(integerReply(result)) != nil {
+								return
+							}
+							command := [][]byte{[]byte("SADD"), saddBatchKeys[i], saddBatchMembers[i]}
+							s.server.feedMonitor(clientSession, command, nil)
+							s.invalidateTrackingKeys(clientSession, command)
 						}
 					}
 					if pendingAuthErr != nil {
