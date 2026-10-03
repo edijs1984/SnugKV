@@ -80,25 +80,14 @@ func TestSetAdaptivePhysicalEncodings(t *testing.T) {
 	}
 	stats, ok, err = s.SetStorageStats("prefix")
 	if err != nil || !ok {
-		t.Fatalf("prefix hot stats ok=%v err=%v", ok, err)
-	}
-	if stats.Encoding != "indexed" {
-		t.Fatalf("prefix hot stats=%+v", stats)
-	}
-	if !s.CompactIndexedSet("prefix") {
-		t.Fatal("prefix compact returned false")
-	}
-	stats, ok, err = s.SetStorageStats("prefix")
-	if err != nil || !ok {
-		t.Fatalf("prefix compact stats ok=%v err=%v", ok, err)
+		t.Fatalf("prefix stats ok=%v err=%v", ok, err)
 	}
 	if stats.Encoding != "prefix" || stats.StoredBytes >= stats.PackedBytes {
-		t.Fatalf("prefix compact stats=%+v", stats)
+		t.Fatalf("prefix stats=%+v", stats)
 	}
 
-	// Fixed-width members with no shared leading byte use the same hot indexed
-	// form during mutation, then freeze back to canonical packed SS1 because
-	// front-coding provides no physical saving.
+	// Fixed-width members with no shared leading byte should remain canonical
+	// packed SS1 because front-coding provides no physical saving.
 	dispersed := [][]byte{
 		append([]byte{0x10}, bytes.Repeat([]byte{1}, 15)...),
 		append([]byte{0x40}, bytes.Repeat([]byte{2}, 15)...),
@@ -110,20 +99,10 @@ func TestSetAdaptivePhysicalEncodings(t *testing.T) {
 	}
 	stats, ok, err = s.SetStorageStats("packed")
 	if err != nil || !ok {
-		t.Fatalf("packed hot stats ok=%v err=%v", ok, err)
-	}
-	if stats.Encoding != "indexed" {
-		t.Fatalf("packed hot stats=%+v", stats)
-	}
-	if !s.CompactIndexedSet("packed") {
-		t.Fatal("packed compact returned false")
-	}
-	stats, ok, err = s.SetStorageStats("packed")
-	if err != nil || !ok {
-		t.Fatalf("packed compact stats ok=%v err=%v", ok, err)
+		t.Fatalf("packed stats ok=%v err=%v", ok, err)
 	}
 	if stats.Encoding != "packed" || stats.StoredBytes != stats.PackedBytes {
-		t.Fatalf("packed compact stats=%+v", stats)
+		t.Fatalf("packed stats=%+v", stats)
 	}
 
 	// Export/AOF always sees canonical SS1 regardless of the physical encoding.
@@ -260,53 +239,3 @@ func TestIndexedSetPromotionAddContainsTTLAndPersistence(t *testing.T) {
 }
 
 
-func TestSetHotIndexedThenCompact(t *testing.T) {
-	s := New()
-	for i := 0; i < 10; i++ {
-		member := []byte(fmt.Sprintf("member:%02d:abcdefghijkl", i))
-		added, err := s.SetAdd("hot-set", [][]byte{member})
-		if err != nil {
-			t.Fatalf("SADD %d: %v", i, err)
-		}
-		if added != 1 {
-			t.Fatalf("SADD %d added=%d", i, added)
-		}
-	}
-
-	sh := s.shardFor("hot-set")
-	sh.mu.RLock()
-	e, ok := sh.get("hot-set")
-	if !ok {
-		sh.mu.RUnlock()
-		t.Fatal("missing hot set")
-	}
-	if !isIndexedSet(sh.encoded(e)) {
-		sh.mu.RUnlock()
-		t.Fatal("expected hot indexed set")
-	}
-	sh.mu.RUnlock()
-
-	if !s.CompactIndexedSet("hot-set") {
-		t.Fatal("expected compact rewrite")
-	}
-
-	sh.mu.RLock()
-	e, ok = sh.get("hot-set")
-	if !ok {
-		sh.mu.RUnlock()
-		t.Fatal("missing compacted set")
-	}
-	if isIndexedSet(sh.encoded(e)) {
-		sh.mu.RUnlock()
-		t.Fatal("small set should demote from hot indexed form")
-	}
-	sh.mu.RUnlock()
-
-	for i := 0; i < 10; i++ {
-		member := []byte(fmt.Sprintf("member:%02d:abcdefghijkl", i))
-		found, err := s.SetContains("hot-set", member)
-		if err != nil || !found {
-			t.Fatalf("member %d found=%v err=%v", i, found, err)
-		}
-	}
-}
