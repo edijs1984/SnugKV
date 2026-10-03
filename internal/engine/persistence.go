@@ -401,13 +401,15 @@ func (s *Store) resetForRecovery() {
 		s.memory.mu.Lock()
 		arenaBytes := sh.arena.MemoryBytes()
 		indexBytes := sh.data.CapacityBytes()
+		hotSidecarBytes := hotHashSidecarBytes(sh)
 		entryBytes := uint64(cap(sh.entries)) * entryStructBytes
 		if sh.metas != nil {
 			entryBytes += uint64(unsafe.Sizeof(entryMetaSidecar{})) +
 				uint64(cap(sh.metas.slots))*entryMetaSlotBytes
 		}
 
-		s.memory.used -= arenaBytes + indexBytes + entryBytes
+		s.memory.used -= arenaBytes + indexBytes + entryBytes + hotSidecarBytes
+		s.memory.hotHashes -= hotSidecarBytes
 		s.memory.arenas -= arenaBytes
 		s.memory.index -= indexBytes
 		s.memory.entries -= entryBytes
