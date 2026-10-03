@@ -140,7 +140,6 @@ func (s *Store) Compact(scratch uint64) int {
 		sh.data = *freshIndex
 		sh.entries = freshEntries
 		sh.metas = freshMetas
-		sh.hotHashes = nil
 		sh.freeIDs = nil
 
 		s.memory.used = next
