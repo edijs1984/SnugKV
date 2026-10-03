@@ -259,6 +259,38 @@ func (s *Server) executeAuthorizedConcurrentGet(args [][]byte) (response []byte,
 	return optionalBulk(value, found), true, nil
 }
 
+// executeAuthorizedConcurrentZSetScore serves the exact ZSCORE key member
+// read without traversing the generic command dispatcher. The engine performs
+// the lookup under the target shard read lock; durableMu.RLock preserves
+// transaction/WATCH exclusion while allowing independent reads to proceed.
+func (s *Server) executeAuthorizedConcurrentZSetScore(args [][]byte) (response []byte, handled bool, err error) {
+	if s.clusterEnabled ||
+		len(args) != 3 ||
+		!bytes.EqualFold(args[0], []byte("ZSCORE")) ||
+		s.journal != nil ||
+		atomic.LoadUint32(&s.metricsEnabled) != 0 {
+		return nil, false, nil
+	}
+
+	s.durableMu.RLock()
+	if s.hasWatchSessionsLocked() {
+		s.durableMu.RUnlock()
+		return nil, false, nil
+	}
+
+	score, found, err := s.store.ZSetScore(string(args[1]), args[2])
+	s.durableMu.RUnlock()
+
+	atomic.AddUint64(&s.commands, 1)
+	if err != nil {
+		return nil, true, err
+	}
+	if !found {
+		return nullBulk(), true, nil
+	}
+	return formatBulkString(formatZSetScore(score)), true, nil
+}
+
 // executeAuthorizedConcurrentSet serves a previously ACL-authorized plain SET
 // without passing through the generic function/blocking/pressure dispatch stack.
 // It is only used when persistence, metrics, WATCH and maxmemory semantics do not
