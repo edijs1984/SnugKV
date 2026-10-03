@@ -1801,27 +1801,32 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			}
 
 			if len(hgetBatchKeys) > 1 {
-				values, found, handled, fastErr :=
-					s.server.executeAuthorizedConcurrentHashGetBatch(
+				handled, fastErr :=
+					s.server.executeAuthorizedConcurrentHashGetBatchVisit(
 						hgetBatchKeys,
 						hgetBatchFields,
-					)
-				if handled {
-					if fastErr != nil {
-						if writeProtocol(msg, errorResponse(fastErr)) != nil {
-							return
-						}
-					} else {
-						for i := range values {
+						func(i int, value []byte, found bool) error {
 							command := [][]byte{
 								[]byte("HGET"),
 								hgetBatchKeys[i],
 								hgetBatchFields[i],
 							}
-							if writeProtocol(command, optionalBulk(values[i], found[i])) != nil {
-								return
+							if found {
+								monitorCommand = command
+								if err := writeBulkProtocol(value); err != nil {
+									return err
+								}
+							} else if err := writeProtocol(command, nullBulk()); err != nil {
+								return err
 							}
 							s.trackCommandRead(clientSession, command)
+							return nil
+						},
+					)
+				if handled {
+					if fastErr != nil {
+						if writeProtocol(msg, errorResponse(fastErr)) != nil {
+							return
 						}
 					}
 					if pendingAuthErr != nil {
