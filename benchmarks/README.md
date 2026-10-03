@@ -161,6 +161,36 @@ strongly and unique layouts remain close enough for v1.
 
 Run with `cmd/hashbench`.
 
+### Adaptive HASH HOT/COLD baseline — 2026-10-03
+
+The release-path HASH implementation now uses two physical states behind the
+same Redis HASH semantics:
+
+- **COLD/indexed:** default for small and medium hashes;
+- **HOT/mutable sidecar:** available only once a pipelined hash reaches 256
+  fields; active HOT hashes are not frozen by generic compaction;
+- **idle return to COLD:** after the HOT idle window, maintenance serializes the
+  hash back to indexed storage and reclaims the sidecar footprint.
+
+Latest SnugKV-only black-box structure benchmark, 1,000,000 logical items,
+64-byte values, 8 workers, pipeline 256, seed 1:
+
+| Profile | Cardinality | WRITE | READ | p95 WRITE | p95 READ | Active B/item | Idle/final B/item |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| hash-medium | 100 | 467,881/s | 531,098/s | 32.49 us | 26.89 us | 118.42 | 118.42 |
+| hash-large | 1,000 | 501,726/s | 488,073/s | 28.42 us | 31.95 us | 141.50 | ~109.43 |
+
+For hash-large, the server reported 109,478,411 used bytes after 70 seconds idle,
+confirming HOT -> indexed COLD convergence. The active 141.50 B/item figure is
+therefore intentionally transient.
+
+Reproduce against a current SnugKV server with:
+
+```sh
+bash scripts/bench/bench-one.sh hash-medium -p 6383 -s snug -k 1000000 -g 2000000 -w 8 -P 256 --seed 1 -o /tmp/hash-medium
+bash scripts/bench/bench-one.sh hash-large  -p 6383 -s snug -k 1000000 -g 2000000 -w 8 -P 256 --seed 1 -o /tmp/hash-large
+```
+
 ### SET
 
 Sequential/structured members:
