@@ -1839,7 +1839,8 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 								if start < 0 || end < start || end > len(hgetBatchBytes) {
 									return
 								}
-								if writeProtocol(command, formatBulkString(hgetBatchBytes[start:end])) != nil {
+								monitorCommand = command
+								if writeBulkProtocol(hgetBatchBytes[start:end]) != nil {
 									return
 								}
 							} else if writeProtocol(command, nullBulk()) != nil {
