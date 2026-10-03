@@ -116,24 +116,20 @@ func (sh *shard) setMeta(id uint32, meta *entryMeta) {
 func (sh *shard) ensureHotHashSlots() {
 	if sh.metas == nil {
 		sh.metas = &entryMetaSidecar{
-			slots:     make([]*entryMeta, len(sh.entries), cap(sh.entries)),
-			hotHashes: make([]*hotHash, len(sh.entries), cap(sh.entries)),
+			slots: make([]*entryMeta, len(sh.entries), cap(sh.entries)),
 		}
-		return
 	}
-	if sh.metas.hotHashes == nil {
-		sh.metas.hotHashes = make([]*hotHash, len(sh.entries), cap(sh.entries))
+	if len(sh.metas.slots) < len(sh.entries) {
+		next := make([]*entryMeta, len(sh.entries), cap(sh.entries))
+		copy(next, sh.metas.slots)
+		sh.metas.slots = next
 	}
-}
-
-func (sh *shard) growHotHashSlots(capacity int) {
-	if sh.metas == nil || sh.metas.hotHashes == nil || capacity <= cap(sh.metas.hotHashes) {
-		return
+	if sh.metas.hotHashes == nil || len(sh.metas.hotHashes) < len(sh.entries) ||
+		cap(sh.metas.hotHashes) < cap(sh.entries) {
+		next := make([]*hotHash, len(sh.entries), cap(sh.entries))
+		copy(next, sh.metas.hotHashes)
+		sh.metas.hotHashes = next
 	}
-	current := sh.metas.hotHashes
-	next := make([]*hotHash, len(current), capacity)
-	copy(next, current)
-	sh.metas.hotHashes = next
 }
 
 func (sh *shard) hotHashByID(id uint32) *hotHash {
@@ -234,14 +230,10 @@ func (sh *shard) insertEntry(key string, hash uint64, e entry, hashKnown bool) {
 			copy(entries, sh.entries)
 			sh.entries = entries
 			sh.growMetaSlots(next)
-			sh.growHotHashSlots(next)
 		}
 		sh.entries = append(sh.entries, e.entryData)
 		if sh.metas != nil {
 			sh.metas.slots = append(sh.metas.slots, nil)
-			if sh.metas.hotHashes != nil {
-				sh.metas.hotHashes = append(sh.metas.hotHashes, nil)
-			}
 		}
 		sh.setMeta(id, e.entryMeta)
 	}
