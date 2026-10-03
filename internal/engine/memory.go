@@ -340,8 +340,10 @@ func (s *Store) publishRecordKnownWithHash(
 ) error {
 	var oldCost uint64
 	var oldHotBytes uint64
+	oldHot := false
 	if exists {
 		oldCost = entryCharge(key, old)
+		oldHot = old.isHotHash()
 		if h, _, ok := sh.hotHashForKey(key); ok && h != nil {
 			oldHotBytes = h.memoryBytes()
 		}
@@ -368,7 +370,7 @@ func (s *Store) publishRecordKnownWithHash(
 	if !inlineNew {
 		extraArena = sh.arena.GrowthFor([]int{len(e.data)})
 	}
-	if exists {
+	if exists && !oldHot {
 		extraArena += sh.arena.FreeGrowth(old.ref)
 	}
 	newBlockBytes := uint64(0)
@@ -376,7 +378,7 @@ func (s *Store) publishRecordKnownWithHash(
 		newBlockBytes = arena.AllocationBytesForLength(len(e.data))
 	}
 	oldBlockBytes := uint64(0)
-	if exists {
+	if exists && !oldHot {
 		oldBlockBytes = sh.arena.AllocationBytes(old.ref)
 	}
 
@@ -420,7 +422,7 @@ func (s *Store) publishRecordKnownWithHash(
 		return ErrOOM
 	}
 
-	if exists && old.entryMeta != nil && old.entryMeta.schemaID != 0 {
+	if exists && !oldHot && old.entryMeta != nil && old.entryMeta.schemaID != 0 {
 		oldSchema := sh.shapes.ByID(old.entryMeta.schemaID)
 		if oldSchema == nil {
 			s.memory.mu.Unlock()
@@ -439,7 +441,7 @@ func (s *Store) publishRecordKnownWithHash(
 	s.memory.index += extraIndex
 	s.memory.arenas += extraArena
 
-	if exists {
+	if exists && !oldHot {
 		if !old.ref.IsInline() {
 			s.memory.arenaPayload -= uint64(len(sh.encoded(old)))
 		}
@@ -490,7 +492,7 @@ func (s *Store) publishRecordKnownWithHash(
 		sh.set(key, e.entry)
 	}
 
-	if exists {
+	if exists && !oldHot {
 		sh.arena.Free(old.ref)
 	}
 
@@ -518,9 +520,12 @@ func (s *Store) remove(sh *shard, key string) {
 		if sh.expired(key, e, s.now()) {
 			atomic.AddUint64(&s.expired, 1)
 		}
-		freeGrowth := sh.arena.FreeGrowth(e.ref)
+		freeGrowth := uint64(0)
+		if !e.isHotHash() {
+			freeGrowth = sh.arena.FreeGrowth(e.ref)
+		}
 		s.memory.mu.Lock()
-		if e.entryMeta != nil && e.entryMeta.schemaID != 0 {
+		if !e.isHotHash() && e.entryMeta != nil && e.entryMeta.schemaID != 0 {
 			schema := sh.shapes.ByID(e.entryMeta.schemaID)
 			if schema == nil {
 				s.memory.mu.Unlock()
@@ -540,13 +545,17 @@ func (s *Store) remove(sh *shard, key string) {
 		s.memory.entries -= cost
 		s.memory.metas -= metaCost
 		s.memory.arenas += freeGrowth
-		if !e.ref.IsInline() {
-			s.memory.arenaPayload -= uint64(len(sh.encoded(e)))
+		if !e.isHotHash() {
+			if !e.ref.IsInline() {
+				s.memory.arenaPayload -= uint64(len(sh.encoded(e)))
+			}
+			s.memory.arenaLiveBlocks -= sh.arena.AllocationBytes(e.ref)
 		}
-		s.memory.arenaLiveBlocks -= sh.arena.AllocationBytes(e.ref)
 		s.memory.mu.Unlock()
 		sh.delete(key)
-		sh.arena.Free(e.ref)
+		if !e.isHotHash() {
+			sh.arena.Free(e.ref)
+		}
 		sh.schedule(key, 0)
 		s.searchRemoveKey(key)
 	}
