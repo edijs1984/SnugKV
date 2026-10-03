@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"reflect"
 	"bytes"
 	"fmt"
 	"testing"
@@ -405,5 +406,39 @@ func TestIndexedHashFieldExpiryFallsBackToCanonical(t *testing.T) {
 	}
 	if _, err := store.HashSet("hfe-indexed", [][]byte{[]byte("new")}, [][]byte{[]byte("value")}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+
+func TestHashSetResultsPreservesSequentialSemantics(t *testing.T) {
+	s := New()
+	results, err := s.HashSetResults(
+		"batch-hash",
+		[][]byte{
+			[]byte("a"),
+			[]byte("a"),
+			[]byte("b"),
+		},
+		[][]byte{
+			[]byte("1"),
+			[]byte("2"),
+			[]byte("3"),
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int64{1, 0, 1}
+	if !reflect.DeepEqual(results, want) {
+		t.Fatalf("results=%v want=%v", results, want)
+	}
+
+	value, found, err := s.HashGet("batch-hash", []byte("a"))
+	if err != nil || !found || string(value) != "2" {
+		t.Fatalf("a=%q found=%v err=%v", value, found, err)
+	}
+	value, found, err = s.HashGet("batch-hash", []byte("b"))
+	if err != nil || !found || string(value) != "3" {
+		t.Fatalf("b=%q found=%v err=%v", value, found, err)
 	}
 }
