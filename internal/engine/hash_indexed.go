@@ -32,8 +32,7 @@ func hashField64(v []byte) uint64 {
 	return h
 }
 
-func indexedHashRecord(data []byte, pos int) (field,value []byte,end int,err error) {
-	_,slots,used,start,e:=indexedHashMeta(data); if e!=nil { err=e; return }
+func indexedHashRecordKnown(data []byte, pos, used, start int) (field,value []byte,end int,err error) {
 	if pos < 0 || pos >= used { err=errors.New("invalid indexed hash offset"); return }
 	off:=start+pos
 	fl,e:=readHashUvarint(data,&off); if e!=nil { err=e; return }
@@ -42,23 +41,31 @@ func indexedHashRecord(data []byte, pos int) (field,value []byte,end int,err err
 	fe:=off+int(fl); field=data[off:fe]; off=fe
 	if vl>uint64(start+used-off) { err=errors.New("invalid indexed hash value"); return }
 	ve:=off+int(vl); value=data[off:ve]; end=ve-start
-	_ = slots
 	return
 }
 
-func indexedHashFind(data, field []byte) (slot,pos int, found bool, err error) {
-	_,slots,_,_,e:=indexedHashMeta(data); if e!=nil { return 0,0,false,e }
+func indexedHashRecord(data []byte, pos int) (field,value []byte,end int,err error) {
+	_,_,used,start,e:=indexedHashMeta(data); if e!=nil { err=e; return }
+	return indexedHashRecordKnown(data,pos,used,start)
+}
+
+func indexedHashFindKnown(data, field []byte, slots, used, dataStart int) (slot,pos int, found bool, err error) {
 	mask:=slots-1
-	start:=int(hashField64(field))&mask
+	hashStart:=int(hashField64(field))&mask
 	for probe:=0;probe<slots;probe++ {
-		slot=(start+probe)&mask
+		slot=(hashStart+probe)&mask
 		raw:=binary.LittleEndian.Uint32(data[indexedHashFixed+slot*4:indexedHashFixed+slot*4+4])
 		if raw==0 { return slot,0,false,nil }
 		pos=int(raw-1)
-		f,_,_,e:=indexedHashRecord(data,pos); if e!=nil { return 0,0,false,e }
+		f,_,_,e:=indexedHashRecordKnown(data,pos,used,dataStart); if e!=nil { return 0,0,false,e }
 		if bytes.Equal(f,field) { return slot,pos,true,nil }
 	}
 	return 0,0,false,errors.New("invalid indexed hash table")
+}
+
+func indexedHashFind(data, field []byte) (slot,pos int, found bool, err error) {
+	_,slots,used,dataStart,e:=indexedHashMeta(data); if e!=nil { return 0,0,false,e }
+	return indexedHashFindKnown(data,field,slots,used,dataStart)
 }
 
 func indexedHashRecordBytes(field,value []byte) []byte {
@@ -122,10 +129,15 @@ func decodeIndexedHash(data []byte) ([]HashPair,error) {
 	return pairs,nil
 }
 
-func indexedHashLookup(data,target []byte)([]byte,bool,error){
-	_,pos,found,err:=indexedHashFind(data,target); if err!=nil||!found { return nil,found,err }
-	_,v,_,err:=indexedHashRecord(data,pos); if err!=nil{return nil,false,err}
+func indexedHashLookupKnown(data,target []byte,slots,used,start int)([]byte,bool,error){
+	_,pos,found,err:=indexedHashFindKnown(data,target,slots,used,start); if err!=nil||!found { return nil,found,err }
+	_,v,_,err:=indexedHashRecordKnown(data,pos,used,start); if err!=nil{return nil,false,err}
 	return append([]byte(nil),v...),true,nil
+}
+
+func indexedHashLookup(data,target []byte)([]byte,bool,error){
+	_,slots,used,start,err:=indexedHashMeta(data); if err!=nil{return nil,false,err}
+	return indexedHashLookupKnown(data,target,slots,used,start)
 }
 
 // indexedHashSet mutates data in place when its reserved table/data capacity can
