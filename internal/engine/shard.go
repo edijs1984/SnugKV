@@ -201,7 +201,6 @@ func (sh *shard) set(key string, e entry) {
 	if id, ok := sh.data.Get(key); ok {
 		sh.entries[id] = e.entryData
 		sh.setMeta(id, e.entryMeta)
-		sh.setHotHash(id, nil)
 		return
 	}
 	sh.insertEntry(key, index.Hash(key), e, false)
@@ -215,7 +214,6 @@ func (sh *shard) setKnownHashed(key string, hash uint64, e entry, exists bool) {
 		}
 		sh.entries[id] = e.entryData
 		sh.setMeta(id, e.entryMeta)
-		sh.setHotHash(id, nil)
 		return
 	}
 	sh.insertEntry(key, hash, e, true)
