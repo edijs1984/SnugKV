@@ -296,26 +296,35 @@ func tinyFixedSetContains(data, target []byte) (bool, error) {
 	return false, nil
 }
 
-func setPreparedEntry(packed []byte) preparedEntry {
+func setPreparedEntryFromMembers(packed []byte, members [][]byte) preparedEntry {
 	stored := append([]byte(nil), packed...)
-	if members, err := decodePackedSet(packed); err == nil {
-		switch len(members) {
-		case 1:
-			// Raw singleton storage has no framing overhead. Avoid the tiny-set
-			// magic prefix so decoding remains unambiguous for arbitrary bytes.
-			if !bytes.HasPrefix(members[0], tinySetHeader[:]) {
-				stored = append([]byte(nil), members[0]...)
-			}
-		default:
-			if tiny, ok := encodeTinyFixedSet(members); ok && len(tiny) < len(stored) {
-				stored = tiny
-			}
+	switch len(members) {
+	case 1:
+		// Raw singleton storage has no framing overhead. Avoid the tiny-set
+		// magic prefix so decoding remains unambiguous for arbitrary bytes.
+		if !bytes.HasPrefix(members[0], tinySetHeader[:]) {
+			stored = append([]byte(nil), members[0]...)
+		}
+	default:
+		if tiny, ok := encodeTinyFixedSet(members); ok && len(tiny) < len(stored) {
+			stored = tiny
 		}
 	}
 	return preparedEntry{
 		entry: entry{entryData: entryData{valueType: TypeSet, rawLength: uint32(len(packed))}},
 		data:  stored,
 	}
+}
+
+func setPreparedEntry(packed []byte) preparedEntry {
+	members, err := decodePackedSet(packed)
+	if err != nil {
+		return preparedEntry{
+			entry: entry{entryData: entryData{valueType: TypeSet, rawLength: uint32(len(packed))}},
+			data:  append([]byte(nil), packed...),
+		}
+	}
+	return setPreparedEntryFromMembers(packed, members)
 }
 
 func (s *Store) setMembersFromEntry(sh *shard, e entry) ([][]byte, error) {
@@ -432,7 +441,7 @@ func (s *Store) SetAdd(key string, members [][]byte) (int64, error) {
 		if err != nil {
 			return 0, err
 		}
-		updated = setPreparedEntry(packed)
+		updated = setPreparedEntryFromMembers(packed, current)
 	}
 	updated.expiresAt = expiresAt
 	if err := s.publish(sh, key, updated); err != nil {
