@@ -491,6 +491,11 @@ func (s *Store) publishRecordKnownWithHash(
 	} else {
 		sh.set(key, e.entry)
 	}
+	if exists && oldHot {
+		if id, ok := sh.data.Get(key); ok {
+			sh.setHotHash(id, nil)
+		}
+	}
 
 	if exists && !oldHot {
 		sh.arena.Free(old.ref)
