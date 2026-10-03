@@ -157,3 +157,38 @@ func TestConcurrentBlockingCapableNativeMutationSignalsWaiters(t *testing.T) {
 		}
 	})
 }
+
+
+func TestConcurrentZSetScoreFastPath(t *testing.T) {
+	s := New(engine.New())
+	if _, _, _, err := s.store.ZSetAdd(
+		"z",
+		[]engine.ZSetItem{{Member: []byte("m"), Score: 42}},
+		engine.ZSetAddOptions{},
+	); err != nil {
+		t.Fatalf("seed zset: %v", err)
+	}
+
+	got, handled, err := s.executeAuthorizedConcurrentZSetScore(
+		[][]byte{[]byte("ZSCORE"), []byte("z"), []byte("m")},
+	)
+	if err != nil {
+		t.Fatalf("fast path error: %v", err)
+	}
+	if !handled {
+		t.Fatal("ZSCORE fast path did not handle command")
+	}
+	if string(got) != "$2\r\n42\r\n" {
+		t.Fatalf("reply=%q", got)
+	}
+
+	got, handled, err = s.executeAuthorizedConcurrentZSetScore(
+		[][]byte{[]byte("ZSCORE"), []byte("z"), []byte("missing")},
+	)
+	if err != nil || !handled {
+		t.Fatalf("missing score handled=%v err=%v", handled, err)
+	}
+	if string(got) != "$-1\r\n" {
+		t.Fatalf("missing reply=%q", got)
+	}
+}
