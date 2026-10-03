@@ -568,6 +568,13 @@ func (s *Store) HashGet(key string, field []byte) ([]byte, bool, error) {
 	}
 	return packedHashLookup(s.decode(sh, e), field, s.now().UnixMilli())
 }
+// HashGetResult describes one field value copied into a caller-owned batch buffer.
+type HashGetResult struct {
+	Offset uint32
+	Length uint32
+	Found  bool
+}
+
 func (s *Store) HashGetResultsInto(
 	key string,
 	fields [][]byte,
