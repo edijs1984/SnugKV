@@ -355,3 +355,26 @@ func TestULIDMaximumCanonicalValueRoundTrips(t *testing.T) {
 		t.Fatalf("decoded=%q want %q", got, value)
 	}
 }
+
+
+func TestULIDFixedDecoderMatchesKnownVectors(t *testing.T) {
+	r := NewRegistry()
+	values := []string{
+		"00000000000000000000000000",
+		"01ARZ3NDEKTSV4RRFFQ69G5FAV",
+		"7ZZZZZZZZZZZZZZZZZZZZZZZZZ",
+	}
+	for _, value := range values {
+		rec := r.Encode([]byte(value))
+		if rec.ID != ULID {
+			t.Fatalf("%q codec=%v want ULID", value, rec.ID)
+		}
+		got, err := r.DecodeInto(rec, len(value), nil)
+		if err != nil {
+			t.Fatalf("%q decode: %v", value, err)
+		}
+		if string(got) != value {
+			t.Fatalf("%q decoded=%q", value, got)
+		}
+	}
+}
