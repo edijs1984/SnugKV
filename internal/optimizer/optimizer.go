@@ -231,7 +231,8 @@ func (o *Optimizer) maintenanceStep() {
 	// indexed ZSETs back to their normal reserve before starting generic sample
 	// recovery work.
 	if len(o.queue) == 0 && quiet {
-		for _, key := range o.store.SampleKeys(2048) {
+		for _, key := range o.store.SampleKeys(16384) {
+			o.store.CompactIndexedSet(key)
 			o.store.CompactIndexedZSet(key)
 		}
 	}
