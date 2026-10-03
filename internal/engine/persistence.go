@@ -418,7 +418,6 @@ func (s *Store) resetForRecovery() {
 		sh.data = *index.New[uint32]()
 		sh.entries = nil
 		sh.metas = nil
-		sh.hotHashes = nil
 		sh.freeIDs = nil
 		sh.expiration = expirationQueue{}
 	}
