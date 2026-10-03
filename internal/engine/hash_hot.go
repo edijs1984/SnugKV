@@ -4,13 +4,18 @@ import (
 	"bytes"
 	"errors"
 	"sort"
+	"time"
 	"unsafe"
 
 	"snugkv/internal/arena"
 	"snugkv/internal/index"
 )
 
-const hotHashMinSlots = 16
+const (
+	hotHashMinSlots      = 16
+	hotHashPromoteFields = 256
+	hotHashIdleFreeze    = time.Minute
+)
 
 type hotHashRecord struct {
 	hash       uint64
@@ -21,9 +26,10 @@ type hotHashRecord struct {
 }
 
 type hotHash struct {
-	slots   []uint32 // record index + 1; zero means empty
-	records []hotHashRecord
-	payload []byte
+	slots        []uint32 // record index + 1; zero means empty
+	records      []hotHashRecord
+	payload      []byte
+	lastMutation int64
 }
 
 func newHotHash(pairs []HashPair) *hotHash {
@@ -281,6 +287,7 @@ func (s *Store) thawHotHashLocked(sh *shard, key string, e entry) (*hotHash, boo
 		return nil, false, nil
 	}
 	h := newHotHash(pairs)
+	h.lastMutation = s.now().UnixMilli()
 	hotBytes := h.memoryBytes()
 	entrySidecarBytes := uint64(0)
 	hotSlotBytes := uint64(0)
@@ -396,6 +403,14 @@ func (s *Store) freezeHotHashAndReloadLocked(sh *shard, key string, e entry) (en
 func (s *Store) mutateHotHashLocked(h *hotHash, mutate func()) {
 	before := h.memoryBytes()
 	mutate()
+	h.lastMutation = s.now().UnixMilli()
 	after := h.memoryBytes()
 	s.accountHotHashResize(before, after)
+}
+
+func (s *Store) hotHashIdle(h *hotHash) bool {
+	if h == nil || h.lastMutation == 0 {
+		return true
+	}
+	return s.now().Sub(time.UnixMilli(h.lastMutation)) >= hotHashIdleFreeze
 }
