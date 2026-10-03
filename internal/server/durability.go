@@ -276,7 +276,7 @@ func (s *Server) executeAuthorizedConcurrentSetContains(args [][]byte) (response
 		return nil, false, nil
 	}
 
-	found, err := s.store.SetContains(string(args[1]), args[2])
+	found, err := s.store.SetContainsBytes(args[1], args[2])
 	s.durableMu.RUnlock()
 
 	atomic.AddUint64(&s.commands, 1)
