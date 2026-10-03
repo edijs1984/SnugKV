@@ -282,13 +282,16 @@ func (s *Store) thawHotHashLocked(sh *shard, key string, e entry) (*hotHash, boo
 	}
 	h := newHotHash(pairs)
 	hotBytes := h.memoryBytes()
-	sidecarBytes := uint64(0)
+	entrySidecarBytes := uint64(0)
+	hotSlotBytes := uint64(0)
 	if sh.metas == nil {
-		sidecarBytes += uint64(unsafe.Sizeof(entryMetaSidecar{})) +
+		entrySidecarBytes =
+			uint64(unsafe.Sizeof(entryMetaSidecar{})) +
 			uint64(cap(sh.entries))*entryMetaSlotBytes
 	}
 	if sh.metas == nil || sh.metas.hotHashes == nil {
-		sidecarBytes += uint64(cap(sh.entries))*uint64(unsafe.Sizeof((*hotHash)(nil)))
+		hotSlotBytes =
+			uint64(cap(sh.entries))*uint64(unsafe.Sizeof((*hotHash)(nil)))
 	}
 
 	oldPayload := uint64(0)
@@ -301,8 +304,9 @@ func (s *Store) thawHotHashLocked(sh *shard, key string, e entry) (*hotHash, boo
 	}
 
 	s.memory.mu.Lock()
-	s.memory.used += hotBytes + sidecarBytes + freeGrowth
-	s.memory.hotHashes += hotBytes + sidecarBytes
+	s.memory.used += hotBytes + hotSlotBytes + entrySidecarBytes + freeGrowth
+	s.memory.hotHashes += hotBytes + hotSlotBytes
+	s.memory.entries += entrySidecarBytes
 	s.memory.arenas += freeGrowth
 	if oldPayload != 0 {
 		s.memory.arenaPayload -= oldPayload
