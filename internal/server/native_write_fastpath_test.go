@@ -355,7 +355,19 @@ func TestConcurrentHashGetBatchFastPath(t *testing.T) {
 		[]byte("b"),
 	}
 
-	values, found, handled, err := s.executeAuthorizedConcurrentHashGetBatch(keys, fields)
+	got := make([]string, len(keys))
+	found := make([]bool, len(keys))
+	handled, err := s.executeAuthorizedConcurrentHashGetBatchVisit(
+		keys,
+		fields,
+		func(i int, value []byte, ok bool) error {
+			found[i] = ok
+			if ok {
+				got[i] = string(value)
+			}
+			return nil
+		},
+	)
 	if err != nil {
 		t.Fatalf("batch error: %v", err)
 	}
@@ -366,15 +378,13 @@ func TestConcurrentHashGetBatchFastPath(t *testing.T) {
 	if !reflect.DeepEqual(found, wantFound) {
 		t.Fatalf("found=%v want=%v", found, wantFound)
 	}
-	got := []string{string(values[0]), string(values[1]), string(values[2]), string(values[3])}
 	want := []string{"1", "", "3", "2"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("values=%v want=%v", got, want)
 	}
 }
 
-
-func TestConcurrentHashGetBatchRegroupsInterleavedKeys(t *testing.T) {
+func TestConcurrentHashGetBatchPreservesInterleavedOrder(t *testing.T) {
 	s := New(engine.New())
 	if _, err := s.store.HashSet(
 		"h1",
@@ -404,7 +414,19 @@ func TestConcurrentHashGetBatchRegroupsInterleavedKeys(t *testing.T) {
 		[]byte("missing"),
 	}
 
-	values, found, handled, err := s.executeAuthorizedConcurrentHashGetBatch(keys, fields)
+	got := make([]string, len(keys))
+	found := make([]bool, len(keys))
+	handled, err := s.executeAuthorizedConcurrentHashGetBatchVisit(
+		keys,
+		fields,
+		func(i int, value []byte, ok bool) error {
+			found[i] = ok
+			if ok {
+				got[i] = string(value)
+			}
+			return nil
+		},
+	)
 	if err != nil {
 		t.Fatalf("batch error: %v", err)
 	}
@@ -415,13 +437,6 @@ func TestConcurrentHashGetBatchRegroupsInterleavedKeys(t *testing.T) {
 	wantFound := []bool{true, true, true, false}
 	if !reflect.DeepEqual(found, wantFound) {
 		t.Fatalf("found=%v want=%v", found, wantFound)
-	}
-
-	got := []string{
-		string(values[0]),
-		string(values[1]),
-		string(values[2]),
-		string(values[3]),
 	}
 	want := []string{"1", "3", "2", ""}
 	if !reflect.DeepEqual(got, want) {
