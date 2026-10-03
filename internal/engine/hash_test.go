@@ -525,3 +525,54 @@ func TestHashGetBatchBytesPreservesOrder(t *testing.T) {
 		t.Fatalf("values=%v want=%v", got, want)
 	}
 }
+
+
+func TestHashIncrementalPromotionThreshold(t *testing.T) {
+	s := New()
+
+	for i := 0; i < 10; i++ {
+		field := []byte(fmt.Sprintf("f%02d", i))
+		value := []byte("value")
+		if _, err := s.HashSet(
+			"tiny-hash",
+			[][]byte{field},
+			[][]byte{value},
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	stats, ok, err := s.HashStorageStats("tiny-hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("tiny hash missing")
+	}
+	if stats.Encoding == "indexed" {
+		t.Fatalf("10-field hash promoted too early: %+v", stats)
+	}
+
+	for i := 10; i < 16; i++ {
+		field := []byte(fmt.Sprintf("f%02d", i))
+		value := []byte("value")
+		if _, err := s.HashSet(
+			"tiny-hash",
+			[][]byte{field},
+			[][]byte{value},
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	physicalStats, ok, err := s.HashStorageStats("tiny-hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("hash missing after promotion")
+	}
+	if physicalStats.Fields != 16 {
+		t.Fatalf("fields=%d want=16", physicalStats.Fields)
+	}
+}
