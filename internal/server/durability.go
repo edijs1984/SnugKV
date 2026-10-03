@@ -259,46 +259,48 @@ func (s *Server) executeAuthorizedConcurrentGet(args [][]byte) (response []byte,
 	return optionalBulk(value, found), true, nil
 }
 
-func (s *Server) executeAuthorizedConcurrentHashGetBatch(keys, fields [][]byte) (values [][]byte, found []bool, handled bool, err error) {
+func (s *Server) executeAuthorizedConcurrentHashGetBatchInto(
+	keys, fields [][]byte,
+	dst []byte,
+	results []engine.HashGetResult,
+) (out []byte, handled bool, err error) {
 	if s.clusterEnabled ||
 		len(keys) < 2 || len(keys) != len(fields) ||
+		len(results) < len(keys) ||
 		s.journal != nil ||
 		atomic.LoadUint32(&s.metricsEnabled) != 0 {
-		return nil, nil, false, nil
+		return dst, false, nil
 	}
 
 	s.durableMu.RLock()
 	if s.hasWatchSessionsLocked() {
 		s.durableMu.RUnlock()
-		return nil, nil, false, nil
+		return dst, false, nil
 	}
 
-	values = make([][]byte, len(keys))
-	found = make([]bool, len(keys))
+	out = dst
 	for i := 0; i < len(keys); {
 		j := i + 1
 		for j < len(keys) && bytes.Equal(keys[j], keys[i]) {
 			j++
 		}
-		groupValues, groupFound, groupErr := s.store.HashGetResults(
+		groupOut, groupErr := s.store.HashGetResultsInto(
 			string(keys[i]),
 			fields[i:j],
+			out,
+			results[i:j],
 		)
 		if groupErr != nil {
 			err = groupErr
 			break
 		}
-		copy(values[i:j], groupValues)
-		copy(found[i:j], groupFound)
+		out = groupOut
 		i = j
 	}
 	s.durableMu.RUnlock()
 
 	atomic.AddUint64(&s.commands, uint64(len(keys)))
-	if err != nil {
-		return values, found, true, err
-	}
-	return values, found, true, nil
+	return out, true, err
 }
 
 // executeAuthorizedConcurrentSetContains serves the exact SISMEMBER key member
