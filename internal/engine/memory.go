@@ -568,6 +568,13 @@ func (s *Store) Encoding(key string) (string, int, int, bool) {
 	if !ok || sh.expired(key, e, s.now()) {
 		return "", 0, 0, false
 	}
+	if e.isHotHash() {
+		h, _, ok := sh.hotHashForKey(key)
+		if !ok || h == nil {
+			return "", 0, 0, false
+		}
+		return "hot-hash", int(e.rawLength), int(h.memoryBytes()), true
+	}
 	return s.codecs.Name(e.codecID), int(e.rawLength), len(sh.encoded(e)), true
 }
 
@@ -588,8 +595,15 @@ func (s *Store) MemoryUsage(key string) (uint64, bool) {
 	if sh.metas != nil {
 		entryBytes += entryMetaSlotBytes
 	}
-	arenaBytes := sh.arena.AllocationBytes(e.ref)
+	if e.isHotHash() {
+		h, _, ok := sh.hotHashForKey(key)
+		if !ok || h == nil {
+			return entryBytes, true
+		}
+		return entryBytes + h.memoryBytes(), true
+	}
 
+	arenaBytes := sh.arena.AllocationBytes(e.ref)
 	return entryBytes + arenaBytes, true
 }
 
