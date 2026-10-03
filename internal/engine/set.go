@@ -796,6 +796,43 @@ func (s *Store) SetContainsBytes(key, member []byte) (bool, error) {
 	return setContainsPhysical(sh.encoded(e), e, member)
 }
 
+// SetContainsResultsBytes answers multiple SISMEMBER probes for one key
+// under a single shard read lock and a single key lookup.
+func (s *Store) SetContainsResultsBytes(key []byte, members [][]byte) ([]int64, error) {
+	results := make([]int64, len(members))
+	if len(members) == 0 {
+		return results, nil
+	}
+
+	hash := index.HashBytes(key)
+	sh := s.shardForHash(hash)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
+
+	e, ok := sh.getHashedBytes(key, hash)
+	if !ok {
+		return results, nil
+	}
+	if e.hasExpiry && sh.expired(string(key), e, s.now()) {
+		return results, nil
+	}
+	if e.valueType != TypeSet {
+		return nil, setWrongType()
+	}
+
+	physical := sh.encoded(e)
+	for i, member := range members {
+		found, err := setContainsPhysical(physical, e, member)
+		if err != nil {
+			return nil, err
+		}
+		if found {
+			results[i] = 1
+		}
+	}
+	return results, nil
+}
+
 func (s *Store) SetLen(key string) (int64, error) {
 	hash := index.Hash(key)
 	sh := s.shardForHash(hash)
