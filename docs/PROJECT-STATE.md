@@ -1,6 +1,6 @@
 # SnugKV Project State
 
-**Updated:** 2026-09-30
+**Updated:** 2026-10-03
 
 This is the canonical current-state handoff for maintainers and coding agents.
 For first-release scope and sequencing, use `FIRST_RELEASE.md` as the authoritative high-level plan and `docs/FIRST-RELEASE-IMPLEMENTATION.md` as the detailed execution queue.
@@ -43,6 +43,32 @@ Implemented distributed capabilities include:
 - TLS-capable authenticated internal migration.
 
 SnugKV intentionally exposes one logical database.
+
+
+## Adaptive storage status
+
+The current first-release storage model is one adaptive SnugKV mode rather than
+separate raw/optimized products. Logical Redis datatypes remain unchanged while
+physical representations adapt to workload and data.
+
+Native HASH is now frozen for this release pass:
+
+- small/medium HASHes remain COLD/indexed;
+- large HASHes become HOT only at 256+ fields when the pipelined write path
+  demonstrates an active mutation workload;
+- active HOT HASHes are skipped by generic compaction;
+- after the HOT idle window, maintenance freezes them back to indexed COLD
+  storage and reclaims the temporary mutable-sidecar footprint;
+- incremental pipelined growth is regression-covered so the threshold cannot be
+  bypassed by an early thaw.
+
+Current validated SnugKV 1M-item baselines on the development host are
+467,881 WRITE/s and 531,098 READ/s for hash-100, and 501,726 WRITE/s and
+488,073 READ/s for active hash-1000. The large active footprint was 141.50
+bytes/item and settled to approximately 109.43 bytes/item after HOT -> COLD.
+These are workload-specific engineering baselines, not universal performance
+claims.
+
 
 ## Current distributed hardening queue
 
