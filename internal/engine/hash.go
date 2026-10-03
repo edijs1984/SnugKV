@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"sort"
+
+	"snugkv/internal/index"
 )
 
 const maxPackedHashBytes = 32 << 20
