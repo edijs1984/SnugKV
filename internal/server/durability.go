@@ -289,6 +289,43 @@ func (s *Server) executeAuthorizedConcurrentSetContains(args [][]byte) (response
 	return integerReply(0), true, nil
 }
 
+func (s *Server) executeAuthorizedConcurrentSetContainsBatch(keys, members [][]byte) (results []int64, handled bool, err error) {
+	if s.clusterEnabled ||
+		len(keys) < 2 || len(keys) != len(members) ||
+		s.journal != nil ||
+		atomic.LoadUint32(&s.metricsEnabled) != 0 {
+		return nil, false, nil
+	}
+
+	s.durableMu.RLock()
+	if s.hasWatchSessionsLocked() {
+		s.durableMu.RUnlock()
+		return nil, false, nil
+	}
+
+	results = make([]int64, len(keys))
+	for i := 0; i < len(keys); {
+		j := i + 1
+		for j < len(keys) && bytes.Equal(keys[j], keys[i]) {
+			j++
+		}
+		group, groupErr := s.store.SetContainsResultsBytes(keys[i], members[i:j])
+		if groupErr != nil {
+			err = groupErr
+			break
+		}
+		copy(results[i:j], group)
+		i = j
+	}
+	s.durableMu.RUnlock()
+
+	atomic.AddUint64(&s.commands, uint64(len(keys)))
+	if err != nil {
+		return results, true, err
+	}
+	return results, true, nil
+}
+
 // executeAuthorizedConcurrentZSetScore serves the exact ZSCORE key member
 // read without traversing the generic command dispatcher. The engine performs
 // the lookup under the target shard read lock; durableMu.RLock preserves
