@@ -28,6 +28,17 @@ func (s *Store) HashSetNX(key string, field, value []byte) (bool, error) {
 		if old.valueType != TypeHash {
 			return false, hashWrongType()
 		}
+		if h, hot, err := s.thawHotHashLocked(sh, key, old); err != nil {
+			return false, err
+		} else if hot {
+			if _, found := h.get(field); found {
+				return false, nil
+			}
+			before := h.memoryBytes()
+			h.set(field, value)
+			s.accountHotHashResize(before, h.memoryBytes())
+			return true, nil
+		}
 		var err error
 		pairs, err = decodePackedHash(s.decode(sh, old))
 		if err != nil {
@@ -63,6 +74,9 @@ func (s *Store) HashSetNX(key string, field, value []byte) (bool, error) {
 	updated.expiresAt = expiresAt
 	if err := s.publish(sh, key, updated); err != nil {
 		return false, err
+	}
+	if current, ok := sh.get(key); ok {
+		_, _, _ = s.thawHotHashLocked(sh, key, current)
 	}
 
 	return true, nil
