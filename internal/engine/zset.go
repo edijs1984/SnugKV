@@ -344,6 +344,124 @@ func decodePackedZSet(data []byte) ([]ZSetItem, error) {
 	return items, nil
 }
 
+func packedZSetScore(data, target []byte) (float64, bool, error) {
+	if len(data) < 3 || data[0] != 'S' || data[1] != 'Z' {
+		return 0, false, errors.New("invalid packed zset")
+	}
+	version := data[2]
+	if version != packedZSetHeaderV1[2] &&
+		version != packedZSetHeaderIntDelta[2] &&
+		version != packedZSetHeaderFloat64[2] &&
+		version != packedZSetHeaderAdaptive[2] {
+		return 0, false, errors.New("invalid packed zset")
+	}
+
+	offset := 3
+	var mode byte
+	if version == packedZSetHeaderAdaptive[2] {
+		if offset >= len(data) {
+			return 0, false, errors.New("invalid packed zset")
+		}
+		mode = data[offset]
+		offset++
+		if mode&^(zsetModeIntDelta|zsetModeMemberPrefix) != 0 || mode&zsetModeMemberPrefix == 0 {
+			return 0, false, errors.New("invalid packed zset")
+		}
+	}
+
+	count64, err := readZSetUvarint(data, &offset)
+	if err != nil || count64 > uint64(maxPackedZSetBytes) {
+		return 0, false, errors.New("invalid packed zset")
+	}
+	count := int(count64)
+	useIntegerDelta := version == packedZSetHeaderIntDelta[2] ||
+		version == packedZSetHeaderAdaptive[2] && mode&zsetModeIntDelta != 0
+	useMemberPrefix := version == packedZSetHeaderAdaptive[2] && mode&zsetModeMemberPrefix != 0
+
+	var previousInt int64
+	var previousMember []byte
+	for i := 0; i < count; i++ {
+		var score float64
+		if useIntegerDelta {
+			encoded, err := readZSetUvarint(data, &offset)
+			if err != nil {
+				return 0, false, errors.New("invalid packed zset")
+			}
+			var scoreInt int64
+			if i == 0 {
+				scoreInt = zsetUnZigZag(encoded)
+			} else {
+				scoreInt = int64(uint64(previousInt) + encoded)
+				if scoreInt < previousInt {
+					return 0, false, errors.New("invalid packed zset")
+				}
+			}
+			score = float64(scoreInt)
+			roundTrip, ok := zsetExactInt64(score)
+			if !ok || roundTrip != scoreInt {
+				return 0, false, errors.New("invalid packed zset")
+			}
+			previousInt = scoreInt
+		} else {
+			if len(data)-offset < 8 {
+				return 0, false, errors.New("invalid packed zset")
+			}
+			score = math.Float64frombits(binary.LittleEndian.Uint64(data[offset : offset+8]))
+			offset += 8
+			if math.IsNaN(score) {
+				return 0, false, errors.New("invalid packed zset")
+			}
+			score = normalizeZSetScore(score)
+		}
+
+		if !useMemberPrefix || i == 0 {
+			length64, err := readZSetUvarint(data, &offset)
+			if err != nil || length64 > uint64(len(data)-offset) {
+				return 0, false, errors.New("invalid packed zset")
+			}
+			end := offset + int(length64)
+			member := data[offset:end]
+			if bytes.Equal(member, target) {
+				return score, true, nil
+			}
+			if useMemberPrefix {
+				previousMember = append(previousMember[:0], member...)
+			}
+			offset = end
+			continue
+		}
+
+		prefix64, err := readZSetUvarint(data, &offset)
+		if err != nil || prefix64 > uint64(len(previousMember)) {
+			return 0, false, errors.New("invalid packed zset")
+		}
+		suffix64, err := readZSetUvarint(data, &offset)
+		if err != nil || suffix64 > uint64(len(data)-offset) ||
+			prefix64+suffix64 > uint64(maxPackedZSetBytes) {
+			return 0, false, errors.New("invalid packed zset")
+		}
+		prefix, suffixLen := int(prefix64), int(suffix64)
+		end := offset + suffixLen
+
+		if cap(previousMember) < prefix+suffixLen {
+			next := make([]byte, prefix, prefix+suffixLen)
+			copy(next, previousMember[:prefix])
+			previousMember = next
+		} else {
+			previousMember = previousMember[:prefix]
+		}
+		previousMember = append(previousMember, data[offset:end]...)
+		if bytes.Equal(previousMember, target) {
+			return score, true, nil
+		}
+		offset = end
+	}
+	if offset != len(data) {
+		return 0, false, errors.New("invalid packed zset trailing data")
+	}
+	return 0, false, nil
+}
+
 func zsetEncodingName(data []byte) string {
 	if len(data) < 3 || data[0] != 'S' || data[1] != 'Z' {
 		return "unknown"
@@ -611,15 +729,7 @@ func (s *Store) ZSetScore(key string, member []byte) (float64, bool, error) {
 	if isIndexedZSet(physical) {
 		return indexedZSetScore(physical, member)
 	}
-	items, err := s.zsetItemsFromEntry(sh, e)
-	if err != nil {
-		return 0, false, err
-	}
-	idx := zsetFindMember(items, member)
-	if idx < 0 {
-		return 0, false, nil
-	}
-	return items[idx].Score, true, nil
+	return packedZSetScore(physical, member)
 }
 
 func (s *Store) ZSetCard(key string) (int64, error) {
