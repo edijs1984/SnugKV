@@ -717,6 +717,59 @@ func (s *Store) SetMembers(key string) ([][]byte, error) {
 	return s.setMembersFromEntry(sh, e)
 }
 
+// CompactIndexedSet freezes a mutable indexed SET after foreground writes
+// have gone quiet. Small sets are demoted back to the compact packed/prefix
+// representation; larger sets retain their hash index but shed append reserve.
+func (s *Store) CompactIndexedSet(key string) bool {
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	e, ok := sh.get(key)
+	if !ok || sh.expired(key, e, s.now()) || e.valueType != TypeSet {
+		return false
+	}
+	physical := sh.encoded(e)
+	if !isIndexedSet(physical) {
+		return false
+	}
+
+	count, _, used, dataStart, err := indexedSetMeta(physical)
+	if err != nil {
+		return false
+	}
+
+	if count < 32 {
+		members, err := decodeIndexedSet(physical)
+		if err != nil {
+			return false
+		}
+		packed, err := encodePackedSetSorted(members)
+		if err != nil {
+			return false
+		}
+		updated := setPreparedEntryFromMembers(packed, members)
+		updated.expiresAt = sh.expirationAt(key, e)
+		return s.publish(sh, key, updated) == nil
+	}
+
+	targetLen := dataStart + used
+	if targetLen >= len(physical) {
+		return false
+	}
+
+	compact := append([]byte(nil), physical[:targetLen]...)
+	updated := preparedEntry{
+		entry: entry{entryData: entryData{
+			valueType: TypeSet,
+			rawLength: e.rawLength,
+		}},
+		data: compact,
+		expiresAt: sh.expirationAt(key, e),
+	}
+	return s.publish(sh, key, updated) == nil
+}
+
 func (s *Store) SetStorageStats(key string) (SetStats, bool, error) {
 	sh := s.shardFor(key)
 	sh.mu.RLock()
