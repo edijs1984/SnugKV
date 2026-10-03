@@ -275,22 +275,43 @@ func (s *Server) executeAuthorizedConcurrentHashGetBatch(keys, fields [][]byte) 
 
 	values = make([][]byte, len(keys))
 	found = make([]bool, len(keys))
-	for i := 0; i < len(keys); {
-		j := i + 1
-		for j < len(keys) && bytes.Equal(keys[j], keys[i]) {
-			j++
+
+	// Group every occurrence of the same key across the entire buffered batch,
+	// not just adjacent commands. This improves workloads with many hash keys
+	// where repeated reads to the same key are interleaved inside one pipeline.
+	type hashReadGroup struct {
+		key     []byte
+		fields  [][]byte
+		indexes []int
+	}
+	groups := make([]hashReadGroup, 0, len(keys))
+	groupByKey := make(map[string]int, len(keys))
+
+	for i := range keys {
+		name := string(keys[i])
+		groupIndex, ok := groupByKey[name]
+		if !ok {
+			groupIndex = len(groups)
+			groupByKey[name] = groupIndex
+			groups = append(groups, hashReadGroup{key: keys[i]})
 		}
+		groups[groupIndex].fields = append(groups[groupIndex].fields, fields[i])
+		groups[groupIndex].indexes = append(groups[groupIndex].indexes, i)
+	}
+
+	for _, group := range groups {
 		groupValues, groupFound, groupErr := s.store.HashGetResults(
-			string(keys[i]),
-			fields[i:j],
+			string(group.key),
+			group.fields,
 		)
 		if groupErr != nil {
 			err = groupErr
 			break
 		}
-		copy(values[i:j], groupValues)
-		copy(found[i:j], groupFound)
-		i = j
+		for i, originalIndex := range group.indexes {
+			values[originalIndex] = groupValues[i]
+			found[originalIndex] = groupFound[i]
+		}
 	}
 	s.durableMu.RUnlock()
 
