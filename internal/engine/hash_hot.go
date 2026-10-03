@@ -326,6 +326,37 @@ func (s *Store) thawHotHashLocked(sh *shard, key string, e entry) (*hotHash, boo
 	return h, true, nil
 }
 
+func (s *Store) coldHashEntry(pairs []HashPair) (preparedEntry, error) {
+	if len(pairs) >= indexedHashPromoteFields {
+		canIndex := true
+		for _, pair := range pairs {
+			if pair.ExpiresAtMS != 0 {
+				canIndex = false
+				break
+			}
+		}
+		if canIndex {
+			indexed, err := encodeIndexedHash(pairs)
+			if err != nil {
+				return preparedEntry{}, err
+			}
+			return preparedEntry{
+				entry: entry{entryData: entryData{
+					valueType: TypeHash,
+					rawLength: uint32(len(indexed)),
+				}},
+				data: indexed,
+			}, nil
+		}
+	}
+
+	packed, err := encodePackedHash(pairs)
+	if err != nil {
+		return preparedEntry{}, err
+	}
+	return s.hashEntry(pairs, packed), nil
+}
+
 func (s *Store) freezeHotHashLocked(sh *shard, key string, e entry) error {
 	if !e.isHotHash() {
 		return nil
@@ -335,11 +366,10 @@ func (s *Store) freezeHotHashLocked(sh *shard, key string, e entry) error {
 		return errors.New("HOT hash sidecar invariant")
 	}
 	pairs := h.pairs()
-	packed, err := encodePackedHash(pairs)
+	updated, err := s.coldHashEntry(pairs)
 	if err != nil {
 		return err
 	}
-	updated := s.hashEntry(pairs, packed)
 	updated.expiresAt = sh.expirationAt(key, e)
 	return s.publish(sh, key, updated)
 }
