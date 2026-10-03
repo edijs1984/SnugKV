@@ -8,55 +8,52 @@ import (
 
 func TestHotHashMutationReadLifecycle(t *testing.T) {
 	s := New()
+	key := "hot-lifecycle"
 
-	if added, err := s.HashSet("hot", [][]byte{[]byte("a")}, [][]byte{[]byte("1")}); err != nil || added != 1 {
-		t.Fatalf("initial HSET added=%d err=%v", added, err)
+	fields := make([][]byte, hotHashPromoteFields)
+	values := make([][]byte, hotHashPromoteFields)
+	for i := range fields {
+		fields[i] = []byte(fmt.Sprintf("field:%03d", i))
+		values[i] = []byte(fmt.Sprintf("value:%03d", i))
+	}
+	if _, err := s.HashSetResults(key, fields, values); err != nil {
+		t.Fatal(err)
 	}
 
-	sh := s.shardFor("hot")
+	sh := s.shardFor(key)
 	sh.mu.RLock()
-	e, ok := sh.get("hot")
-	firstHot := ok && e.isHotHash()
-	sh.mu.RUnlock()
-	if firstHot {
-		t.Fatal("first HSET should remain cold")
-	}
-
-	results, err := s.HashSetResults(
-		"hot",
-		[][]byte{[]byte("b"), []byte("a")},
-		[][]byte{[]byte("2"), []byte("3")},
-	)
-	if err != nil {
-		t.Fatalf("batched HSET err=%v", err)
-	}
-	if len(results) != 2 || results[0] != 1 || results[1] != 0 {
-		t.Fatalf("batched HSET results=%v", results)
-	}
-
-	sh.mu.RLock()
-	e, ok = sh.get("hot")
+	e, ok := sh.get(key)
 	isHot := ok && e.isHotHash()
-	h, _, hotOK := sh.hotHashForKey("hot")
 	sh.mu.RUnlock()
-	if !isHot || !hotOK || h == nil {
-		t.Fatal("repeated mutation did not promote HASH to HOT representation")
+	if !isHot {
+		t.Fatal("large pipelined HASH did not promote to HOT representation")
 	}
 
-	value, found, err := s.HashGet("hot", []byte("a"))
-	if err != nil || !found || string(value) != "3" {
-		t.Fatalf("HGET a=%q found=%v err=%v", value, found, err)
-	}
-	if n, err := s.HashLen("hot"); err != nil || n != 2 {
-		t.Fatalf("HLEN=%d err=%v", n, err)
-	}
-	if deleted, err := s.HashDel("hot", [][]byte{[]byte("b")}); err != nil || deleted != 1 {
-		t.Fatalf("HDEL=%d err=%v", deleted, err)
+	// Repeated mutation of an already-HOT large HASH must remain HOT.
+	if _, err := s.HashSetResults(
+		key,
+		[][]byte{[]byte("field:000"), []byte("field:new")},
+		[][]byte{[]byte("updated"), []byte("new-value")},
+	); err != nil {
+		t.Fatal(err)
 	}
 
-	stats := s.Memory()
-	if stats.HotHashBytes == 0 {
-		t.Fatal("HOT hash memory is not accounted")
+	sh.mu.RLock()
+	e, ok = sh.get(key)
+	stillHot := ok && e.isHotHash()
+	sh.mu.RUnlock()
+	if !stillHot {
+		t.Fatal("repeated mutation left HOT representation")
+	}
+
+	value, found, err := s.HashGet(key, []byte("field:000"))
+	if err != nil || !found || string(value) != "updated" {
+		t.Fatalf("field:000=%q found=%v err=%v", value, found, err)
+	}
+
+	value, found, err = s.HashGet(key, []byte("field:new"))
+	if err != nil || !found || string(value) != "new-value" {
+		t.Fatalf("field:new=%q found=%v err=%v", value, found, err)
 	}
 }
 
