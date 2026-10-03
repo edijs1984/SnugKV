@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sort"
 
+	"snugkv/internal/arena"
 	"snugkv/internal/index"
 )
 
@@ -243,46 +244,18 @@ func (s *Store) hotHashForKeyLocked(sh *shard, key string) (*hotHash, uint32, bo
 	return sh.hotHashForKey(key)
 }
 
-func (s *Store) installHotHashLocked(sh *shard, key string, h *hotHash) bool {
-	if h == nil || s.memory.max.Load() != 0 {
-		return false
-	}
-	_, id, ok := sh.hotHashForKey(key)
-	if !ok {
-		return false
-	}
-	if current := sh.hotHashByID(id); current != nil {
-		return true
-	}
-	bytes := h.memoryBytes()
-	s.memory.mu.Lock()
-	s.memory.used += bytes
-	s.memory.hotHashes += bytes
-	s.memory.mu.Unlock()
-	sh.setHotHash(id, h)
-	return true
-}
-
-func (s *Store) dropHotHashByIDLocked(sh *shard, id uint32) {
-	h := sh.hotHashByID(id)
-	if h == nil {
-		return
-	}
-	bytes := h.memoryBytes()
-	s.memory.mu.Lock()
-	s.memory.used -= bytes
-	s.memory.hotHashes -= bytes
-	s.memory.mu.Unlock()
-	sh.setHotHash(id, nil)
-}
-
 func (s *Store) thawHotHashLocked(sh *shard, key string, e entry) (*hotHash, bool, error) {
-	if h, _, ok := sh.hotHashForKey(key); ok && h != nil {
+	if e.isHotHash() {
+		h, _, ok := sh.hotHashForKey(key)
+		if !ok || h == nil {
+			return nil, false, errors.New("HOT hash sidecar invariant")
+		}
 		return h, true, nil
 	}
 	if s.memory.max.Load() != 0 {
 		return nil, false, nil
 	}
+
 	pairs, err := decodePackedHash(s.decode(sh, e))
 	if err != nil {
 		return nil, false, err
@@ -293,17 +266,52 @@ func (s *Store) thawHotHashLocked(sh *shard, key string, e entry) (*hotHash, boo
 			return nil, false, nil
 		}
 	}
-	h := newHotHash(pairs)
-	if !s.installHotHashLocked(sh, key, h) {
+
+	id, ok := sh.data.Get(key)
+	if !ok {
 		return nil, false, nil
 	}
+	h := newHotHash(pairs)
+	hotBytes := h.memoryBytes()
+
+	oldPayload := uint64(0)
+	oldBlock := uint64(0)
+	freeGrowth := uint64(0)
+	if !e.ref.IsInline() {
+		oldPayload = uint64(len(sh.encoded(e)))
+		oldBlock = sh.arena.AllocationBytes(e.ref)
+		freeGrowth = sh.arena.FreeGrowth(e.ref)
+	}
+
+	s.memory.mu.Lock()
+	s.memory.used += hotBytes + freeGrowth
+	s.memory.hotHashes += hotBytes
+	s.memory.arenas += freeGrowth
+	if oldPayload != 0 {
+		s.memory.arenaPayload -= oldPayload
+	}
+	if oldBlock != 0 {
+		s.memory.arenaLiveBlocks -= oldBlock
+	}
+	s.memory.mu.Unlock()
+
+	if !e.ref.IsInline() {
+		sh.arena.Free(e.ref)
+	}
+	e.hot = true
+	e.ref = arena.Ref{}
+	sh.entries[id] = e.entryData
+	sh.setHotHash(id, h)
 	return h, true, nil
 }
 
 func (s *Store) freezeHotHashLocked(sh *shard, key string, e entry) error {
-	h, id, ok := sh.hotHashForKey(key)
-	if !ok || h == nil {
+	if !e.isHotHash() {
 		return nil
+	}
+	h, _, ok := sh.hotHashForKey(key)
+	if !ok || h == nil {
+		return errors.New("HOT hash sidecar invariant")
 	}
 	pairs := h.pairs()
 	packed, err := encodePackedHash(pairs)
@@ -312,13 +320,21 @@ func (s *Store) freezeHotHashLocked(sh *shard, key string, e entry) error {
 	}
 	updated := s.hashEntry(pairs, packed)
 	updated.expiresAt = sh.expirationAt(key, e)
-	// publish clears the sidecar slot; memory accounting for the HOT object is
-	// released by the generic publish path before replacement.
-	if err := s.publish(sh, key, updated); err != nil {
-		return err
+	return s.publish(sh, key, updated)
+}
+
+func (s *Store) freezeHotHashAndReloadLocked(sh *shard, key string, e entry) (entry, error) {
+	if !e.isHotHash() {
+		return e, nil
 	}
-	_ = id
-	return nil
+	if err := s.freezeHotHashLocked(sh, key, e); err != nil {
+		return entry{}, err
+	}
+	next, ok := sh.get(key)
+	if !ok {
+		return entry{}, errors.New("HASH disappeared while freezing HOT value")
+	}
+	return next, nil
 }
 
 func (s *Store) mutateHotHashLocked(h *hotHash, mutate func()) {
