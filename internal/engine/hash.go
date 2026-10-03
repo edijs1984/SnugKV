@@ -292,15 +292,7 @@ func (s *Store) hashEntry(pairs []HashPair, packed []byte) preparedEntry {
 // HashSet updates one or more field/value pairs and returns the number of newly
 // inserted fields. The logical representation remains canonical packed HASH;
 // repeated field layouts may use a smaller shared-shape physical representation.
-func (s *Store) HashSet(key string, fields, values [][]byte) (int64, error) {
-	if len(fields) == 0 || len(fields) != len(values) {
-		return 0, errors.New("ERR invalid hash field/value count")
-	}
-
-	sh := s.shardFor(key)
-	sh.mu.Lock()
-	defer sh.mu.Unlock()
-
+func (s *Store) hashSetLocked(sh *shard, key string, fields, values [][]byte) (int64, error) {
 	now := s.now()
 	old, exists := sh.get(key)
 	if exists && sh.expired(key, old, now) {
@@ -413,6 +405,90 @@ func (s *Store) HashSet(key string, fields, values [][]byte) (int64, error) {
 	}
 
 	return added, nil
+}
+
+func (s *Store) HashSet(key string, fields, values [][]byte) (int64, error) {
+	if len(fields) == 0 || len(fields) != len(values) {
+		return 0, errors.New("ERR invalid hash field/value count")
+	}
+
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+	return s.hashSetLocked(sh, key, fields, values)
+}
+
+// HashSetResults applies a sequence of single-field HSET commands for one key
+// under a single shard lock and returns one Redis HSET result per command.
+// The first insertion of a previously absent field returns 1; overwrites and
+// repeated fields later in the same batch return 0.
+func (s *Store) HashSetResults(key string, fields, values [][]byte) ([]int64, error) {
+	if len(fields) == 0 || len(fields) != len(values) {
+		return nil, errors.New("ERR invalid hash field/value count")
+	}
+
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	results := make([]int64, len(fields))
+	now := s.now()
+	old, exists := sh.get(key)
+	if exists && sh.expired(key, old, now) {
+		s.remove(sh, key)
+		exists = false
+		old = entry{}
+	}
+	if exists && old.valueType != TypeHash {
+		return nil, hashWrongType()
+	}
+
+	existing := make(map[string]struct{})
+	if exists {
+		physical := sh.encoded(old)
+		if isIndexedHash(physical) {
+			for _, field := range fields {
+				name := string(field)
+				if _, seen := existing[name]; seen {
+					continue
+				}
+				_, _, found, err := indexedHashFind(physical, field)
+				if err != nil {
+					return nil, err
+				}
+				if found {
+					existing[name] = struct{}{}
+				}
+			}
+		} else {
+			pairs, err := decodePackedHash(s.decode(sh, old))
+			if err != nil {
+				return nil, err
+			}
+			for _, pair := range liveHashPairs(pairs, now.UnixMilli()) {
+				existing[string(pair.Field)] = struct{}{}
+			}
+		}
+	}
+
+	seen := make(map[string]struct{}, len(fields))
+	for i, field := range fields {
+		name := string(field)
+		if _, ok := existing[name]; ok {
+			seen[name] = struct{}{}
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		results[i] = 1
+	}
+
+	if _, err := s.hashSetLocked(sh, key, fields, values); err != nil {
+		return nil, err
+	}
+	return results, nil
 }
 
 func (s *Store) hashLogicalValue(sh *shard, e entry) ([]byte, error) {
