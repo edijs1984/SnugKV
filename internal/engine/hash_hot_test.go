@@ -346,3 +346,39 @@ func TestActiveLargeHotHashSurvivesGenericCompaction(t *testing.T) {
 		t.Fatal("active large HOT hash should not freeze during generic compaction")
 	}
 }
+
+
+func TestIncrementalPipelinedHashPromotesOnlyAtLargeThreshold(t *testing.T) {
+	s := New()
+	key := "incremental-hot-policy"
+
+	for i := 0; i < hotHashPromoteFields-1; i++ {
+		field := []byte(fmt.Sprintf("field:%03d", i))
+		if _, err := s.HashSetResults(key, [][]byte{field}, [][]byte{[]byte("value")}); err != nil {
+			t.Fatalf("field %d: %v", i, err)
+		}
+
+		sh := s.shardFor(key)
+		sh.mu.RLock()
+		e, ok := sh.get(key)
+		isHot := ok && e.isHotHash()
+		sh.mu.RUnlock()
+		if isHot {
+			t.Fatalf("hash promoted HOT at %d fields, threshold is %d", i+1, hotHashPromoteFields)
+		}
+	}
+
+	field := []byte(fmt.Sprintf("field:%03d", hotHashPromoteFields-1))
+	if _, err := s.HashSetResults(key, [][]byte{field}, [][]byte{[]byte("value")}); err != nil {
+		t.Fatal(err)
+	}
+
+	sh := s.shardFor(key)
+	sh.mu.RLock()
+	e, ok := sh.get(key)
+	isHot := ok && e.isHotHash()
+	sh.mu.RUnlock()
+	if !isHot {
+		t.Fatalf("hash did not promote HOT at %d fields", hotHashPromoteFields)
+	}
+}
