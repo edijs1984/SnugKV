@@ -314,9 +314,11 @@ func (s *Store) hashSetLocked(sh *shard, key string, fields, values [][]byte) (i
 		if old.valueType != TypeHash {
 			return 0, hashWrongType()
 		}
-		if h, hot, err := s.thawHotHashLocked(sh, key, old); err != nil {
-			return 0, err
-		} else if hot {
+		if old.isHotHash() {
+			h, _, ok := sh.hotHashForKey(key)
+			if !ok || h == nil {
+				return 0, errors.New("HOT hash sidecar invariant")
+			}
 			before := h.memoryBytes()
 			var added int64
 			for i, field := range fields {
@@ -340,6 +342,11 @@ func (s *Store) hashSetLocked(sh *shard, key string, fields, values [][]byte) (i
 				return 0, err
 			}
 			if rebuilt == nil {
+				if current, ok := sh.get(key); ok && !current.isHotHash() {
+					if _, _, err := s.thawHotHashLocked(sh, key, current); err != nil {
+						return 0, err
+					}
+				}
 				return added, nil
 			}
 			updated := preparedEntry{
@@ -425,6 +432,13 @@ func (s *Store) hashSetLocked(sh *shard, key string, fields, values [][]byte) (i
 	updated.expiresAt = expiresAt
 	if err := s.publish(sh, key, updated); err != nil {
 		return 0, err
+	}
+	if exists {
+		if current, ok := sh.get(key); ok && !current.isHotHash() {
+			if _, _, err := s.thawHotHashLocked(sh, key, current); err != nil {
+				return 0, err
+			}
+		}
 	}
 	return added, nil
 }
