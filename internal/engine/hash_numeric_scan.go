@@ -29,6 +29,13 @@ func (s *Store) HashIncrBy(key string, field []byte, increment int64) (int64, er
 		if old.valueType != TypeHash {
 			return 0, hashWrongType()
 		}
+		if old.isHotHash() {
+			var freezeErr error
+			old, freezeErr = s.freezeHotHashAndReloadLocked(sh, key, old)
+			if freezeErr != nil {
+				return 0, freezeErr
+			}
+		}
 		var err error
 		pairs, err = decodePackedHash(s.decode(sh, old))
 		if err != nil {
@@ -110,6 +117,13 @@ func (s *Store) HashIncrByFloat(key string, field []byte, increment float64) (st
 		if old.valueType != TypeHash {
 			return "", hashWrongType()
 		}
+		if old.isHotHash() {
+			var freezeErr error
+			old, freezeErr = s.freezeHotHashAndReloadLocked(sh, key, old)
+			if freezeErr != nil {
+				return "", freezeErr
+			}
+		}
 		var err error
 		pairs, err = decodePackedHash(s.decode(sh, old))
 		if err != nil {
@@ -189,11 +203,21 @@ func (s *Store) HashScan(key string, cursor uint64, count int, pattern []byte) (
 		return 0, nil, hashWrongType()
 	}
 
-	pairs, err := decodePackedHash(s.decode(sh, e))
-	if err != nil {
-		return 0, nil, err
+	var pairs []HashPair
+	if e.isHotHash() {
+		h, _, ok := sh.hotHashForKey(key)
+		if !ok || h == nil {
+			return 0, nil, errors.New("HOT hash sidecar invariant")
+		}
+		pairs = h.pairs()
+	} else {
+		var err error
+		pairs, err = decodePackedHash(s.decode(sh, e))
+		if err != nil {
+			return 0, nil, err
+		}
+		pairs = liveHashPairs(pairs, s.now().UnixMilli())
 	}
-	pairs = liveHashPairs(pairs, s.now().UnixMilli())
 	if cursor >= uint64(len(pairs)) {
 		return 0, nil, nil
 	}
