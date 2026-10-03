@@ -9,7 +9,7 @@ import (
 
 var indexedSetHeader = [...]byte{'S','S',4}
 const indexedSetFixed = 15
-const indexedSetPromoteMembers = 4
+const indexedSetPromoteMembers = 32
 
 func isIndexedSet(data []byte) bool {
 	return len(data) >= indexedSetFixed && bytes.Equal(data[:3], indexedSetHeader[:])
@@ -128,12 +128,8 @@ func encodeIndexedSet(members [][]byte) ([]byte,error) {
 		used += len(records[i])
 	}
 	dataCap := used + used/4
-	minReserve := 128
-	if len(sorted) >= 32 {
-		minReserve = 512
-	}
-	if dataCap-used < minReserve {
-		dataCap = used + minReserve
+	if dataCap-used < 512 {
+		dataCap = used + 512
 	}
 	total := indexedSetFixed + slots*4 + dataCap
 	if total > maxPackedSetBytes {
