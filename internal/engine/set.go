@@ -471,15 +471,7 @@ func (s *Store) setLogicalValue(sh *shard, e entry) ([]byte, error) {
 }
 
 // SetAdd inserts binary-safe members and returns the number of newly added members.
-func (s *Store) SetAdd(key string, members [][]byte) (int64, error) {
-	if len(members) == 0 {
-		return 0, errors.New("ERR invalid set member count")
-	}
-	hash := index.Hash(key)
-	sh := s.shardForHash(hash)
-	sh.mu.Lock()
-	defer sh.mu.Unlock()
-
+func (s *Store) setAddLocked(sh *shard, key string, hash uint64, members [][]byte) (int64, error) {
 	now := s.now()
 	old, exists := sh.getHashed(key, hash)
 	if exists && sh.expired(key, old, now) {
@@ -593,6 +585,79 @@ func (s *Store) SetAdd(key string, members [][]byte) (int64, error) {
 		return 0, err
 	}
 	return added, nil
+}
+
+func (s *Store) SetAdd(key string, members [][]byte) (int64, error) {
+	if len(members) == 0 {
+		return 0, errors.New("ERR invalid set member count")
+	}
+	hash := index.Hash(key)
+	sh := s.shardForHash(hash)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+	return s.setAddLocked(sh, key, hash, members)
+}
+
+// SetAddResults applies a sequence of SADD key member operations for one key
+// under a single shard lock and returns one Redis-compatible result per member.
+// Duplicate members within the batch preserve sequential command semantics.
+func (s *Store) SetAddResults(key string, members [][]byte) ([]int64, error) {
+	if len(members) == 0 {
+		return nil, errors.New("ERR invalid set member count")
+	}
+
+	hash := index.Hash(key)
+	sh := s.shardForHash(hash)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	results := make([]int64, len(members))
+	now := s.now()
+	old, exists := sh.getHashed(key, hash)
+	if exists && sh.expired(key, old, now) {
+		s.remove(sh, key)
+		exists = false
+		old = entry{}
+	}
+	if exists && old.valueType != TypeSet {
+		return nil, setWrongType()
+	}
+
+	seen := make(map[string]struct{}, len(members))
+	var physical []byte
+	if exists {
+		physical = sh.encoded(old)
+	}
+
+	pending := make([][]byte, 0, len(members))
+	for i, member := range members {
+		memberKey := string(member)
+		if _, duplicate := seen[memberKey]; duplicate {
+			continue
+		}
+		seen[memberKey] = struct{}{}
+
+		if exists {
+			found, err := setContainsPhysical(physical, old, member)
+			if err != nil {
+				return nil, err
+			}
+			if found {
+				continue
+			}
+		}
+
+		results[i] = 1
+		pending = append(pending, member)
+	}
+
+	if len(pending) == 0 {
+		return results, nil
+	}
+	if _, err := s.setAddLocked(sh, key, hash, pending); err != nil {
+		return nil, err
+	}
+	return results, nil
 }
 
 func (s *Store) SetRemove(key string, members [][]byte) (int64, error) {
