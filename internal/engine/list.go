@@ -40,6 +40,90 @@ func readListUvarint(data []byte, offset *int) (uint64, error) {
 	return value, nil
 }
 
+
+func packedListMeta(data []byte) (count int, recordsStart int, err error) {
+	if len(data) < len(packedListHeader) || !bytes.Equal(data[:len(packedListHeader)], packedListHeader[:]) {
+		return 0, 0, errors.New("invalid packed list")
+	}
+	offset := len(packedListHeader)
+	count64, err := readListUvarint(data, &offset)
+	if err != nil || count64 > uint64(maxPackedListBytes) {
+		return 0, 0, errors.New("invalid packed list")
+	}
+	return int(count64), offset, nil
+}
+
+func packedListElement(data []byte, index int) ([]byte, bool, error) {
+	count, offset, err := packedListMeta(data)
+	if err != nil {
+		return nil, false, err
+	}
+	if index < 0 {
+		index += count
+	}
+	if index < 0 || index >= count {
+		return nil, false, nil
+	}
+
+	for i := 0; i < count; i++ {
+		length64, err := readListUvarint(data, &offset)
+		if err != nil || length64 > uint64(len(data)-offset) {
+			return nil, false, errors.New("invalid packed list")
+		}
+		end := offset + int(length64)
+		if i == index {
+			return append([]byte(nil), data[offset:end]...), true, nil
+		}
+		offset = end
+	}
+	return nil, false, errors.New("invalid packed list")
+}
+
+// appendPackedListRight appends directly to the packed byte stream without
+// decoding every existing element into temporary [][]byte allocations. It
+// validates the existing record boundaries while scanning them once, then
+// copies the already-packed records verbatim into the new representation.
+func appendPackedListRight(data []byte, values [][]byte) (int, []byte, error) {
+	count, recordsStart, err := packedListMeta(data)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	offset := recordsStart
+	for i := 0; i < count; i++ {
+		length64, err := readListUvarint(data, &offset)
+		if err != nil || length64 > uint64(len(data)-offset) {
+			return 0, nil, errors.New("invalid packed list")
+		}
+		offset += int(length64)
+	}
+	if offset != len(data) {
+		return 0, nil, errors.New("invalid packed list trailing data")
+	}
+
+	newCount := count + len(values)
+	capacity := len(packedListHeader) + binary.MaxVarintLen64 + (len(data) - recordsStart)
+	for _, value := range values {
+		capacity += binary.MaxVarintLen64 + len(value)
+		if capacity > maxPackedListBytes {
+			return 0, nil, errors.New("ERR list exceeds 32 MiB limit")
+		}
+	}
+
+	out := make([]byte, 0, capacity)
+	out = append(out, packedListHeader[:]...)
+	out = appendListUvarint(out, uint64(newCount))
+	out = append(out, data[recordsStart:]...)
+	for _, value := range values {
+		out = appendListUvarint(out, uint64(len(value)))
+		out = append(out, value...)
+	}
+	if len(out) > maxPackedListBytes {
+		return 0, nil, errors.New("ERR list exceeds 32 MiB limit")
+	}
+	return newCount, out, nil
+}
+
 func encodePackedList(elements [][]byte) ([]byte, error) {
 	capacity := len(packedListHeader) + binary.MaxVarintLen64
 	for _, element := range elements {
@@ -156,10 +240,33 @@ func (s *Store) listPush(key string, values [][]byte, left bool) (int64, error) 
 			}
 			return int64(length), nil
 		}
-		var err error
-		current, err = s.listElementsFromEntry(sh, old)
-		if err != nil {
-			return 0, err
+		if !left {
+			length, packed, err := appendPackedListRight(physical, values)
+			if err != nil {
+				return 0, err
+			}
+			if length < indexedListPromoteElements {
+				updated := listPreparedEntry(packed)
+				updated.expiresAt = expiresAt
+				if err := s.publish(sh, key, updated); err != nil {
+					return 0, err
+				}
+				return int64(length), nil
+			}
+
+			// Promotion happens once when the packed list crosses the indexed
+			// threshold. Decode only at that boundary instead of on every RPUSH.
+			current, err = decodePackedList(packed)
+			if err != nil {
+				return 0, err
+			}
+			values = nil
+		} else {
+			var err error
+			current, err = s.listElementsFromEntry(sh, old)
+			if err != nil {
+				return 0, err
+			}
 		}
 	}
 	result := make([][]byte, 0, len(current)+len(values))
@@ -280,8 +387,8 @@ func (s *Store) ListLen(key string) (int64, error) {
 		count, _, _, _, err := indexedListMeta(physical)
 		return int64(count), err
 	}
-	elements, err := s.listElementsFromEntry(sh, e)
-	return int64(len(elements)), err
+	count, _, err := packedListMeta(physical)
+	return int64(count), err
 }
 
 func (s *Store) ListIndex(key string, index int64) ([]byte, bool, error) {
@@ -299,18 +406,7 @@ func (s *Store) ListIndex(key string, index int64) ([]byte, bool, error) {
 	if isIndexedList(physical) {
 		return indexedListElement(physical, int(index))
 	}
-	elements, err := s.listElementsFromEntry(sh, e)
-	if err != nil {
-		return nil, false, err
-	}
-	n := int64(len(elements))
-	if index < 0 {
-		index += n
-	}
-	if index < 0 || index >= n {
-		return nil, false, nil
-	}
-	return append([]byte(nil), elements[index]...), true, nil
+	return packedListElement(physical, int(index))
 }
 
 func (s *Store) ListRange(key string, start, stop int64) ([][]byte, error) {
