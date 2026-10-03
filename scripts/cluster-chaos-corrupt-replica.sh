@@ -167,6 +167,12 @@ replica_durable="${waitaof[1]:-}"
 if [[ "$replica_durable" != "2" ]]; then
   echo "WAITAOF result local=$local_durable replicas=$replica_durable, want replicas=2" >&2
   cli "$P0" INFO replication >&2 || true
+  echo "--- primary replication debug ---" >&2
+  cli "$P0" SNUG.STATS >&2 || true
+  echo "--- replica n1 replication debug ---" >&2
+  cli "$P1" SNUG.STATS >&2 || true
+  echo "--- replica n2 replication debug ---" >&2
+  cli "$P2" SNUG.STATS >&2 || true
   echo "n1_aof_bytes=$(stat -c%s "$TMP/n1.aof" 2>/dev/null || echo missing)" >&2
   echo "n2_aof_bytes=$(stat -c%s "$TMP/n2.aof" 2>/dev/null || echo missing)" >&2
   exit 1
