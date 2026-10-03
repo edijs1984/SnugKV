@@ -273,7 +273,25 @@ func (s *Server) executeAuthorizedConcurrentHashGetBatch(keys, fields [][]byte) 
 		return nil, nil, false, nil
 	}
 
-	values, found, err = s.store.HashGetBatchBytes(keys, fields)
+	values = make([][]byte, len(keys))
+	found = make([]bool, len(keys))
+	for i := 0; i < len(keys); {
+		j := i + 1
+		for j < len(keys) && bytes.Equal(keys[j], keys[i]) {
+			j++
+		}
+		groupValues, groupFound, groupErr := s.store.HashGetResults(
+			string(keys[i]),
+			fields[i:j],
+		)
+		if groupErr != nil {
+			err = groupErr
+			break
+		}
+		copy(values[i:j], groupValues)
+		copy(found[i:j], groupFound)
+		i = j
+	}
 	s.durableMu.RUnlock()
 
 	atomic.AddUint64(&s.commands, uint64(len(keys)))
