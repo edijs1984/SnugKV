@@ -240,6 +240,9 @@ func (sh *shard) insertEntry(key string, hash uint64, e entry, hashKnown bool) {
 		if sh.metas != nil {
 				sh.metas.slots = append(sh.metas.slots, nil)
 		}
+		if sh.hotHashes != nil {
+			sh.hotHashes.slots = append(sh.hotHashes.slots, nil)
+		}
 		sh.setMeta(id, e.entryMeta)
 	}
 	if hashKnown {
