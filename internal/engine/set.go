@@ -209,12 +209,91 @@ func decodeTinyFixedSet(data []byte) ([][]byte, error) {
 }
 
 func packedSetContains(data, target []byte) (bool, error) {
-	members, err := decodePackedSet(data)
+	count, err := packedSetCount(data)
 	if err != nil {
 		return false, err
 	}
-	idx := sort.Search(len(members), func(i int) bool { return bytes.Compare(members[i], target) >= 0 })
-	return idx < len(members) && bytes.Equal(members[idx], target), nil
+	offset := len(packedSetHeader)
+	if _, err := readSetUvarint(data, &offset); err != nil {
+		return false, err
+	}
+	for i := 0; i < count; i++ {
+		memberLen, err := readSetUvarint(data, &offset)
+		if err != nil || memberLen > uint64(len(data)-offset) {
+			return false, errors.New("invalid packed set")
+		}
+		end := offset + int(memberLen)
+		cmp := bytes.Compare(data[offset:end], target)
+		if cmp == 0 {
+			return true, nil
+		}
+		if cmp > 0 {
+			return false, nil
+		}
+		offset = end
+	}
+	if offset != len(data) {
+		return false, errors.New("invalid packed set trailing data")
+	}
+	return false, nil
+}
+
+func tinyFixedSetContains(data, target []byte) (bool, error) {
+	if len(data) < len(tinySetHeader) || !bytes.Equal(data[:len(tinySetHeader)], tinySetHeader[:]) {
+		return false, errors.New("invalid tiny set")
+	}
+	offset := len(tinySetHeader)
+	count64, err := readSetUvarint(data, &offset)
+	if err != nil || count64 < 2 || count64 > uint64(maxPackedSetBytes) {
+		return false, errors.New("invalid tiny set")
+	}
+	width64, err := readSetUvarint(data, &offset)
+	if err != nil || width64 > uint64(maxPackedSetBytes) {
+		return false, errors.New("invalid tiny set")
+	}
+	count, width := int(count64), int(width64)
+	if len(target) != width {
+		return false, nil
+	}
+	if width > len(data)-offset {
+		return false, errors.New("invalid tiny set")
+	}
+
+	current := make([]byte, width)
+	copy(current, data[offset:offset+width])
+	offset += width
+	cmp := bytes.Compare(current, target)
+	if cmp == 0 {
+		return true, nil
+	}
+	if cmp > 0 {
+		return false, nil
+	}
+
+	for i := 1; i < count; i++ {
+		prefix64, err := readSetUvarint(data, &offset)
+		if err != nil || prefix64 > uint64(width) {
+			return false, errors.New("invalid tiny set")
+		}
+		prefix := int(prefix64)
+		suffixLen := width - prefix
+		if suffixLen > len(data)-offset {
+			return false, errors.New("invalid tiny set")
+		}
+		copy(current[prefix:], data[offset:offset+suffixLen])
+		offset += suffixLen
+		cmp = bytes.Compare(current, target)
+		if cmp == 0 {
+			return true, nil
+		}
+		if cmp > 0 {
+			return false, nil
+		}
+	}
+	if offset != len(data) {
+		return false, errors.New("invalid tiny set trailing data")
+	}
+	return false, nil
 }
 
 func setPreparedEntry(packed []byte) preparedEntry {
@@ -431,12 +510,14 @@ func (s *Store) SetContains(key string, member []byte) (bool, error) {
 	if isIndexedSet(physical) {
 		return indexedSetContains(physical, member)
 	}
-	members, err := s.setMembersFromEntry(sh, e)
-	if err != nil {
-		return false, err
+	if len(physical) == int(e.rawLength) {
+		return packedSetContains(physical, member)
 	}
-	idx := sort.Search(len(members), func(i int) bool { return bytes.Compare(members[i], member) >= 0 })
-	return idx < len(members) && bytes.Equal(members[idx], member), nil
+	if bytes.HasPrefix(physical, tinySetHeader[:]) {
+		return tinyFixedSetContains(physical, member)
+	}
+	// Unframed SET storage is only valid for a singleton.
+	return bytes.Equal(physical, member), nil
 }
 
 func (s *Store) SetLen(key string) (int64, error) {
@@ -455,8 +536,19 @@ func (s *Store) SetLen(key string) (int64, error) {
 		count, _, _, _, err := indexedSetMeta(physical)
 		return int64(count), err
 	}
-	members, err := s.setMembersFromEntry(sh, e)
-	return int64(len(members)), err
+	if len(physical) == int(e.rawLength) {
+		count, err := packedSetCount(physical)
+		return int64(count), err
+	}
+	if bytes.HasPrefix(physical, tinySetHeader[:]) {
+		offset := len(tinySetHeader)
+		count, err := readSetUvarint(physical, &offset)
+		if err != nil {
+			return 0, errors.New("invalid tiny set")
+		}
+		return int64(count), nil
+	}
+	return 1, nil
 }
 
 func (s *Store) SetMembers(key string) ([][]byte, error) {
