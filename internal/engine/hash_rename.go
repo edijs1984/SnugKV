@@ -46,10 +46,26 @@ func (s *Store) RenameHash(source, destination string, nx bool) (handled bool, r
 		return true, false, nil
 	}
 
-	packed := s.decode(sourceShard, sourceEntry)
-	pairs, decodeErr := decodePackedHash(packed)
-	if decodeErr != nil {
-		return true, false, decodeErr
+	var packed []byte
+	var pairs []HashPair
+	if sourceEntry.isHotHash() {
+		h, _, ok := sourceShard.hotHashForKey(source)
+		if !ok || h == nil {
+			return true, false, errors.New("HOT hash sidecar invariant")
+		}
+		pairs = h.pairs()
+		var encodeErr error
+		packed, encodeErr = encodePackedHash(pairs)
+		if encodeErr != nil {
+			return true, false, encodeErr
+		}
+	} else {
+		packed = s.decode(sourceShard, sourceEntry)
+		var decodeErr error
+		pairs, decodeErr = decodePackedHash(packed)
+		if decodeErr != nil {
+			return true, false, decodeErr
+		}
 	}
 
 	replacement := s.hashEntry(pairs, packed)
