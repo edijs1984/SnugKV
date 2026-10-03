@@ -326,6 +326,7 @@ func (s *Store) hashSetLocked(sh *shard, key string, fields, values [][]byte) (i
 					added++
 				}
 			}
+			h.lastMutation = s.now().UnixMilli()
 			s.accountHotHashResize(before, h.memoryBytes())
 			return added, nil
 		}
@@ -474,6 +475,7 @@ func (s *Store) HashSetResults(key string, fields, values [][]byte) ([]int64, er
 				}
 				h.set(field, values[i])
 			}
+			h.lastMutation = s.now().UnixMilli()
 			s.accountHotHashResize(before, h.memoryBytes())
 			return results, nil
 		}
@@ -527,15 +529,15 @@ func (s *Store) HashSetResults(key string, fields, values [][]byte) ([]int64, er
 	if current, ok := sh.get(key); ok && !current.isHotHash() {
 		shouldPromote := false
 		if isIndexedHash(sh.encoded(current)) {
-			if _, _, used, _, err := indexedHashMeta(sh.encoded(current)); err == nil {
-				shouldPromote = used >= indexedHashPromoteFields
+			if count, _, _, _, err := indexedHashMeta(sh.encoded(current)); err == nil {
+				shouldPromote = count >= hotHashPromoteFields
 			}
 		} else {
 			pairs, err := decodePackedHash(s.decode(sh, current))
 			if err != nil {
 				return nil, err
 			}
-			shouldPromote = len(liveHashPairs(pairs, now.UnixMilli())) >= indexedHashPromoteFields
+			shouldPromote = len(liveHashPairs(pairs, now.UnixMilli())) >= hotHashPromoteFields
 		}
 		if shouldPromote {
 			if _, _, err := s.thawHotHashLocked(sh, key, current); err != nil {
