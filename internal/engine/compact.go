@@ -43,6 +43,7 @@ func (s *Store) Compact(scratch uint64) int {
 
 		oldArena, oldIndex := sh.arena.TotalMemoryBytes(), sh.data.CapacityBytes()
 		oldEntries := shardEntryStorageBytes(sh)
+		oldHotSidecar := hotHashSidecarBytes(sh)
 		if oldArena+oldIndex+oldEntries == 0 ||
 			(oldArena+oldIndex+oldEntries)*3 > scratch {
 			sh.mu.Unlock()
@@ -127,7 +128,7 @@ func (s *Store) Compact(scratch uint64) int {
 		// Account for the complete compacted shard, not only arena growth.
 		// Dense entry holes and oversized index tables are reclaimed together.
 		next := s.memory.used -
-			oldArena - oldIndex - oldEntries +
+			oldArena - oldIndex - oldEntries - oldHotSidecar +
 			newArena + newIndex + newEntries
 		if max := s.memory.max.Load(); max > 0 && next > max {
 			s.memory.mu.Unlock()
@@ -143,6 +144,7 @@ func (s *Store) Compact(scratch uint64) int {
 		sh.freeIDs = nil
 
 		s.memory.used = next
+		s.memory.hotHashes -= oldHotSidecar
 		s.memory.arenas = s.memory.arenas - oldArena + newArena
 		s.memory.index = s.memory.index - oldIndex + newIndex
 		s.memory.entries = s.memory.entries - oldEntries + newEntries
