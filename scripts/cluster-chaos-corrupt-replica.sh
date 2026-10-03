@@ -139,9 +139,40 @@ seed="$TMP/seed.commands"
 for i in $(seq 1 200); do
   printf 'SET corrupt:key:%03d value-%03d\n' "$i" "$i" >>"$seed"
 done
-printf 'WAIT 2 5000\n' >>"$seed"
 redis-cli --no-auth-warning --raw -a "$PASSWORD" -p "$P0" <"$seed" >"$TMP/seed.out"
-[[ "$(tail -n 1 "$TMP/seed.out")" == "2" ]]
+
+# First prove the primary actually committed representative seed values.
+for n in 001 100 200; do
+  got="$(cli "$P0" GET "corrupt:key:$n")"
+  [[ "$got" == "value-$n" ]] || {
+    echo "primary seed verification failed for key $n: $got" >&2
+    exit 1
+  }
+done
+
+# WAIT proves both direct replicas applied the primary replication offset.
+replicated="$(cli "$P0" WAIT 2 5000)"
+[[ "$replicated" == "2" ]] || {
+  echo "WAIT acknowledged $replicated replicas, want 2" >&2
+  cli "$P0" INFO replication >&2 || true
+  exit 1
+}
+
+# This chaos case immediately SIGKILLs and later replays the replica AOF, so
+# application-level WAIT is not sufficient. Require both replicas to report a
+# durable/fsynced offset via FACK before corrupting one of their AOFs.
+mapfile -t waitaof < <(cli "$P0" WAITAOF 0 2 5000)
+local_durable="${waitaof[0]:-}"
+replica_durable="${waitaof[1]:-}"
+if [[ "$local_durable" != "0" || "$replica_durable" != "2" ]]; then
+  echo "WAITAOF result local=$local_durable replicas=$replica_durable, want local=0 replicas=2" >&2
+  cli "$P0" INFO replication >&2 || true
+  echo "n1_aof_bytes=$(stat -c%s "$TMP/n1.aof" 2>/dev/null || echo missing)" >&2
+  echo "n2_aof_bytes=$(stat -c%s "$TMP/n2.aof" 2>/dev/null || echo missing)" >&2
+  exit 1
+fi
+
+echo "seed durability confirmed: WAIT=2 WAITAOF_replicas=2 n1_aof_bytes=$(stat -c%s "$TMP/n1.aof") n2_aof_bytes=$(stat -c%s "$TMP/n2.aof")"
 
 echo "[2/8] hard-stop replica n2"
 stop_hard n2
@@ -230,9 +261,26 @@ grep -q '^master_link_status:up' <<<"$info"
 
 echo "[7/8] verify cluster routing sees the rebuilt replica's recovered dataset"
 for n in 001 100 200; do
+  primary_got="$(cli "$P0" GET "corrupt:key:$n" 2>/dev/null || true)"
+  [[ "$primary_got" == "value-$n" ]] || {
+    echo "primary lost seed key $n before rebuilt-replica verification: $primary_got" >&2
+    cli "$P0" INFO replication >&2 || true
+    exit 1
+  }
+
   got="$(redis-cli --no-auth-warning --raw -a "$PASSWORD" -c -p "$P2" GET "corrupt:key:$n" 2>/dev/null || true)"
   [[ "$got" == "value-$n" ]] || {
     echo "cluster-routed read mismatch for key $n: $got" >&2
+    echo "--- primary replication ---" >&2
+    cli "$P0" INFO replication >&2 || true
+    echo "--- rebuilt replica replication ---" >&2
+    cli "$P2" INFO replication >&2 || true
+    echo "--- rebuilt replica role ---" >&2
+    cli "$P2" ROLE >&2 || true
+    echo "--- rebuilt replica cluster nodes ---" >&2
+    cli "$P2" CLUSTER NODES >&2 || true
+    echo "--- AOF sizes ---" >&2
+    echo "n0=$(stat -c%s "$TMP/n0.aof" 2>/dev/null || echo missing) n1=$(stat -c%s "$TMP/n1.aof" 2>/dev/null || echo missing) n2=$(stat -c%s "$TMP/n2.aof" 2>/dev/null || echo missing)" >&2
     exit 1
   }
 done
