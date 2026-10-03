@@ -24,6 +24,23 @@ func (s *Store) Compact(scratch uint64) int {
 	for i := range s.shards {
 		sh := &s.shards[i]
 		sh.mu.Lock()
+
+		hotKeys := make([]string, 0)
+		for key, e := range sh.all() {
+			if e.isHotHash() {
+				hotKeys = append(hotKeys, key)
+			}
+		}
+		for _, key := range hotKeys {
+			e, ok := sh.get(key)
+			if !ok {
+				continue
+			}
+			if err := s.freezeHotHashLocked(sh, key, e); err != nil {
+				panic(err)
+			}
+		}
+
 		oldArena, oldIndex := sh.arena.TotalMemoryBytes(), sh.data.CapacityBytes()
 		oldEntries := shardEntryStorageBytes(sh)
 		if oldArena+oldIndex+oldEntries == 0 ||
@@ -122,6 +139,7 @@ func (s *Store) Compact(scratch uint64) int {
 		sh.data = *freshIndex
 		sh.entries = freshEntries
 		sh.metas = freshMetas
+		sh.hotHashes = nil
 		sh.freeIDs = nil
 
 		s.memory.used = next
