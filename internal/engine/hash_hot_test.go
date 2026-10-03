@@ -15,11 +15,10 @@ func TestHotHashMutationReadLifecycle(t *testing.T) {
 	sh := s.shardFor("hot")
 	sh.mu.RLock()
 	e, ok := sh.get("hot")
-	isHot := ok && e.isHotHash()
-	h, _, hotOK := sh.hotHashForKey("hot")
+	firstHot := ok && e.isHotHash()
 	sh.mu.RUnlock()
-	if !isHot || !hotOK || h == nil {
-		t.Fatal("hash did not promote to HOT representation")
+	if firstHot {
+		t.Fatal("first HSET should remain cold")
 	}
 
 	if added, err := s.HashSet(
@@ -27,7 +26,16 @@ func TestHotHashMutationReadLifecycle(t *testing.T) {
 		[][]byte{[]byte("b"), []byte("a")},
 		[][]byte{[]byte("2"), []byte("3")},
 	); err != nil || added != 1 {
-		t.Fatalf("HOT HSET added=%d err=%v", added, err)
+		t.Fatalf("second HSET added=%d err=%v", added, err)
+	}
+
+	sh.mu.RLock()
+	e, ok = sh.get("hot")
+	isHot := ok && e.isHotHash()
+	h, _, hotOK := sh.hotHashForKey("hot")
+	sh.mu.RUnlock()
+	if !isHot || !hotOK || h == nil {
+		t.Fatal("repeated mutation did not promote HASH to HOT representation")
 	}
 
 	value, found, err := s.HashGet("hot", []byte("a"))
