@@ -520,6 +520,55 @@ func (s *Server) executeAuthorizedConcurrentBlockingCapableNativeMutation(args [
 	return integerReply(result), true, nil
 }
 
+func (s *Server) executeAuthorizedConcurrentHashSetBatch(keys, fields, values [][]byte) (results []int64, handled bool, err error) {
+	if s.clusterEnabled ||
+		len(keys) < 2 || len(keys) != len(fields) || len(keys) != len(values) ||
+		s.journal != nil ||
+		s.replication.primaryHasReplicas() ||
+		atomic.LoadUint32(&s.metricsEnabled) != 0 ||
+		s.store.MaxMemory() != 0 {
+		return nil, false, nil
+	}
+	if s.replication.isReadOnlyReplica() {
+		return nil, true, errors.New("READONLY You can't write against a read only replica.")
+	}
+
+	s.durableMu.RLock()
+	if s.hasWatchSessionsLocked() {
+		s.durableMu.RUnlock()
+		return nil, false, nil
+	}
+	if s.optimizer != nil {
+		s.optimizer.NoteForegroundWrite()
+	}
+
+	results = make([]int64, len(keys))
+	for i := 0; i < len(keys); {
+		j := i + 1
+		for j < len(keys) && bytes.Equal(keys[j], keys[i]) {
+			j++
+		}
+		groupResults, groupErr := s.store.HashSetResults(
+			string(keys[i]),
+			fields[i:j],
+			values[i:j],
+		)
+		if groupErr != nil {
+			err = groupErr
+			break
+		}
+		copy(results[i:j], groupResults)
+		i = j
+	}
+	s.durableMu.RUnlock()
+
+	atomic.AddUint64(&s.commands, uint64(len(keys)))
+	if err != nil {
+		return results, true, err
+	}
+	return results, true, nil
+}
+
 // executeAuthorizedConcurrentSetAddBatch executes a buffered run of exact
 // single-member SADD commands under one durability read lock. Each SET still
 // owns its shard lock and returns its own Redis integer result, preserving
