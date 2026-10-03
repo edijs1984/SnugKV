@@ -158,3 +158,26 @@ func TestReadBufferedNativeMutationLeavesComplexFormBuffered(t *testing.T) {
 		t.Fatalf("fallback command=%q", msg)
 	}
 }
+
+
+func TestReadBufferedSADD(t *testing.T) {
+	raw := "*3\r\n$4\r\nSADD\r\n$3\r\nkey\r\n$6\r\nmember\r\n"
+	reader := bufio.NewReader(strings.NewReader(raw))
+	decoder, err := NewDecoder(reader, DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, member, ok, err := decoder.ReadBufferedSADD(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected buffered SADD")
+	}
+	if string(key) != "key" || string(member) != "member" {
+		t.Fatalf("key=%q member=%q", key, member)
+	}
+	if reader.Buffered() != 0 {
+		t.Fatalf("buffered=%d", reader.Buffered())
+	}
+}
