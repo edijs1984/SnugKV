@@ -50,6 +50,14 @@ func (s *Store) HashFieldExpireAtCondition(key string, fields [][]byte, whenMS i
 		return nil, hashWrongType()
 	}
 
+	if e.isHotHash() {
+		var freezeErr error
+		e, freezeErr = s.freezeHotHashAndReloadLocked(sh, key, e)
+		if freezeErr != nil {
+			return nil, freezeErr
+		}
+	}
+
 	pairs, err := decodePackedHash(s.decode(sh, e))
 	if err != nil {
 		return nil, err
@@ -153,6 +161,21 @@ func (s *Store) HashFieldPTTL(key string, fields [][]byte) ([]int64, error) {
 	if e.valueType != TypeHash {
 		return nil, hashWrongType()
 	}
+	if e.isHotHash() {
+		h, _, ok := sh.hotHashForKey(key)
+		if !ok || h == nil {
+			return nil, errors.New("HOT hash sidecar invariant")
+		}
+		out := make([]int64, len(fields))
+		for i, field := range fields {
+			if _, found := h.get(field); found {
+				out[i] = -1
+			} else {
+				out[i] = -2
+			}
+		}
+		return out, nil
+	}
 
 	pairs, err := decodePackedHash(s.decode(sh, e))
 	if err != nil {
@@ -197,6 +220,21 @@ func (s *Store) HashFieldExpireTime(key string, fields [][]byte) ([]int64, error
 	}
 	if e.valueType != TypeHash {
 		return nil, hashWrongType()
+	}
+	if e.isHotHash() {
+		h, _, ok := sh.hotHashForKey(key)
+		if !ok || h == nil {
+			return nil, errors.New("HOT hash sidecar invariant")
+		}
+		out := make([]int64, len(fields))
+		for i, field := range fields {
+			if _, found := h.get(field); found {
+				out[i] = -1
+			} else {
+				out[i] = -2
+			}
+		}
+		return out, nil
 	}
 
 	pairs, err := decodePackedHash(s.decode(sh, e))
@@ -244,6 +282,14 @@ func (s *Store) HashFieldPersist(key string, fields [][]byte) ([]int64, error) {
 	}
 	if e.valueType != TypeHash {
 		return nil, hashWrongType()
+	}
+
+	if e.isHotHash() {
+		var freezeErr error
+		e, freezeErr = s.freezeHotHashAndReloadLocked(sh, key, e)
+		if freezeErr != nil {
+			return nil, freezeErr
+		}
 	}
 
 	pairs, err := decodePackedHash(s.decode(sh, e))
@@ -321,6 +367,14 @@ func (s *Store) HashGetDel(key string, fields [][]byte) ([][]byte, []bool, error
 		return nil, nil, hashWrongType()
 	}
 
+	if e.isHotHash() {
+		var freezeErr error
+		e, freezeErr = s.freezeHotHashAndReloadLocked(sh, key, e)
+		if freezeErr != nil {
+			return nil, freezeErr
+		}
+	}
+
 	pairs, err := decodePackedHash(s.decode(sh, e))
 	if err != nil {
 		return nil, nil, err
@@ -385,6 +439,14 @@ func (s *Store) HashGetEx(key string, fields [][]byte, options HashGetExOptions)
 	}
 	if e.valueType != TypeHash {
 		return nil, nil, hashWrongType()
+	}
+
+	if e.isHotHash() {
+		var freezeErr error
+		e, freezeErr = s.freezeHotHashAndReloadLocked(sh, key, e)
+		if freezeErr != nil {
+			return nil, freezeErr
+		}
 	}
 
 	pairs, err := decodePackedHash(s.decode(sh, e))
