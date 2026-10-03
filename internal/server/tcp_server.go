@@ -1347,6 +1347,20 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			continue
 		}
 
+		if result, handled, fastErr := s.server.executeAuthorizedConcurrentZSetScore(msg); handled {
+			s.server.recordSlowlogForClient(clientSession, msg, time.Since(requestNow))
+			if fastErr != nil {
+				result = errorResponse(fastErr)
+			}
+			if writeProtocol(msg, result) != nil {
+				return
+			}
+			if fastErr == nil {
+				s.trackCommandRead(clientSession, msg)
+			}
+			continue
+		}
+
 		if result, handled, fastErr := s.server.executeAuthorizedConcurrentSet(msg); handled {
 			s.server.recordSlowlogForClient(clientSession, msg, time.Since(requestNow))
 			if fastErr != nil {
