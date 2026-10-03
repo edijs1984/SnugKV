@@ -80,14 +80,25 @@ func TestSetAdaptivePhysicalEncodings(t *testing.T) {
 	}
 	stats, ok, err = s.SetStorageStats("prefix")
 	if err != nil || !ok {
-		t.Fatalf("prefix stats ok=%v err=%v", ok, err)
+		t.Fatalf("prefix hot stats ok=%v err=%v", ok, err)
+	}
+	if stats.Encoding != "indexed" {
+		t.Fatalf("prefix hot stats=%+v", stats)
+	}
+	if !s.CompactIndexedSet("prefix") {
+		t.Fatal("prefix compact returned false")
+	}
+	stats, ok, err = s.SetStorageStats("prefix")
+	if err != nil || !ok {
+		t.Fatalf("prefix compact stats ok=%v err=%v", ok, err)
 	}
 	if stats.Encoding != "prefix" || stats.StoredBytes >= stats.PackedBytes {
-		t.Fatalf("prefix stats=%+v", stats)
+		t.Fatalf("prefix compact stats=%+v", stats)
 	}
 
-	// Fixed-width members with no shared leading byte should remain canonical
-	// packed SS1 because front-coding provides no physical saving.
+	// Fixed-width members with no shared leading byte use the same hot indexed
+	// form during mutation, then freeze back to canonical packed SS1 because
+	// front-coding provides no physical saving.
 	dispersed := [][]byte{
 		append([]byte{0x10}, bytes.Repeat([]byte{1}, 15)...),
 		append([]byte{0x40}, bytes.Repeat([]byte{2}, 15)...),
@@ -99,10 +110,20 @@ func TestSetAdaptivePhysicalEncodings(t *testing.T) {
 	}
 	stats, ok, err = s.SetStorageStats("packed")
 	if err != nil || !ok {
-		t.Fatalf("packed stats ok=%v err=%v", ok, err)
+		t.Fatalf("packed hot stats ok=%v err=%v", ok, err)
+	}
+	if stats.Encoding != "indexed" {
+		t.Fatalf("packed hot stats=%+v", stats)
+	}
+	if !s.CompactIndexedSet("packed") {
+		t.Fatal("packed compact returned false")
+	}
+	stats, ok, err = s.SetStorageStats("packed")
+	if err != nil || !ok {
+		t.Fatalf("packed compact stats ok=%v err=%v", ok, err)
 	}
 	if stats.Encoding != "packed" || stats.StoredBytes != stats.PackedBytes {
-		t.Fatalf("packed stats=%+v", stats)
+		t.Fatalf("packed compact stats=%+v", stats)
 	}
 
 	// Export/AOF always sees canonical SS1 regardless of the physical encoding.
