@@ -627,6 +627,28 @@ func (s *Store) SetAddResults(key string, members [][]byte) ([]int64, error) {
 	var physical []byte
 	if exists {
 		physical = sh.encoded(old)
+
+		if isIndexedSet(physical) {
+			results, rebuilt, err := indexedSetAddResults(physical, members)
+			if err != nil {
+				return nil, err
+			}
+			if rebuilt == nil {
+				return results, nil
+			}
+			updated := preparedEntry{
+				entry: entry{entryData: entryData{
+					valueType: TypeSet,
+					rawLength: uint32(len(rebuilt)),
+				}},
+				data: rebuilt,
+				expiresAt: sh.expirationAt(key, old),
+			}
+			if err := s.publish(sh, key, updated); err != nil {
+				return nil, err
+			}
+			return results, nil
+		}
 	}
 
 	pending := make([][]byte, 0, len(members))
