@@ -263,6 +263,95 @@ func packedSetContains(data, target []byte) (bool, error) {
 	return false, nil
 }
 
+func tinyFixedSetAddOne(data, target []byte) (updated []byte, added bool, count int, width int, err error) {
+	if len(data) < len(tinySetHeader) || !bytes.Equal(data[:len(tinySetHeader)], tinySetHeader[:]) {
+		return nil, false, 0, 0, errors.New("invalid tiny set")
+	}
+	offset := len(tinySetHeader)
+	count64, err := readSetUvarint(data, &offset)
+	if err != nil || count64 < 2 || count64 > uint64(maxPackedSetBytes) {
+		return nil, false, 0, 0, errors.New("invalid tiny set")
+	}
+	width64, err := readSetUvarint(data, &offset)
+	if err != nil || width64 > uint64(maxPackedSetBytes) {
+		return nil, false, 0, 0, errors.New("invalid tiny set")
+	}
+	count, width = int(count64), int(width64)
+	if len(target) != width {
+		return nil, false, count, width, nil
+	}
+	if width > len(data)-offset {
+		return nil, false, 0, 0, errors.New("invalid tiny set")
+	}
+
+	// Decode one member at a time into a reusable buffer. We only retain the
+	// insertion neighborhood, so hot SADD avoids constructing [][]byte for the
+	// complete tiny set.
+	current := make([]byte, width)
+	copy(current, data[offset:offset+width])
+	offset += width
+
+	members := make([]byte, 0, (count+1)*width)
+	inserted := false
+	appendMember := func(member []byte) {
+		if !inserted && bytes.Compare(target, member) < 0 {
+			members = append(members, target...)
+			inserted = true
+		}
+		members = append(members, member...)
+	}
+
+	cmp := bytes.Compare(current, target)
+	if cmp == 0 {
+		return nil, false, count, width, nil
+	}
+	appendMember(current)
+
+	for i := 1; i < count; i++ {
+		prefix64, e := readSetUvarint(data, &offset)
+		if e != nil || prefix64 > uint64(width) {
+			return nil, false, 0, 0, errors.New("invalid tiny set")
+		}
+		prefix := int(prefix64)
+		suffixLen := width - prefix
+		if suffixLen > len(data)-offset {
+			return nil, false, 0, 0, errors.New("invalid tiny set")
+		}
+		copy(current[prefix:], data[offset:offset+suffixLen])
+		offset += suffixLen
+
+		cmp = bytes.Compare(current, target)
+		if cmp == 0 {
+			return nil, false, count, width, nil
+		}
+		appendMember(current)
+	}
+	if offset != len(data) {
+		return nil, false, 0, 0, errors.New("invalid tiny set trailing data")
+	}
+	if !inserted {
+		members = append(members, target...)
+	}
+
+	newCount := count + 1
+	out := make([]byte, 0, len(data)+width+binary.MaxVarintLen64)
+	out = append(out, tinySetHeader[:]...)
+	out = appendSetUvarint(out, uint64(newCount))
+	out = appendSetUvarint(out, uint64(width))
+
+	first := members[:width]
+	out = append(out, first...)
+	previous := first
+	for i := 1; i < newCount; i++ {
+		member := members[i*width : (i+1)*width]
+		prefix := commonSetPrefix(previous, member)
+		out = appendSetUvarint(out, uint64(prefix))
+		out = append(out, member[prefix:]...)
+		previous = member
+	}
+	return out, true, newCount, width, nil
+}
+
 func tinyFixedSetContains(data, target []byte) (bool, error) {
 	if len(data) < len(tinySetHeader) || !bytes.Equal(data[:len(tinySetHeader)], tinySetHeader[:]) {
 		return false, errors.New("invalid tiny set")
@@ -405,6 +494,35 @@ func (s *Store) SetAdd(key string, members [][]byte) (int64, error) {
 		}
 		expiresAt = sh.expirationAt(key, old)
 		physical := sh.encoded(old)
+		if len(members) == 1 && bytes.HasPrefix(physical, tinySetHeader[:]) {
+			tiny, added, newCount, width, err := tinyFixedSetAddOne(physical, members[0])
+			if err != nil {
+				return 0, err
+			}
+			if !added {
+				return 0, nil
+			}
+			if newCount < indexedSetPromoteMembers {
+				oldCount := newCount - 1
+				oldCountLen := len(appendSetUvarint(nil, uint64(oldCount)))
+				newCountLen := len(appendSetUvarint(nil, uint64(newCount)))
+				rawLength := int(old.rawLength) + width + 1 + (newCountLen - oldCountLen)
+				updated := preparedEntry{
+					entry: entry{entryData: entryData{
+						valueType: TypeSet,
+						rawLength: uint32(rawLength),
+					}},
+					data: tiny,
+					expiresAt: expiresAt,
+				}
+				if err := s.publish(sh, key, updated); err != nil {
+					return 0, err
+				}
+				return 1, nil
+			}
+			// Promotion at the indexed threshold falls through to the generic
+			// path so the existing canonicalization checks remain authoritative.
+		}
 		if isIndexedSet(physical) {
 			added, rebuilt, err := indexedSetAdd(physical, members)
 			if err != nil {
