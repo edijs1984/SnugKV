@@ -200,7 +200,7 @@ func decodePackedHash(data []byte) ([]HashPair, error) {
 	return pairs, nil
 }
 
-func packedHashLookup(data, target []byte, nowMS int64) ([]byte, bool, error) {
+func packedHashLookupView(data, target []byte, nowMS int64) ([]byte, bool, error) {
 	if isIndexedHash(data) {
 		return indexedHashLookup(data, target)
 	}
@@ -251,7 +251,7 @@ func packedHashLookup(data, target []byte, nowMS int64) ([]byte, bool, error) {
 			if expiresAtMS != 0 && expiresAtMS <= nowMS {
 				return nil, false, nil
 			}
-			return append([]byte(nil), data[offset:valueEnd]...), true, nil
+			return data[offset:valueEnd], true, nil
 		}
 		if cmp > 0 {
 			return nil, false, nil
@@ -261,6 +261,15 @@ func packedHashLookup(data, target []byte, nowMS int64) ([]byte, bool, error) {
 	}
 
 	return nil, false, nil
+}
+
+
+func packedHashLookup(data, target []byte, nowMS int64) ([]byte, bool, error) {
+	value, found, err := packedHashLookupView(data, target, nowMS)
+	if err != nil || !found {
+		return nil, found, err
+	}
+	return append([]byte(nil), value...), true, nil
 }
 
 func (s *Store) hashEntry(pairs []HashPair, packed []byte) preparedEntry {
@@ -517,6 +526,94 @@ func (s *Store) HashGet(key string, field []byte) ([]byte, bool, error) {
 		return indexedHashLookup(physical, field)
 	}
 	return packedHashLookup(s.decode(sh, e), field, s.now().UnixMilli())
+}
+
+// HashGetResult describes one field value copied into a caller-owned batch buffer.
+type HashGetResult struct {
+	Offset uint32
+	Length uint32
+	Found  bool
+}
+
+// HashGetResultsInto copies multiple HGET values for one key into caller-owned
+// storage while holding the shard lock, then lets the caller frame replies
+// after the lock is released. This avoids one heap allocation per returned value.
+func (s *Store) HashGetResultsInto(
+	key string,
+	fields [][]byte,
+	dst []byte,
+	results []HashGetResult,
+) ([]byte, error) {
+	if len(results) < len(fields) {
+		return dst, errors.New("ERR insufficient hash result scratch")
+	}
+	if len(fields) == 0 {
+		return dst, nil
+	}
+
+	sh := s.shardFor(key)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
+
+	e, ok := sh.get(key)
+	if !ok || sh.expired(key, e, s.now()) {
+		for i := range fields {
+			results[i] = HashGetResult{}
+		}
+		return dst, nil
+	}
+	if e.valueType != TypeHash {
+		return dst, hashWrongType()
+	}
+
+	physical := sh.encoded(e)
+	nowMS := s.now().UnixMilli()
+	if isIndexedHash(physical) {
+		_, slots, used, start, err := indexedHashMeta(physical)
+		if err != nil {
+			return dst, err
+		}
+		for i, field := range fields {
+			value, found, lookupErr := indexedHashLookupViewKnown(
+				physical, field, slots, used, start,
+			)
+			if lookupErr != nil {
+				return dst, lookupErr
+			}
+			if !found {
+				results[i] = HashGetResult{}
+				continue
+			}
+			offset := len(dst)
+			dst = append(dst, value...)
+			results[i] = HashGetResult{
+				Offset: uint32(offset),
+				Length: uint32(len(value)),
+				Found:  true,
+			}
+		}
+		return dst, nil
+	}
+
+	decoded := s.decode(sh, e)
+	for i, field := range fields {
+		value, found, lookupErr := packedHashLookupView(decoded, field, nowMS)
+		if lookupErr != nil {
+			return dst, lookupErr
+		}
+		if !found {
+			results[i] = HashGetResult{}
+			continue
+		}
+		offset := len(dst)
+		dst = append(dst, value...)
+		results[i] = HashGetResult{
+			Offset: uint32(offset),
+			Length: uint32(len(value)),
+			Found:  true,
+		}
+	}
+	return dst, nil
 }
 
 // HashGetResults answers multiple HGET field probes for one key under
