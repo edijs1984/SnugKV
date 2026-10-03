@@ -237,3 +237,55 @@ func TestIndexedSetPromotionAddContainsTTLAndPersistence(t *testing.T) {
 		t.Fatalf("restored tail found=%v err=%v", found, err)
 	}
 }
+
+
+func TestSetHotIndexedThenCompact(t *testing.T) {
+	s := New()
+	for i := 0; i < 10; i++ {
+		member := []byte(fmt.Sprintf("member:%02d:abcdefghijkl", i))
+		added, err := s.SetAdd("hot-set", [][]byte{member})
+		if err != nil {
+			t.Fatalf("SADD %d: %v", i, err)
+		}
+		if added != 1 {
+			t.Fatalf("SADD %d added=%d", i, added)
+		}
+	}
+
+	sh := s.shardFor("hot-set")
+	sh.mu.RLock()
+	e, ok := sh.get("hot-set")
+	if !ok {
+		sh.mu.RUnlock()
+		t.Fatal("missing hot set")
+	}
+	if !isIndexedSet(sh.encoded(e)) {
+		sh.mu.RUnlock()
+		t.Fatal("expected hot indexed set")
+	}
+	sh.mu.RUnlock()
+
+	if !s.CompactIndexedSet("hot-set") {
+		t.Fatal("expected compact rewrite")
+	}
+
+	sh.mu.RLock()
+	e, ok = sh.get("hot-set")
+	if !ok {
+		sh.mu.RUnlock()
+		t.Fatal("missing compacted set")
+	}
+	if isIndexedSet(sh.encoded(e)) {
+		sh.mu.RUnlock()
+		t.Fatal("small set should demote from hot indexed form")
+	}
+	sh.mu.RUnlock()
+
+	for i := 0; i < 10; i++ {
+		member := []byte(fmt.Sprintf("member:%02d:abcdefghijkl", i))
+		found, err := s.SetContains("hot-set", member)
+		if err != nil || !found {
+			t.Fatalf("member %d found=%v err=%v", i, found, err)
+		}
+	}
+}
