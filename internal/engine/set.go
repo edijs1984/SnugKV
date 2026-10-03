@@ -629,25 +629,36 @@ func (s *Store) SetAddResults(key string, members [][]byte) ([]int64, error) {
 		physical = sh.encoded(old)
 
 		if isIndexedSet(physical) {
-			results, rebuilt, err := indexedSetAddResults(physical, members)
-			if err != nil {
-				return nil, err
+			count, _, _, _, metaErr := indexedSetMeta(physical)
+			if metaErr != nil {
+				return nil, metaErr
 			}
-			if rebuilt == nil {
+			// Medium sets benefit more from the existing pre-probe/batched
+			// rebuild path, while large sets benefit from combining membership
+			// detection and insertion into one hash probe. Keep the crossover
+			// above the set-medium workload so the two representations can use
+			// their individually faster mutation strategy.
+			if count >= 128 {
+				results, rebuilt, err := indexedSetAddResults(physical, members)
+				if err != nil {
+					return nil, err
+				}
+				if rebuilt == nil {
+					return results, nil
+				}
+				updated := preparedEntry{
+					entry: entry{entryData: entryData{
+						valueType: TypeSet,
+						rawLength: uint32(len(rebuilt)),
+					}},
+					data: rebuilt,
+					expiresAt: sh.expirationAt(key, old),
+				}
+				if err := s.publish(sh, key, updated); err != nil {
+					return nil, err
+				}
 				return results, nil
 			}
-			updated := preparedEntry{
-				entry: entry{entryData: entryData{
-					valueType: TypeSet,
-					rawLength: uint32(len(rebuilt)),
-				}},
-				data: rebuilt,
-				expiresAt: sh.expirationAt(key, old),
-			}
-			if err := s.publish(sh, key, updated); err != nil {
-				return nil, err
-			}
-			return results, nil
 		}
 	}
 
