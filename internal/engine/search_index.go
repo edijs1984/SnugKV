@@ -592,6 +592,18 @@ func (m *searchManager) drop(name string) bool {
 	return false
 }
 
+func (m *searchManager) resetDocuments() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	next := make(map[string]*searchIndex, len(m.indexes))
+	for name, idx := range m.indexes {
+		next[name] = newSearchIndex(idx.def)
+	}
+	m.indexes = next
+	m.pending = make(map[string]*searchPendingBuild)
+}
+
 func (m *searchManager) names() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
