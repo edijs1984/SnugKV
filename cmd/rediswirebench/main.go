@@ -35,7 +35,7 @@ func main() {
 	ops := flag.Int("ops", 1000000, "operations for get/mixed/ttl")
 	workers := flag.Int("workers", runtime.NumCPU(), "concurrent workers")
 	valueBytes := flag.Int("value-bytes", 64, "value bytes")
-	valueShape := flag.String("value-shape", "repetitive", "value shape: random, repetitive, json, session-json, api-json, cache-json, counter, uuid, text, or compressed")
+	valueShape := flag.String("value-shape", "repetitive", "value shape: random, repetitive, json, session-json, api-json, cache-json, counter, uuid, ulid, text, or compressed")
 	pipeline := flag.Int("pipeline", 256, "pipeline depth for load/get")
 	seed := flag.Int64("seed", 1, "deterministic seed")
 	settleMS := flag.Int("settle-ms", 0, "milliseconds to wait after workload before final memory snapshot")
@@ -54,7 +54,7 @@ func main() {
 		fatalf("workload must be load, get, get-seq, mixed, mixed-pipe, or ttl")
 	}
 	switch *valueShape {
-	case "random", "repetitive", "json", "session-json", "api-json", "cache-json", "counter", "uuid", "text", "compressed":
+	case "random", "repetitive", "json", "session-json", "api-json", "cache-json", "counter", "uuid", "ulid", "text", "compressed":
 	default:
 		fatalf("unsupported value-shape %q", *valueShape)
 	}
@@ -66,6 +66,9 @@ func main() {
 	}
 	if *valueShape == "uuid" && *valueBytes != 36 {
 		fatalf("uuid value-shape requires value-bytes=36")
+	}
+	if *valueShape == "ulid" && *valueBytes != 26 {
+		fatalf("ulid value-shape requires value-bytes=26")
 	}
 	if *valueShape == "compressed" && *valueBytes < 16 {
 		fatalf("compressed value-shape requires value-bytes >= 16")
@@ -538,6 +541,27 @@ func benchmarkValue(shape string, size, keyIndex int, seed int64) []byte {
 			y&0x0000ffffffffffff,
 		))
 
+	case "ulid":
+		// Deterministic canonical ULID. Keep the high 48 bits timestamp-like and
+		// derive the lower 80 bits from seed/keyIndex so every benchmark key gets
+		// a stable unique identifier without involving wall-clock time.
+		var raw [16]byte
+		ts := uint64(0x0196f0a00000) + uint64(keyIndex&0xfffff)
+		raw[0] = byte(ts >> 40)
+		raw[1] = byte(ts >> 32)
+		raw[2] = byte(ts >> 24)
+		raw[3] = byte(ts >> 16)
+		raw[4] = byte(ts >> 8)
+		raw[5] = byte(ts)
+		x := uint64(seed) ^ uint64(keyIndex+1)*0x9e3779b97f4a7c15
+		y := x ^ 0xd6e8feb86659fd93
+		for i := 0; i < 8; i++ {
+			raw[6+i] = byte(x >> (56 - 8*i))
+		}
+		raw[14] = byte(y >> 56)
+		raw[15] = byte(y >> 48)
+		return benchmarkULID(raw)
+
 	case "text":
 		prefix := []byte(fmt.Sprintf("user %d cached response: ", keyIndex))
 		v := make([]byte, 0, size)
@@ -577,6 +601,28 @@ func benchmarkValue(shape string, size, keyIndex int, seed int64) []byte {
 		return v
 	}
 }
+const benchmarkULIDAlphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+func benchmarkULID(raw [16]byte) []byte {
+	out := make([]byte, 0, 26)
+	var acc uint32
+	bits := 2
+	for _, b := range raw {
+		acc = (acc << 8) | uint32(b)
+		bits += 8
+		for bits >= 5 {
+			bits -= 5
+			out = append(out, benchmarkULIDAlphabet[(acc>>bits)&31])
+			if bits == 0 {
+				acc = 0
+			} else {
+				acc &= (1 << bits) - 1
+			}
+		}
+	}
+	return out
+}
+
 func paddedJSON(size int, prefix, suffix string, salt int) []byte {
 	p := []byte(prefix)
 	s := []byte(suffix)
