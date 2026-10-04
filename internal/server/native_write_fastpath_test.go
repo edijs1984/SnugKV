@@ -456,3 +456,94 @@ func TestConcurrentHashGetBatchPreservesInterleavedOrder(t *testing.T) {
 		t.Fatalf("values=%v want=%v", got, want)
 	}
 }
+
+
+func TestConcurrentListPushRightBatchFastPath(t *testing.T) {
+	s := New(engine.New())
+	keys := [][]byte{[]byte("a"), []byte("a"), []byte("b")}
+	values := [][]byte{[]byte("x"), []byte("y"), []byte("z")}
+
+	results, handled, err := s.executeAuthorizedConcurrentListPushRightBatch(keys, values)
+	if err != nil {
+		t.Fatalf("batch error: %v", err)
+	}
+	if !handled {
+		t.Fatal("RPUSH batch fast path did not handle commands")
+	}
+	if want := []int64{1, 2, 1}; !reflect.DeepEqual(results, want) {
+		t.Fatalf("results=%v want=%v", results, want)
+	}
+
+	got, err := s.store.ListRange("a", 0, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := [][]byte{[]byte("x"), []byte("y")}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("list a=%q want=%q", got, want)
+	}
+}
+
+func TestConcurrentListIndexFastPaths(t *testing.T) {
+	s := New(engine.New())
+	if _, err := s.store.ListPushRight("a", [][]byte{[]byte("x"), []byte("y")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.store.ListPushRight("b", [][]byte{[]byte("z")}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, handled, err := s.executeAuthorizedConcurrentListIndex(
+		[][]byte{[]byte("LINDEX"), []byte("a"), []byte("1")},
+	)
+	if err != nil || !handled {
+		t.Fatalf("single handled=%v err=%v", handled, err)
+	}
+	if string(got) != "$1\r\ny\r\n" {
+		t.Fatalf("single reply=%q", got)
+	}
+
+	results, handled, err := s.executeAuthorizedConcurrentListIndexBatch(
+		[][]byte{[]byte("a"), []byte("a"), []byte("b")},
+		[]int64{0, 9, 0},
+	)
+	if err != nil || !handled {
+		t.Fatalf("batch handled=%v err=%v", handled, err)
+	}
+	found := []bool{results[0].Found, results[1].Found, results[2].Found}
+	if want := []bool{true, false, true}; !reflect.DeepEqual(found, want) {
+		t.Fatalf("found=%v want=%v", found, want)
+	}
+	if string(results[0].Value) != "x" || string(results[2].Value) != "z" {
+		t.Fatalf("values=%q,%q", results[0].Value, results[2].Value)
+	}
+}
+
+func TestConcurrentZSetAddAndScoreBatchFastPaths(t *testing.T) {
+	s := New(engine.New())
+	keys := [][]byte{[]byte("a"), []byte("a"), []byte("b")}
+	scores := [][]byte{[]byte("1"), []byte("2"), []byte("7")}
+	members := [][]byte{[]byte("x"), []byte("y"), []byte("z")}
+
+	added, handled, err := s.executeAuthorizedConcurrentZSetAddBatch(keys, scores, members)
+	if err != nil || !handled {
+		t.Fatalf("ZADD batch handled=%v err=%v", handled, err)
+	}
+	if want := []int64{1, 1, 1}; !reflect.DeepEqual(added, want) {
+		t.Fatalf("added=%v want=%v", added, want)
+	}
+
+	results, handled, err := s.executeAuthorizedConcurrentZSetScoreBatch(
+		[][]byte{[]byte("a"), []byte("a"), []byte("b"), []byte("a")},
+		[][]byte{[]byte("x"), []byte("missing"), []byte("z"), []byte("y")},
+	)
+	if err != nil || !handled {
+		t.Fatalf("ZSCORE batch handled=%v err=%v", handled, err)
+	}
+	found := []bool{results[0].Found, results[1].Found, results[2].Found, results[3].Found}
+	if want := []bool{true, false, true, true}; !reflect.DeepEqual(found, want) {
+		t.Fatalf("found=%v want=%v", found, want)
+	}
+	if results[0].Score != 1 || results[2].Score != 7 || results[3].Score != 2 {
+		t.Fatalf("scores=%+v", results)
+	}
+}
