@@ -13,6 +13,50 @@ func zitem(score float64, member string) ZSetItem {
 	return ZSetItem{Score: score, Member: []byte(member)}
 }
 
+
+func TestIndexedZSetIncrRankAndSmallRange(t *testing.T) {
+	s := New()
+	for i := 0; i < 200; i++ {
+		member := []byte(fmt.Sprintf("user:%03d", i))
+		if _, _, _, err := s.ZSetAdd(
+			"leaderboard",
+			[]ZSetItem{{Member: member, Score: float64(i)}},
+			ZSetAddOptions{},
+		); err != nil {
+			t.Fatalf("seed %d: %v", i, err)
+		}
+	}
+
+	if _, applied, score, err := s.ZSetAdd(
+		"leaderboard",
+		[]ZSetItem{{Member: []byte("user:010"), Score: 500}},
+		ZSetAddOptions{INCR: true},
+	); err != nil || !applied || score != 510 {
+		t.Fatalf("incr applied=%v score=%v err=%v", applied, score, err)
+	}
+
+	rank, found, err := s.ZSetRank("leaderboard", []byte("user:010"), true)
+	if err != nil || !found || rank != 0 {
+		t.Fatalf("rank=%d found=%v err=%v", rank, found, err)
+	}
+
+	items, err := s.ZSetRange("leaderboard", 0, 9, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 10 {
+		t.Fatalf("len=%d", len(items))
+	}
+	if string(items[0].Member) != "user:010" || items[0].Score != 510 {
+		t.Fatalf("top=%q score=%v", items[0].Member, items[0].Score)
+	}
+	for i := 1; i < len(items); i++ {
+		if zsetLess(items[i-1], items[i]) {
+			t.Fatalf("reverse range out of order at %d: %+v < %+v", i, items[i-1], items[i])
+		}
+	}
+}
+
 func TestZSetCoreOrderingAndLookup(t *testing.T) {
 	s := New()
 	added, _, _, err := s.ZSetAdd("z", []ZSetItem{

@@ -576,6 +576,33 @@ func (s *Store) ZSetAdd(key string, pairs []ZSetItem, options ZSetAddOptions) (c
 			}
 			return added, false, 0, nil
 		}
+		if isIndexedZSet(physical) && options == (ZSetAddOptions{INCR: true}) && len(pairs) == 1 {
+			added, score, rebuilt, err := indexedZSetIncrBy(physical, pairs[0].Member, pairs[0].Score)
+			if err != nil {
+				return 0, false, 0, err
+			}
+			if rebuilt == nil {
+				if added {
+					return 1, true, score, nil
+				}
+				return 0, true, score, nil
+			}
+			updated := preparedEntry{
+				entry: entry{entryData: entryData{
+					valueType: TypeZSet,
+					rawLength: uint32(len(rebuilt)),
+				}},
+				data: rebuilt,
+				expiresAt: expiresAt,
+			}
+			if err := s.publish(sh, key, updated); err != nil {
+				return 0, false, 0, err
+			}
+			if added {
+				return 1, true, score, nil
+			}
+			return 0, true, score, nil
+		}
 		items, err = s.zsetItemsFromEntry(sh, old)
 		if err != nil {
 			return 0, false, 0, err
@@ -763,6 +790,10 @@ func (s *Store) ZSetRank(key string, member []byte, reverse bool) (int64, bool, 
 	if e.valueType != TypeZSet {
 		return 0, false, zsetWrongType()
 	}
+	physical := sh.encoded(e)
+	if isIndexedZSet(physical) {
+		return indexedZSetRank(physical, member, reverse)
+	}
 	items, err := s.zsetItemsFromEntry(sh, e)
 	if err != nil {
 		return 0, false, err
@@ -807,6 +838,14 @@ func (s *Store) ZSetRange(key string, start, stop int64, reverse bool) ([]ZSetIt
 	}
 	if e.valueType != TypeZSet {
 		return nil, zsetWrongType()
+	}
+	physical := sh.encoded(e)
+	if isIndexedZSet(physical) {
+		if out, handled, err := indexedZSetSmallRange(physical, start, stop, reverse); err != nil {
+			return nil, err
+		} else if handled {
+			return out, nil
+		}
 	}
 	items, err := s.zsetItemsFromEntry(sh, e)
 	if err != nil {
