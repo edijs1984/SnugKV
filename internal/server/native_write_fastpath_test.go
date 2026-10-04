@@ -41,7 +41,7 @@ func TestConcurrentScalarCommandIncludesSimpleNativeWrites(t *testing.T) {
 		want bool
 	}{
 		{"hset-simple", [][]byte{[]byte("HSET"), []byte("h"), []byte("f"), []byte("v")}, true},
-		{"rpush-simple", [][]byte{[]byte("RPUSH"), []byte("l"), []byte("v")}, false},
+		{"rpush-simple", [][]byte{[]byte("RPUSH"), []byte("l"), []byte("v")}, true},
 		{"sadd-simple", [][]byte{[]byte("SADD"), []byte("s"), []byte("m")}, true},
 		{"zadd-simple", [][]byte{[]byte("ZADD"), []byte("z"), []byte("1"), []byte("m")}, false},
 		{"hset-multi", [][]byte{[]byte("HSET"), []byte("h"), []byte("f1"), []byte("v1"), []byte("f2"), []byte("v2")}, false},
