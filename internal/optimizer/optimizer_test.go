@@ -1,6 +1,7 @@
 package optimizer
 
 import (
+	"context"
 	"sync/atomic"
 	"bytes"
 	"snugkv/internal/engine"
@@ -429,5 +430,37 @@ func TestMaintenanceCompactsIndexedZSetWithOptimizerBacklog(t *testing.T) {
 	}
 	if store.CompactIndexedZSet("z") {
 		t.Fatal("optimizer backlog blocked indexed ZSET maintenance compaction")
+	}
+}
+
+
+func TestSampleSkipsNativeZSetKeys(t *testing.T) {
+	store := engine.New()
+	for i := 0; i < 32; i++ {
+		if _, _, _, err := store.ZSetAdd(
+			"z:"+strconv.Itoa(i),
+			[]engine.ZSetItem{{Member: []byte("m"), Score: 1}},
+			engine.ZSetAddOptions{},
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	o := &Optimizer{
+		store:  store,
+		config: Default(),
+		ctx:    ctx,
+		queue:  make(chan string, 64),
+	}
+
+	o.Sample(32)
+
+	if got := o.Stats().Queued; got != 0 {
+		t.Fatalf("native ZSET sampling queued %d ineligible keys, want 0", got)
+	}
+	if got := len(o.queue); got != 0 {
+		t.Fatalf("native ZSET sampling queue depth=%d want=0", got)
 	}
 }
