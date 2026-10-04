@@ -25,6 +25,20 @@ export interface SnugKVClientStats {
   batchedCommands: number;
 }
 
+export interface SetOptions {
+  ex?: number;
+  px?: number;
+}
+
+export interface ZRangeOptions {
+  withScores?: boolean;
+}
+
+export interface ZRangeItem {
+  member: Buffer;
+  score: number;
+}
+
 type CommandArg = RespCommandArg;
 
 interface PendingCommand {
@@ -162,9 +176,36 @@ export class SnugKV {
     });
   }
 
-  async set(key: string | Buffer, value: string | Buffer): Promise<"OK"> {
-    const result = await this.command(["SET", key, value]);
+  async ping(): Promise<string> {
+    const result = await this.command(["PING"]);
+    if (typeof result !== "string") throw new Error("unexpected PING reply");
+    return result;
+  }
+
+  async set(
+    key: string | Buffer,
+    value: string | Buffer,
+    options: SetOptions = {},
+  ): Promise<"OK"> {
+    const args: CommandArg[] = ["SET", key, value];
+    if (options.ex !== undefined && options.px !== undefined) {
+      throw new Error("SET accepts only one of ex or px");
+    }
+    if (options.ex !== undefined) args.push("EX", options.ex);
+    if (options.px !== undefined) args.push("PX", options.px);
+
+    const result = await this.command(args);
     if (result !== "OK") throw new Error(`unexpected SET reply: ${String(result)}`);
+    return "OK";
+  }
+
+  async setEx(
+    key: string | Buffer,
+    seconds: number,
+    value: string | Buffer,
+  ): Promise<"OK"> {
+    const result = await this.command(["SETEX", key, seconds, value]);
+    if (result !== "OK") throw new Error(`unexpected SETEX reply: ${String(result)}`);
     return "OK";
   }
 
@@ -176,14 +217,154 @@ export class SnugKV {
 
   async del(...keys: (string | Buffer)[]): Promise<number> {
     const result = await this.command(["DEL", ...keys]);
-    if (typeof result !== "number") throw new Error("unexpected DEL reply");
-    return result;
+    return this.expectInteger(result, "DEL");
   }
 
   async exists(...keys: (string | Buffer)[]): Promise<number> {
     const result = await this.command(["EXISTS", ...keys]);
-    if (typeof result !== "number") throw new Error("unexpected EXISTS reply");
-    return result;
+    return this.expectInteger(result, "EXISTS");
+  }
+
+  async expire(key: string | Buffer, seconds: number): Promise<number> {
+    const result = await this.command(["EXPIRE", key, seconds]);
+    return this.expectInteger(result, "EXPIRE");
+  }
+
+  async incr(key: string | Buffer): Promise<number> {
+    const result = await this.command(["INCR", key]);
+    return this.expectInteger(result, "INCR");
+  }
+
+  async incrBy(key: string | Buffer, delta: number): Promise<number> {
+    const result = await this.command(["INCRBY", key, delta]);
+    return this.expectInteger(result, "INCRBY");
+  }
+
+  async hSet(
+    key: string | Buffer,
+    field: string | Buffer,
+    value: string | Buffer,
+  ): Promise<number> {
+    const result = await this.command(["HSET", key, field, value]);
+    return this.expectInteger(result, "HSET");
+  }
+
+  async hGetAll(key: string | Buffer): Promise<Record<string, Buffer>> {
+    const result = await this.command(["HGETALL", key]);
+    if (!Array.isArray(result) || result.length % 2 !== 0) {
+      throw new Error("unexpected HGETALL reply");
+    }
+    const out: Record<string, Buffer> = {};
+    for (let i = 0; i < result.length; i += 2) {
+      const field = result[i];
+      const value = result[i + 1];
+      if (!Buffer.isBuffer(field) || !Buffer.isBuffer(value)) {
+        throw new Error("unexpected HGETALL reply");
+      }
+      out[field.toString()] = value;
+    }
+    return out;
+  }
+
+  async lPush(key: string | Buffer, ...values: (string | Buffer)[]): Promise<number> {
+    const result = await this.command(["LPUSH", key, ...values]);
+    return this.expectInteger(result, "LPUSH");
+  }
+
+  async lTrim(key: string | Buffer, start: number, stop: number): Promise<"OK"> {
+    const result = await this.command(["LTRIM", key, start, stop]);
+    if (result !== "OK") throw new Error(`unexpected LTRIM reply: ${String(result)}`);
+    return "OK";
+  }
+
+  async lRange(key: string | Buffer, start: number, stop: number): Promise<Buffer[]> {
+    const result = await this.command(["LRANGE", key, start, stop]);
+    return this.expectBufferArray(result, "LRANGE");
+  }
+
+  async sAdd(key: string | Buffer, ...members: (string | Buffer)[]): Promise<number> {
+    const result = await this.command(["SADD", key, ...members]);
+    return this.expectInteger(result, "SADD");
+  }
+
+  async sMembers(key: string | Buffer): Promise<Buffer[]> {
+    const result = await this.command(["SMEMBERS", key]);
+    return this.expectBufferArray(result, "SMEMBERS");
+  }
+
+  async zIncrBy(
+    key: string | Buffer,
+    increment: number,
+    member: string | Buffer,
+  ): Promise<number> {
+    const result = await this.command(["ZINCRBY", key, increment, member]);
+    return this.expectNumericBulk(result, "ZINCRBY");
+  }
+
+  async zRevRank(
+    key: string | Buffer,
+    member: string | Buffer,
+  ): Promise<number | null> {
+    const result = await this.command(["ZREVRANK", key, member]);
+    if (result === null) return null;
+    return this.expectInteger(result, "ZREVRANK");
+  }
+
+  async zRevRange(
+    key: string | Buffer,
+    start: number,
+    stop: number,
+    options: ZRangeOptions & { withScores: true },
+  ): Promise<ZRangeItem[]>;
+  async zRevRange(
+    key: string | Buffer,
+    start: number,
+    stop: number,
+    options?: ZRangeOptions,
+  ): Promise<Buffer[]>;
+  async zRevRange(
+    key: string | Buffer,
+    start: number,
+    stop: number,
+    options: ZRangeOptions = {},
+  ): Promise<Buffer[] | ZRangeItem[]> {
+    const args: CommandArg[] = ["ZREVRANGE", key, start, stop];
+    if (options.withScores) args.push("WITHSCORES");
+    const result = await this.command(args);
+    const values = this.expectBufferArray(result, "ZREVRANGE");
+    if (!options.withScores) return values;
+    if (values.length % 2 !== 0) throw new Error("unexpected ZREVRANGE WITHSCORES reply");
+
+    const out: ZRangeItem[] = [];
+    for (let i = 0; i < values.length; i += 2) {
+      const score = Number(values[i + 1].toString());
+      if (!Number.isFinite(score)) throw new Error("unexpected ZREVRANGE score");
+      out.push({ member: values[i], score });
+    }
+    return out;
+  }
+
+  async flushDb(): Promise<"OK"> {
+    const result = await this.command(["FLUSHDB"]);
+    if (result !== "OK") throw new Error(`unexpected FLUSHDB reply: ${String(result)}`);
+    return "OK";
+  }
+
+  async dbSize(): Promise<number> {
+    const result = await this.command(["DBSIZE"]);
+    return this.expectInteger(result, "DBSIZE");
+  }
+
+  async info(section?: string): Promise<string> {
+    const result = await this.command(section ? ["INFO", section] : ["INFO"]);
+    if (!Buffer.isBuffer(result)) throw new Error("unexpected INFO reply");
+    return result.toString();
+  }
+
+  async snugStats(): Promise<string> {
+    const result = await this.command(["SNUG.STATS"]);
+    if (!Buffer.isBuffer(result)) throw new Error("unexpected SNUG.STATS reply");
+    return result.toString();
   }
 
   async pipeline(commands: readonly (readonly CommandArg[])[]): Promise<RespValue[]> {
@@ -223,6 +404,29 @@ export class SnugKV {
       this.batchedCommandCount += batch.length;
     }
     this.socket.write(encodeCommands(batch.map((pending) => pending.args)));
+  }
+
+  private expectInteger(result: RespValue, command: string): number {
+    if (typeof result !== "number") {
+      throw new Error(`unexpected ${command} reply`);
+    }
+    return result;
+  }
+
+  private expectBufferArray(result: RespValue, command: string): Buffer[] {
+    if (!Array.isArray(result) || result.some((item) => !Buffer.isBuffer(item))) {
+      throw new Error(`unexpected ${command} reply`);
+    }
+    return result as Buffer[];
+  }
+
+  private expectNumericBulk(result: RespValue, command: string): number {
+    if (!Buffer.isBuffer(result) && typeof result !== "string") {
+      throw new Error(`unexpected ${command} reply`);
+    }
+    const value = Number(Buffer.isBuffer(result) ? result.toString() : result);
+    if (!Number.isFinite(value)) throw new Error(`unexpected ${command} numeric reply`);
+    return value;
   }
 
   private onData(chunk: Buffer): void {
