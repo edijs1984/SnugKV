@@ -227,23 +227,16 @@ func (o *Optimizer) maintenanceStep() {
 	quiet := o.foregroundQuietFor(2 * time.Second)
 
 	// Native ZSETs use aggressive payload headroom while growing. Once the
-	// foreground optimizer queue is empty, compact a bounded deterministic
-	// sample window and immediately reclaim the dead arena blocks created by
-	// those replacements. SampleKeys advances the store cursor, so repeated
-	// maintenance ticks cover the dataset instead of repeatedly relying on
-	// random hits (which made medium ZSET convergence take minutes).
+	// foreground optimizer queue is empty, deterministically compact native
+	// indexed ZSETs and immediately reclaim the dead arena blocks created by
+	// those replacements. A bounded sweep avoids the long probabilistic tail
+	// caused by sampling medium-cardinality datasets.
 	if len(o.queue) == 0 && quiet {
 		limit := int(o.store.PhysicalKeyCount())
 		if limit > 16384 {
 			limit = 16384
 		}
-		zsetCompacted := 0
-		for _, key := range o.store.SampleMaintenanceKeys(limit) {
-			if o.store.CompactIndexedZSet(key) {
-				zsetCompacted++
-			}
-		}
-		if zsetCompacted > 0 {
+		if o.store.CompactIndexedZSets(limit) > 0 {
 			if o.store.Compact(uint64(o.config.MaxScratchBytes)) > 0 {
 				debug.FreeOSMemory()
 			}
