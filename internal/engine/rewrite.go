@@ -611,10 +611,8 @@ func (s *Store) Rewrite(candidate Candidate, record codec.Record) bool {
 	return s.publish(sh, candidate.Key, prepared) == nil
 }
 
-// SampleKeys takes bounded samples from rotating shards; Go map iteration avoids
-// retaining an unbounded list of all keys for background work.
-func (s *Store) SampleKeys(limit int) []string {
-	if limit <= 0 {
+func (s *Store) sampleKeys(limit, perShard int) []string {
+	if limit <= 0 || perShard <= 0 {
 		return nil
 	}
 	out := make([]string, 0, limit)
@@ -622,15 +620,32 @@ func (s *Store) SampleKeys(limit int) []string {
 	for n := 0; n < len(s.shards) && len(out) < limit; n++ {
 		sh := &s.shards[(start+n)%len(s.shards)]
 		sh.mu.Lock()
-		n := limit - len(out)
-		if n > 16 {
-			n = 16
+		want := limit - len(out)
+		if want > perShard {
+			want = perShard
 		}
-		keys, next := sh.data.Sample(sh.sampleOffset, 64, n)
+		scan := perShard
+		if scan < 64 {
+			scan = 64
+		}
+		keys, next := sh.data.Sample(sh.sampleOffset, scan, want)
 		sh.sampleOffset = next
 		out = append(out, keys...)
 		sh.mu.Unlock()
-
 	}
 	return out
+}
+
+// SampleKeys takes bounded samples from rotating shards; Go map iteration avoids
+// retaining an unbounded list of all keys for background optimizer work.
+func (s *Store) SampleKeys(limit int) []string {
+	return s.sampleKeys(limit, 16)
+}
+
+// SampleMaintenanceKeys uses a wider per-shard window for quiet maintenance.
+// Unlike optimizer recovery sampling, maintenance is allowed to inspect the
+// whole index scan window so native-container cleanup does not take many
+// 10-second ticks merely because each shard contains more than 16 keys.
+func (s *Store) SampleMaintenanceKeys(limit int) []string {
+	return s.sampleKeys(limit, 64)
 }
