@@ -13,13 +13,29 @@ func (s *Server) noteReplicaAOFOffset(offset int64) {
 	if !ok {
 		return
 	}
-	appended, _, _ := journal.DurabilitySnapshot()
+	appended, synced, _ := journal.DurabilitySnapshot()
 	if appended == 0 {
 		return
 	}
 
 	s.replicaDurabilityMu.Lock()
 	defer s.replicaDurabilityMu.Unlock()
+
+	// With appendfsync=always, Append does not return until the accepted
+	// sequence has crossed fsync. Publish that durability immediately instead
+	// of waiting for a later ACK-time sweep. This also covers any other policy
+	// state where the current append sequence is already known synced.
+	//
+	// The comparison is conservative: if another append advanced appended past
+	// this replica frame but has not synced yet, we queue the point below rather
+	// than claiming durability early.
+	if synced >= appended {
+		if !s.replicaDurabilityKnown || offset > s.replicaDurabilityFsynced {
+			s.replicaDurabilityFsynced = offset
+			s.replicaDurabilityKnown = true
+		}
+		return
+	}
 
 	n := len(s.replicaDurabilityPoints)
 	if n > 0 && s.replicaDurabilityPoints[n-1].sequence == appended {
