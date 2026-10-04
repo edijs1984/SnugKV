@@ -205,6 +205,148 @@ func decodeIndexedZSet(data []byte) ([]ZSetItem,error) {
 	return items,nil
 }
 
+
+func indexedZSetIncrBy(data, member []byte, increment float64) (added bool, score float64, rebuilt []byte, err error) {
+	count, slots, used, start, err := indexedZSetMeta(data)
+	if err != nil {
+		return false, 0, nil, err
+	}
+	slot, _, found, current, err := indexedZSetFindKnown(data, member, slots, used, start)
+	if err != nil {
+		return false, 0, nil, err
+	}
+	score = normalizeZSetScore(increment)
+	if found {
+		score = normalizeZSetScore(current + increment)
+		if math.IsNaN(score) {
+			return false, 0, nil, errors.New("ERR resulting score is not a number (NaN)")
+		}
+	}
+	rec := indexedZSetRecordBytes(member, score)
+	needRehash := !found && (count+1)*5 >= slots*4
+	if needRehash || start+used+len(rec) > len(data) {
+		items, e := decodeIndexedZSet(data)
+		if e != nil {
+			return false, 0, nil, e
+		}
+		idx := zsetFindMember(items, member)
+		if idx >= 0 {
+			items[idx].Score = score
+		} else {
+			items = append(items, ZSetItem{Member: append([]byte(nil), member...), Score: score})
+			added = true
+		}
+		rebuilt, e = encodeIndexedZSet(items)
+		return added, score, rebuilt, e
+	}
+
+	copy(data[start+used:], rec)
+	binary.LittleEndian.PutUint32(
+		data[indexedZSetFixed+slot*4:indexedZSetFixed+slot*4+4],
+		uint32(used+1),
+	)
+	used += len(rec)
+	if !found {
+		count++
+		added = true
+		binary.LittleEndian.PutUint32(data[3:7], uint32(count))
+	}
+	binary.LittleEndian.PutUint32(data[11:15], uint32(used))
+	return added, score, nil, nil
+}
+
+func indexedZSetRank(data, target []byte, reverse bool) (int64, bool, error) {
+	count, slots, used, start, err := indexedZSetMeta(data)
+	if err != nil {
+		return 0, false, err
+	}
+	_, _, found, targetScore, err := indexedZSetFindKnown(data, target, slots, used, start)
+	if err != nil || !found {
+		return 0, found, err
+	}
+	targetItem := ZSetItem{Member: target, Score: targetScore}
+	rank := int64(0)
+	seen := 0
+	for slot := 0; slot < slots; slot++ {
+		raw := binary.LittleEndian.Uint32(data[indexedZSetFixed+slot*4 : indexedZSetFixed+slot*4+4])
+		if raw == 0 {
+			continue
+		}
+		member, score, _, e := indexedZSetRecordKnown(data, int(raw-1), used, start)
+		if e != nil {
+			return 0, false, e
+		}
+		seen++
+		item := ZSetItem{Member: member, Score: score}
+		if reverse {
+			if zsetLess(targetItem, item) {
+				rank++
+			}
+		} else if zsetLess(item, targetItem) {
+			rank++
+		}
+	}
+	if seen != count {
+		return 0, false, errors.New("invalid indexed zset count")
+	}
+	return rank, true, nil
+}
+
+func indexedZSetSmallRange(data []byte, startRank, stopRank int64, reverse bool) ([]ZSetItem, bool, error) {
+	count, slots, used, start, err := indexedZSetMeta(data)
+	if err != nil {
+		return nil, false, err
+	}
+	startIndex, stopIndex, ok := normalizeZSetRange(count, startRank, stopRank)
+	if !ok {
+		return nil, true, nil
+	}
+	// This path is deliberately bounded for leaderboard/top-N traffic. Larger
+	// ranges continue through the generic decode+sort implementation.
+	if stopIndex >= 64 {
+		return nil, false, nil
+	}
+	limit := stopIndex + 1
+	best := make([]ZSetItem, 0, limit)
+	seen := 0
+	for slot := 0; slot < slots; slot++ {
+		raw := binary.LittleEndian.Uint32(data[indexedZSetFixed+slot*4 : indexedZSetFixed+slot*4+4])
+		if raw == 0 {
+			continue
+		}
+		member, score, _, e := indexedZSetRecordKnown(data, int(raw-1), used, start)
+		if e != nil {
+			return nil, false, e
+		}
+		seen++
+		item := ZSetItem{Member: member, Score: score}
+		pos := len(best)
+		for i := 0; i < len(best); i++ {
+			less := zsetLess(item, best[i])
+			if reverse {
+				less = zsetLess(best[i], item)
+			}
+			if less {
+				pos = i
+				break
+			}
+		}
+		if pos >= limit {
+			continue
+		}
+		if len(best) < limit {
+			best = append(best, ZSetItem{})
+		}
+		copy(best[pos+1:], best[pos:len(best)-1])
+		best[pos] = ZSetItem{Member: append([]byte(nil), member...), Score: score}
+	}
+	if seen != count {
+		return nil, false, errors.New("invalid indexed zset count")
+	}
+	out := append([]ZSetItem(nil), best[startIndex:stopIndex+1]...)
+	return out, true, nil
+}
+
 func indexedZSetScore(data,target []byte)(float64,bool,error) {
 	_,_,found,score,err := indexedZSetFind(data,target)
 	return score,found,err
