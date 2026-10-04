@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"strconv"
 	"fmt"
 	"encoding/binary"
 	"math"
@@ -362,5 +363,30 @@ func TestCompactIndexedZSetReducesGrowthSlack(t *testing.T) {
 		if err != nil || !found || score != float64(i) {
 			t.Fatalf("member=%q score=%v found=%v err=%v", member, score, found, err)
 		}
+	}
+}
+
+
+func TestCompactIndexedZSetsSweepsDataset(t *testing.T) {
+	s := New()
+	for key := 0; key < 32; key++ {
+		name := "z:" + strconv.Itoa(key)
+		for member := 0; member < 96; member++ {
+			if _, _, _, err := s.ZSetAdd(
+				name,
+				[]ZSetItem{{Member: []byte("m:" + strconv.Itoa(member)), Score: float64(member)}},
+				ZSetAddOptions{},
+			); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	compacted := s.CompactIndexedZSets(64)
+	if compacted != 32 {
+		t.Fatalf("compacted=%d want=32", compacted)
+	}
+	if again := s.CompactIndexedZSets(64); again != 0 {
+		t.Fatalf("second sweep compacted=%d want=0", again)
 	}
 }
