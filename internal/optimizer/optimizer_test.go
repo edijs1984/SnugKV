@@ -378,3 +378,56 @@ func TestMaintenanceCompactsIndexedZSetWithoutLongTail(t *testing.T) {
 		t.Fatal("maintenance left indexed ZSET growth reserve behind")
 	}
 }
+
+
+func TestMaintenanceCompactsIndexedZSetWithOptimizerBacklog(t *testing.T) {
+	store := engine.New()
+
+	for i := 0; i < 128; i++ {
+		if _, _, _, err := store.ZSetAdd(
+			"z",
+			[]engine.ZSetItem{{
+				Member: []byte("m:" + strconv.Itoa(i)),
+				Score:  float64(i),
+			}},
+			engine.ZSetAddOptions{},
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if !store.CompactIndexedZSet("z") {
+		t.Fatal("expected indexed ZSET to have compactable growth reserve")
+	}
+
+	for i := 128; i < 160; i++ {
+		if _, _, _, err := store.ZSetAdd(
+			"z",
+			[]engine.ZSetItem{{
+				Member: []byte("m:" + strconv.Itoa(i)),
+				Score:  float64(i),
+			}},
+			engine.ZSetAddOptions{},
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	config := Default()
+	o := &Optimizer{
+		store:  store,
+		config: config,
+		queue:  make(chan string, 4),
+	}
+	o.queue <- "pending:1"
+	o.queue <- "pending:2"
+
+	o.maintenanceStep()
+
+	if len(o.queue) == 0 {
+		t.Fatal("test did not preserve optimizer backlog")
+	}
+	if store.CompactIndexedZSet("z") {
+		t.Fatal("optimizer backlog blocked indexed ZSET maintenance compaction")
+	}
+}
