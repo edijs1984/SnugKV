@@ -386,7 +386,7 @@ func TestCanonicalInt64Bytes(t *testing.T) {
 
 func TestRegistryCanonicalIntegerFastPath(t *testing.T) {
 	r := NewRegistry()
-	for _, input := range []string{"0", "1", "-1", "1000000000", "-9223372036854775808"} {
+	for _, input := range []string{"-1", "1000000000", "-9223372036854775808"} {
 		rec := r.Encode([]byte(input))
 		if rec.ID != Integer {
 			t.Fatalf("Encode(%q) codec = %v, want Integer", input, rec.ID)
@@ -397,6 +397,14 @@ func TestRegistryCanonicalIntegerFastPath(t *testing.T) {
 		}
 		if string(out) != input {
 			t.Fatalf("round trip %q = %q", input, out)
+		}
+	}
+
+	// Keep the registry's existing best-representation rule: an integer codec
+	// is selected only when it is physically smaller than the original text.
+	for _, input := range []string{"0", "1"} {
+		if rec := r.Encode([]byte(input)); rec.ID != Raw {
+			t.Fatalf("Encode(%q) codec = %v, want Raw", input, rec.ID)
 		}
 	}
 }
