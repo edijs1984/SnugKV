@@ -534,15 +534,19 @@ func (s *Server) executeAuthorizedConcurrentListPushRightBatch(
 	}
 
 	results = make([]int64, len(keys))
-	for i := range keys {
-		one := [1][]byte{values[i]}
-		result, pushErr := s.store.ListPushRight(string(keys[i]), one[:])
+	for i := 0; i < len(keys); {
+		j := i + 1
+		for j < len(keys) && bytes.Equal(keys[j], keys[i]) {
+			j++
+		}
+		group, pushErr := s.store.ListPushRightResults(string(keys[i]), values[i:j])
 		if pushErr != nil {
 			err = pushErr
 			break
 		}
-		results[i] = result
+		copy(results[i:j], group)
 		s.signalListKey(string(keys[i]))
+		i = j
 	}
 	s.durableMu.RUnlock()
 	atomic.AddUint64(&s.commands, uint64(len(keys)))
@@ -583,15 +587,23 @@ func (s *Server) executeAuthorizedConcurrentZSetAddBatch(
 	}
 
 	results = make([]int64, len(keys))
-	for i := range keys {
-		pair := [1]engine.ZSetItem{{Member: members[i], Score: scores[i]}}
-		result, _, _, addErr := s.store.ZSetAdd(string(keys[i]), pair[:], engine.ZSetAddOptions{})
+	for i := 0; i < len(keys); {
+		j := i + 1
+		for j < len(keys) && bytes.Equal(keys[j], keys[i]) {
+			j++
+		}
+		pairs := make([]engine.ZSetItem, j-i)
+		for k := i; k < j; k++ {
+			pairs[k-i] = engine.ZSetItem{Member: members[k], Score: scores[k]}
+		}
+		group, addErr := s.store.ZSetAddResults(string(keys[i]), pairs)
 		if addErr != nil {
 			err = addErr
 			break
 		}
-		results[i] = result
+		copy(results[i:j], group)
 		s.signalZSetKey(string(keys[i]))
+		i = j
 	}
 	s.durableMu.RUnlock()
 	atomic.AddUint64(&s.commands, uint64(len(keys)))
