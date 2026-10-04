@@ -379,3 +379,25 @@ func TestIncrementalPipelinedHashPromotesOnlyAtLargeThreshold(t *testing.T) {
 		t.Fatalf("hash did not promote HOT at %d fields", hotHashPromoteFields)
 	}
 }
+
+
+func TestHotHashIdleFreezeWindow(t *testing.T) {
+	s := New()
+	now := time.Unix(1700000000, 0)
+	s.now = func() time.Time { return now }
+
+	h := &hotHash{lastMutation: now.UnixMilli()}
+	if s.hotHashIdle(h) {
+		t.Fatal("newly mutated HOT hash should remain active")
+	}
+
+	now = now.Add(hotHashIdleFreeze - time.Millisecond)
+	if s.hotHashIdle(h) {
+		t.Fatal("HOT hash froze before idle window elapsed")
+	}
+
+	now = now.Add(time.Millisecond)
+	if !s.hotHashIdle(h) {
+		t.Fatal("HOT hash did not become idle at freeze window")
+	}
+}
