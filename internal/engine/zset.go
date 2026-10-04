@@ -664,6 +664,159 @@ func (s *Store) ZSetAdd(key string, pairs []ZSetItem, options ZSetAddOptions) (c
 	return added, incremented, incrementScore, nil
 }
 
+
+// ZSetAddResults applies a run of plain single-member ZADD commands for one
+// key under one shard lock and returns one Redis-compatible result per command.
+// Repeated members in the same batch preserve sequential ZADD semantics: only
+// the first insertion of a previously absent member returns 1.
+func (s *Store) ZSetAddResults(key string, pairs []ZSetItem) ([]int64, error) {
+	if len(pairs) == 0 {
+		return nil, errors.New("ERR invalid sorted set member count")
+	}
+	for _, pair := range pairs {
+		if math.IsNaN(pair.Score) {
+			return nil, errors.New("ERR resulting score is not a number (NaN)")
+		}
+	}
+
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	now := s.now()
+	old, exists := sh.get(key)
+	if exists && sh.expired(key, old, now) {
+		s.remove(sh, key)
+		exists = false
+		old = entry{}
+	}
+	if exists && old.valueType != TypeZSet {
+		return nil, zsetWrongType()
+	}
+
+	results := make([]int64, len(pairs))
+	known := make(map[string]struct{}, len(pairs))
+	var expiresAt stamp
+	var physical []byte
+
+	if exists {
+		expiresAt = sh.expirationAt(key, old)
+		physical = sh.encoded(old)
+
+		if isIndexedZSet(physical) {
+			_, slots, used, start, err := indexedZSetMeta(physical)
+			if err != nil {
+				return nil, err
+			}
+			for _, pair := range pairs {
+				name := string(pair.Member)
+				if _, ok := known[name]; ok {
+					continue
+				}
+				_, _, found, _, err := indexedZSetFindKnown(
+					physical, pair.Member, slots, used, start,
+				)
+				if err != nil {
+					return nil, err
+				}
+				if found {
+					known[name] = struct{}{}
+				}
+			}
+		} else {
+			items, err := decodePackedZSet(physical)
+			if err != nil {
+				return nil, err
+			}
+			for _, item := range items {
+				known[string(item.Member)] = struct{}{}
+			}
+		}
+	}
+
+	seen := make(map[string]struct{}, len(pairs))
+	for i, pair := range pairs {
+		name := string(pair.Member)
+		if _, ok := known[name]; !ok {
+			if _, duplicate := seen[name]; !duplicate {
+				results[i] = 1
+			}
+		}
+		seen[name] = struct{}{}
+	}
+
+	if exists && isIndexedZSet(physical) {
+		_, rebuilt, err := indexedZSetAddSimple(physical, pairs)
+		if err != nil {
+			return nil, err
+		}
+		if rebuilt == nil {
+			return results, nil
+		}
+		updated := preparedEntry{
+			entry: entry{entryData: entryData{
+				valueType: TypeZSet,
+				rawLength: uint32(len(rebuilt)),
+			}},
+			data:      rebuilt,
+			expiresAt: expiresAt,
+		}
+		if err := s.publish(sh, key, updated); err != nil {
+			return nil, err
+		}
+		return results, nil
+	}
+
+	byMember := make(map[string]ZSetItem, len(pairs))
+	if exists {
+		items, err := decodePackedZSet(physical)
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range items {
+			byMember[string(item.Member)] = item
+		}
+	}
+	for _, pair := range pairs {
+		byMember[string(pair.Member)] = ZSetItem{
+			Member: append([]byte(nil), pair.Member...),
+			Score:  normalizeZSetScore(pair.Score),
+		}
+	}
+
+	items := make([]ZSetItem, 0, len(byMember))
+	for _, item := range byMember {
+		items = append(items, item)
+	}
+	sort.Slice(items, func(i, j int) bool { return zsetLess(items[i], items[j]) })
+
+	var updated preparedEntry
+	if len(items) >= indexedZSetPromoteMembers {
+		indexed, err := encodeIndexedZSet(items)
+		if err != nil {
+			return nil, err
+		}
+		updated = preparedEntry{
+			entry: entry{entryData: entryData{
+				valueType: TypeZSet,
+				rawLength: uint32(len(indexed)),
+			}},
+			data: indexed,
+		}
+	} else {
+		packed, err := encodePackedZSet(items)
+		if err != nil {
+			return nil, err
+		}
+		updated = zsetPreparedEntry(packed)
+	}
+	updated.expiresAt = expiresAt
+	if err := s.publish(sh, key, updated); err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
 func (s *Store) ZSetRemove(key string, members [][]byte) (int64, error) {
 	sh := s.shardFor(key)
 	sh.mu.Lock()
