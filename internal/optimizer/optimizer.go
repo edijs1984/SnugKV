@@ -165,6 +165,17 @@ func (o *Optimizer) Sample(limit int) {
 	}
 
 	for _, key := range o.store.SampleKeys(limit) {
+		// Recovery sampling is only for values that the generic optimizer can
+		// actually rewrite. Native containers (HASH/LIST/SET/ZSET/etc.) have
+		// dedicated representations and otherwise create large skip-only queue
+		// backlogs that delay arena maintenance.
+		if _, eligible := o.store.OptimizationEligible(
+			key,
+			o.config.MinRewriteInterval,
+			o.config.MinAttemptInterval,
+		); !eligible {
+			continue
+		}
 		if !o.Queue(key) {
 			break
 		}
