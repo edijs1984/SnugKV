@@ -238,7 +238,7 @@ func (o *Optimizer) maintenanceStep() {
 			limit = 16384
 		}
 		zsetCompacted := 0
-		for _, key := range o.store.SampleKeys(limit) {
+		for _, key := range o.store.SampleMaintenanceKeys(limit) {
 			if o.store.CompactIndexedZSet(key) {
 				zsetCompacted++
 			}
