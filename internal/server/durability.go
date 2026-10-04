@@ -1355,6 +1355,10 @@ func (s *Server) executeDurableForSessionCaptureState(
 		if !s.hasWatchSessionsLocked() {
 			result, err := s.executePressure(args)
 			s.durableMu.RUnlock()
+			if err == nil {
+				s.signalListAvailability(args, result)
+				s.signalZSetAvailability(args, result)
+			}
 			return result, err
 		}
 		s.durableMu.RUnlock()
@@ -1567,36 +1571,55 @@ func (s *Server) executeDurableLocked(args [][]byte) ([]byte, error) {
 }
 
 func isConcurrentScalarCommand(args [][]byte) bool {
-	if len(args) == 2 && bytes.EqualFold(args[0], []byte("GET")) {
-		return true
+	if len(args) == 0 {
+		return false
 	}
-	// Native container point reads are shard-read-locked and do not mutate
-	// engine state. Let them share the durability read lock so independent
-	// clients are not serialized behind the global command mutex.
-	if len(args) == 3 &&
-		(bytes.EqualFold(args[0], []byte("HGET")) ||
-			bytes.EqualFold(args[0], []byte("LINDEX")) ||
-			bytes.EqualFold(args[0], []byte("SISMEMBER")) ||
-			bytes.EqualFold(args[0], []byte("ZSCORE"))) {
-		return true
+	cmd := strings.ToUpper(string(args[0]))
+
+	// Single-key reads are protected by the engine shard read lock. They can
+	// safely run under the shared durability lock when AOF, replication and
+	// WATCH are absent (the caller enforces those conditions).
+	switch cmd {
+	case "GET":
+		return len(args) == 2
+	case "HGET", "LINDEX", "SISMEMBER", "ZSCORE", "ZREVRANK":
+		return len(args) == 3
+	case "ZREVRANGE":
+		return len(args) == 4 ||
+			(len(args) == 5 && bytes.EqualFold(args[4], []byte("WITHSCORES")))
 	}
 
-	// Simple single-key native mutations are fully serialized by their shard
-	// locks. With AOF/replication/MULTI/WATCH already excluded by the caller,
-	// they do not need the process-wide exclusive durability lock. Keep the
-	// fast path deliberately narrow: complex option/multi-value forms continue
-	// through the conservative serialized path until separately audited.
-	if len(args) == 4 && bytes.EqualFold(args[0], []byte("HSET")) {
-		return true
-	}
-	if len(args) == 3 && bytes.EqualFold(args[0], []byte("SADD")) {
-		return true
+	// These benchmark-relevant mutations touch exactly one key and their Store
+	// implementations own that key's shard lock. Sharing durableMu avoids
+	// serializing unrelated keys process-wide while MULTI/EXEC still excludes
+	// them through durableMu.Lock.
+	switch cmd {
+	case "SET":
+		if len(args) == 3 {
+			return true
+		}
+		// Audit only the common TTL forms here. Conditional SET (NX/XX), GET,
+		// KEEPTTL and combinations remain on the conservative path.
+		return len(args) == 5 &&
+			(bytes.EqualFold(args[3], []byte("EX")) ||
+				bytes.EqualFold(args[3], []byte("PX")) ||
+				bytes.EqualFold(args[3], []byte("EXAT")) ||
+				bytes.EqualFold(args[3], []byte("PXAT")))
+	case "INCR", "DECR":
+		return len(args) == 2
+	case "INCRBY", "DECRBY", "EXPIRE", "PEXPIRE":
+		return len(args) == 3
+	case "HSET":
+		return len(args) == 4
+	case "SADD", "LPUSH", "RPUSH":
+		return len(args) == 3
+	case "LTRIM":
+		return len(args) == 4
+	case "ZINCRBY":
+		return len(args) == 4
 	}
 
-	// Keep only the plain SET key value form on the concurrent write fast path.
-	// Option parsing can involve TTL/conditional semantics and stays on the
-	// serialized path until separately audited.
-	return len(args) == 3 && bytes.EqualFold(args[0], []byte("SET"))
+	return false
 }
 
 
