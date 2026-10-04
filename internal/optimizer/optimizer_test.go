@@ -1,6 +1,7 @@
 package optimizer
 
 import (
+	"context"
 	"sync/atomic"
 	"bytes"
 	"snugkv/internal/engine"
@@ -323,4 +324,143 @@ func TestForegroundWriteDefersOptimizerDuringBurstThenResumes(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("optimizer did not resume after foreground quiet: %+v", o.Stats())
+}
+
+
+func TestMaintenanceCompactsIndexedZSetWithoutLongTail(t *testing.T) {
+	store := engine.New()
+
+	// Grow a ZSET past the indexed threshold one member at a time so its
+	// physical representation owns append headroom that maintenance can trim.
+	for i := 0; i < 128; i++ {
+		if _, _, _, err := store.ZSetAdd(
+			"z",
+			[]engine.ZSetItem{{
+				Member: []byte("m:" + strconv.Itoa(i)),
+				Score:  float64(i),
+			}},
+			engine.ZSetAddOptions{},
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The first explicit compaction proves there is indexed growth reserve.
+	if !store.CompactIndexedZSet("z") {
+		t.Fatal("expected indexed ZSET to have compactable growth reserve")
+	}
+
+	// Grow it again so the optimizer maintenance path has fresh reserve to trim.
+	for i := 128; i < 160; i++ {
+		if _, _, _, err := store.ZSetAdd(
+			"z",
+			[]engine.ZSetItem{{
+				Member: []byte("m:" + strconv.Itoa(i)),
+				Score:  float64(i),
+			}},
+			engine.ZSetAddOptions{},
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	config := Default()
+	config.Workers = 1
+	o, err := New(store, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer o.Close()
+
+	// Run the maintenance body directly rather than waiting for the 10s ticker.
+	o.maintenanceStep()
+
+	if store.CompactIndexedZSet("z") {
+		t.Fatal("maintenance left indexed ZSET growth reserve behind")
+	}
+}
+
+
+func TestMaintenanceCompactsIndexedZSetWithOptimizerBacklog(t *testing.T) {
+	store := engine.New()
+
+	for i := 0; i < 128; i++ {
+		if _, _, _, err := store.ZSetAdd(
+			"z",
+			[]engine.ZSetItem{{
+				Member: []byte("m:" + strconv.Itoa(i)),
+				Score:  float64(i),
+			}},
+			engine.ZSetAddOptions{},
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if !store.CompactIndexedZSet("z") {
+		t.Fatal("expected indexed ZSET to have compactable growth reserve")
+	}
+
+	for i := 128; i < 160; i++ {
+		if _, _, _, err := store.ZSetAdd(
+			"z",
+			[]engine.ZSetItem{{
+				Member: []byte("m:" + strconv.Itoa(i)),
+				Score:  float64(i),
+			}},
+			engine.ZSetAddOptions{},
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	config := Default()
+	o := &Optimizer{
+		store:  store,
+		config: config,
+		queue:  make(chan string, 4),
+	}
+	o.queue <- "pending:1"
+	o.queue <- "pending:2"
+
+	o.maintenanceStep()
+
+	if len(o.queue) == 0 {
+		t.Fatal("test did not preserve optimizer backlog")
+	}
+	if store.CompactIndexedZSet("z") {
+		t.Fatal("optimizer backlog blocked indexed ZSET maintenance compaction")
+	}
+}
+
+
+func TestSampleSkipsNativeZSetKeys(t *testing.T) {
+	store := engine.New()
+	for i := 0; i < 32; i++ {
+		if _, _, _, err := store.ZSetAdd(
+			"z:"+strconv.Itoa(i),
+			[]engine.ZSetItem{{Member: []byte("m"), Score: 1}},
+			engine.ZSetAddOptions{},
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	o := &Optimizer{
+		store:  store,
+		config: Default(),
+		ctx:    ctx,
+		queue:  make(chan string, 64),
+	}
+
+	o.Sample(32)
+
+	if got := o.Stats().Queued; got != 0 {
+		t.Fatalf("native ZSET sampling queued %d ineligible keys, want 0", got)
+	}
+	if got := len(o.queue); got != 0 {
+		t.Fatalf("native ZSET sampling queue depth=%d want=0", got)
+	}
 }

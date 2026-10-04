@@ -100,6 +100,20 @@ func (r *Registry) Encode(src []byte) Record {
 		}
 	}
 
+	// Canonical INT64 strings are extremely common cache/counter values. Detect
+	// them before cloning the RAW fallback and avoid the generic encode/decode
+	// verification loop: canonicalInt64Bytes performs exact syntax and overflow
+	// validation, and varint encoding is self-contained and deterministic.
+	if len(src) <= 20 {
+		if n, ok := canonicalInt64Bytes(src); ok {
+			var buf [10]byte
+			size := binary.PutVarint(buf[:], n)
+			if size < len(src) {
+				return Record{ID: Integer, RawLength: len(src), Data: bytes.Clone(buf[:size])}
+			}
+		}
+	}
+
 	best := Record{ID: Raw, RawLength: len(src), Data: bytes.Clone(src)}
 
 	// No synchronous scalar codec can represent a canonical value longer
@@ -118,7 +132,7 @@ func (r *Registry) Encode(src []byte) Record {
 	}
 
 	for _, c := range r.order {
-		if c.ID() == Raw || c.ID() == UUID || c.ID() == 5 || c.ID() >= RepeatByte {
+		if c.ID() == Raw || c.ID() == Integer || c.ID() == UUID || c.ID() == 5 || c.ID() >= RepeatByte {
 			continue
 		}
 		data, ok := c.Encode(src)
@@ -235,13 +249,62 @@ func (rawCodec) DecodeInto(src []byte, n int, dst []byte) ([]byte, error) {
 	return dst, nil
 }
 
+func canonicalInt64Bytes(src []byte) (int64, bool) {
+	if len(src) == 0 {
+		return 0, false
+	}
+
+	negative := src[0] == '-'
+	start := 0
+	if negative {
+		if len(src) == 1 {
+			return 0, false
+		}
+		start = 1
+	} else if src[0] == '+' {
+		return 0, false
+	}
+
+	if src[start] == '0' && len(src)-start > 1 {
+		return 0, false
+	}
+
+	limit := uint64(math.MaxInt64)
+	if negative {
+		limit++
+	}
+
+	var magnitude uint64
+	for _, b := range src[start:] {
+		if b < '0' || b > '9' {
+			return 0, false
+		}
+		digit := uint64(b - '0')
+		if magnitude > (limit-digit)/10 {
+			return 0, false
+		}
+		magnitude = magnitude*10 + digit
+	}
+
+	if negative {
+		if magnitude == 0 {
+			return 0, false
+		}
+		if magnitude == uint64(math.MaxInt64)+1 {
+			return math.MinInt64, true
+		}
+		return -int64(magnitude), true
+	}
+	return int64(magnitude), true
+}
+
 type integerCodec struct{}
 
 func (integerCodec) ID() ID       { return Integer }
 func (integerCodec) Name() string { return "integer" }
 func (integerCodec) Encode(src []byte) ([]byte, bool) {
-	n, err := strconv.ParseInt(string(src), 10, 64)
-	if err != nil || strconv.FormatInt(n, 10) != string(src) {
+	n, ok := canonicalInt64Bytes(src)
+	if !ok {
 		return nil, false
 	}
 	var buf [10]byte

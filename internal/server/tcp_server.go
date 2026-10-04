@@ -390,6 +390,16 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 	var sismemberBatchMemberArena []byte
 	var sismemberKeyScratch []byte
 	var sismemberMemberScratch []byte
+	var nativeBatchKeys [][]byte
+	var nativeBatchArg2 [][]byte
+	var nativeBatchArg3 [][]byte
+	var nativeBatchKeyArena []byte
+	var nativeBatchArg2Arena []byte
+	var nativeBatchArg3Arena []byte
+	var listIndexBatchKeys [][]byte
+	var listIndexBatchIndexes []int64
+	var zscoreBatchKeys [][]byte
+	var zscoreBatchMembers [][]byte
 	const maxRetainedGetScratch = 64 << 10
 	const maxRetainedGetKeyScratch = 64 << 10
 	const maxRetainedSetKeyScratch = 64 << 10
@@ -1330,6 +1340,129 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 		}
 
 		if borrowedNativeMutation &&
+			(len(msg) == 3 && bytes.EqualFold(msg[0], []byte("RPUSH")) ||
+				len(msg) == 4 && bytes.EqualFold(msg[0], []byte("ZADD"))) &&
+			!s.adminOnly && !txSession.multi &&
+			!(clientSession.protocolVersion() == 2 && pubSession.active()) &&
+			s.server.journal == nil &&
+			!s.server.replication.primaryHasReplicas() &&
+			atomic.LoadUint32(&s.server.metricsEnabled) == 0 &&
+			s.server.store.MaxMemory() == 0 &&
+			reader.Buffered() > 0 {
+
+			isZSet := len(msg) == 4
+			maxBatch := configuredSetBatchLimit
+			if cap(nativeBatchKeys) < maxBatch {
+				nativeBatchKeys = make([][]byte, 0, maxBatch)
+				nativeBatchArg2 = make([][]byte, 0, maxBatch)
+				nativeBatchArg3 = make([][]byte, 0, maxBatch)
+			} else {
+				nativeBatchKeys = nativeBatchKeys[:0]
+				nativeBatchArg2 = nativeBatchArg2[:0]
+				nativeBatchArg3 = nativeBatchArg3[:0]
+			}
+			nativeBatchKeyArena = nativeBatchKeyArena[:0]
+			nativeBatchArg2Arena = nativeBatchArg2Arena[:0]
+			nativeBatchArg3Arena = nativeBatchArg3Arena[:0]
+			if cap(nativeBatchKeyArena) < 4<<10 { nativeBatchKeyArena = make([]byte, 0, 4<<10) }
+			if cap(nativeBatchArg2Arena) < 32<<10 { nativeBatchArg2Arena = make([]byte, 0, 32<<10) }
+			if cap(nativeBatchArg3Arena) < 32<<10 { nativeBatchArg3Arena = make([]byte, 0, 32<<10) }
+
+			appendOwnedNative := func(key, arg2, arg3 []byte) {
+				start := len(nativeBatchKeyArena)
+				nativeBatchKeyArena = append(nativeBatchKeyArena, key...)
+				nativeBatchKeys = append(nativeBatchKeys, nativeBatchKeyArena[start:len(nativeBatchKeyArena)])
+
+				start = len(nativeBatchArg2Arena)
+				nativeBatchArg2Arena = append(nativeBatchArg2Arena, arg2...)
+				nativeBatchArg2 = append(nativeBatchArg2, nativeBatchArg2Arena[start:len(nativeBatchArg2Arena)])
+
+				if arg3 != nil {
+					start = len(nativeBatchArg3Arena)
+					nativeBatchArg3Arena = append(nativeBatchArg3Arena, arg3...)
+					nativeBatchArg3 = append(nativeBatchArg3, nativeBatchArg3Arena[start:len(nativeBatchArg3Arena)])
+				}
+			}
+			if isZSet {
+				appendOwnedNative(msg[1], msg[2], msg[3])
+			} else {
+				appendOwnedNative(msg[1], msg[2], nil)
+			}
+
+			nextBufferedSameNative := func() bool {
+				prefix := []byte("*3\r\n$5\r\nRPUSH\r\n")
+				if isZSet {
+					prefix = []byte("*4\r\n$4\r\nZADD\r\n")
+				}
+				if reader.Buffered() < len(prefix) { return false }
+				buf, peekErr := reader.Peek(len(prefix))
+				return peekErr == nil && bytes.EqualFold(buf, prefix)
+			}
+
+			var pendingAuthErr error
+			for len(nativeBatchKeys) < maxBatch && nextBufferedSameNative() {
+				cmd, args, argc, ok, nativeErr := decoder.ReadBufferedNativeMutation(&nativeScratch)
+				if nativeErr != nil { return }
+				if !ok || (isZSet && (cmd != "ZADD" || argc != 3)) || (!isZSet && (cmd != "RPUSH" || argc != 2)) {
+					break
+				}
+
+				var nextMsg [][]byte
+				if isZSet {
+					nextMsg = [][]byte{[]byte("ZADD"), args[0], args[1], args[2]}
+				} else {
+					nextMsg = [][]byte{[]byte("RPUSH"), args[0], args[1]}
+				}
+				if authErr := s.server.authorizeConnectionCommand(authSession, nextMsg); authErr != nil {
+					pendingAuthErr = authErr
+					break
+				}
+				clientSession.touch(nextMsg)
+				if isZSet {
+					appendOwnedNative(args[0], args[1], args[2])
+				} else {
+					appendOwnedNative(args[0], args[1], nil)
+				}
+			}
+
+			if len(nativeBatchKeys) > 1 {
+				var results []int64
+				var handled bool
+				var fastErr error
+				if isZSet {
+					results, handled, fastErr = s.server.executeAuthorizedConcurrentZSetAddBatch(
+						nativeBatchKeys, nativeBatchArg2, nativeBatchArg3,
+					)
+				} else {
+					results, handled, fastErr = s.server.executeAuthorizedConcurrentListPushRightBatch(
+						nativeBatchKeys, nativeBatchArg2,
+					)
+				}
+				if handled {
+					if fastErr != nil {
+						if writer.writeBuffered(errorResponse(fastErr)) != nil { return }
+					} else {
+						for i, result := range results {
+							if writer.writeBuffered(integerReply(result)) != nil { return }
+							var command [][]byte
+							if isZSet {
+								command = [][]byte{[]byte("ZADD"), nativeBatchKeys[i], nativeBatchArg2[i], nativeBatchArg3[i]}
+							} else {
+								command = [][]byte{[]byte("RPUSH"), nativeBatchKeys[i], nativeBatchArg2[i]}
+							}
+							s.server.feedMonitor(clientSession, command, nil)
+							s.invalidateTrackingKeys(clientSession, command)
+						}
+					}
+					if pendingAuthErr != nil {
+						if writer.writeBuffered(errorResponse(pendingAuthErr)) != nil { return }
+					}
+					continue
+				}
+			}
+		}
+
+		if borrowedNativeMutation &&
 			len(msg) == 4 &&
 			bytes.EqualFold(msg[0], []byte("HSET")) &&
 			!s.adminOnly && !txSession.multi &&
@@ -1860,6 +1993,128 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 					continue
 				}
 			}
+		}
+
+		if len(msg) == 3 &&
+			bytes.EqualFold(msg[0], []byte("LINDEX")) &&
+			!s.adminOnly && !txSession.multi &&
+			!(clientSession.protocolVersion() == 2 && pubSession.active()) &&
+			!s.server.clusterEnabled &&
+			s.server.journal == nil &&
+			atomic.LoadUint32(&s.server.metricsEnabled) == 0 &&
+			reader.Buffered() > 0 {
+
+			maxBatch := configuredSetBatchLimit
+			listIndexBatchKeys = listIndexBatchKeys[:0]
+			listIndexBatchIndexes = listIndexBatchIndexes[:0]
+			index, parseErr := strconv.ParseInt(string(msg[2]), 10, 64)
+			if parseErr == nil {
+				listIndexBatchKeys = append(listIndexBatchKeys, msg[1])
+				listIndexBatchIndexes = append(listIndexBatchIndexes, index)
+			}
+			var pendingAuthErr error
+			const lindexPrefix = "*3\r\n$6\r\nLINDEX\r\n"
+			for parseErr == nil && len(listIndexBatchKeys) < maxBatch && reader.Buffered() >= len(lindexPrefix) {
+				buf, peekErr := reader.Peek(len(lindexPrefix))
+				if peekErr != nil || !bytes.EqualFold(buf, []byte(lindexPrefix)) { break }
+				nextMsg, readErr := decoder.ReadCommand()
+				if readErr != nil { return }
+				if len(nextMsg) != 3 { break }
+				if authErr := s.server.authorizeConnectionCommand(authSession, nextMsg); authErr != nil {
+					pendingAuthErr = authErr
+					break
+				}
+				nextIndex, nextErr := strconv.ParseInt(string(nextMsg[2]), 10, 64)
+				if nextErr != nil { break }
+				clientSession.touch(nextMsg)
+				listIndexBatchKeys = append(listIndexBatchKeys, nextMsg[1])
+				listIndexBatchIndexes = append(listIndexBatchIndexes, nextIndex)
+			}
+			if len(listIndexBatchKeys) > 1 {
+				results, handled, fastErr := s.server.executeAuthorizedConcurrentListIndexBatch(
+					listIndexBatchKeys, listIndexBatchIndexes,
+				)
+				if handled {
+					if fastErr != nil {
+						if writeProtocol(msg, errorResponse(fastErr)) != nil { return }
+					} else {
+						for i, result := range results {
+							command := [][]byte{[]byte("LINDEX"), listIndexBatchKeys[i], strconv.AppendInt(nil, listIndexBatchIndexes[i], 10)}
+							monitorCommand = command
+							if result.Found {
+								if writeBulkProtocol(result.Value) != nil { return }
+							} else if writeProtocol(command, nullBulk()) != nil { return }
+							s.trackCommandRead(clientSession, command)
+						}
+					}
+					if pendingAuthErr != nil {
+						if writeProtocol([][]byte{[]byte("LINDEX")}, errorResponse(pendingAuthErr)) != nil { return }
+					}
+					continue
+				}
+			}
+		}
+
+		if len(msg) == 3 &&
+			bytes.EqualFold(msg[0], []byte("ZSCORE")) &&
+			!s.adminOnly && !txSession.multi &&
+			!(clientSession.protocolVersion() == 2 && pubSession.active()) &&
+			!s.server.clusterEnabled &&
+			s.server.journal == nil &&
+			atomic.LoadUint32(&s.server.metricsEnabled) == 0 &&
+			reader.Buffered() > 0 {
+
+			maxBatch := configuredSetBatchLimit
+			zscoreBatchKeys = zscoreBatchKeys[:0]
+			zscoreBatchMembers = zscoreBatchMembers[:0]
+			zscoreBatchKeys = append(zscoreBatchKeys, msg[1])
+			zscoreBatchMembers = append(zscoreBatchMembers, msg[2])
+			var pendingAuthErr error
+			const zscorePrefix = "*3\r\n$6\r\nZSCORE\r\n"
+			for len(zscoreBatchKeys) < maxBatch && reader.Buffered() >= len(zscorePrefix) {
+				buf, peekErr := reader.Peek(len(zscorePrefix))
+				if peekErr != nil || !bytes.EqualFold(buf, []byte(zscorePrefix)) { break }
+				nextMsg, readErr := decoder.ReadCommand()
+				if readErr != nil { return }
+				if len(nextMsg) != 3 { break }
+				if authErr := s.server.authorizeConnectionCommand(authSession, nextMsg); authErr != nil {
+					pendingAuthErr = authErr
+					break
+				}
+				clientSession.touch(nextMsg)
+				zscoreBatchKeys = append(zscoreBatchKeys, nextMsg[1])
+				zscoreBatchMembers = append(zscoreBatchMembers, nextMsg[2])
+			}
+			if len(zscoreBatchKeys) > 1 {
+				results, handled, fastErr := s.server.executeAuthorizedConcurrentZSetScoreBatch(
+					zscoreBatchKeys, zscoreBatchMembers,
+				)
+				if handled {
+					if fastErr != nil {
+						if writeProtocol(msg, errorResponse(fastErr)) != nil { return }
+					} else {
+						for i, result := range results {
+							command := [][]byte{[]byte("ZSCORE"), zscoreBatchKeys[i], zscoreBatchMembers[i]}
+							if result.Found {
+								if writeProtocol(command, formatBulkString(formatZSetScore(result.Score))) != nil { return }
+							} else if writeProtocol(command, nullBulk()) != nil { return }
+							s.trackCommandRead(clientSession, command)
+						}
+					}
+					if pendingAuthErr != nil {
+						if writeProtocol([][]byte{[]byte("ZSCORE")}, errorResponse(pendingAuthErr)) != nil { return }
+					}
+					continue
+				}
+			}
+		}
+
+		if result, handled, fastErr := s.server.executeAuthorizedConcurrentListIndex(msg); handled {
+			s.server.recordSlowlogForClient(clientSession, msg, time.Since(requestNow))
+			if fastErr != nil { result = errorResponse(fastErr) }
+			if writeProtocol(msg, result) != nil { return }
+			if fastErr == nil { s.trackCommandRead(clientSession, msg) }
+			continue
 		}
 
 		if result, handled, fastErr := s.server.executeAuthorizedConcurrentSetContains(msg); handled {

@@ -165,6 +165,17 @@ func (o *Optimizer) Sample(limit int) {
 	}
 
 	for _, key := range o.store.SampleKeys(limit) {
+		// Recovery sampling is only for values that the generic optimizer can
+		// actually rewrite. Native containers (HASH/LIST/SET/ZSET/etc.) have
+		// dedicated representations and otherwise create large skip-only queue
+		// backlogs that delay arena maintenance.
+		if _, eligible := o.store.OptimizationEligible(
+			key,
+			o.config.MinRewriteInterval,
+			o.config.MinAttemptInterval,
+		); !eligible {
+			continue
+		}
 		if !o.Queue(key) {
 			break
 		}
@@ -226,13 +237,20 @@ func shouldCompactEntries(capacity, live uint64, queueDepth int) bool {
 func (o *Optimizer) maintenanceStep() {
 	quiet := o.foregroundQuietFor(2 * time.Second)
 
-	// Native ZSETs use aggressive payload headroom while growing. Once the
-	// foreground optimizer queue is empty, opportunistically compact sampled
-	// indexed ZSETs back to their normal reserve before starting generic sample
-	// recovery work.
-	if len(o.queue) == 0 && quiet {
-		for _, key := range o.store.SampleKeys(2048) {
-			o.store.CompactIndexedZSet(key)
+	// Native ZSET cleanup is independent of the generic scalar optimizer queue.
+	// Once foreground writes are quiet, compact indexed ZSET headroom directly
+	// even if scalar optimization work is still draining. Requiring an empty
+	// queue here turns millions of ineligible native-container queue entries into
+	// an artificial convergence delay.
+	if quiet {
+		limit := int(o.store.PhysicalKeyCount())
+		if limit > 16384 {
+			limit = 16384
+		}
+		if o.store.CompactIndexedZSets(limit) > 0 {
+			if o.store.Compact(uint64(o.config.MaxScratchBytes)) > 0 {
+				debug.FreeOSMemory()
+			}
 		}
 	}
 

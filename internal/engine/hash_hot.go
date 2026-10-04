@@ -14,7 +14,7 @@ import (
 const (
 	hotHashMinSlots      = 16
 	hotHashPromoteFields = 256
-	hotHashIdleFreeze    = time.Minute
+	hotHashIdleFreeze    = 6 * time.Second
 )
 
 type hotHashRecord struct {

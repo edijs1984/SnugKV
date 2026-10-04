@@ -833,13 +833,8 @@ func (s *Store) ZSetRange(key string, start, stop int64, reverse bool) ([]ZSetIt
 // CompactIndexedZSet rewrites an indexed ZSET with normal compact payload
 // headroom. It is intended for background maintenance after an aggressive
 // growth phase has completed.
-func (s *Store) CompactIndexedZSet(key string) bool {
-	sh := s.shardFor(key)
-	sh.mu.Lock()
-	defer sh.mu.Unlock()
-
-	e, ok := sh.get(key)
-	if !ok || sh.expired(key, e, s.now()) || e.valueType != TypeZSet {
+func (s *Store) compactIndexedZSetLocked(sh *shard, key string, e entry) bool {
+	if e.valueType != TypeZSet {
 		return false
 	}
 	physical := sh.encoded(e)
@@ -852,10 +847,6 @@ func (s *Store) CompactIndexedZSet(key string) bool {
 		return false
 	}
 
-	// Keep the existing slot table and live records byte-for-byte. Once the
-	// foreground burst is over, append reserve has no value and can keep the
-	// payload in a larger arena allocation class. Trim to exact live bytes;
-	// a later write can rebuild growth headroom on demand.
 	targetLen := dataStart + used
 	if targetLen >= len(physical) {
 		return false
@@ -867,10 +858,56 @@ func (s *Store) CompactIndexedZSet(key string) bool {
 			valueType: TypeZSet,
 			rawLength: e.rawLength,
 		}},
-		data: compact,
+		data:      compact,
 		expiresAt: sh.expirationAt(key, e),
 	}
 	return s.publish(sh, key, updated) == nil
+}
+
+func (s *Store) CompactIndexedZSet(key string) bool {
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	e, ok := sh.get(key)
+	if !ok || sh.expired(key, e, s.now()) {
+		return false
+	}
+	return s.compactIndexedZSetLocked(sh, key, e)
+}
+
+// CompactIndexedZSets performs bounded deterministic native-ZSET cleanup.
+// Quiet maintenance uses this instead of probabilistic key sampling so a
+// known-size workload can converge in a predictable number of passes.
+func (s *Store) CompactIndexedZSets(limit int) int {
+	if limit <= 0 {
+		return 0
+	}
+
+	compacted := 0
+	now := s.now()
+	for i := range s.shards {
+		sh := &s.shards[i]
+		sh.mu.Lock()
+
+		for key, e := range sh.all() {
+			if compacted >= limit {
+				break
+			}
+			if sh.expired(key, e, now) {
+				continue
+			}
+			if s.compactIndexedZSetLocked(sh, key, e) {
+				compacted++
+			}
+		}
+
+		sh.mu.Unlock()
+		if compacted >= limit {
+			break
+		}
+	}
+	return compacted
 }
 
 func (s *Store) ZSetStorageStats(key string) (ZSetStats, bool, error) {
