@@ -197,6 +197,31 @@ func (s *Store) ListPushRight(key string, values [][]byte) (int64, error) {
 	return s.listPush(key, values, false)
 }
 
+
+// ListPushRightResults applies a sequence of single-value RPUSH commands for
+// one key under one shard lock and one physical list mutation. Since RPUSH
+// always appends exactly one element, per-command replies are derived from the
+// final length while preserving Redis sequential results.
+func (s *Store) ListPushRightResults(key string, values [][]byte) ([]int64, error) {
+	if len(values) == 0 {
+		return nil, errors.New("ERR invalid list element count")
+	}
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+
+	finalLength, err := s.listPushLocked(sh, key, values, false)
+	if err != nil {
+		return nil, err
+	}
+	start := finalLength - int64(len(values))
+	results := make([]int64, len(values))
+	for i := range results {
+		results[i] = start + int64(i) + 1
+	}
+	return results, nil
+}
+
 func (s *Store) listPush(key string, values [][]byte, left bool) (int64, error) {
 	if len(values) == 0 {
 		return 0, errors.New("ERR invalid list element count")
@@ -204,6 +229,10 @@ func (s *Store) listPush(key string, values [][]byte, left bool) (int64, error) 
 	sh := s.shardFor(key)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
+	return s.listPushLocked(sh, key, values, left)
+}
+
+func (s *Store) listPushLocked(sh *shard, key string, values [][]byte, left bool) (int64, error) {
 	now := s.now()
 	old, exists := sh.get(key)
 	if exists && sh.expired(key, old, now) {
