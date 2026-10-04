@@ -1,6 +1,7 @@
 package codec
 
 import (
+	"math"
 	"bytes"
 	"errors"
 	"sync"
@@ -353,5 +354,49 @@ func TestULIDMaximumCanonicalValueRoundTrips(t *testing.T) {
 	}
 	if string(got) != value {
 		t.Fatalf("decoded=%q want %q", got, value)
+	}
+}
+
+
+func TestCanonicalInt64Bytes(t *testing.T) {
+	valid := map[string]int64{
+		"0": 0,
+		"1": 1,
+		"-1": -1,
+		"1000000000": 1000000000,
+		"9223372036854775807": math.MaxInt64,
+		"-9223372036854775808": math.MinInt64,
+	}
+	for input, want := range valid {
+		got, ok := canonicalInt64Bytes([]byte(input))
+		if !ok || got != want {
+			t.Fatalf("canonicalInt64Bytes(%q) = (%d, %v), want (%d, true)", input, got, ok, want)
+		}
+	}
+
+	for _, input := range []string{
+		"", "+1", "00", "01", "-0", "-01", "1.0", "1e3",
+		"9223372036854775808", "-9223372036854775809",
+	} {
+		if got, ok := canonicalInt64Bytes([]byte(input)); ok {
+			t.Fatalf("canonicalInt64Bytes(%q) = (%d, true), want invalid", input, got)
+		}
+	}
+}
+
+func TestRegistryCanonicalIntegerFastPath(t *testing.T) {
+	r := NewRegistry()
+	for _, input := range []string{"0", "1", "-1", "1000000000", "-9223372036854775808"} {
+		rec := r.Encode([]byte(input))
+		if rec.ID != Integer {
+			t.Fatalf("Encode(%q) codec = %v, want Integer", input, rec.ID)
+		}
+		out, err := r.Decode(rec, len(input))
+		if err != nil {
+			t.Fatalf("Decode(%q): %v", input, err)
+		}
+		if string(out) != input {
+			t.Fatalf("round trip %q = %q", input, out)
+		}
 	}
 }
