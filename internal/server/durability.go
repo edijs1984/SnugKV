@@ -402,6 +402,202 @@ func (s *Server) executeAuthorizedConcurrentZSetScore(args [][]byte) (response [
 	return formatBulkString(formatZSetScore(score)), true, nil
 }
 
+
+type listIndexFastResult struct {
+	Value []byte
+	Found bool
+}
+
+type zsetScoreFastResult struct {
+	Score float64
+	Found bool
+}
+
+// executeAuthorizedConcurrentListIndex serves the exact LINDEX key index read
+// without the generic dispatcher. It mirrors the ZSCORE/SISMEMBER read fast
+// paths and is intentionally limited to the non-durable standalone case.
+func (s *Server) executeAuthorizedConcurrentListIndex(args [][]byte) (response []byte, handled bool, err error) {
+	if s.clusterEnabled ||
+		len(args) != 3 ||
+		!bytes.EqualFold(args[0], []byte("LINDEX")) ||
+		s.journal != nil ||
+		atomic.LoadUint32(&s.metricsEnabled) != 0 {
+		return nil, false, nil
+	}
+	index, parseErr := strconv.ParseInt(string(args[2]), 10, 64)
+	if parseErr != nil {
+		return nil, true, errors.New("ERR value is not an integer or out of range")
+	}
+
+	s.durableMu.RLock()
+	if s.hasWatchSessionsLocked() {
+		s.durableMu.RUnlock()
+		return nil, false, nil
+	}
+	value, found, err := s.store.ListIndex(string(args[1]), index)
+	s.durableMu.RUnlock()
+
+	atomic.AddUint64(&s.commands, 1)
+	if err != nil {
+		return nil, true, err
+	}
+	return optionalBulk(value, found), true, nil
+}
+
+func (s *Server) executeAuthorizedConcurrentListIndexBatch(
+	keys [][]byte,
+	indexes []int64,
+) (results []listIndexFastResult, handled bool, err error) {
+	if s.clusterEnabled ||
+		len(keys) < 2 || len(keys) != len(indexes) ||
+		s.journal != nil ||
+		atomic.LoadUint32(&s.metricsEnabled) != 0 {
+		return nil, false, nil
+	}
+
+	s.durableMu.RLock()
+	if s.hasWatchSessionsLocked() {
+		s.durableMu.RUnlock()
+		return nil, false, nil
+	}
+
+	results = make([]listIndexFastResult, len(keys))
+	for i := range keys {
+		value, found, readErr := s.store.ListIndex(string(keys[i]), indexes[i])
+		if readErr != nil {
+			err = readErr
+			break
+		}
+		results[i] = listIndexFastResult{Value: value, Found: found}
+	}
+	s.durableMu.RUnlock()
+	atomic.AddUint64(&s.commands, uint64(len(keys)))
+	return results, true, err
+}
+
+func (s *Server) executeAuthorizedConcurrentZSetScoreBatch(
+	keys, members [][]byte,
+) (results []zsetScoreFastResult, handled bool, err error) {
+	if s.clusterEnabled ||
+		len(keys) < 2 || len(keys) != len(members) ||
+		s.journal != nil ||
+		atomic.LoadUint32(&s.metricsEnabled) != 0 {
+		return nil, false, nil
+	}
+
+	s.durableMu.RLock()
+	if s.hasWatchSessionsLocked() {
+		s.durableMu.RUnlock()
+		return nil, false, nil
+	}
+
+	results = make([]zsetScoreFastResult, len(keys))
+	for i := range keys {
+		score, found, readErr := s.store.ZSetScore(string(keys[i]), members[i])
+		if readErr != nil {
+			err = readErr
+			break
+		}
+		results[i] = zsetScoreFastResult{Score: score, Found: found}
+	}
+	s.durableMu.RUnlock()
+	atomic.AddUint64(&s.commands, uint64(len(keys)))
+	return results, true, err
+}
+
+// executeAuthorizedConcurrentListPushRightBatch amortizes durability/WATCH
+// coordination across a pipelined run of exact single-value RPUSH commands.
+// Each command still enters the engine independently, preserving normal
+// cross-client command interleaving and Redis integer reply semantics.
+func (s *Server) executeAuthorizedConcurrentListPushRightBatch(
+	keys, values [][]byte,
+) (results []int64, handled bool, err error) {
+	if s.clusterEnabled ||
+		len(keys) < 2 || len(keys) != len(values) ||
+		s.journal != nil ||
+		s.replication.primaryHasReplicas() ||
+		atomic.LoadUint32(&s.metricsEnabled) != 0 ||
+		s.store.MaxMemory() != 0 {
+		return nil, false, nil
+	}
+	if s.replication.isReadOnlyReplica() {
+		return nil, true, errors.New("READONLY You can't write against a read only replica.")
+	}
+
+	s.durableMu.RLock()
+	if s.hasWatchSessionsLocked() {
+		s.durableMu.RUnlock()
+		return nil, false, nil
+	}
+	if s.optimizer != nil {
+		s.optimizer.NoteForegroundWrite()
+	}
+
+	results = make([]int64, len(keys))
+	for i := range keys {
+		one := [1][]byte{values[i]}
+		result, pushErr := s.store.ListPushRight(string(keys[i]), one[:])
+		if pushErr != nil {
+			err = pushErr
+			break
+		}
+		results[i] = result
+		s.signalListKey(string(keys[i]))
+	}
+	s.durableMu.RUnlock()
+	atomic.AddUint64(&s.commands, uint64(len(keys)))
+	return results, true, err
+}
+
+func (s *Server) executeAuthorizedConcurrentZSetAddBatch(
+	keys, scoreArgs, members [][]byte,
+) (results []int64, handled bool, err error) {
+	if s.clusterEnabled ||
+		len(keys) < 2 || len(keys) != len(scoreArgs) || len(keys) != len(members) ||
+		s.journal != nil ||
+		s.replication.primaryHasReplicas() ||
+		atomic.LoadUint32(&s.metricsEnabled) != 0 ||
+		s.store.MaxMemory() != 0 {
+		return nil, false, nil
+	}
+	if s.replication.isReadOnlyReplica() {
+		return nil, true, errors.New("READONLY You can't write against a read only replica.")
+	}
+
+	scores := make([]float64, len(keys))
+	for i := range scoreArgs {
+		score, parseErr := parseZSetScore(scoreArgs[i])
+		if parseErr != nil {
+			return nil, true, parseErr
+		}
+		scores[i] = score
+	}
+
+	s.durableMu.RLock()
+	if s.hasWatchSessionsLocked() {
+		s.durableMu.RUnlock()
+		return nil, false, nil
+	}
+	if s.optimizer != nil {
+		s.optimizer.NoteForegroundWrite()
+	}
+
+	results = make([]int64, len(keys))
+	for i := range keys {
+		pair := [1]engine.ZSetItem{{Member: members[i], Score: scores[i]}}
+		result, _, _, addErr := s.store.ZSetAdd(string(keys[i]), pair[:], engine.ZSetAddOptions{})
+		if addErr != nil {
+			err = addErr
+			break
+		}
+		results[i] = result
+		s.signalZSetKey(string(keys[i]))
+	}
+	s.durableMu.RUnlock()
+	atomic.AddUint64(&s.commands, uint64(len(keys)))
+	return results, true, err
+}
+
 // executeAuthorizedConcurrentSet serves a previously ACL-authorized plain SET
 // without passing through the generic function/blocking/pressure dispatch stack.
 // It is only used when persistence, metrics, WATCH and maxmemory semantics do not
