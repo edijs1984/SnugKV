@@ -6,6 +6,34 @@ import (
 	"testing"
 )
 
+
+func TestConcurrentScalarCommandIncludesRealLifeSingleKeyTraffic(t *testing.T) {
+	tests := []struct {
+		name string
+		args [][]byte
+		want bool
+	}{
+		{"set-ex", [][]byte{[]byte("SET"), []byte("k"), []byte("v"), []byte("EX"), []byte("60")}, true},
+		{"set-nx", [][]byte{[]byte("SET"), []byte("k"), []byte("v"), []byte("NX")}, false},
+		{"incr", [][]byte{[]byte("INCR"), []byte("counter")}, true},
+		{"expire", [][]byte{[]byte("EXPIRE"), []byte("k"), []byte("60")}, true},
+		{"lpush", [][]byte{[]byte("LPUSH"), []byte("l"), []byte("v")}, true},
+		{"ltrim", [][]byte{[]byte("LTRIM"), []byte("l"), []byte("0"), []byte("99")}, true},
+		{"zincrby", [][]byte{[]byte("ZINCRBY"), []byte("z"), []byte("1"), []byte("m")}, true},
+		{"zrevrank", [][]byte{[]byte("ZREVRANK"), []byte("z"), []byte("m")}, true},
+		{"zrevrange", [][]byte{[]byte("ZREVRANGE"), []byte("z"), []byte("0"), []byte("9")}, true},
+		{"zrevrange-withscores", [][]byte{[]byte("ZREVRANGE"), []byte("z"), []byte("0"), []byte("9"), []byte("WITHSCORES")}, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isConcurrentScalarCommand(tc.args); got != tc.want {
+				t.Fatalf("isConcurrentScalarCommand(%q)=%v want=%v", tc.args, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestConcurrentScalarCommandIncludesSimpleNativeWrites(t *testing.T) {
 	tests := []struct {
 		name string
