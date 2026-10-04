@@ -459,3 +459,38 @@ func TestWaitAOFReplicaTopologyLossKeepsWaitingUntilTimeout(t *testing.T) {
 		t.Fatal("WAITAOF did not time out after replica topology loss")
 	}
 }
+
+
+type alreadySyncedWaitAOFJournal struct {
+	seq uint64
+}
+
+func (j *alreadySyncedWaitAOFJournal) Append([]persistence.Record) error {
+	j.seq++
+	return nil
+}
+
+func (j *alreadySyncedWaitAOFJournal) DurabilitySnapshot() (uint64, uint64, <-chan struct{}) {
+	return j.seq, j.seq, nil
+}
+
+func TestReplicaAOFAlreadySyncedOffsetPublishesImmediately(t *testing.T) {
+	s := New(engine.New())
+	journal := &alreadySyncedWaitAOFJournal{seq: 7}
+	s.SetJournal(journal)
+
+	s.noteReplicaAOFOffset(321)
+
+	s.replicaDurabilityMu.Lock()
+	known := s.replicaDurabilityKnown
+	fsynced := s.replicaDurabilityFsynced
+	pending := len(s.replicaDurabilityPoints)
+	s.replicaDurabilityMu.Unlock()
+
+	if !known || fsynced != 321 {
+		t.Fatalf("immediate FACK known=%v offset=%d want known=true offset=321", known, fsynced)
+	}
+	if pending != 0 {
+		t.Fatalf("already-synced durability left %d pending points, want 0", pending)
+	}
+}
