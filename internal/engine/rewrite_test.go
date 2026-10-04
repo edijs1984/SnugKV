@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"strconv"
 	"bytes"
 	"fmt"
 	"snugkv/internal/codec"
@@ -334,5 +335,31 @@ func TestOptimizationClassForValue(t *testing.T) {
 			if got := s.OptimizationClassForValue(tt.value); got != tt.want { t.Fatalf("class=%v want=%v", got, tt.want) }
 			if got := s.ShouldQueueOptimization(tt.value); got != (tt.want != OptimizationNone) { t.Fatalf("queue=%v class=%v", got, tt.want) }
 		})
+	}
+}
+
+
+func TestMaintenanceSamplerUsesWiderPerShardWindow(t *testing.T) {
+	makeStore := func() *Store {
+		s, err := NewWithShards(1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 100; i++ {
+			if err := s.Set("k:"+strconv.Itoa(i), []byte("v"), 0); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return s
+	}
+
+	normal := makeStore()
+	if got := len(normal.SampleKeys(100)); got > 16 {
+		t.Fatalf("normal sample size=%d want <=16", got)
+	}
+
+	maintenance := makeStore()
+	if got := len(maintenance.SampleMaintenanceKeys(100)); got <= 16 || got > 64 {
+		t.Fatalf("maintenance sample size=%d want 17..64", got)
 	}
 }
