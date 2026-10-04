@@ -84,14 +84,17 @@ case "$SERVER" in
 esac
 
 for _ in $(seq 1 200); do
-  if redis-cli -h 127.0.0.1 -p "$port" PING >/dev/null 2>&1; then
-    echo "$SERVER ready on 127.0.0.1:$port pid=$pid"
-    exit 0
-  fi
+  # The newly started process must still be alive before accepting a successful
+  # PING. Otherwise an older process already bound to the same port can make the
+  # launcher falsely report readiness after the new process exits with EADDRINUSE.
   if ! kill -0 "$pid" 2>/dev/null; then
     echo "$SERVER exited during startup" >&2
     [[ "$SERVER" == "redis" ]] && tail -50 "$REDIS_LOG" >&2 || tail -50 "$SNUG_LOG" >&2
     exit 1
+  fi
+  if redis-cli -h 127.0.0.1 -p "$port" PING >/dev/null 2>&1; then
+    echo "$SERVER ready on 127.0.0.1:$port pid=$pid"
+    exit 0
   fi
   sleep 0.025
 done
