@@ -37,8 +37,8 @@ test("typed v1 command surface preserves Redis-compatible replies", async () => 
     "*4\r\n$1\r\nu\r\n$1\r\n9\r\n$1\r\nv\r\n$1\r\n8\r\n",
     "+OK\r\n",
     ":4\r\n",
-    "$17\r\nused_memory:123\r\n",
-    "$21\r\naccounted_bytes:456\r\n",
+    "$17\r\nused_memory:123\r\n\r\n",
+    "$21\r\naccounted_bytes:456\r\n\r\n",
   ];
 
   let received = Buffer.alloc(0);
