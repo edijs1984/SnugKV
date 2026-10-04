@@ -226,12 +226,12 @@ func shouldCompactEntries(capacity, live uint64, queueDepth int) bool {
 func (o *Optimizer) maintenanceStep() {
 	quiet := o.foregroundQuietFor(2 * time.Second)
 
-	// Native ZSETs use aggressive payload headroom while growing. Once the
-	// foreground optimizer queue is empty, deterministically compact native
-	// indexed ZSETs and immediately reclaim the dead arena blocks created by
-	// those replacements. A bounded sweep avoids the long probabilistic tail
-	// caused by sampling medium-cardinality datasets.
-	if len(o.queue) == 0 && quiet {
+	// Native ZSET cleanup is independent of the generic scalar optimizer queue.
+	// Once foreground writes are quiet, compact indexed ZSET headroom directly
+	// even if scalar optimization work is still draining. Requiring an empty
+	// queue here turns millions of ineligible native-container queue entries into
+	// an artificial convergence delay.
+	if quiet {
 		limit := int(o.store.PhysicalKeyCount())
 		if limit > 16384 {
 			limit = 16384
