@@ -34,6 +34,49 @@ new SnugKV({
 Automatic pipelining is enabled by default. A batch flushes on the next microtask, or immediately when a configured command/byte threshold is reached.
 
 
+
+## Typed command API
+
+`@snugkv/client` keeps `command([...])` available for the full Redis-compatible
+SnugKV command surface, and provides typed helpers for the common application
+paths used by SnugKV v1:
+
+```ts
+await client.ping();
+
+await client.set("cache:key", JSON.stringify(payload), { ex: 300 });
+await client.setEx("session:1", 1800, JSON.stringify(session));
+await client.get("cache:key");
+await client.del("cache:key");
+await client.exists("cache:key");
+await client.expire("cache:key", 600);
+
+await client.incr("rate:1");
+await client.incrBy("counter:requests", 10);
+
+await client.hSet("cart:1", "sku-1", JSON.stringify(item));
+const cart = await client.hGetAll("cart:1");
+
+await client.lPush("activity:1", JSON.stringify(event));
+await client.lTrim("activity:1", 0, 99);
+const activity = await client.lRange("activity:1", 0, 19);
+
+await client.sAdd("tags:1", "typescript");
+const tags = await client.sMembers("tags:1");
+
+await client.zIncrBy("leaderboard", 5, "user:1");
+const rank = await client.zRevRank("leaderboard", "user:1");
+const top = await client.zRevRange("leaderboard", 0, 9, { withScores: true });
+
+await client.dbSize();
+await client.info("memory");
+await client.snugStats();
+```
+
+Adaptive encoding, compression, JSON-shape optimization, native container storage,
+and indexed ZSET optimizations are server-side and require no client opt-in. The
+same client commands continue to work as SnugKV changes physical representation.
+
 ## Auto-pipeline observability
 
 `client.stats()` exposes client-side transport counters:
@@ -150,3 +193,15 @@ Workload:
 ```
 
 These figures describe this local SnugKV-server benchmark only; they are not universal claims about every Redis-compatible server, machine, network, workload, or client configuration. The matrix benchmark rotates client execution order across repetitions to reduce systematic order bias.
+
+
+## Current scope
+
+Version 0.2.x is a fast standalone RESP client with automatic pipelining and
+typed helpers for the common SnugKV application surface. Arbitrary supported
+commands remain available through `client.command([...])`.
+
+Cluster topology discovery, automatic `MOVED`/`ASK` redirection, and automatic
+reconnect/failover are not yet implemented in this client. Until those are added,
+use the client against a single SnugKV endpoint or a stable proxy/load-balancer
+endpoint.
