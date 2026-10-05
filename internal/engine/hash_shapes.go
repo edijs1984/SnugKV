@@ -120,6 +120,95 @@ func encodeShapedHash(shapeID uint16, pairs []HashPair) []byte {
 	return out
 }
 
+func (s *Store) shapedHashLookupView(data, target []byte) ([]byte, bool, error) {
+	if !isShapedHash(data) {
+		return nil, false, errors.New("invalid shaped hash")
+	}
+	shapeID := binary.LittleEndian.Uint16(data[len(shapedHashHeader) : len(shapedHashHeader)+2])
+	signature, ok := s.hashShapeSignatureByID(shapeID)
+	if !ok {
+		return nil, false, errors.New("unknown HASH shape")
+	}
+
+	sigOffset := 0
+	count, err := readHashUvarint(signature, &sigOffset)
+	if err != nil {
+		return nil, false, err
+	}
+	valueOffset := len(shapedHashHeader) + 2
+	for i := uint64(0); i < count; i++ {
+		fieldLen, err := readHashUvarint(signature, &sigOffset)
+		if err != nil || fieldLen > uint64(len(signature)-sigOffset) {
+			return nil, false, errors.New("invalid HASH shape")
+		}
+		fieldEnd := sigOffset + int(fieldLen)
+		field := signature[sigOffset:fieldEnd]
+		sigOffset = fieldEnd
+
+		valueLen, err := readHashUvarint(data, &valueOffset)
+		if err != nil || valueLen > uint64(len(data)-valueOffset) {
+			return nil, false, errors.New("invalid shaped hash value")
+		}
+		valueEnd := valueOffset + int(valueLen)
+
+		cmp := bytes.Compare(field, target)
+		if cmp == 0 {
+			return data[valueOffset:valueEnd], true, nil
+		}
+		if cmp > 0 {
+			return nil, false, nil
+		}
+		valueOffset = valueEnd
+	}
+	if sigOffset != len(signature) || valueOffset != len(data) {
+		return nil, false, errors.New("invalid HASH shape framing")
+	}
+	return nil, false, nil
+}
+
+func (s *Store) shapedHashPairsView(data []byte) ([]HashPair, error) {
+	if !isShapedHash(data) {
+		return nil, errors.New("invalid shaped hash")
+	}
+	shapeID := binary.LittleEndian.Uint16(data[len(shapedHashHeader) : len(shapedHashHeader)+2])
+	signature, ok := s.hashShapeSignatureByID(shapeID)
+	if !ok {
+		return nil, errors.New("unknown HASH shape")
+	}
+
+	sigOffset := 0
+	count64, err := readHashUvarint(signature, &sigOffset)
+	if err != nil || count64 > uint64(maxPackedHashBytes) {
+		return nil, errors.New("invalid HASH shape")
+	}
+	valueOffset := len(shapedHashHeader) + 2
+	pairs := make([]HashPair, 0, int(count64))
+	for i := uint64(0); i < count64; i++ {
+		fieldLen, err := readHashUvarint(signature, &sigOffset)
+		if err != nil || fieldLen > uint64(len(signature)-sigOffset) {
+			return nil, errors.New("invalid HASH shape")
+		}
+		fieldEnd := sigOffset + int(fieldLen)
+		field := signature[sigOffset:fieldEnd]
+		sigOffset = fieldEnd
+
+		valueLen, err := readHashUvarint(data, &valueOffset)
+		if err != nil || valueLen > uint64(len(data)-valueOffset) {
+			return nil, errors.New("invalid shaped hash value")
+		}
+		valueEnd := valueOffset + int(valueLen)
+		pairs = append(pairs, HashPair{
+			Field: field,
+			Value: data[valueOffset:valueEnd],
+		})
+		valueOffset = valueEnd
+	}
+	if sigOffset != len(signature) || valueOffset != len(data) {
+		return nil, errors.New("invalid HASH shape framing")
+	}
+	return pairs, nil
+}
+
 func isShapedHash(data []byte) bool {
 	return len(data) >= len(shapedHashHeader)+2 &&
 		bytes.Equal(data[:len(shapedHashHeader)], shapedHashHeader[:])
