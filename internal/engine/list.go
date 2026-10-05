@@ -222,12 +222,6 @@ func (s *Store) listPush(key string, values [][]byte, left bool) (int64, error) 
 			if left { s.mutateHotListLocked(h, func(){ h.appendLeft(values) }) } else { s.mutateHotListLocked(h, func(){ h.appendRight(values) }) }
 			return int64(len(h.elements)), nil
 		}
-		if !left && len(values) > 0 {
-			if h, promoted, err := s.thawHotListLocked(sh, key, old); err != nil { return 0, err } else if promoted {
-				if left { s.mutateHotListLocked(h, func(){ h.appendLeft(values) }) } else { s.mutateHotListLocked(h, func(){ h.appendRight(values) }) }
-				return int64(len(h.elements)), nil
-			}
-		}
 		physical := sh.encoded(old)
 		if !left && isIndexedList(physical) {
 			length, rebuilt, err := indexedListAppend(physical, values)
