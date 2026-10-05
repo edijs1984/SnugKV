@@ -379,7 +379,8 @@ func packedZSetScore(data, target []byte) (float64, bool, error) {
 	useMemberPrefix := version == packedZSetHeaderAdaptive[2] && mode&zsetModeMemberPrefix != 0
 
 	var previousInt int64
-	var previousMember []byte
+	var memberScratch [256]byte
+	previousMember := memberScratch[:0]
 	for i := 0; i < count; i++ {
 		var score float64
 		if useIntegerDelta {
@@ -460,6 +461,179 @@ func packedZSetScore(data, target []byte) (float64, bool, error) {
 		return 0, false, errors.New("invalid packed zset trailing data")
 	}
 	return 0, false, nil
+}
+
+func packedZSetAppendOrdered(data []byte, pair ZSetItem) ([]byte, bool, error) {
+	if len(data) < 3 || data[0] != 'S' || data[1] != 'Z' {
+		return nil, false, errors.New("invalid packed zset")
+	}
+	version := data[2]
+	// Legacy SZ1 stays on the canonical decode/re-encode path.
+	if version != packedZSetHeaderIntDelta[2] &&
+		version != packedZSetHeaderFloat64[2] &&
+		version != packedZSetHeaderAdaptive[2] {
+		return nil, false, nil
+	}
+
+	offset := 3
+	var mode byte
+	if version == packedZSetHeaderAdaptive[2] {
+		if offset >= len(data) {
+			return nil, false, errors.New("invalid packed zset")
+		}
+		mode = data[offset]
+		offset++
+		if mode&^(zsetModeIntDelta|zsetModeMemberPrefix) != 0 || mode&zsetModeMemberPrefix == 0 {
+			return nil, false, errors.New("invalid packed zset")
+		}
+	}
+	countOffset := offset
+	count64, err := readZSetUvarint(data, &offset)
+	if err != nil || count64 == 0 || count64 > uint64(maxPackedZSetBytes) {
+		return nil, false, errors.New("invalid packed zset")
+	}
+	count := int(count64)
+	if count+1 >= indexedZSetPromoteMembers {
+		return nil, false, nil
+	}
+	countEnd := offset
+
+	useIntegerDelta := version == packedZSetHeaderIntDelta[2] ||
+		version == packedZSetHeaderAdaptive[2] && mode&zsetModeIntDelta != 0
+	useMemberPrefix := version == packedZSetHeaderAdaptive[2] && mode&zsetModeMemberPrefix != 0
+
+	var previousInt int64
+	var memberScratch [256]byte
+	previousMember := memberScratch[:0]
+	var lastScore float64
+	var lastMember []byte
+
+	for i := 0; i < count; i++ {
+		var score float64
+		if useIntegerDelta {
+			encoded, e := readZSetUvarint(data, &offset)
+			if e != nil {
+				return nil, false, errors.New("invalid packed zset")
+			}
+			var scoreInt int64
+			if i == 0 {
+				scoreInt = zsetUnZigZag(encoded)
+			} else {
+				scoreInt = int64(uint64(previousInt) + encoded)
+				if scoreInt < previousInt {
+					return nil, false, errors.New("invalid packed zset")
+				}
+			}
+			score = float64(scoreInt)
+			roundTrip, ok := zsetExactInt64(score)
+			if !ok || roundTrip != scoreInt {
+				return nil, false, errors.New("invalid packed zset")
+			}
+			previousInt = scoreInt
+		} else {
+			if len(data)-offset < 8 {
+				return nil, false, errors.New("invalid packed zset")
+			}
+			score = math.Float64frombits(binary.LittleEndian.Uint64(data[offset : offset+8]))
+			offset += 8
+			if math.IsNaN(score) {
+				return nil, false, errors.New("invalid packed zset")
+			}
+			score = normalizeZSetScore(score)
+		}
+
+		if !useMemberPrefix || i == 0 {
+			length64, e := readZSetUvarint(data, &offset)
+			if e != nil || length64 > uint64(len(data)-offset) {
+				return nil, false, errors.New("invalid packed zset")
+			}
+			end := offset + int(length64)
+			member := data[offset:end]
+			if bytes.Equal(member, pair.Member) {
+				return nil, false, nil
+			}
+			if useMemberPrefix {
+				if cap(previousMember) < len(member) {
+					previousMember = make([]byte, len(member))
+				} else {
+					previousMember = previousMember[:len(member)]
+				}
+				copy(previousMember, member)
+				lastMember = previousMember
+			} else {
+				lastMember = member
+			}
+			offset = end
+		} else {
+			prefix64, e := readZSetUvarint(data, &offset)
+			if e != nil || prefix64 > uint64(len(previousMember)) {
+				return nil, false, errors.New("invalid packed zset")
+			}
+			suffix64, e := readZSetUvarint(data, &offset)
+			if e != nil || suffix64 > uint64(len(data)-offset) ||
+				prefix64+suffix64 > uint64(maxPackedZSetBytes) {
+				return nil, false, errors.New("invalid packed zset")
+			}
+			prefix, suffixLen := int(prefix64), int(suffix64)
+			memberLen := prefix + suffixLen
+			if cap(previousMember) < memberLen {
+				next := make([]byte, memberLen)
+				copy(next, previousMember[:prefix])
+				previousMember = next
+			} else {
+				previousMember = previousMember[:memberLen]
+			}
+			copy(previousMember[prefix:], data[offset:offset+suffixLen])
+			if bytes.Equal(previousMember, pair.Member) {
+				return nil, false, nil
+			}
+			lastMember = previousMember
+			offset += suffixLen
+		}
+		lastScore = score
+	}
+	if offset != len(data) {
+		return nil, false, errors.New("invalid packed zset trailing data")
+	}
+
+	pair.Score = normalizeZSetScore(pair.Score)
+	if math.IsNaN(pair.Score) || !zsetLess(ZSetItem{Member: lastMember, Score: lastScore}, pair) {
+		return nil, false, nil
+	}
+
+	record := make([]byte, 0, 16+len(pair.Member))
+	if useIntegerDelta {
+		scoreInt, ok := zsetExactInt64(pair.Score)
+		if !ok || scoreInt < previousInt {
+			return nil, false, nil
+		}
+		record = appendZSetUvarint(record, uint64(scoreInt)-uint64(previousInt))
+	} else {
+		var scoreBytes [8]byte
+		binary.LittleEndian.PutUint64(scoreBytes[:], math.Float64bits(pair.Score))
+		record = append(record, scoreBytes[:]...)
+	}
+
+	if useMemberPrefix {
+		prefix := zsetCommonPrefix(lastMember, pair.Member)
+		suffix := pair.Member[prefix:]
+		record = appendZSetUvarint(record, uint64(prefix))
+		record = appendZSetUvarint(record, uint64(len(suffix)))
+		record = append(record, suffix...)
+	} else {
+		record = appendZSetUvarint(record, uint64(len(pair.Member)))
+		record = append(record, pair.Member...)
+	}
+
+	out := make([]byte, 0, len(data)+len(record)+binary.MaxVarintLen64)
+	out = append(out, data[:countOffset]...)
+	out = appendZSetUvarint(out, uint64(count+1))
+	out = append(out, data[countEnd:]...)
+	out = append(out, record...)
+	if len(out) > maxPackedZSetBytes {
+		return nil, false, errors.New("ERR sorted set exceeds 32 MiB limit")
+	}
+	return out, true, nil
 }
 
 func zsetEncodingName(data []byte) string {
@@ -602,6 +776,24 @@ func (s *Store) ZSetAdd(key string, pairs []ZSetItem, options ZSetAddOptions) (c
 				return 1, true, score, nil
 			}
 			return 0, true, score, nil
+		}
+		if !isIndexedZSet(physical) && options == (ZSetAddOptions{}) && len(pairs) == 1 {
+			if appended, ok, appendErr := packedZSetAppendOrdered(physical, pairs[0]); appendErr != nil {
+				return 0, false, 0, appendErr
+			} else if ok {
+				updated := preparedEntry{
+					entry: entry{entryData: entryData{
+						valueType: TypeZSet,
+						rawLength: uint32(len(appended)),
+					}},
+					data:      appended,
+					expiresAt: expiresAt,
+				}
+				if err := s.publish(sh, key, updated); err != nil {
+					return 0, false, 0, err
+				}
+				return 1, false, 0, nil
+			}
 		}
 		items, err = s.zsetItemsFromEntry(sh, old)
 		if err != nil {
