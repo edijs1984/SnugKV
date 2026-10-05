@@ -148,3 +148,78 @@ func TestFlushDBDropsHashShapeCatalogAccounting(t *testing.T) {
 		t.Fatalf("schema bytes after FLUSHDB = %d, want 0", after.SchemaBytes)
 	}
 }
+
+
+func TestHashShapeMediumDirectLookup(t *testing.T) {
+	store := New()
+	fields, values := repeatedHashFixture(100, 64)
+
+	for i := 0; i < 8; i++ {
+		if _, err := store.HashSet(fmt.Sprintf("medium:%02d", i), fields, values); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	key := "medium:07"
+	physical := physicalHashBytes(t, store, key)
+	if !isShapedHash(physical) {
+		t.Fatalf("expected 100-field HASH to use shared shape, got header %x", physical[:min(5, len(physical))])
+	}
+	if isIndexedHash(physical) {
+		t.Fatal("100-field repeated HASH should not use private indexed representation")
+	}
+
+	for _, idx := range []int{0, 49, 99} {
+		got, found, err := store.HashGet(key, fields[idx])
+		if err != nil || !found || !bytes.Equal(got, values[idx]) {
+			t.Fatalf("HGET field %d found=%v err=%v value mismatch=%v", idx, found, err, !bytes.Equal(got, values[idx]))
+		}
+	}
+	if _, found, err := store.HashGet(key, []byte("field:missing")); err != nil || found {
+		t.Fatalf("missing HGET found=%v err=%v", found, err)
+	}
+
+	query := [][]byte{fields[0], fields[50], fields[99], []byte("field:missing")}
+	results := make([]HashGetResult, len(query))
+	buf, err := store.HashGetResultsInto(key, query, nil, results)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		if !results[i].Found {
+			t.Fatalf("batched HGET field %d not found", i)
+		}
+		start := int(results[i].Offset)
+		end := start + int(results[i].Length)
+		if end > len(buf) || !bytes.Equal(buf[start:end], values[[]int{0, 50, 99}[i]]) {
+			t.Fatalf("batched HGET field %d value mismatch", i)
+		}
+	}
+	if results[3].Found {
+		t.Fatal("missing batched HGET unexpectedly found")
+	}
+
+	gotValues, found, err := store.HashGetResults(key, query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, idx := range []int{0, 50, 99} {
+		if !found[i] || !bytes.Equal(gotValues[i], values[idx]) {
+			t.Fatalf("HashGetResults field %d mismatch", idx)
+		}
+	}
+	if found[3] {
+		t.Fatal("missing HashGetResults field unexpectedly found")
+	}
+
+	stats, ok, err := store.HashStorageStats(key)
+	if err != nil || !ok {
+		t.Fatalf("stats ok=%v err=%v", ok, err)
+	}
+	if stats.Encoding != "shape" {
+		t.Fatalf("encoding=%q, want shape", stats.Encoding)
+	}
+	if stats.StoredBytes >= stats.PackedBytes {
+		t.Fatalf("shape did not save memory: stored=%d packed=%d", stats.StoredBytes, stats.PackedBytes)
+	}
+}
