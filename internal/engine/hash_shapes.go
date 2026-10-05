@@ -26,7 +26,7 @@ type hashShapeCandidate struct {
 }
 
 type hashShapeCatalog struct {
-	mu            sync.RWMutex
+	mu            sync.Mutex
 	byFingerprint map[uint64]uint16
 	shapes        []hashShape
 	candidates    [256]hashShapeCandidate
@@ -303,8 +303,8 @@ func (s *Store) hashShapeID(pairs []HashPair, packedLen int) (uint16, bool) {
 
 func (s *Store) hashShapeSignatureByID(id uint16) ([]byte, bool) {
 	catalog := &s.hashShapes
-	catalog.mu.RLock()
-	defer catalog.mu.RUnlock()
+	catalog.mu.Lock()
+	defer catalog.mu.Unlock()
 	if id == 0 || int(id) > len(catalog.shapes) {
 		return nil, false
 	}
