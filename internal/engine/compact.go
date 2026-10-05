@@ -26,11 +26,16 @@ func (s *Store) Compact(scratch uint64) int {
 		sh.mu.Lock()
 
 		hotKeys := make([]string, 0)
+		hotListKeys := make([]string, 0)
 		activeHot := false
 		for key, e := range sh.all() {
-			if !e.isHotHash() {
-				continue
+			if e.isHotList() {
+				h,_,ok:=sh.hotListForKey(key);if !ok||h==nil{panic("HOT list sidecar invariant")}
+				if !h.idle(s.now()){activeHot=true;break}
+				hotListKeys=append(hotListKeys,key);continue
 			}
+			if !e.isHotHash(){continue}
+			
 			h, _, ok := sh.hotHashForKey(key)
 			if !ok || h == nil {
 				panic("HOT hash sidecar invariant")
@@ -53,6 +58,10 @@ func (s *Store) Compact(scratch uint64) int {
 			if err := s.freezeHotHashLocked(sh, key, e); err != nil {
 				panic(err)
 			}
+		}
+		for _, key := range hotListKeys {
+			e,ok:=sh.get(key);if !ok{continue}
+			if err:=s.freezeHotListLocked(sh,key,e);err!=nil{panic(err)}
 		}
 
 		// Active hashes use indexed/HOT representations for cheap mutation.
@@ -95,7 +104,7 @@ func (s *Store) Compact(scratch uint64) int {
 
 		oldArena, oldIndex := sh.arena.TotalMemoryBytes(), sh.data.CapacityBytes()
 		oldEntries := shardEntryStorageBytes(sh)
-		oldHotSidecar := hotHashSidecarBytes(sh)
+		oldHotSidecar := hotHashSidecarBytes(sh) + hotListSidecarBytes(sh)
 		if oldArena+oldIndex+oldEntries == 0 ||
 			(oldArena+oldIndex+oldEntries)*3 > scratch {
 			sh.mu.Unlock()
@@ -195,7 +204,8 @@ func (s *Store) Compact(scratch uint64) int {
 		sh.freeIDs = nil
 
 		s.memory.used = next
-		s.memory.hotHashes -= oldHotSidecar
+		s.memory.hotHashes -= hotHashSidecarBytes(sh)
+		s.memory.hotLists -= hotListSidecarBytes(sh)
 		s.memory.arenas = s.memory.arenas - oldArena + newArena
 		s.memory.index = s.memory.index - oldIndex + newIndex
 		s.memory.entries = s.memory.entries - oldEntries + newEntries
