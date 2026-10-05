@@ -157,12 +157,13 @@ grep -q '^master_link_status:up' <<<"$i1"
 grep -q '^master_link_status:up' <<<"$i2"
 
 # Replica links can report up before the primary has renewed its quorum lease.
-# Require one successful client write before the actual seed burst so transient
-# failover fencing cannot turn this chaos case into a false data-loss failure.
+# Require one successful write before the seed burst so transient failover
+# fencing cannot produce false data-loss failures.
 lease_ready=0
+lease_reply=""
 for _ in $(seq 1 200); do
-  reply="$(cli "$P0" SET chaos:lease-ready yes 2>&1 || true)"
-  if [[ "$reply" == "OK" ]]; then
+  lease_reply="$(cli "$P0" SET chaos:lease-ready yes 2>&1 || true)"
+  if [[ "$lease_reply" == "OK" ]]; then
     lease_ready=1
     break
   fi
@@ -170,7 +171,7 @@ for _ in $(seq 1 200); do
 done
 if (( lease_ready == 0 )); then
   echo "primary did not become writable after replica attachment" >&2
-  echo "last SET reply: $reply" >&2
+  echo "last SET reply: $lease_reply" >&2
   cli "$P0" INFO replication >&2 || true
   cli "$P0" SNUG.FAILOVER HEALTH >&2 || true
   exit 1
@@ -183,8 +184,9 @@ for i in $(seq 1 100); do
 done
 printf 'WAIT 2 15000\n' >>"$seed"
 redis-cli --no-auth-warning --raw -a "$PASSWORD" -p "$P0" <"$seed" >"$TMP/seed.out"
-seed_replies="$TMP/seed.set-replies"
-head -n 100 "$TMP/seed.out" >"$seed_replies"
+
+seed_set_replies="$TMP/seed-set-replies.out"
+head -n 100 "$TMP/seed.out" >"$seed_set_replies"
 if grep -v '^OK
 if [[ "$seed_wait" != "2" ]]; then
   echo "baseline did not replicate to both replicas: WAIT=$seed_wait" >&2
@@ -289,7 +291,7 @@ echo "[8/8] verify baseline and post-failure data survived restart"
 
 echo "cluster persistence failure/restart matrix: PASS"
 echo "failed_rewrite=$failed_rewrite_status recovered_rewrite=$rewrite_status recovered_primary=127.0.0.1:$P0"
- "$seed_replies" | grep -q .; then
+ "$seed_set_replies" | grep -q .; then
   echo "baseline seed produced rejected/unexpected SET replies" >&2
   grep -n -v '^OK
 if [[ "$seed_wait" != "2" ]]; then
@@ -395,11 +397,12 @@ echo "[8/8] verify baseline and post-failure data survived restart"
 
 echo "cluster persistence failure/restart matrix: PASS"
 echo "failed_rewrite=$failed_rewrite_status recovered_rewrite=$rewrite_status recovered_primary=127.0.0.1:$P0"
- "$seed_replies" | head -n 20 >&2 || true
+ "$seed_set_replies" | head -n 20 >&2 || true
   cli "$P0" INFO replication >&2 || true
   cli "$P0" SNUG.FAILOVER HEALTH >&2 || true
   exit 1
 fi
+
 seed_wait="$(tail -n 1 "$TMP/seed.out")"
 if [[ "$seed_wait" != "2" ]]; then
   echo "baseline did not replicate to both replicas: WAIT=$seed_wait" >&2
