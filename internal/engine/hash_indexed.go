@@ -9,10 +9,7 @@ import (
 
 var indexedHashHeader = [...]byte{'S','H',4}
 const indexedHashFixed = 15
-// Medium hashes benefit more from shared-shape compaction than from a private
-// per-key hash table. Keep the indexed representation for genuinely large
-// hashes, while 100-field repeated layouts remain eligible for shape encoding.
-const indexedHashPromoteFields = 256
+const indexedHashPromoteFields = 32
 
 func isIndexedHash(data []byte) bool {
 	return len(data) >= indexedHashFixed && bytes.Equal(data[:3], indexedHashHeader[:])
