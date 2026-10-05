@@ -348,3 +348,36 @@ func TestVariableWidthShapedHashFallback(t *testing.T) {
 		}
 	}
 }
+
+
+func TestHashPhysicalHeadersAreDistinct(t *testing.T) {
+	if bytes.Equal(shapedHashHeader[:], shapedHashFixedHeader[:]) {
+		t.Fatal("variable and fixed shaped HASH headers overlap")
+	}
+	if bytes.Equal(shapedHashHeader[:], indexedHashHeader[:]) {
+		t.Fatal("variable shaped and indexed HASH headers overlap")
+	}
+	if bytes.Equal(shapedHashFixedHeader[:], indexedHashHeader[:]) {
+		t.Fatal("fixed shaped and indexed HASH headers overlap")
+	}
+
+	indexed, err := encodeIndexedHash([]HashPair{
+		{Field: []byte("a"), Value: []byte("1")},
+		{Field: []byte("b"), Value: []byte("2")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !isIndexedHash(indexed) || isShapedHash(indexed) {
+		t.Fatalf("indexed HASH misclassified: %x", indexed[:min(5, len(indexed))])
+	}
+
+	fixedPairs := []HashPair{
+		{Field: []byte("a"), Value: []byte("11")},
+		{Field: []byte("b"), Value: []byte("22")},
+	}
+	fixed := encodeShapedHash(1, fixedPairs)
+	if !isFixedShapedHash(fixed) || !isShapedHash(fixed) || isIndexedHash(fixed) {
+		t.Fatalf("fixed shaped HASH misclassified: %x", fixed[:min(5, len(fixed))])
+	}
+}
