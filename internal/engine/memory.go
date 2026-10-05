@@ -404,7 +404,8 @@ func (s *Store) publishRecordKnownWithHash(
 	next := s.memory.used -
 		oldCost -
 		oldMetaCost -
-		oldHotBytes +
+		oldHotBytes -
+		oldHotListBytes +
 		newCost +
 		newMetaCost +
 		extraIndex +
