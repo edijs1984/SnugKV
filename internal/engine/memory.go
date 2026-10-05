@@ -523,70 +523,26 @@ func (s *Store) publishRecordKnownWithHash(
 
 func (s *Store) remove(sh *shard, key string) {
 	if e, ok := sh.get(key); ok {
-		if sh.expired(key, e, s.now()) {
-			atomic.AddUint64(&s.expired, 1)
-		}
-		freeGrowth := uint64(0)
-		if !e.isHotHash() && !e.isHotList() { freeGrowth = sh.arena.FreeGrowth(e.ref)
-		}
+		if sh.expired(key,e,s.now()){atomic.AddUint64(&s.expired,1)}
+		freeGrowth:=uint64(0);if !e.isHotHash()&&!e.isHotList(){freeGrowth=sh.arena.FreeGrowth(e.ref)}
+		hotBytes,hotListBytes:=uint64(0),uint64(0)
+		if h,_,found:=sh.hotHashForKey(key);found&&h!=nil{hotBytes=h.memoryBytes()}
+		if h,_,found:=sh.hotListForKey(key);found&&h!=nil{hotListBytes=h.memoryBytes()}
 		s.memory.mu.Lock()
-		if !e.isHotHash() && e.entryMeta != nil && e.entryMeta.schemaID != 0 {
-			schema := sh.shapes.ByID(e.entryMeta.schemaID)
-			if schema == nil {
-				s.memory.mu.Unlock()
-				panic("stored schema handle is invalid")
-			}
-			sh.shapes.ReleaseRecord(schema, sh.encoded(e))
-		}
-		cost := entryCharge(key, e)
-		metaCost := metadataCharge(e)
-		hotBytes := uint64(0)
-		hotListBytes := uint64(0)
-		if h, _, found := sh.hotHashForKey(key); found && h != nil {
-			hotBytes = h.memoryBytes()
-		}
-		s.memory.used -= cost + metaCost + hotBytes
-		s.memory.hotHashes -= hotBytes
-		s.memory.used -= hotListBytes
-		s.memory.hotLists -= hotListBytes
-		s.memory.used += freeGrowth
-		s.memory.entries -= cost
-		s.memory.metas -= metaCost
-		s.memory.arenas += freeGrowth
-		if h, _, found := sh.hotListForKey(key); found && h != nil { hotListBytes = h.memoryBytes() }
-		// hotListBytes must be included in used before subtracting it.
-		s.memory.used += hotListBytes
-		if !e.isHotHash() && !e.isHotList() {
-			if !e.ref.IsInline() {
-				s.memory.arenaPayload -= uint64(len(sh.encoded(e)))
-			}
-			s.memory.arenaLiveBlocks -= sh.arena.AllocationBytes(e.ref)
-		}
+		if !e.isHotHash()&&!e.isHotList()&&e.entryMeta!=nil&&e.entryMeta.schemaID!=0{schema:=sh.shapes.ByID(e.entryMeta.schemaID);if schema==nil{s.memory.mu.Unlock();panic("stored schema handle is invalid")};sh.shapes.ReleaseRecord(schema,sh.encoded(e))}
+		cost,metaCost:=entryCharge(key,e),metadataCharge(e)
+		s.memory.used-=cost+metaCost+hotBytes+hotListBytes;s.memory.hotHashes-=hotBytes;s.memory.hotLists-=hotListBytes;s.memory.used+=freeGrowth;s.memory.entries-=cost;s.memory.metas-=metaCost;s.memory.arenas+=freeGrowth
+		if !e.isHotHash()&&!e.isHotList(){if !e.ref.IsInline(){s.memory.arenaPayload-=uint64(len(sh.encoded(e)))};s.memory.arenaLiveBlocks-=sh.arena.AllocationBytes(e.ref)}
 		s.memory.mu.Unlock()
-		sh.delete(key)
-		if !e.isHotHash() {
-			sh.arena.Free(e.ref)
-		}
-		sh.schedule(key, 0)
-		s.searchRemoveKey(key)
+		sh.delete(key);if !e.isHotHash()&&!e.isHotList(){sh.arena.Free(e.ref)};sh.schedule(key,0);s.searchRemoveKey(key)
 	}
 }
-func (s *Store) Encoding(key string) (string, int, int, bool) {
-	sh := s.shardFor(key)
-	sh.mu.RLock()
-	defer sh.mu.RUnlock()
-	e, ok := sh.get(key)
-	if !ok || sh.expired(key, e, s.now()) {
-		return "", 0, 0, false
-	}
-	if e.isHotHash() {
-		h, _, ok := sh.hotHashForKey(key)
-		if !ok || h == nil {
-			return "", 0, 0, false
-		}
-		return "hot-hash", int(e.rawLength), int(h.memoryBytes()), true
-	}
-	return s.codecs.Name(e.codecID), int(e.rawLength), len(sh.encoded(e)), true
+
+func (s *Store) Encoding(key string) (string,int,int,bool) {
+	sh:=s.shardFor(key);sh.mu.RLock();defer sh.mu.RUnlock();e,ok:=sh.get(key);if !ok||sh.expired(key,e,s.now()){return "",0,0,false}
+	if e.isHotHash(){h,_,ok:=sh.hotHashForKey(key);if !ok||h==nil{return "",0,0,false};return "hot-hash",int(e.rawLength),int(h.memoryBytes()),true}
+	if e.isHotList(){h,_,ok:=sh.hotListForKey(key);if !ok||h==nil{return "",0,0,false};return "hot-list",int(e.rawLength),int(h.memoryBytes()),true}
+	return s.codecs.Name(e.codecID),int(e.rawLength),len(sh.encoded(e)),true
 }
 
 func (s *Store) MemoryUsage(key string) (uint64, bool) {
@@ -606,13 +562,8 @@ func (s *Store) MemoryUsage(key string) (uint64, bool) {
 	if sh.metas != nil {
 		entryBytes += entryMetaSlotBytes
 	}
-	if e.isHotHash() {
-		h, _, ok := sh.hotHashForKey(key)
-		if !ok || h == nil {
-			return entryBytes, true
-		}
-		return entryBytes + h.memoryBytes(), true
-	}
+	if e.isHotHash(){h,_,ok:=sh.hotHashForKey(key);if !ok||h==nil{return entryBytes,true};return entryBytes+h.memoryBytes(),true}
+	if e.isHotList(){h,_,ok:=sh.hotListForKey(key);if !ok||h==nil{return entryBytes,true};return entryBytes+h.memoryBytes(),true}
 
 	arenaBytes := sh.arena.AllocationBytes(e.ref)
 	return entryBytes + arenaBytes, true
