@@ -50,6 +50,7 @@ type MemoryStats struct {
 	SchemaBytes,
 	MetaBytes,
 	HotHashBytes,
+	HotListBytes,
 	SearchBytes uint64
 }
 
