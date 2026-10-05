@@ -38,6 +38,10 @@ func (v SnugValue) isRaw() bool {
 	return v.codecID == codec.Raw
 }
 
+func (v SnugValue) isHotList() bool {
+	return v.rawStable && v.valueType == TypeList
+}
+
 func (v SnugValue) isHotHash() bool {
 	// Native HASH values never use the scalar rawStable optimizer state.
 	// Reuse the existing bit as the HOT/COLD representation flag so the
