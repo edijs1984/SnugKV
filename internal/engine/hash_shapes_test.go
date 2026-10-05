@@ -86,6 +86,89 @@ func TestHashShapeAdmissionKeepsLogicalSemantics(t *testing.T) {
 	}
 }
 
+func TestShapedHashDirectLookupAndMutation(t *testing.T) {
+	store := New()
+	fields, values := repeatedHashFixture(10, 64)
+	for i := 0; i < 8; i++ {
+		if _, err := store.HashSet(fmt.Sprintf("direct:%02d", i), fields, values); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	key := "direct:07"
+	physical := physicalHashBytes(t, store, key)
+	if !isShapedHash(physical) {
+		t.Fatalf("expected shaped HASH, got %x", physical[:min(5, len(physical))])
+	}
+
+	value, found, err := store.shapedHashLookupView(physical, fields[4])
+	if err != nil || !found || !bytes.Equal(value, values[4]) {
+		t.Fatalf("direct lookup found=%v err=%v", found, err)
+	}
+	if _, found, err := store.shapedHashLookupView(physical, []byte("field:9999")); err != nil || found {
+		t.Fatalf("missing lookup found=%v err=%v", found, err)
+	}
+
+	updated := bytes.Repeat([]byte{'z'}, 64)
+	added, err := store.HashSet(key, [][]byte{fields[4]}, [][]byte{updated})
+	if err != nil || added != 0 {
+		t.Fatalf("overwrite added=%d err=%v", added, err)
+	}
+	got, found, err := store.HashGet(key, fields[4])
+	if err != nil || !found || !bytes.Equal(got, updated) {
+		t.Fatalf("updated lookup found=%v err=%v", found, err)
+	}
+
+	newField := []byte("field:9999")
+	newValue := bytes.Repeat([]byte{'n'}, 64)
+	added, err = store.HashSet(key, [][]byte{newField}, [][]byte{newValue})
+	if err != nil || added != 1 {
+		t.Fatalf("insert added=%d err=%v", added, err)
+	}
+	got, found, err = store.HashGet(key, newField)
+	if err != nil || !found || !bytes.Equal(got, newValue) {
+		t.Fatalf("insert lookup found=%v err=%v", found, err)
+	}
+}
+
+func TestShapedHashBatchLookupAvoidsCanonicalDecode(t *testing.T) {
+	store := New()
+	fields, values := repeatedHashFixture(10, 64)
+	for i := 0; i < 8; i++ {
+		if _, err := store.HashSet(fmt.Sprintf("batch:%02d", i), fields, values); err != nil {
+			t.Fatal(err)
+		}
+	}
+	key := "batch:07"
+	physical := physicalHashBytes(t, store, key)
+	if !isShapedHash(physical) {
+		t.Fatal("expected shaped hash")
+	}
+
+	results := make([]HashGetResult, len(fields))
+	dst := make([]byte, 0, len(fields)*64)
+	var err error
+	allocs := testing.AllocsPerRun(1000, func() {
+		dst = dst[:0]
+		dst, err = store.HashGetResultsInto(key, fields, dst, results)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allocs > 0.1 {
+		t.Fatalf("batch shaped HGET allocations/run=%v want ~0 with reused dst/results", allocs)
+	}
+	for i, result := range results {
+		if !result.Found {
+			t.Fatalf("field %d not found", i)
+		}
+		got := dst[result.Offset : result.Offset+result.Length]
+		if !bytes.Equal(got, values[i]) {
+			t.Fatalf("field %d value mismatch", i)
+		}
+	}
+}
+
 func TestHashShapeRestoreRebuildsPhysicalEncoding(t *testing.T) {
 	store := New()
 	fields, values := repeatedHashFixture(8, 32)
