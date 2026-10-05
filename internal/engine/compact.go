@@ -55,6 +55,38 @@ func (s *Store) Compact(scratch uint64) int {
 			}
 		}
 
+		// Indexed lists keep spare offset slots and payload headroom while
+		// mutating. Maintenance removes that reserve once they are cold, while
+		// preserving the same O(1) indexed read format. The next mutation of a
+		// tight list rebuilds it with normal active headroom.
+		for key, e := range sh.all() {
+			if e.valueType != TypeList {
+				continue
+			}
+			physical := sh.encoded(e)
+			if !isIndexedList(physical) {
+				continue
+			}
+			tight, changed, err := compactIndexedList(physical)
+			if err != nil {
+				panic(err)
+			}
+			if !changed {
+				continue
+			}
+			updated := preparedEntry{
+				entry: entry{entryData: entryData{
+					valueType: TypeList,
+					rawLength: uint32(len(tight)),
+				}},
+				data:      tight,
+				expiresAt: sh.expirationAt(key, e),
+			}
+			if err := s.publish(sh, key, updated); err != nil {
+				panic(err)
+			}
+		}
+
 		// Active hashes use indexed/HOT representations for cheap mutation.
 		// Once maintenance sees them cold, collapse repeated field layouts into
 		// shared shapes. Medium hashes may use either shaped format; large hashes
