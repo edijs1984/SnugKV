@@ -235,6 +235,19 @@ func (s *Store) listPush(key string, values [][]byte, left bool) (int64, error) 
 				return 0, err
 			}
 			if rebuilt == nil {
+				if length >= hotListPromoteElements {
+					e := old
+					if h, promoted, err := s.thawHotListLocked(sh, key, e); err != nil {
+						return 0, err
+					} else if promoted {
+						if left {
+							s.mutateHotListLocked(h, func() { h.appendLeft(values) })
+						} else {
+							s.mutateHotListLocked(h, func() { h.appendRight(values) })
+						}
+						return int64(len(h.elements)), nil
+					}
+				}
 				return int64(length), nil
 			}
 			updated := preparedEntry{
@@ -247,6 +260,16 @@ func (s *Store) listPush(key string, values [][]byte, left bool) (int64, error) 
 			}
 			if err := s.publish(sh, key, updated); err != nil {
 				return 0, err
+			}
+			if length >= hotListPromoteElements {
+				e, ok := sh.get(key)
+				if ok {
+					if h, promoted, err := s.thawHotListLocked(sh, key, e); err != nil {
+						return 0, err
+					} else if promoted {
+						return int64(len(h.elements)), nil
+					}
+				}
 			}
 			return int64(length), nil
 		}
