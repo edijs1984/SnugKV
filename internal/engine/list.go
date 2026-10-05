@@ -214,10 +214,20 @@ func (s *Store) listPush(key string, values [][]byte, left bool) (int64, error) 
 	var current [][]byte
 	var expiresAt stamp
 	if exists {
-		if old.valueType != TypeList {
-			return 0, listWrongType()
-		}
+		if old.valueType != TypeList { return 0, listWrongType() }
 		expiresAt = sh.expirationAt(key, old)
+		if old.isHotList() {
+			h, _, ok := sh.hotListForKey(key); if !ok || h == nil { return 0, errors.New("HOT list sidecar invariant") }
+			if left { s.mutateHotListLocked(h, func(){ h.appendLeft(values) }) } else { s.mutateHotListLocked(h, func(){ h.appendRight(values) }) }
+			if len(h.elements) > maxPackedListBytes { return 0, errors.New("ERR list exceeds 32 MiB limit") }
+			return int64(len(h.elements)), nil
+		}
+		if !left && len(values) > 0 {
+			if h, promoted, err := s.thawHotListLocked(sh, key, old); err != nil { return 0, err } else if promoted {
+				if left { s.mutateHotListLocked(h, func(){ h.appendLeft(values) }) } else { s.mutateHotListLocked(h, func(){ h.appendRight(values) }) }
+				return int64(len(h.elements)), nil
+			}
+		}
 		physical := sh.encoded(old)
 		if !left && isIndexedList(physical) {
 			length, rebuilt, err := indexedListAppend(physical, values)
