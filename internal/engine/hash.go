@@ -359,11 +359,17 @@ func (s *Store) hashSetLocked(sh *shard, key string, fields, values [][]byte) (i
 			return added, nil
 		}
 		var err error
-		pairs, err = decodePackedHash(s.decode(sh, old))
+		if isShapedHash(physical) {
+			pairs, err = s.shapedHashPairsView(physical)
+		} else {
+			pairs, err = decodePackedHash(s.decode(sh, old))
+			if err == nil {
+				pairs = liveHashPairs(pairs, now.UnixMilli())
+			}
+		}
 		if err != nil {
 			return 0, err
 		}
-		pairs = liveHashPairs(pairs, now.UnixMilli())
 	}
 
 	var added int64
@@ -498,8 +504,16 @@ func (s *Store) HashSetResults(key string, fields, values [][]byte) ([]int64, er
 					existing[name] = struct{}{}
 				}
 			}
+		} else if isShapedHash(physical) {
+			pairs, err := s.shapedHashPairsView(physical)
+			if err != nil {
+				return nil, err
+			}
+			for _, pair := range pairs {
+				existing[string(pair.Field)] = struct{}{}
+			}
 		} else {
-			pairs, err := decodePackedHash(s.decode(sh, old))
+			pairs, err := decodePackedHash(physical)
 			if err != nil {
 				return nil, err
 			}
@@ -532,8 +546,14 @@ func (s *Store) HashSetResults(key string, fields, values [][]byte) ([]int64, er
 			if count, _, _, _, err := indexedHashMeta(sh.encoded(current)); err == nil {
 				shouldPromote = count >= hotHashPromoteFields
 			}
+		} else if isShapedHash(sh.encoded(current)) {
+			pairs, err := s.shapedHashPairsView(sh.encoded(current))
+			if err != nil {
+				return nil, err
+			}
+			shouldPromote = len(pairs) >= hotHashPromoteFields
 		} else {
-			pairs, err := decodePackedHash(s.decode(sh, current))
+			pairs, err := decodePackedHash(sh.encoded(current))
 			if err != nil {
 				return nil, err
 			}
@@ -583,7 +603,14 @@ func (s *Store) HashGet(key string, field []byte) ([]byte, bool, error) {
 	if isIndexedHash(physical) {
 		return indexedHashLookup(physical, field)
 	}
-	return packedHashLookup(s.decode(sh, e), field, s.now().UnixMilli())
+	if isShapedHash(physical) {
+		value, found, err := s.shapedHashLookupView(physical, field)
+		if err != nil || !found {
+			return nil, found, err
+		}
+		return append([]byte(nil), value...), true, nil
+	}
+	return packedHashLookup(physical, field, s.now().UnixMilli())
 }
 // HashGetResult describes one field value copied into a caller-owned batch buffer.
 type HashGetResult struct {
@@ -644,6 +671,27 @@ func (s *Store) HashGetResultsInto(
 
 	physical := sh.encoded(e)
 	nowMS := s.now().UnixMilli()
+	if isShapedHash(physical) {
+		for i, field := range fields {
+			value, found, lookupErr := s.shapedHashLookupView(physical, field)
+			if lookupErr != nil {
+				return dst, lookupErr
+			}
+			if !found {
+				results[i] = HashGetResult{}
+				continue
+			}
+			offset := len(dst)
+			dst = append(dst, value...)
+			results[i] = HashGetResult{
+				Offset: uint32(offset),
+				Length: uint32(len(value)),
+				Found:  true,
+			}
+		}
+		return dst, nil
+	}
+
 	if isIndexedHash(physical) {
 		_, slots, used, start, err := indexedHashMeta(physical)
 		if err != nil {
@@ -724,6 +772,19 @@ func (s *Store) HashGetResults(key string, fields [][]byte) (values [][]byte, fo
 	}
 
 	physical := sh.encoded(e)
+	if isShapedHash(physical) {
+		for i, field := range fields {
+			value, ok, lookupErr := s.shapedHashLookupView(physical, field)
+			if lookupErr != nil {
+				return nil, nil, lookupErr
+			}
+			if ok {
+				values[i] = append([]byte(nil), value...)
+				found[i] = true
+			}
+		}
+		return values, found, nil
+	}
 	if isIndexedHash(physical) {
 		_, slots, used, start, metaErr := indexedHashMeta(physical)
 		if metaErr != nil {
