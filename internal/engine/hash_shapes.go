@@ -125,6 +125,80 @@ func isShapedHash(data []byte) bool {
 		bytes.Equal(data[:len(shapedHashHeader)], shapedHashHeader[:])
 }
 
+func (s *Store) shapedHashSignature(data []byte) ([]byte, error) {
+	if !isShapedHash(data) {
+		return nil, errors.New("invalid shaped hash")
+	}
+	shapeID := binary.LittleEndian.Uint16(data[len(shapedHashHeader) : len(shapedHashHeader)+2])
+	signature, ok := s.hashShapeSignatureByID(shapeID)
+	if !ok {
+		return nil, errors.New("unknown HASH shape")
+	}
+	return signature, nil
+}
+
+// shapedHashLookupViewKnown reads directly from the compact shared-shape
+// representation. It avoids materializing the canonical packed HASH on HGET,
+// which keeps medium repeated-shape hashes compact without giving back the
+// read-throughput advantage.
+func shapedHashLookupViewKnown(data, target, signature []byte) ([]byte, bool, error) {
+	if !isShapedHash(data) {
+		return nil, false, errors.New("invalid shaped hash")
+	}
+
+	sigOffset := 0
+	count, err := readHashUvarint(signature, &sigOffset)
+	if err != nil {
+		return nil, false, err
+	}
+	valueOffset := len(shapedHashHeader) + 2
+
+	for i := uint64(0); i < count; i++ {
+		fieldLen, err := readHashUvarint(signature, &sigOffset)
+		if err != nil || fieldLen > uint64(len(signature)-sigOffset) {
+			return nil, false, errors.New("invalid HASH shape")
+		}
+		fieldEnd := sigOffset + int(fieldLen)
+		field := signature[sigOffset:fieldEnd]
+		sigOffset = fieldEnd
+
+		valueLen, err := readHashUvarint(data, &valueOffset)
+		if err != nil || valueLen > uint64(len(data)-valueOffset) {
+			return nil, false, errors.New("invalid shaped hash value")
+		}
+		valueEnd := valueOffset + int(valueLen)
+
+		switch bytes.Compare(field, target) {
+		case 0:
+			return data[valueOffset:valueEnd], true, nil
+		case 1:
+			return nil, false, nil
+		}
+		valueOffset = valueEnd
+	}
+
+	if sigOffset != len(signature) || valueOffset != len(data) {
+		return nil, false, errors.New("invalid shaped hash framing")
+	}
+	return nil, false, nil
+}
+
+func (s *Store) shapedHashLookupView(data, target []byte) ([]byte, bool, error) {
+	signature, err := s.shapedHashSignature(data)
+	if err != nil {
+		return nil, false, err
+	}
+	return shapedHashLookupViewKnown(data, target, signature)
+}
+
+func (s *Store) shapedHashLookup(data, target []byte) ([]byte, bool, error) {
+	value, found, err := s.shapedHashLookupView(data, target)
+	if err != nil || !found {
+		return nil, found, err
+	}
+	return append([]byte(nil), value...), true, nil
+}
+
 // hashShapeID returns an admitted shape for pairs, admitting the shape after
 // repeated observations when the physical representation saves enough bytes.
 // Fingerprint collisions only disable shape encoding for the colliding shape;
