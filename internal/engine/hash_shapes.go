@@ -99,6 +99,26 @@ func hashUvarintLen(value uint64) int {
 	return n
 }
 
+func canonicalPackedHashLen(pairs []HashPair) (int, bool) {
+	hasExpiry := false
+	length := len(packedHashHeader) + hashUvarintLen(uint64(len(pairs)))
+	for _, pair := range pairs {
+		if pair.ExpiresAtMS != 0 {
+			hasExpiry = true
+		}
+		length += hashUvarintLen(uint64(len(pair.Field))) +
+			hashUvarintLen(uint64(len(pair.Value))) +
+			len(pair.Field) + len(pair.Value)
+		if length > maxPackedHashBytes {
+			return 0, false
+		}
+	}
+	if hasExpiry {
+		length += 8 * len(pairs)
+	}
+	return length, length <= maxPackedHashBytes
+}
+
 func shapedHashEncodedLen(pairs []HashPair) int {
 	length := len(shapedHashHeader) + 2
 	for _, pair := range pairs {
