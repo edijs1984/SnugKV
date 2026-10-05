@@ -186,7 +186,6 @@ func TestHashShapeMediumDirectLookup(t *testing.T) {
 		t.Fatal("expected at least one shard to compact")
 	}
 	key := firstShapedHashKey(t, store, keys)
-	physical := physicalHashBytes(t, store, key)
 
 	for _, idx := range []int{0, 49, 99} {
 		got, found, err := store.HashGet(key, fields[idx])
