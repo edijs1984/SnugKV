@@ -175,6 +175,7 @@ func listPreparedEntry(packed []byte) preparedEntry {
 }
 
 func (s *Store) listElementsFromEntry(sh *shard, e entry) ([][]byte, error) {
+	if e.isHotList() { return nil, errors.New("HOT list requires key context") }
 	data := sh.encoded(e)
 	if isIndexedList(data) {
 		return decodeIndexedList(data)
@@ -339,8 +340,11 @@ func (s *Store) listPop(key string, count int, left bool) ([][]byte, error) {
 		}
 		return nil, nil
 	}
-	if e.valueType != TypeList {
-		return nil, listWrongType()
+	if e.valueType != TypeList { return nil, listWrongType() }
+	if e.isHotList() {
+		h,_,ok:=sh.hotListForKey(key);if !ok||h==nil{return nil,errors.New("HOT list sidecar invariant")}
+		if count==0{return [][]byte{},nil};if count>len(h.elements){count=len(h.elements)}
+		out:=h.pop(left,count);if len(h.elements)==0{s.remove(sh,key)};return out,nil
 	}
 	elements, err := s.listElementsFromEntry(sh, e)
 	if err != nil {
