@@ -204,19 +204,29 @@ cat >"$post" <<EOF
 SET persist:after-failure durable-after-failure
 WAIT 2 15000
 EOF
-redis-cli --no-auth-warning --raw -a "$PASSWORD" -p "$P0" <"$post" >"$TMP/post-failure.out"
-grep -qx OK < <(head -n 1 "$TMP/post-failure.out")
-post_wait="$(tail -n 1 "$TMP/post-failure.out")"
-if [[ "$post_wait" != "2" ]]; then
-  echo "post-failure write did not replicate to both replicas: WAIT=$post_wait" >&2
+redis-cli --no-auth-warning --raw -a "$PASSWORD" -p "$P0" <"$post" >"$TMP/post-failure.out" 2>"$TMP/post-failure.err" || true
+post_set="$(head -n 1 "$TMP/post-failure.out" | tr -d '\r')"
+post_wait="$(tail -n 1 "$TMP/post-failure.out" | tr -d '\r')"
+if [[ "$post_set" != "OK" || "$post_wait" != "2" ]]; then
+  echo "post-failure live-AOF check failed: SET=$post_set WAIT=$post_wait" >&2
+  if [[ -s "$TMP/post-failure.err" ]]; then
+    echo "--- redis-cli stderr ---" >&2
+    cat "$TMP/post-failure.err" >&2 || true
+  fi
+  echo "--- raw command output ---" >&2
+  cat "$TMP/post-failure.out" >&2 || true
+  echo "--- primary INFO persistence ---" >&2
+  cli "$P0" INFO persistence >&2 || true
   echo "--- primary INFO replication ---" >&2
   cli "$P0" INFO replication >&2 || true
+  echo "--- primary FAILOVER HEALTH ---" >&2
+  cli "$P0" FAILOVER HEALTH >&2 || true
   echo "--- replica n1 INFO replication ---" >&2
   cli "$P1" INFO replication >&2 || true
   echo "--- replica n2 INFO replication ---" >&2
   cli "$P2" INFO replication >&2 || true
   echo "--- primary log tail ---" >&2
-  tail -n 120 "$TMP/n0.log" >&2 || true
+  tail -n 160 "$TMP/n0.log" >&2 || true
   exit 1
 fi
 [[ "$(cli "$P0" GET persist:after-failure)" == "durable-after-failure" ]]
