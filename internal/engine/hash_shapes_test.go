@@ -223,3 +223,57 @@ func TestHashShapeMediumDirectLookup(t *testing.T) {
 		t.Fatalf("shape did not save memory: stored=%d packed=%d", stats.StoredBytes, stats.PackedBytes)
 	}
 }
+
+
+func TestCompactConvertsColdMediumIndexedHashToShape(t *testing.T) {
+	store := New()
+	fields, values := repeatedHashFixture(100, 64)
+
+	// Warm the shape catalog with the same completed layout while each active
+	// hash still uses the indexed representation.
+	for i := 0; i < 8; i++ {
+		key := fmt.Sprintf("compact-medium:%02d", i)
+		for j := range fields {
+			if _, err := store.HashSet(key, fields[j:j+1], values[j:j+1]); err != nil {
+				t.Fatal(err)
+			}
+		}
+		physical := physicalHashBytes(t, store, key)
+		if !isIndexedHash(physical) {
+			t.Fatalf("active 100-field hash %q encoding=%x, want indexed", key, physical[:min(5, len(physical))])
+		}
+	}
+
+	// A maintenance compaction should turn admitted medium layouts into shared
+	// shapes without changing logical data.
+	if compacted := store.Compact(^uint64(0)); compacted == 0 {
+		t.Fatal("expected at least one shard to compact")
+	}
+
+	key := "compact-medium:07"
+	physical := physicalHashBytes(t, store, key)
+	if !isShapedHash(physical) {
+		t.Fatalf("cold 100-field hash encoding=%x, want shape", physical[:min(5, len(physical))])
+	}
+
+	for _, idx := range []int{0, 49, 99} {
+		got, found, err := store.HashGet(key, fields[idx])
+		if err != nil || !found || !bytes.Equal(got, values[idx]) {
+			t.Fatalf("HGET field %d found=%v err=%v", idx, found, err)
+		}
+	}
+
+	// First mutation after compaction must thaw back to the indexed write path.
+	next := []byte("updated-value")
+	if _, err := store.HashSet(key, fields[50:51], [][]byte{next}); err != nil {
+		t.Fatal(err)
+	}
+	physical = physicalHashBytes(t, store, key)
+	if !isIndexedHash(physical) {
+		t.Fatalf("mutated medium hash encoding=%x, want indexed", physical[:min(5, len(physical))])
+	}
+	got, found, err := store.HashGet(key, fields[50])
+	if err != nil || !found || !bytes.Equal(got, next) {
+		t.Fatalf("updated HGET found=%v err=%v value=%q", found, err, got)
+	}
+}
