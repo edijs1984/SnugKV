@@ -342,12 +342,16 @@ func (s *Store) publishRecordKnownWithHash(
 	var oldCost uint64
 	var oldHotBytes uint64
 	oldHot := false
+	oldHotList := false
+	var oldHotListBytes uint64
 	if exists {
 		oldCost = entryCharge(key, old)
 		oldHot = old.isHotHash()
+		oldHotList = old.isHotList()
 		if h, _, ok := sh.hotHashForKey(key); ok && h != nil {
 			oldHotBytes = h.memoryBytes()
 		}
+		if h, _, ok := sh.hotListForKey(key); ok && h != nil { oldHotListBytes = h.memoryBytes() }
 	}
 
 	newCost := entryCharge(key, e)
@@ -371,7 +375,7 @@ func (s *Store) publishRecordKnownWithHash(
 	if !inlineNew {
 		extraArena = sh.arena.GrowthFor([]int{len(e.data)})
 	}
-	if exists && !oldHot {
+	if exists && !oldHot && !oldHotList {
 		extraArena += sh.arena.FreeGrowth(old.ref)
 	}
 	newBlockBytes := uint64(0)
@@ -433,16 +437,15 @@ func (s *Store) publishRecordKnownWithHash(
 	}
 
 	s.memory.used = next
-	if oldHotBytes != 0 {
-		s.memory.hotHashes -= oldHotBytes
-	}
+	if oldHotBytes != 0 { s.memory.hotHashes -= oldHotBytes }
+	if oldHotListBytes != 0 { s.memory.hotLists -= oldHotListBytes }
 	s.memory.entries =
 		s.memory.entries - oldCost + newCost + extraEntries + extraMetaSlots
 	s.memory.metas = s.memory.metas - oldMetaCost + newMetaCost
 	s.memory.index += extraIndex
 	s.memory.arenas += extraArena
 
-	if exists && !oldHot {
+	if exists && !oldHot && !oldHotList {
 		if !old.ref.IsInline() {
 			s.memory.arenaPayload -= uint64(len(sh.encoded(old)))
 		}
@@ -492,13 +495,10 @@ func (s *Store) publishRecordKnownWithHash(
 	} else {
 		sh.set(key, e.entry)
 	}
-	if exists && oldHot {
-		if id, ok := sh.data.Get(key); ok {
-			sh.setHotHash(id, nil)
-		}
-	}
+	if exists && oldHot { if id, ok := sh.data.Get(key); ok { sh.setHotHash(id, nil) } }
+	if exists && oldHotList { if id, ok := sh.data.Get(key); ok { sh.setHotList(id, nil) } }
 
-	if exists && !oldHot {
+	if exists && !oldHot && !oldHotList {
 		sh.arena.Free(old.ref)
 	}
 
@@ -527,8 +527,7 @@ func (s *Store) remove(sh *shard, key string) {
 			atomic.AddUint64(&s.expired, 1)
 		}
 		freeGrowth := uint64(0)
-		if !e.isHotHash() {
-			freeGrowth = sh.arena.FreeGrowth(e.ref)
+		if !e.isHotHash() && !e.isHotList() { freeGrowth = sh.arena.FreeGrowth(e.ref)
 		}
 		s.memory.mu.Lock()
 		if !e.isHotHash() && e.entryMeta != nil && e.entryMeta.schemaID != 0 {
@@ -542,16 +541,22 @@ func (s *Store) remove(sh *shard, key string) {
 		cost := entryCharge(key, e)
 		metaCost := metadataCharge(e)
 		hotBytes := uint64(0)
+		hotListBytes := uint64(0)
 		if h, _, found := sh.hotHashForKey(key); found && h != nil {
 			hotBytes = h.memoryBytes()
 		}
 		s.memory.used -= cost + metaCost + hotBytes
 		s.memory.hotHashes -= hotBytes
+		s.memory.used -= hotListBytes
+		s.memory.hotLists -= hotListBytes
 		s.memory.used += freeGrowth
 		s.memory.entries -= cost
 		s.memory.metas -= metaCost
 		s.memory.arenas += freeGrowth
-		if !e.isHotHash() {
+		if h, _, found := sh.hotListForKey(key); found && h != nil { hotListBytes = h.memoryBytes() }
+		// hotListBytes must be included in used before subtracting it.
+		s.memory.used += hotListBytes
+		if !e.isHotHash() && !e.isHotList() {
 			if !e.ref.IsInline() {
 				s.memory.arenaPayload -= uint64(len(sh.encoded(e)))
 			}
