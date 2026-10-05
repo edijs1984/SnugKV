@@ -220,7 +220,6 @@ func (s *Store) listPush(key string, values [][]byte, left bool) (int64, error) 
 		if old.isHotList() {
 			h, _, ok := sh.hotListForKey(key); if !ok || h == nil { return 0, errors.New("HOT list sidecar invariant") }
 			if left { s.mutateHotListLocked(h, func(){ h.appendLeft(values) }) } else { s.mutateHotListLocked(h, func(){ h.appendRight(values) }) }
-			if len(h.elements) > maxPackedListBytes { return 0, errors.New("ERR list exceeds 32 MiB limit") }
 			return int64(len(h.elements)), nil
 		}
 		if !left && len(values) > 0 {
