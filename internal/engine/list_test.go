@@ -221,3 +221,106 @@ func TestIndexedListPromotionAppendIndexTTLAndPersistence(t *testing.T) {
 		t.Fatalf("restored tail=%q found=%v err=%v", value, found, err)
 	}
 }
+
+
+func TestCompactTightensIndexedListAndMutationReexpands(t *testing.T) {
+	s := New()
+	for i := 0; i < 100; i++ {
+		value := []byte(fmt.Sprintf("v:%06d", i))
+		if _, err := s.ListPushRight("medium-list", [][]byte{value}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	sh := s.shardFor("medium-list")
+	sh.mu.RLock()
+	e, ok := sh.get("medium-list")
+	if !ok {
+		sh.mu.RUnlock()
+		t.Fatal("list missing")
+	}
+	before := append([]byte(nil), sh.encoded(e)...)
+	sh.mu.RUnlock()
+
+	count, capacity, used, start, err := indexedListMeta(before)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capacity <= count || start+used >= len(before) {
+		t.Fatalf("active indexed list unexpectedly tight count=%d capacity=%d used=%d len=%d", count, capacity, used, len(before))
+	}
+
+	s.Compact(^uint64(0))
+
+	sh.mu.RLock()
+	e, ok = sh.get("medium-list")
+	if !ok {
+		sh.mu.RUnlock()
+		t.Fatal("list missing after compact")
+	}
+	after := append([]byte(nil), sh.encoded(e)...)
+	sh.mu.RUnlock()
+
+	count, capacity, used, start, err = indexedListMeta(after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capacity != count || start+used != len(after) {
+		t.Fatalf("compacted indexed list not tight count=%d capacity=%d used=%d len=%d", count, capacity, used, len(after))
+	}
+	if len(after) >= len(before) {
+		t.Fatalf("compact did not shrink list before=%d after=%d", len(before), len(after))
+	}
+
+	for _, idx := range []int64{0, 49, 99, -1} {
+		value, found, err := s.ListIndex("medium-list", idx)
+		if err != nil || !found {
+			t.Fatalf("LINDEX %d found=%v err=%v", idx, found, err)
+		}
+	}
+
+	if n, err := s.ListPushRight("medium-list", [][]byte{[]byte("tail")}); err != nil || n != 101 {
+		t.Fatalf("RPUSH after compact n=%d err=%v", n, err)
+	}
+
+	sh.mu.RLock()
+	e, ok = sh.get("medium-list")
+	if !ok {
+		sh.mu.RUnlock()
+		t.Fatal("list missing after mutation")
+	}
+	mutated := append([]byte(nil), sh.encoded(e)...)
+	sh.mu.RUnlock()
+	count, capacity, used, start, err = indexedListMeta(mutated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capacity <= count || start+used >= len(mutated) {
+		t.Fatalf("mutated list did not regain active headroom count=%d capacity=%d used=%d len=%d", count, capacity, used, len(mutated))
+	}
+	value, found, err := s.ListIndex("medium-list", -1)
+	if err != nil || !found || string(value) != "tail" {
+		t.Fatalf("tail=%q found=%v err=%v", value, found, err)
+	}
+}
+
+func TestListSmallStaysPackedWithEarlierMediumPromotion(t *testing.T) {
+	s := New()
+	for i := 0; i < 10; i++ {
+		if _, err := s.ListPushRight("small-list", [][]byte{[]byte("value")}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sh := s.shardFor("small-list")
+	sh.mu.RLock()
+	e, ok := sh.get("small-list")
+	if !ok {
+		sh.mu.RUnlock()
+		t.Fatal("small list missing")
+	}
+	physical := append([]byte(nil), sh.encoded(e)...)
+	sh.mu.RUnlock()
+	if isIndexedList(physical) {
+		t.Fatal("10-element small list should remain packed")
+	}
+}
