@@ -2,6 +2,7 @@ package engine
 
 import ("errors";"time";"unsafe";"snugkv/internal/arena")
 const hotListIdleFreeze=6*time.Second
+const hotListPromoteElements=256
 type hotList struct{elements [][]byte;lastMutation int64}
 func newHotList(e [][]byte)*hotList{h:=&hotList{elements:make([][]byte,0,len(e))};for _,v:=range e{h.elements=append(h.elements,append([]byte(nil),v...))};return h}
 func(h *hotList) memoryBytes()uint64{if h==nil{return 0};n:=uint64(unsafe.Sizeof(*h))+uint64(cap(h.elements))*uint64(unsafe.Sizeof([]byte(nil)));for _,v:=range h.elements{n+=uint64(cap(v))};return n}
