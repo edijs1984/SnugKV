@@ -55,6 +55,43 @@ func (s *Store) Compact(scratch uint64) int {
 			}
 		}
 
+		// Active medium hashes use the indexed representation for cheap HSET/HGET.
+		// Once maintenance sees them cold, collapse repeated field layouts into
+		// the shared-shape representation. This keeps foreground mutation fast
+		// while allowing settled memory to converge below the indexed layout.
+		//
+		// Deliberately cap this below the HOT-hash threshold: large hashes keep
+		// their O(1) index instead of turning HGET into a long linear shape scan.
+		for key, e := range sh.all() {
+			if e.valueType != TypeHash || e.isHotHash() {
+				continue
+			}
+			physical := sh.encoded(e)
+			if !isIndexedHash(physical) {
+				continue
+			}
+			count, _, _, _, err := indexedHashMeta(physical)
+			if err != nil || count < indexedHashPromoteFields || count >= hotHashPromoteFields {
+				continue
+			}
+			pairs, err := decodeIndexedHash(physical)
+			if err != nil {
+				panic(err)
+			}
+			packed, err := encodePackedHash(pairs)
+			if err != nil {
+				panic(err)
+			}
+			updated := s.hashEntry(pairs, packed)
+			if !isShapedHash(updated.data) {
+				continue
+			}
+			updated.expiresAt = sh.expirationAt(key, e)
+			if err := s.publish(sh, key, updated); err != nil {
+				panic(err)
+			}
+		}
+
 		oldArena, oldIndex := sh.arena.TotalMemoryBytes(), sh.data.CapacityBytes()
 		oldEntries := shardEntryStorageBytes(sh)
 		oldHotSidecar := hotHashSidecarBytes(sh)
