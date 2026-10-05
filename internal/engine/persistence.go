@@ -65,11 +65,12 @@ func (s *Store) Export(keys []string) []persistence.Record {
 				}
 				record.Value = logical
 			case TypeList:
-				logical, err := s.listLogicalValue(sh, e)
-				if err != nil {
-					panic(err)
+				if e.isHotList() {
+					h,_,ok:=sh.hotListForKey(key);if !ok||h==nil{panic("HOT list sidecar invariant")}
+					logical,err:=h.packed();if err!=nil{panic(err)};record.Value=logical
+				} else {
+					logical, err := s.listLogicalValue(sh, e);if err != nil {panic(err)};record.Value = logical
 				}
-				record.Value = logical
 			case TypeZSet:
 				logical, err := s.zsetLogicalValue(sh, e)
 				if err != nil {
