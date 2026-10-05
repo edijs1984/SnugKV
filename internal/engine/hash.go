@@ -647,12 +647,12 @@ func (s *Store) HashGetResultsInto(
 
 	physical := sh.encoded(e)
 	if isShapedHash(physical) {
-		signature, err := s.shapedHashSignature(physical)
+		shape, err := s.shapedHashShape(physical)
 		if err != nil {
 			return dst, err
 		}
 		for i, field := range fields {
-			value, found, lookupErr := shapedHashLookupViewKnown(physical, field, signature)
+			value, found, lookupErr := shapedHashLookupViewKnown(physical, field, shape)
 			if lookupErr != nil {
 				return dst, lookupErr
 			}
@@ -753,12 +753,12 @@ func (s *Store) HashGetResults(key string, fields [][]byte) (values [][]byte, fo
 
 	physical := sh.encoded(e)
 	if isShapedHash(physical) {
-		signature, metaErr := s.shapedHashSignature(physical)
+		shape, metaErr := s.shapedHashShape(physical)
 		if metaErr != nil {
 			return nil, nil, metaErr
 		}
 		for i, field := range fields {
-			value, ok, lookupErr := shapedHashLookupViewKnown(physical, field, signature)
+			value, ok, lookupErr := shapedHashLookupViewKnown(physical, field, shape)
 			if lookupErr != nil {
 				return nil, nil, lookupErr
 			}
