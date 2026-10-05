@@ -295,3 +295,56 @@ func TestCompactConvertsColdMediumIndexedHashToShape(t *testing.T) {
 		t.Fatalf("updated HGET found=%v err=%v value=%q", found, err, got)
 	}
 }
+
+
+func TestFixedWidthShapedHashDirectAddressing(t *testing.T) {
+	store := New()
+	fields, values := repeatedHashFixture(100, 64)
+	keys := make([]string, 0, 8)
+	for i := 0; i < 8; i++ {
+		key := fmt.Sprintf("fixed-medium:%02d", i)
+		keys = append(keys, key)
+		for j := range fields {
+			if _, err := store.HashSet(key, fields[j:j+1], values[j:j+1]); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	store.Compact(^uint64(0))
+	key := firstShapedHashKey(t, store, keys)
+	physical := physicalHashBytes(t, store, key)
+	if !isFixedShapedHash(physical) {
+		t.Fatalf("expected fixed-width SH4 encoding, got header %x", physical[:min(5, len(physical))])
+	}
+	for _, idx := range []int{0, 1, 49, 98, 99} {
+		got, found, err := store.HashGet(key, fields[idx])
+		if err != nil || !found || !bytes.Equal(got, values[idx]) {
+			t.Fatalf("HGET field %d found=%v err=%v", idx, found, err)
+		}
+	}
+	records := store.Export([]string{key})
+	if len(records) != 1 || !bytes.HasPrefix(records[0].Value, packedHashHeader[:]) {
+		t.Fatal("fixed shaped HASH must export canonical packed representation")
+	}
+}
+
+func TestVariableWidthShapedHashFallback(t *testing.T) {
+	store := New()
+	fields, values := repeatedHashFixture(8, 32)
+	values[3] = append(values[3], 'x')
+	for i := 0; i < 8; i++ {
+		if _, err := store.HashSet(fmt.Sprintf("variable:%02d", i), fields, values); err != nil {
+			t.Fatal(err)
+		}
+	}
+	physical := physicalHashBytes(t, store, "variable:07")
+	if !isShapedHash(physical) || isFixedShapedHash(physical) {
+		t.Fatalf("expected variable-width SH2 encoding, got header %x", physical[:min(5, len(physical))])
+	}
+	for _, idx := range []int{0, 3, 7} {
+		got, found, err := store.HashGet("variable:07", fields[idx])
+		if err != nil || !found || !bytes.Equal(got, values[idx]) {
+			t.Fatalf("HGET field %d found=%v err=%v", idx, found, err)
+		}
+	}
+}
