@@ -272,10 +272,18 @@ func TestCompactTightensIndexedListAndMutationReexpands(t *testing.T) {
 		t.Fatalf("compact did not shrink list before=%d after=%d", len(before), len(after))
 	}
 
-	for _, idx := range []int64{0, 49, 99, -1} {
-		value, found, err := s.ListIndex("medium-list", idx)
-		if err != nil || !found {
-			t.Fatalf("LINDEX %d found=%v err=%v", idx, found, err)
+	for _, tc := range []struct {
+		index int64
+		want  string
+	}{
+		{0, "v:000000"},
+		{49, "v:000049"},
+		{99, "v:000099"},
+		{-1, "v:000099"},
+	} {
+		value, found, err := s.ListIndex("medium-list", tc.index)
+		if err != nil || !found || string(value) != tc.want {
+			t.Fatalf("LINDEX %d value=%q found=%v err=%v want=%q", tc.index, value, found, err, tc.want)
 		}
 	}
 
