@@ -162,11 +162,18 @@ func TestHashShapeMediumDirectLookup(t *testing.T) {
 
 	key := "medium:07"
 	physical := physicalHashBytes(t, store, key)
-	if !isShapedHash(physical) {
-		t.Fatalf("expected 100-field HASH to use shared shape, got header %x", physical[:min(5, len(physical))])
+	if !isIndexedHash(physical) {
+		t.Fatalf("expected active 100-field HASH to use indexed representation, got header %x", physical[:min(5, len(physical))])
 	}
-	if isIndexedHash(physical) {
-		t.Fatal("100-field repeated HASH should not use private indexed representation")
+
+	// Medium hashes stay indexed while active, then maintenance compacts
+	// repeated layouts into the shared-shape representation.
+	if compacted := store.Compact(^uint64(0)); compacted == 0 {
+		t.Fatal("expected at least one shard to compact")
+	}
+	physical = physicalHashBytes(t, store, key)
+	if !isShapedHash(physical) {
+		t.Fatalf("expected cold 100-field HASH to use shared shape, got header %x", physical[:min(5, len(physical))])
 	}
 
 	for _, idx := range []int{0, 49, 99} {
