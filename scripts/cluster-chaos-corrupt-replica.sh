@@ -135,12 +135,13 @@ grep -q '^master_link_status:up' <<<"$i1"
 grep -q '^master_link_status:up' <<<"$i2"
 
 # Replica links can report up before the primary has renewed its quorum lease.
-# Require one successful client write before the actual seed burst so transient
-# failover fencing cannot turn this chaos case into a false data-loss failure.
+# Require one successful write before the seed burst so transient failover
+# fencing cannot produce false data-loss failures.
 lease_ready=0
+lease_reply=""
 for _ in $(seq 1 200); do
-  reply="$(cli "$P0" SET chaos:lease-ready yes 2>&1 || true)"
-  if [[ "$reply" == "OK" ]]; then
+  lease_reply="$(cli "$P0" SET chaos:lease-ready yes 2>&1 || true)"
+  if [[ "$lease_reply" == "OK" ]]; then
     lease_ready=1
     break
   fi
@@ -148,7 +149,7 @@ for _ in $(seq 1 200); do
 done
 if (( lease_ready == 0 )); then
   echo "primary did not become writable after replica attachment" >&2
-  echo "last SET reply: $reply" >&2
+  echo "last SET reply: $lease_reply" >&2
   cli "$P0" INFO replication >&2 || true
   cli "$P0" SNUG.FAILOVER HEALTH >&2 || true
   exit 1
