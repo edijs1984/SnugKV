@@ -57,6 +57,111 @@ func TestIndexedZSetIncrRankAndSmallRange(t *testing.T) {
 	}
 }
 
+func TestPackedZSetOrderedAppendFastPath(t *testing.T) {
+	items := []ZSetItem{
+		zitem(0, "m:000000:aaaaaaaaaaaaaaaa"),
+		zitem(1, "m:000001:bbbbbbbbbbbbbbbb"),
+	}
+	packed, err := encodePackedZSet(items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := zsetEncodingName(packed); got != "packed-int-delta-prefix" {
+		t.Fatalf("encoding=%q", got)
+	}
+
+	appended, ok, err := packedZSetAppendOrdered(
+		packed,
+		zitem(2, "m:000002:cccccccccccccccc"),
+	)
+	if err != nil || !ok {
+		t.Fatalf("append ok=%v err=%v", ok, err)
+	}
+	decoded, err := decodePackedZSet(appended)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded) != 3 || decoded[2].Score != 2 || string(decoded[2].Member) != "m:000002:cccccccccccccccc" {
+		t.Fatalf("decoded=%v", decoded)
+	}
+
+	if _, ok, err := packedZSetAppendOrdered(
+		appended,
+		zitem(99, "m:000001:bbbbbbbbbbbbbbbb"),
+	); err != nil || ok {
+		t.Fatalf("duplicate member must fall back: ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := packedZSetAppendOrdered(
+		appended,
+		zitem(1.5, "m:000003:dddddddddddddddd"),
+	); err != nil || ok {
+		t.Fatalf("out-of-order score must fall back: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestPackedZSetScoreShortPrefixHasNoHeapAllocation(t *testing.T) {
+	items := make([]ZSetItem, 10)
+	for i := range items {
+		items[i] = ZSetItem{
+			Score:  float64(i),
+			Member: []byte(fmt.Sprintf("m:%06d:%016x", i, uint64(i+1)*0x9e3779b97f4a7c15)),
+		}
+	}
+	packed, err := encodePackedZSet(items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := zsetEncodingName(packed); got != "packed-int-delta-prefix" {
+		t.Fatalf("encoding=%q", got)
+	}
+	target := items[9].Member
+	var score float64
+	var found bool
+	var lookupErr error
+	allocs := testing.AllocsPerRun(1000, func() {
+		score, found, lookupErr = packedZSetScore(packed, target)
+	})
+	if lookupErr != nil || !found || score != 9 {
+		t.Fatalf("score=%v found=%v err=%v", score, found, lookupErr)
+	}
+	if allocs > 0.1 {
+		t.Fatalf("packed ZSCORE allocations/run=%v want ~0", allocs)
+	}
+}
+
+func TestPackedZSetOrderedAppendPreservesTTL(t *testing.T) {
+	s := New()
+	if _, _, _, err := s.ZSetAdd("z", []ZSetItem{zitem(0, "m:000000:aaaaaaaaaaaaaaaa")}, ZSetAddOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if !s.Expire("z", time.Minute) {
+		t.Fatal("expire failed")
+	}
+	for i := 1; i < 10; i++ {
+		member := fmt.Sprintf("m:%06d:%016x", i, uint64(i+1)*0x9e3779b97f4a7c15)
+		added, _, _, err := s.ZSetAdd("z", []ZSetItem{zitem(float64(i), member)}, ZSetAddOptions{})
+		if err != nil || added != 1 {
+			t.Fatalf("append %d added=%d err=%v", i, added, err)
+		}
+	}
+	if ttl := s.TTL("z", true); ttl <= 0 {
+		t.Fatalf("ttl lost: %d", ttl)
+	}
+	if card, err := s.ZSetCard("z"); err != nil || card != 10 {
+		t.Fatalf("card=%d err=%v", card, err)
+	}
+	for i := 0; i < 10; i++ {
+		member := "m:000000:aaaaaaaaaaaaaaaa"
+		if i > 0 {
+			member = fmt.Sprintf("m:%06d:%016x", i, uint64(i+1)*0x9e3779b97f4a7c15)
+		}
+		score, found, err := s.ZSetScore("z", []byte(member))
+		if err != nil || !found || score != float64(i) {
+			t.Fatalf("score %d=%v found=%v err=%v", i, score, found, err)
+		}
+	}
+}
+
 func TestZSetCoreOrderingAndLookup(t *testing.T) {
 	s := New()
 	added, _, _, err := s.ZSetAdd("z", []ZSetItem{
