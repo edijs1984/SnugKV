@@ -392,11 +392,9 @@ func (s *Store) ListLen(key string) (int64, error) {
 	if e.valueType != TypeList {
 		return 0, listWrongType()
 	}
+	if e.isHotList() { h,_,ok:=sh.hotListForKey(key); if !ok||h==nil{return 0,errors.New("HOT list sidecar invariant")}; return int64(len(h.elements)),nil }
 	physical := sh.encoded(e)
-	if isIndexedList(physical) {
-		count, _, _, _, err := indexedListMeta(physical)
-		return int64(count), err
-	}
+	if isIndexedList(physical) { count, _, _, _, err := indexedListMeta(physical); return int64(count), err }
 	count, _, err := packedListMeta(physical)
 	return int64(count), err
 }
@@ -412,10 +410,9 @@ func (s *Store) ListIndex(key string, index int64) ([]byte, bool, error) {
 	if e.valueType != TypeList {
 		return nil, false, listWrongType()
 	}
+	if e.isHotList() { h,_,ok:=sh.hotListForKey(key); if !ok||h==nil{return nil,false,errors.New("HOT list sidecar invariant")}; i:=index;if i<0{i+=int64(len(h.elements))};if i<0||i>=int64(len(h.elements)){return nil,false,nil};return append([]byte(nil),h.elements[i]...),true,nil }
 	physical := sh.encoded(e)
-	if isIndexedList(physical) {
-		return indexedListElement(physical, int(index))
-	}
+	if isIndexedList(physical) { return indexedListElement(physical, int(index)) }
 	return packedListElement(physical, int(index))
 }
 
