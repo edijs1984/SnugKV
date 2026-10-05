@@ -55,13 +55,11 @@ func (s *Store) Compact(scratch uint64) int {
 			}
 		}
 
-		// Active medium hashes use the indexed representation for cheap HSET/HGET.
+		// Active hashes use indexed/HOT representations for cheap mutation.
 		// Once maintenance sees them cold, collapse repeated field layouts into
-		// the shared-shape representation. This keeps foreground mutation fast
-		// while allowing settled memory to converge below the indexed layout.
-		//
-		// Deliberately cap this below the HOT-hash threshold: large hashes keep
-		// their O(1) index instead of turning HGET into a long linear shape scan.
+		// shared shapes. Medium hashes may use either shaped format; large hashes
+		// are compacted only when the fixed-width SF1 form is available, keeping
+		// cold HGET O(1) instead of introducing a long variable-width scan.
 		for key, e := range sh.all() {
 			if e.valueType != TypeHash || e.isHotHash() {
 				continue
@@ -71,7 +69,7 @@ func (s *Store) Compact(scratch uint64) int {
 				continue
 			}
 			count, _, _, _, err := indexedHashMeta(physical)
-			if err != nil || count < indexedHashPromoteFields || count >= hotHashPromoteFields {
+			if err != nil || count < indexedHashPromoteFields {
 				continue
 			}
 			pairs, err := decodeIndexedHash(physical)
@@ -84,6 +82,9 @@ func (s *Store) Compact(scratch uint64) int {
 			}
 			updated := s.hashEntry(pairs, packed)
 			if !isShapedHash(updated.data) {
+				continue
+			}
+			if count >= hotHashPromoteFields && !isFixedShapedHash(updated.data) {
 				continue
 			}
 			updated.expiresAt = sh.expirationAt(key, e)
