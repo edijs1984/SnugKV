@@ -8,7 +8,7 @@ import (
 
 var indexedListHeader = [...]byte{'S','L',2}
 const indexedListFixed = 15
-const indexedListPromoteElements = 32
+const indexedListPromoteElements = 16
 
 func isIndexedList(data []byte) bool {
 	return len(data) >= indexedListFixed && bytes.Equal(data[:3], indexedListHeader[:])
@@ -118,6 +118,30 @@ func encodeIndexedList(elements [][]byte) ([]byte,error) {
 	}
 	binary.LittleEndian.PutUint32(out[11:15],uint32(cursor))
 	return out,nil
+}
+
+func compactIndexedList(data []byte) ([]byte, bool, error) {
+	count, capacity, used, start, err := indexedListMeta(data)
+	if err != nil {
+		return nil, false, err
+	}
+	tightStart := indexedListFixed + count*4
+	tightLen := tightStart + used
+	if capacity == count && start+used == len(data) {
+		return nil, false, nil
+	}
+	if tightLen > maxPackedListBytes {
+		return nil, false, errors.New("ERR list exceeds 32 MiB limit")
+	}
+
+	out := make([]byte, tightLen)
+	copy(out[:3], indexedListHeader[:])
+	binary.LittleEndian.PutUint32(out[3:7], uint32(count))
+	binary.LittleEndian.PutUint32(out[7:11], uint32(count))
+	binary.LittleEndian.PutUint32(out[11:15], uint32(used))
+	copy(out[indexedListFixed:tightStart], data[indexedListFixed:indexedListFixed+count*4])
+	copy(out[tightStart:], data[start:start+used])
+	return out, true, nil
 }
 
 func decodeIndexedList(data []byte) ([][]byte,error) {
