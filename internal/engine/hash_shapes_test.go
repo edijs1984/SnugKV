@@ -351,14 +351,22 @@ func TestVariableWidthShapedHashFallback(t *testing.T) {
 
 
 func TestHashPhysicalHeadersAreDistinct(t *testing.T) {
-	if bytes.Equal(shapedHashHeader[:], shapedHashFixedHeader[:]) {
-		t.Fatal("variable and fixed shaped HASH headers overlap")
+	headers := map[string][]byte{
+		"packed":        packedHashHeader[:],
+		"shape":         shapedHashHeader[:],
+		"packed-expiry": packedHashExpiryHeader[:],
+		"indexed":       indexedHashHeader[:],
+		"shape-fixed":   shapedHashFixedHeader[:],
 	}
-	if bytes.Equal(shapedHashHeader[:], indexedHashHeader[:]) {
-		t.Fatal("variable shaped and indexed HASH headers overlap")
-	}
-	if bytes.Equal(shapedHashFixedHeader[:], indexedHashHeader[:]) {
-		t.Fatal("fixed shaped and indexed HASH headers overlap")
+	for nameA, a := range headers {
+		for nameB, b := range headers {
+			if nameA >= nameB {
+				continue
+			}
+			if bytes.Equal(a, b) {
+				t.Fatalf("HASH physical headers overlap: %s=%x %s=%x", nameA, a, nameB, b)
+			}
+		}
 	}
 
 	indexed, err := encodeIndexedHash([]HashPair{
@@ -377,7 +385,17 @@ func TestHashPhysicalHeadersAreDistinct(t *testing.T) {
 		{Field: []byte("b"), Value: []byte("22")},
 	}
 	fixed := encodeShapedHash(1, fixedPairs)
-	if !isFixedShapedHash(fixed) || !isShapedHash(fixed) || isIndexedHash(fixed) {
+	if !isFixedShapedHash(fixed) || !isShapedHash(fixed) || isIndexedHash(fixed) || packedHashHasFieldExpiry(fixed) {
 		t.Fatalf("fixed shaped HASH misclassified: %x", fixed[:min(5, len(fixed))])
+	}
+
+	expiring, err := encodePackedHash([]HashPair{
+		{Field: []byte("a"), Value: []byte("1"), ExpiresAtMS: 123},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !packedHashHasFieldExpiry(expiring) || isIndexedHash(expiring) || isShapedHash(expiring) {
+		t.Fatalf("expiring packed HASH misclassified: %x", expiring[:min(5, len(expiring))])
 	}
 }
