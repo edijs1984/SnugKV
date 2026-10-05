@@ -15,7 +15,7 @@ const (
 )
 
 var shapedHashHeader = [...]byte{'S', 'H', 2}
-var shapedHashFixedHeader = [...]byte{'S', 'H', 4}
+var shapedHashFixedHeader = [...]byte{'S', 'H', 3}
 
 type hashShape struct {
 	signature []byte
