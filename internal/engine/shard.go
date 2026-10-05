@@ -11,6 +11,7 @@ import (
 type entryMetaSidecar struct {
 	slots     []*entryMeta
 	hotHashes []*hotHash
+	hotLists  []*hotList
 }
 
 type shard struct {
@@ -111,6 +112,35 @@ func (sh *shard) setMeta(id uint32, meta *entryMeta) {
 	if sh.metas != nil {
 		sh.metas.slots[id] = meta
 	}
+}
+
+func (sh *shard) ensureHotListSlots() {
+	if sh.metas == nil {
+		sh.metas = &entryMetaSidecar{slots: make([]*entryMeta, len(sh.entries), cap(sh.entries))}
+	}
+	if len(sh.metas.slots) < len(sh.entries) {
+		next := make([]*entryMeta, len(sh.entries), cap(sh.entries))
+		copy(next, sh.metas.slots)
+		sh.metas.slots = next
+	}
+	if sh.metas.hotLists == nil || len(sh.metas.hotLists) < len(sh.entries) || cap(sh.metas.hotLists) < cap(sh.entries) {
+		next := make([]*hotList, len(sh.entries), cap(sh.entries))
+		copy(next, sh.metas.hotLists)
+		sh.metas.hotLists = next
+	}
+}
+
+func (sh *shard) hotListByID(id uint32) *hotList {
+	if sh.metas == nil || sh.metas.hotLists == nil || int(id) >= len(sh.metas.hotLists) { return nil }
+	return sh.metas.hotLists[id]
+}
+func (sh *shard) hotListForKey(key string) (*hotList, uint32, bool) {
+	id, ok := sh.data.Get(key); if !ok { return nil, 0, false }
+	return sh.hotListByID(id), id, true
+}
+func (sh *shard) setHotList(id uint32, h *hotList) {
+	if h != nil { sh.ensureHotListSlots() }
+	if sh.metas != nil && sh.metas.hotLists != nil { sh.metas.hotLists[id] = h }
 }
 
 func (sh *shard) ensureHotHashSlots() {
@@ -260,9 +290,8 @@ func (sh *shard) delete(key string) bool {
 	if sh.metas != nil {
 		sh.metas.slots[id] = nil
 	}
-	if sh.metas != nil && sh.metas.hotHashes != nil {
-		sh.metas.hotHashes[id] = nil
-	}
+	if sh.metas != nil && sh.metas.hotHashes != nil { sh.metas.hotHashes[id] = nil }
+	if sh.metas != nil && sh.metas.hotLists != nil { sh.metas.hotLists[id] = nil }
 	sh.freeIDs = append(sh.freeIDs, id)
 
 	return true
