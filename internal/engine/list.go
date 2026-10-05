@@ -469,16 +469,14 @@ func (s *Store) ListStorageStats(key string) (ListStats, bool, error) {
 	if e.valueType != TypeList {
 		return ListStats{}, false, listWrongType()
 	}
-	elements, err := s.listElementsFromEntry(sh, e)
-	if err != nil {
-		return ListStats{}, false, err
-	}
+	var elements [][]byte
+	if e.isHotList() { h,_,ok:=sh.hotListForKey(key);if !ok||h==nil{return ListStats{},false,errors.New("HOT list sidecar invariant")};elements=h.elements } else { var err error;elements,err=s.listElementsFromEntry(sh,e);if err!=nil{return ListStats{},false,err} }
 	logical, err := encodePackedList(elements)
 	if err != nil {
 		return ListStats{}, false, err
 	}
 	encoding := "packed"
-	if isIndexedList(sh.encoded(e)) {
+	if e.isHotList() { encoding="hot-list" } else if isIndexedList(sh.encoded(e)) {
 		encoding = "indexed"
 	}
 	stats := ListStats{Elements: len(elements), PackedBytes: len(logical), StoredBytes: len(sh.encoded(e)), Encoding: encoding}
