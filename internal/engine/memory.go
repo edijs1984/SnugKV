@@ -99,7 +99,7 @@ func (s *Store) Layout() LayoutStats {
 
 type accounting struct {
 	mu                                                                         sync.Mutex
-	used, index, entries, arenas, arenaPayload, arenaLiveBlocks, schemas, metas, hotHashes uint64
+	used, index, entries, arenas, arenaPayload, arenaLiveBlocks, schemas, metas, hotHashes, hotLists uint64
 	max                                                                        atomic.Uint64
 }
 
@@ -119,6 +119,7 @@ func (s *Store) Memory() MemoryStats {
 		SchemaBytes:         s.memory.schemas,
 		MetaBytes:           s.memory.metas,
 		HotHashBytes:        s.memory.hotHashes,
+		HotListBytes:        s.memory.hotLists,
 		SearchBytes:         searchBytes,
 	}
 }
