@@ -236,15 +236,9 @@ func (s *Store) listPush(key string, values [][]byte, left bool) (int64, error) 
 			}
 			if rebuilt == nil {
 				if length >= hotListPromoteElements {
-					e := old
-					if h, promoted, err := s.thawHotListLocked(sh, key, e); err != nil {
+					if h, promoted, err := s.thawHotListLocked(sh, key, old); err != nil {
 						return 0, err
 					} else if promoted {
-						if left {
-							s.mutateHotListLocked(h, func() { h.appendLeft(values) })
-						} else {
-							s.mutateHotListLocked(h, func() { h.appendRight(values) })
-						}
 						return int64(len(h.elements)), nil
 					}
 				}
