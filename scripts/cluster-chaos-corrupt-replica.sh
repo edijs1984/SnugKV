@@ -134,12 +134,40 @@ done
 grep -q '^master_link_status:up' <<<"$i1"
 grep -q '^master_link_status:up' <<<"$i2"
 
+# Replica links can report up before the primary has renewed its quorum lease.
+# Require one successful write before the seed burst so transient failover
+# fencing cannot produce false data-loss failures.
+lease_ready=0
+lease_reply=""
+for _ in $(seq 1 200); do
+  lease_reply="$(cli "$P0" SET chaos:lease-ready yes 2>&1 || true)"
+  if [[ "$lease_reply" == "OK" ]]; then
+    lease_ready=1
+    break
+  fi
+  sleep 0.05
+done
+if (( lease_ready == 0 )); then
+  echo "primary did not become writable after replica attachment" >&2
+  echo "last SET reply: $lease_reply" >&2
+  cli "$P0" INFO replication >&2 || true
+  cli "$P0" SNUG.FAILOVER HEALTH >&2 || true
+  exit 1
+fi
+
 seed="$TMP/seed.commands"
 : >"$seed"
 for i in $(seq 1 200); do
   printf 'SET corrupt:key:%03d value-%03d\n' "$i" "$i" >>"$seed"
 done
 redis-cli --no-auth-warning --raw -a "$PASSWORD" -p "$P0" <"$seed" >"$TMP/seed.out"
+if grep -v '^OK$' "$TMP/seed.out" | grep -q .; then
+  echo "seed produced rejected/unexpected replies" >&2
+  grep -n -v '^OK$' "$TMP/seed.out" | head -n 20 >&2 || true
+  cli "$P0" INFO replication >&2 || true
+  cli "$P0" SNUG.FAILOVER HEALTH >&2 || true
+  exit 1
+fi
 
 # First prove the primary actually committed representative seed values.
 for n in 001 100 200; do
