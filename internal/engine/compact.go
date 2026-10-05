@@ -104,7 +104,9 @@ func (s *Store) Compact(scratch uint64) int {
 
 		oldArena, oldIndex := sh.arena.TotalMemoryBytes(), sh.data.CapacityBytes()
 		oldEntries := shardEntryStorageBytes(sh)
-		oldHotSidecar := hotHashSidecarBytes(sh) + hotListSidecarBytes(sh)
+		oldHotHashSidecar := hotHashSidecarBytes(sh)
+		oldHotListSidecar := hotListSidecarBytes(sh)
+		oldHotSidecar := oldHotHashSidecar + oldHotListSidecar
 		if oldArena+oldIndex+oldEntries == 0 ||
 			(oldArena+oldIndex+oldEntries)*3 > scratch {
 			sh.mu.Unlock()
@@ -204,8 +206,8 @@ func (s *Store) Compact(scratch uint64) int {
 		sh.freeIDs = nil
 
 		s.memory.used = next
-		s.memory.hotHashes -= hotHashSidecarBytes(sh)
-		s.memory.hotLists -= hotListSidecarBytes(sh)
+		s.memory.hotHashes -= oldHotHashSidecar
+		s.memory.hotLists -= oldHotListSidecar
 		s.memory.arenas = s.memory.arenas - oldArena + newArena
 		s.memory.index = s.memory.index - oldIndex + newIndex
 		s.memory.entries = s.memory.entries - oldEntries + newEntries
