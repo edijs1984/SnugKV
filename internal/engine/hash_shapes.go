@@ -19,7 +19,7 @@ var shapedHashFixedHeader = [...]byte{'S', 'H', 4}
 
 type hashShape struct {
 	signature []byte
-	ordinals  map[string]uint16
+	ordinals  map[string]uint32
 }
 
 type hashShapeCandidate struct {
@@ -215,7 +215,7 @@ func shapedHashLookupViewKnown(data, target []byte, shape hashShape) ([]byte, bo
 		return data[start:end], true, nil
 	}
 
-	for i := uint16(0); i <= ordinal; i++ {
+	for i := uint32(0); i <= ordinal; i++ {
 		valueLen, err := readHashUvarint(data, &valueOffset)
 		if err != nil || valueLen > uint64(len(data)-valueOffset) {
 			return nil, false, errors.New("invalid shaped hash value")
@@ -287,10 +287,10 @@ func (s *Store) hashShapeID(pairs []HashPair, packedLen int) (uint16, bool) {
 	}
 
 	signature := hashShapeSignature(pairs)
-	ordinals := make(map[string]uint16, len(pairs))
+	ordinals := make(map[string]uint32, len(pairs))
 	ordinalBytes := 0
 	for i, pair := range pairs {
-		ordinals[string(pair.Field)] = uint16(i)
+		ordinals[string(pair.Field)] = uint32(i)
 		ordinalBytes += len(pair.Field) + 24
 	}
 	// Covers the retained signature, ordinal lookup, and conservative
