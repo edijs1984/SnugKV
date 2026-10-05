@@ -399,3 +399,70 @@ func TestHashPhysicalHeadersAreDistinct(t *testing.T) {
 		t.Fatalf("expiring packed HASH misclassified: %x", expiring[:min(5, len(expiring))])
 	}
 }
+
+
+func TestCompactConvertsColdLargeFixedHashToShape(t *testing.T) {
+	store := New()
+	fields, values := repeatedHashFixture(300, 64)
+	keys := make([]string, 0, 8)
+
+	for i := 0; i < 8; i++ {
+		key := fmt.Sprintf("compact-large:%02d", i)
+		keys = append(keys, key)
+		for j := range fields {
+			if _, err := store.HashSet(key, fields[j:j+1], values[j:j+1]); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	// Large hashes are HOT while mutating. Maintenance freezes them and may
+	// compact repeated fixed-width layouts into SF1.
+	if compacted := store.Compact(^uint64(0)); compacted == 0 {
+		t.Fatal("expected at least one shard to compact")
+	}
+
+	key := firstShapedHashKey(t, store, keys)
+	physical := physicalHashBytes(t, store, key)
+	if !isFixedShapedHash(physical) {
+		t.Fatalf("cold large HASH encoding=%x, want fixed shape", physical[:min(5, len(physical))])
+	}
+
+	for _, idx := range []int{0, 149, 299} {
+		got, found, err := store.HashGet(key, fields[idx])
+		if err != nil || !found || !bytes.Equal(got, values[idx]) {
+			t.Fatalf("HGET field %d found=%v err=%v", idx, found, err)
+		}
+	}
+}
+
+func TestCompactKeepsColdLargeVariableHashIndexed(t *testing.T) {
+	store := New()
+	fields, values := repeatedHashFixture(300, 64)
+	values[150] = append(values[150], 'x')
+
+	keys := make([]string, 0, 8)
+	for i := 0; i < 8; i++ {
+		key := fmt.Sprintf("compact-large-variable:%02d", i)
+		keys = append(keys, key)
+		for j := range fields {
+			if _, err := store.HashSet(key, fields[j:j+1], values[j:j+1]); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	if compacted := store.Compact(^uint64(0)); compacted == 0 {
+		t.Fatal("expected at least one shard to compact")
+	}
+
+	for _, key := range keys {
+		physical := physicalHashBytes(t, store, key)
+		if isShapedHash(physical) {
+			t.Fatalf("variable-width large HASH %q should remain indexed, got %x", key, physical[:min(5, len(physical))])
+		}
+		if !isIndexedHash(physical) {
+			t.Fatalf("variable-width large HASH %q encoding=%x, want indexed", key, physical[:min(5, len(physical))])
+		}
+	}
+}
