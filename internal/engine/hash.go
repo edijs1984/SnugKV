@@ -272,6 +272,39 @@ func packedHashLookup(data, target []byte, nowMS int64) ([]byte, bool, error) {
 	return append([]byte(nil), value...), true, nil
 }
 
+func (s *Store) hashEntryFromPairs(pairs []HashPair) (preparedEntry, error) {
+	packedLen, ok := canonicalPackedHashLen(pairs)
+	if !ok {
+		return preparedEntry{}, errors.New("ERR hash exceeds 32 MiB limit")
+	}
+	for _, pair := range pairs {
+		if pair.ExpiresAtMS != 0 {
+			packed, err := encodePackedHash(pairs)
+			if err != nil {
+				return preparedEntry{}, err
+			}
+			return s.hashEntry(pairs, packed), nil
+		}
+	}
+	if shapeID, ok := s.hashShapeID(pairs, packedLen); ok {
+		shaped := encodeShapedHash(shapeID, pairs)
+		if len(shaped)+hashShapeMinSavings <= packedLen {
+			return preparedEntry{
+				entry: entry{entryData: entryData{
+					valueType: TypeHash,
+					rawLength: uint32(packedLen),
+				}},
+				data: shaped,
+			}, nil
+		}
+	}
+	packed, err := encodePackedHash(pairs)
+	if err != nil {
+		return preparedEntry{}, err
+	}
+	return s.hashEntry(pairs, packed), nil
+}
+
 func (s *Store) hashEntry(pairs []HashPair, packed []byte) preparedEntry {
 	stored := packed
 	hasFieldExpiry := false
@@ -422,11 +455,11 @@ func (s *Store) hashSetLocked(sh *shard, key string, fields, values [][]byte) (i
 			data: indexed,
 		}
 	} else {
-		packed, err := encodePackedHash(pairs)
+		var err error
+		updated, err = s.hashEntryFromPairs(pairs)
 		if err != nil {
 			return 0, err
 		}
-		updated = s.hashEntry(pairs, packed)
 	}
 	updated.expiresAt = expiresAt
 	if err := s.publish(sh, key, updated); err != nil {
