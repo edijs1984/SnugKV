@@ -10,6 +10,10 @@ var indexedListHeader = [...]byte{'S','L',2}
 const indexedListFixed = 15
 const indexedListPromoteElements = 32
 
+// indexedListMaxPayloadHeadroom caps the append reserve added when a list is
+// regrown, so very large lists grow by a fixed step instead of doubling.
+const indexedListMaxPayloadHeadroom = 1 << 20
+
 func isIndexedList(data []byte) bool {
 	return len(data) >= indexedListFixed && bytes.Equal(data[:3], indexedListHeader[:])
 }
@@ -265,10 +269,19 @@ func growIndexedListRaw(data []byte, values [][]byte) (newCount int, grown []byt
 		newCapacity = nextListPow2(newCount * 2)
 	}
 	newUsed := used + extra
-	dataCap := newUsed + newUsed/4
-	if dataCap-newUsed < 512 {
-		dataCap = newUsed + 512
+	// Double the payload reserve (capped, like Redis SDS preallocation) so a
+	// list built by repeated RPUSH regrows O(log n) times. Each regrow leaves a
+	// dead copy in the arena and a temporary heap buffer, so a smaller growth
+	// factor multiplies both the post-load memory spike and GC churn. Idle lists
+	// give the reserve back through trimIndexedList during compaction.
+	headroom := newUsed
+	if headroom > indexedListMaxPayloadHeadroom {
+		headroom = indexedListMaxPayloadHeadroom
 	}
+	if headroom < 512 {
+		headroom = 512
+	}
+	dataCap := newUsed + headroom
 	newStart := indexedListFixed + newCapacity*4
 	total := newStart + dataCap
 	if total > maxPackedListBytes {
