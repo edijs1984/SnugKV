@@ -149,8 +149,13 @@ func indexedZSetFind(data, target []byte) (slot,pos int, found bool, score float
 }
 
 func indexedZSetRecordBytes(member []byte, score float64) []byte {
+	return indexedZSetAppendRecord(make([]byte,0,2*binary.MaxVarintLen64+8+len(member)),member,score)
+}
+
+// indexedZSetAppendRecord appends the record for (member, score) to dst, so hot
+// paths can encode into a stack buffer instead of allocating per call.
+func indexedZSetAppendRecord(out []byte, member []byte, score float64) []byte {
 	score = normalizeZSetScore(score)
-	out := make([]byte,0,2*binary.MaxVarintLen64+8+len(member))
 	if score == math.Trunc(score) && math.Abs(score) < indexedZSetMaxIntScore {
 		n := int64(score)
 		z := uint64(n<<1) ^ uint64(n>>63)
@@ -311,7 +316,8 @@ func indexedZSetIncrBy(data, member []byte, increment float64) (added bool, scor
 			return false, 0, nil, errors.New("ERR resulting score is not a number (NaN)")
 		}
 	}
-	rec := indexedZSetRecordBytes(member, score)
+	var recBuf [96]byte
+	rec := indexedZSetAppendRecord(recBuf[:0], member, score)
 	needRehash := !found && (count+1)*5 >= slots*4
 	if needRehash || start+used+len(rec) > len(data) {
 		items, e := decodeIndexedZSet(data)
@@ -458,7 +464,8 @@ func indexedZSetAddSimple(data []byte, pairs []ZSetItem)(added int64, rebuilt []
 		if found && current == score {
 			continue
 		}
-		rec := indexedZSetRecordBytes(pair.Member,score)
+		var recBuf [96]byte
+		rec := indexedZSetAppendRecord(recBuf[:0],pair.Member,score)
 		// Match the 80% occupancy target used by the encoder. Linear probing
 		// remains bounded while avoiding an early 2x table expansion for medium
 		// cardinalities such as 100 members.
