@@ -14,6 +14,11 @@ const indexedListPromoteElements = 32
 // regrown, so very large lists grow by a fixed step instead of doubling.
 const indexedListMaxPayloadHeadroom = 1 << 20
 
+// indexedListDoublingPayloadBytes is the payload size from which regrow headroom
+// doubles. Below it the reserve stays at 25%: lists that end up small keep a tight
+// footprint, while lists that keep growing stop leaving a long chain of dead copies.
+const indexedListDoublingPayloadBytes = 8 << 10
+
 func isIndexedList(data []byte) bool {
 	return len(data) >= indexedListFixed && bytes.Equal(data[:3], indexedListHeader[:])
 }
@@ -269,12 +274,16 @@ func growIndexedListRaw(data []byte, values [][]byte) (newCount int, grown []byt
 		newCapacity = nextListPow2(newCount * 2)
 	}
 	newUsed := used + extra
-	// Double the payload reserve (capped, like Redis SDS preallocation) so a
-	// list built by repeated RPUSH regrows O(log n) times. Each regrow leaves a
-	// dead copy in the arena and a temporary heap buffer, so a smaller growth
-	// factor multiplies both the post-load memory spike and GC churn. Idle lists
-	// give the reserve back through trimIndexedList during compaction.
+	// Large lists double their payload reserve (capped, like Redis SDS
+	// preallocation) so repeated RPUSH regrows O(log n) times. Each regrow leaves
+	// a dead copy in the arena and a temporary heap buffer, so a small growth
+	// factor multiplies both the post-load memory spike and GC churn. Small
+	// lists keep a 25% reserve to stay tight. Idle lists give the reserve back
+	// through trimIndexedList during compaction.
 	headroom := newUsed
+	if newUsed < indexedListDoublingPayloadBytes {
+		headroom = newUsed / 4
+	}
 	if headroom > indexedListMaxPayloadHeadroom {
 		headroom = indexedListMaxPayloadHeadroom
 	}

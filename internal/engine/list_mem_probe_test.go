@@ -11,7 +11,7 @@ func TestListSettledBytesPerItemReport(t *testing.T) {
 	if testing.Short() {
 		t.Skip("memory report")
 	}
-	for _, card := range []int{10, 100, 1000} {
+	for _, card := range []int{10, 100, 200, 500, 1000, 3000} {
 		s := New()
 		const items = 200_000
 		v := bytes.Repeat([]byte("v"), 64)
