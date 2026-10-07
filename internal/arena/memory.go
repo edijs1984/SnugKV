@@ -1,6 +1,6 @@
 package arena
 
-const freeTableBytes = uint64(freeBucketCount * 8)
+const freeTableBytes = uint64(freeBucketCount*8 + 24)
 
 // TotalMemoryBytes reports all heap storage owned by the arena, including the
 // lazily allocated free-head table when it exists.

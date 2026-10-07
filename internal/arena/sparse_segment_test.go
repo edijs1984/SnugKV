@@ -119,15 +119,15 @@ func TestArenaKeepsFreeTableLazy(t *testing.T) {
 		t.Fatalf("first free total growth = %d, want %d", got, freeTableBytes)
 	}
 	bucket, _ := class(16)
-	if a.free[bucket] == 0 {
+	if a.free.heads[bucket] == 0 {
 		t.Fatal("freed block was not linked into free table")
 	}
 
-	before := *a.free
+	before := a.free.heads
 	if projected := a.GrowthFor([]int{16}); projected != 0 {
 		t.Fatalf("freelist reuse projected growth = %d", projected)
 	}
-	if *a.free != before {
+	if a.free.heads != before {
 		t.Fatal("GrowthFor mutated live free table")
 	}
 }

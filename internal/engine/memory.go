@@ -291,6 +291,18 @@ func (s *Store) decode(sh *shard, e entry) []byte {
 
 // publish is called with the owning shard locked. Index reservations remain
 // charged after deletion because Go maps can retain their bucket allocation.
+// arenaReleased records heap bytes the arena handed back when a dedicated large
+// block was freed, keeping accounting equal to the arena's real footprint.
+func (s *Store) arenaReleased(n uint64) {
+	if n == 0 {
+		return
+	}
+	s.memory.mu.Lock()
+	s.memory.used -= n
+	s.memory.arenas -= n
+	s.memory.mu.Unlock()
+}
+
 func (s *Store) publish(sh *shard, key string, e preparedEntry) error {
 	return s.publishRecord(sh, key, e, enforceMemoryLimit)
 }
@@ -498,7 +510,7 @@ func (s *Store) publishRecordKnownWithHash(
 	}
 
 	if exists && !oldHot {
-		sh.arena.Free(old.ref)
+		s.arenaReleased(sh.arena.Free(old.ref))
 	}
 
 	sh.schedule(key, e.expiresAt)
@@ -559,7 +571,7 @@ func (s *Store) remove(sh *shard, key string) {
 		s.memory.mu.Unlock()
 		sh.delete(key)
 		if !e.isHotHash() {
-			sh.arena.Free(e.ref)
+			s.arenaReleased(sh.arena.Free(e.ref))
 		}
 		sh.schedule(key, 0)
 		s.searchRemoveKey(key)

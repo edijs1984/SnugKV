@@ -53,7 +53,7 @@ func TestMediumGeometricClassesStayWithinFreelist(t *testing.T) {
 		if block < payload+8 {
 			t.Fatalf("payload %d block %d is too small", payload, block)
 		}
-		if bucket >= len(Arena{}.free) {
+		if bucket >= freeBucketCount {
 			t.Fatalf("payload %d bucket %d exceeds freelist", payload, bucket)
 		}
 		previousBucket = bucket
@@ -85,7 +85,7 @@ func TestSmallHashClassesReduceSlack(t *testing.T) {
 
 	for _, tt := range tests {
 		bucket, block := class(tt.payload)
-		if bucket < 0 || bucket >= len(Arena{}.free) {
+		if bucket < 0 || bucket >= freeBucketCount {
 			t.Fatalf("payload %d bucket %d outside freelist", tt.payload, bucket)
 		}
 		if block != tt.wantBlock {

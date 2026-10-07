@@ -20,7 +20,11 @@ func TestListSettledBytesPerItemReport(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		raw := s.Memory().AccountedBytes
+		m := s.Memory()
+		raw := m.AccountedBytes
+		t.Logf("card=%4d  arena=%.1f payload=%.1f liveBlocks=%.1f index=%.1f entries=%.1f B/item", card,
+			float64(m.ArenaBytes)/items, float64(m.ArenaPayloadBytes)/items, float64(m.ArenaLiveBlockBytes)/items,
+			float64(m.IndexReservedBytes)/items, float64(m.EntryBytes)/items)
 		s.Compact(1 << 30)
 		settled := s.Memory().AccountedBytes
 		t.Logf("card=%4d  right-after-load=%6.1f B/item  settled=%6.1f B/item", card, float64(raw)/items, float64(settled)/items)

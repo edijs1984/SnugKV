@@ -84,6 +84,10 @@ All notable changes to SnugKV will be documented in this file.
 
 ## [Unreleased]
 
+### Memory — large freed arena blocks are returned to the heap (pending live benchmark)
+
+- A value that outgrows its block (every RPUSH/APPEND-style rewrite) used to leave the old block on a per-size free list. A growing list passes through every size class once, so each shard kept one idle block per class that no other value could reuse. Freed blocks that own a whole segment (above 4 KiB) are now released to the Go heap and the segment slot is reused. Right after loading 1000-item lists this cuts reserved arena from ~174 to ~110 B/item in the engine probe.
+
 ### Performance — optimizer yields to foreground writes (pending live benchmark)
 
 - Optimizer workers now stay idle for the whole foreground write burst (bounded at 2 s, or earlier when the queue is more than half full) instead of doing one key every 50 ms per worker, and the quiet poll reuses one timer instead of allocating one per poll. Shard write locks and CPU taken by `Rewrite`/`MarkOptimizationAttempt` during load were showing up as write p99. Catch-up still runs at full speed as soon as writes stop.
