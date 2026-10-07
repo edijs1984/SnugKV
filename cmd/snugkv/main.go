@@ -9,6 +9,7 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"os/signal"
+	"runtime"
 	"runtime/debug"
 	"snugkv/internal/config"
 	"snugkv/internal/engine"
@@ -88,6 +89,10 @@ func main() {
 		if ip == nil || !ip.IsLoopback() && !ip.IsUnspecified() {
 			log.Fatal("pprof-listen must use a loopback or unspecified IP")
 		}
+		// Contention profiles are only useful when pprof is enabled; sample
+		// 1 in 100 events so the overhead stays negligible.
+		runtime.SetMutexProfileFraction(100)
+		runtime.SetBlockProfileRate(10000)
 		go func() {
 			log.Printf("event=pprof_started listen=%s", *pprofAddr)
 			if serveErr := http.ListenAndServe(*pprofAddr, nil); serveErr != nil {
