@@ -93,6 +93,37 @@ func (s *Store) Compact(scratch uint64) int {
 			}
 		}
 
+		// Idle indexed lists carry append headroom (payload slack and a
+		// power-of-two offset table). Trim it so the rebuilt arena stores them
+		// at their exact size; a later RPUSH regrows the list on demand.
+		listKeys := make([]string, 0)
+		for key, e := range sh.all() {
+			if e.valueType == TypeList && isIndexedList(sh.encoded(e)) {
+				listKeys = append(listKeys, key)
+			}
+		}
+		for _, key := range listKeys {
+			e, ok := sh.get(key)
+			if !ok {
+				continue
+			}
+			trimmed, ok := trimIndexedList(sh.encoded(e))
+			if !ok {
+				continue
+			}
+			updated := preparedEntry{
+				entry: entry{entryData: entryData{
+					valueType: TypeList,
+					rawLength: uint32(len(trimmed)),
+				}},
+				data:      trimmed,
+				expiresAt: sh.expirationAt(key, e),
+			}
+			// Under memory pressure the replacement may not fit; the list
+			// simply keeps its headroom until a later pass.
+			_ = s.publish(sh, key, updated)
+		}
+
 		oldArena, oldIndex := sh.arena.TotalMemoryBytes(), sh.data.CapacityBytes()
 		oldEntries := shardEntryStorageBytes(sh)
 		oldHotSidecar := hotHashSidecarBytes(sh)
