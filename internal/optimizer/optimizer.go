@@ -111,19 +111,28 @@ func (o *Optimizer) foregroundQuietFor(d time.Duration) bool {
 
 func (o *Optimizer) waitForForegroundQuiet() bool {
 	const quietWindow = 2 * time.Millisecond
-	const maxDeferral = 50 * time.Millisecond
+	// Foreground writes own the machine. Workers hold shard write locks and
+	// burn CPU, which shows up directly as write tail latency, so they stay
+	// out of the way for the whole write burst. The bounds below only keep
+	// continuous workloads and a full queue from starving the optimizer.
+	const maxDeferral = 2 * time.Second
 	deadline := time.Now().Add(maxDeferral)
+	var timer *time.Timer
 
 	for {
 		last := atomic.LoadInt64(&o.lastForegroundWrite)
 		if last == 0 || time.Since(time.Unix(0, last)) >= quietWindow {
 			return true
 		}
-		if !time.Now().Before(deadline) {
+		if !time.Now().Before(deadline) || len(o.queue) > cap(o.queue)/2 {
 			return true
 		}
 
-		timer := time.NewTimer(quietWindow)
+		if timer == nil {
+			timer = time.NewTimer(quietWindow)
+		} else {
+			timer.Reset(quietWindow)
+		}
 		select {
 		case <-o.ctx.Done():
 			timer.Stop()
