@@ -464,3 +464,29 @@ func TestSampleSkipsNativeZSetKeys(t *testing.T) {
 		t.Fatalf("native ZSET sampling queue depth=%d want=0", got)
 	}
 }
+
+func TestShouldCompactIndex(t *testing.T) {
+	const slot = 16
+	if shouldCompactIndex(0, 0, slot, 0) {
+		t.Fatal("empty store must not compact")
+	}
+	// 1M keys at power-of-two sizing: about 2.1 slots per key.
+	if !shouldCompactIndex(33_605_632, 1_000_000, slot, 0) {
+		t.Fatal("loose index should compact when idle")
+	}
+	// Already tight: about 1.25 slots per key.
+	if shouldCompactIndex(20_000_000, 1_000_000, slot, 0) {
+		t.Fatal("tight index must not compact")
+	}
+	// Small slack stays below the absolute floor.
+	if shouldCompactIndex(300_000, 10_000, slot, 0) {
+		t.Fatal("tiny absolute slack must not compact")
+	}
+	// A busy queue demands more slack before maintenance competes with it.
+	if shouldCompactIndex(24_000_000, 1_000_000, slot, 10) {
+		t.Fatal("moderate slack must wait while the queue is backed up")
+	}
+	if !shouldCompactIndex(33_605_632, 1_000_000, slot, 10) {
+		t.Fatal("large slack should still compact under a backlog")
+	}
+}

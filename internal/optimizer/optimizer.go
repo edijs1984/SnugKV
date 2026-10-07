@@ -230,6 +230,24 @@ func shouldCompactArena(arenaBytes, liveBytes uint64, queueDepth int) bool {
 	return dead >= 8<<20 && dead*5 >= arenaBytes*2
 }
 
+// shouldCompactIndex reports whether the shard indexes hold enough unused slots
+// to be worth rebuilding at a tight capacity. Power-of-two growth leaves tables
+// between 40% and 80% full; a rebuild fits them to the live key count.
+func shouldCompactIndex(reservedBytes, live, slotBytes uint64, queueDepth int) bool {
+	if live == 0 || slotBytes == 0 {
+		return false
+	}
+	needed := (live*5/4 + 1) * slotBytes
+	if reservedBytes <= needed {
+		return false
+	}
+	slack := reservedBytes - needed
+	if queueDepth == 0 {
+		return slack >= 1<<20 && slack*8 >= reservedBytes
+	}
+	return slack >= 8<<20 && slack*4 >= reservedBytes
+}
+
 func shouldCompactEntries(capacity, live uint64, queueDepth int) bool {
 	if capacity == 0 || live >= capacity {
 		return false
@@ -275,7 +293,8 @@ func (o *Optimizer) maintenanceStep() {
 	layout := o.store.Layout()
 	if quiet &&
 		(shouldCompactArena(m.ArenaBytes, m.ArenaLiveBlockBytes, len(o.queue)) ||
-			shouldCompactEntries(layout.EntryCapacity, layout.EntryCount, len(o.queue))) {
+			shouldCompactEntries(layout.EntryCapacity, layout.EntryCount, len(o.queue)) ||
+			shouldCompactIndex(m.IndexReservedBytes, layout.EntryCount, layout.IndexSlotBytes, len(o.queue))) {
 		if compacted := o.store.Compact(uint64(o.config.MaxScratchBytes)); compacted > 0 {
 			// Compaction replaces shard arenas and dense storage with fresh
 			// allocations. The old backing pages are then unreachable, but Go may

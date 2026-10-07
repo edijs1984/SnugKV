@@ -194,9 +194,12 @@ func testGetHashed(table *Table[uint32], key string, hash uint64) (uint32, bool)
 	if len(table.slots) == 0 {
 		return 0, false
 	}
-	mask := uint64(len(table.slots) - 1)
-	for n := 0; n < len(table.slots); n++ {
-		s := &table.slots[(hash+uint64(n))&mask]
+	size := len(table.slots)
+	for n, i := 0, table.probeStart(hash); n < size; n, i = n+1, i+1 {
+		if i == size {
+			i = 0
+		}
+		s := &table.slots[i]
 		switch s.state() {
 		case stateEmpty:
 			return 0, false
@@ -210,10 +213,12 @@ func testGetHashed(table *Table[uint32], key string, hash uint64) (uint32, bool)
 }
 
 func testInsertHashed(table *Table[uint32], key string, value uint32, hash uint64) {
-	mask := uint64(len(table.slots) - 1)
+	size := len(table.slots)
 	deleted := -1
-	for n := 0; n < len(table.slots); n++ {
-		i := int((hash + uint64(n)) & mask)
+	for n, i := 0, table.probeStart(hash); n < size; n, i = n+1, i+1 {
+		if i == size {
+			i = 0
+		}
 		s := &table.slots[i]
 		switch s.state() {
 		case stateLive:
@@ -264,9 +269,12 @@ func testDeleteHashed(table *Table[uint32], key string, hash uint64) {
 	if len(table.slots) == 0 {
 		return
 	}
-	mask := uint64(len(table.slots) - 1)
-	for n := 0; n < len(table.slots); n++ {
-		s := &table.slots[(hash+uint64(n))&mask]
+	size := len(table.slots)
+	for n, i := 0, table.probeStart(hash); n < size; n, i = n+1, i+1 {
+		if i == size {
+			i = 0
+		}
+		s := &table.slots[i]
 		switch s.state() {
 		case stateEmpty:
 			return
