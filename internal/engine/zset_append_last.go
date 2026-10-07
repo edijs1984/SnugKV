@@ -71,6 +71,10 @@ func packedZSetAppendLast(data, member []byte, score float64, dst []byte) (out [
 	cur, prev := bufA[:0], bufB[:0]
 	var prevInt int64
 	var prevScore float64
+	// sharedPrefix sums the common prefix of adjacent members. When the value is
+	// not front-coded but front-coding would pay off, the full encoder should
+	// switch modes, so the fast path steps aside.
+	sharedPrefix := 0
 	for i := 0; i < count; i++ {
 		if useInt {
 			encoded, e := readZSetUvarint(data, &off)
@@ -117,6 +121,9 @@ func packedZSetAppendLast(data, member []byte, score float64, dst []byte) (out [
 		if bytes.Equal(cur, member) {
 			return nil, false
 		}
+		if !usePrefix && i > 0 {
+			sharedPrefix += zsetCommonPrefix(prev, cur)
+		}
 		cur, prev = prev, cur
 	}
 	if off != len(data) {
@@ -124,6 +131,14 @@ func packedZSetAppendLast(data, member []byte, score float64, dst []byte) (out [
 	}
 	if !zsetLess(ZSetItem{Member: prev, Score: prevScore}, ZSetItem{Member: member, Score: score}) {
 		return nil, false
+	}
+
+	if !usePrefix {
+		sharedPrefix += zsetCommonPrefix(prev, member)
+		// Front-coding costs about one extra byte per member plus the mode byte.
+		if sharedPrefix > count+1 {
+			return nil, false
+		}
 	}
 
 	size := len(data) + 2*10 + 8 + len(member)

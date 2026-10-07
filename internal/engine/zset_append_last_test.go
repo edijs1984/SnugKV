@@ -102,3 +102,28 @@ func TestPackedZSetAppendLastFallsBack(t *testing.T) {
 		t.Fatalf("bad result %v err %v", got, err)
 	}
 }
+
+// Ascending adds must not leave the value in a larger encoding than a full
+// re-encode would choose (front-coding of members sharing a prefix).
+func TestZSetAppendLastKeepsBestEncoding(t *testing.T) {
+	s := New()
+	var items []ZSetItem
+	for i := 0; i < 20; i++ {
+		m := []byte(fmt.Sprintf("m:%06d:%016x", i, uint64(i)*0x9E3779B97F4A7C15))
+		items = append(items, ZSetItem{Member: m, Score: float64(1000 + i)})
+		if _, _, _, err := s.ZSetAdd("z", []ZSetItem{items[i]}, ZSetAddOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		st, ok, err := s.ZSetStorageStats("z")
+		if err != nil || !ok {
+			t.Fatal(err)
+		}
+		want, err := encodePackedZSet(items)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.StoredBytes > len(want)+1 {
+			t.Fatalf("after %d members stored %d bytes, full encode is %d", i+1, st.StoredBytes, len(want))
+		}
+	}
+}
