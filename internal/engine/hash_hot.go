@@ -332,7 +332,7 @@ func (s *Store) thawHotHashLocked(sh *shard, key string, e entry) (*hotHash, boo
 	s.memory.mu.Unlock()
 
 	if !e.ref.IsInline() {
-		sh.arena.Free(e.ref)
+		s.arenaReleased(sh.arena.Free(e.ref))
 	}
 	e.rawStable = true
 	e.ref = arena.Ref{}

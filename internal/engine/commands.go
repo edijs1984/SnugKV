@@ -616,7 +616,9 @@ func (s *Store) MSet(keys []string, values [][]byte) error {
 		e.hasExpiry = !e.expiresAt.IsZero()
 		sh.set(k, e.entry)
 		if exists {
-			sh.arena.Free(old.ref)
+			released := sh.arena.Free(old.ref)
+			s.memory.used -= released
+			s.memory.arenas -= released
 		}
 		sh.schedule(k, e.expiresAt)
 

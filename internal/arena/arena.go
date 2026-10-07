@@ -139,9 +139,25 @@ type Arena struct {
 	// Keep the free-head table out of the Arena struct until a shard actually
 	// frees an allocation. Sparse/write-once shards otherwise paid 130 uint64
 	// heads (1040 bytes) even though every head stayed zero.
-	free       *[freeBucketCount]uint64
+	free       *freeTable
 	generation uint64
 }
+
+// freeTable is allocated lazily on the first real free so write-once shards do
+// not pay for it. holes lists segment slots whose dedicated block was freed and
+// whose backing memory was returned to the Go heap; they are reused for the
+// next dedicated allocation so the segment slice does not grow without bound.
+type freeTable struct {
+	heads [freeBucketCount]uint64
+	holes []uint32
+}
+
+// dedicatedBlock reports whether a block of this size owns a whole segment.
+// Blocks above half a segment cannot share one, so freeing them can release
+// the segment instead of parking it on a per-class free list that only the
+// exact same class can ever reuse (a growing value passes through every class
+// once and would otherwise leave one idle block behind per class per shard).
+func dedicatedBlock(block int) bool { return block > SegmentBytes/2 }
 
 func class(n int) (int, int) {
 	size := n + 8
@@ -307,8 +323,10 @@ func (a *Arena) SegmentCount() int { return len(a.segments) }
 // live during planning, bounding peak old/new storage during publication.
 func (a *Arena) GrowthFor(lengths []int) uint64 {
 	var free [freeBucketCount]uint64
+	holes := 0
 	if a.free != nil {
-		free = *a.free
+		free = a.free.heads
+		holes = len(a.free.holes)
 	}
 	count, capacity := len(a.segments), cap(a.segments)
 	used, size := 0, 0
@@ -327,6 +345,11 @@ func (a *Arena) GrowthFor(lengths []int) uint64 {
 			address := free[bucket]
 			seg, offset := int(address>>32)-1, int(uint32(address))
 			free[bucket] = binary.LittleEndian.Uint64(a.segments[seg].data[offset+8:])
+			continue
+		}
+		if dedicatedBlock(block) && holes > 0 {
+			holes--
+			growth += uint64(segmentSizeForBlock(block))
 			continue
 		}
 		if size-used < block {
@@ -356,12 +379,17 @@ func (a *Arena) Alloc(value []byte) Ref {
 	var seg, offset int
 	var address uint64
 	if a.free != nil {
-		address = a.free[bucket]
+		address = a.free.heads[bucket]
 	}
 	if address != 0 {
 		seg = int(address>>32) - 1
 		offset = int(uint32(address))
-		a.free[bucket] = binary.LittleEndian.Uint64(a.segments[seg].data[offset+8:])
+		a.free.heads[bucket] = binary.LittleEndian.Uint64(a.segments[seg].data[offset+8:])
+	} else if dedicatedBlock(block) && a.free != nil && len(a.free.holes) > 0 {
+		seg = int(a.free.holes[len(a.free.holes)-1])
+		a.free.holes = a.free.holes[:len(a.free.holes)-1]
+		a.segments[seg].data = make([]byte, block, segmentSizeForBlock(block))
+		offset = 0
 	} else {
 		seg = len(a.segments) - 1
 		if seg < 0 || cap(a.segments[seg].data)-len(a.segments[seg].data) < block {
@@ -450,24 +478,35 @@ func (a *Arena) ViewKnownLive(ref Ref) ([]byte, error) {
 }
 
 
-func (a *Arena) Free(ref Ref) {
+// Free releases ref. It returns the number of heap bytes handed back to the Go
+// heap (non-zero only for dedicated large blocks), so the caller can keep its
+// accounting equal to MemoryBytes.
+func (a *Arena) Free(ref Ref) uint64 {
 	if ref.IsInline() {
-		return
+		return 0
 	}
 	if ref.generation == 0 {
-		return
+		return 0
 	}
 	if _, err := a.View(ref); err != nil {
 		panic(err)
 	}
-	bucket, _ := class(int(ref.length()))
+	bucket, block := class(int(ref.length()))
+	seg := ref.segment()
+	data := a.segments[seg].data
 	if a.free == nil {
-		a.free = new([freeBucketCount]uint64)
+		a.free = new(freeTable)
 	}
-	data := a.segments[ref.segment()].data
+	if dedicatedBlock(block) && ref.offset() == 0 && cap(data) == block && len(data) == block {
+		released := uint64(cap(data))
+		a.segments[seg].data = nil
+		a.free.holes = append(a.free.holes, seg)
+		return released
+	}
 	binary.LittleEndian.PutUint64(data[ref.offset():], 0)
-	binary.LittleEndian.PutUint64(data[ref.offset()+8:], a.free[bucket])
-	a.free[bucket] = (uint64(ref.segment())+1)<<32 | uint64(ref.offset())
+	binary.LittleEndian.PutUint64(data[ref.offset()+8:], a.free.heads[bucket])
+	a.free.heads[bucket] = (uint64(seg)+1)<<32 | uint64(ref.offset())
+	return 0
 }
 
 // AllocationBytesForLength returns the physical arena block that would be
