@@ -113,11 +113,7 @@ func (c *clientSession) touch(args [][]byte) time.Time {
 			raw[2]|32 == 116 {
 			cmd = &clientCommandSET
 		} else {
-			value := strings.ToLower(string(raw))
-			if len(args) > 1 && strings.EqualFold(string(raw), "CLIENT") {
-				value += "|" + strings.ToLower(string(args[1]))
-			}
-			cmd = &value
+			cmd = c.commandLabel(args)
 		}
 	}
 
@@ -126,6 +122,46 @@ func (c *clientSession) touch(args [][]byte) time.Time {
 		c.lastCmd.Store(cmd)
 	}
 	return now
+}
+
+// commandLabel returns the lower-cased command label (with the subcommand for
+// CLIENT). Connections overwhelmingly repeat the same command, so the label is
+// built in a stack buffer and the previous pointer is reused when it matches;
+// only a changed command allocates.
+func (c *clientSession) commandLabel(args [][]byte) *string {
+	var buf [48]byte
+	n := 0
+	raw := args[0]
+	if len(raw) <= 32 {
+		for _, ch := range raw {
+			if ch >= 'A' && ch <= 'Z' {
+				ch += 'a' - 'A'
+			}
+			buf[n] = ch
+			n++
+		}
+		if len(args) > 1 && string(buf[:n]) == "client" && len(args[1]) <= len(buf)-n-1 {
+			buf[n] = '|'
+			n++
+			for _, ch := range args[1] {
+				if ch >= 'A' && ch <= 'Z' {
+					ch += 'a' - 'A'
+				}
+				buf[n] = ch
+				n++
+			}
+		}
+		if prev := c.lastCmd.Load(); prev != nil && *prev == string(buf[:n]) {
+			return prev
+		}
+		value := string(buf[:n])
+		return &value
+	}
+	value := strings.ToLower(string(raw))
+	if len(args) > 1 && strings.EqualFold(string(raw), "CLIENT") {
+		value += "|" + strings.ToLower(string(args[1]))
+	}
+	return &value
 }
 
 func (c *clientSession) setProtocol(protocol int) {

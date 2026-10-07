@@ -8,6 +8,8 @@
 - Plain ZADD on small packed sorted sets reuses pooled decode/encode buffers: 1,641 ns and 3 allocations per op drop to about 1,230 ns and none in the engine benchmark (10 members).
 - A new member that sorts after every existing member of a small packed sorted set is appended in place (one scan, no decode, no re-sort): 10-member ZADD drops to about 730 ns in the engine benchmark, from 1,640 ns.
 - ZSCORE on small packed sorted sets scans without allocating (10-member lookup: about 704 ns and 28 B/op down to about 530 ns and 0 allocations in the engine benchmark).
+- Growing an indexed sorted set (and trimming it when idle) rebuilds straight from the live records: no decode, map or sort, and no per-record allocation. In a profile of the 100-member lab workload the old rebuild path was about 17% of server CPU.
+- Per-command client bookkeeping no longer allocates when a connection repeats the same command (it was about 14M allocations in one lab run).
 - Physical formats are internal; persistence still uses the logical form.
 
 ### Memory — trim idle list headroom during compaction (pending live benchmark)

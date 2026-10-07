@@ -187,11 +187,11 @@ func encodeIndexedZSetWithReserve(items []ZSetItem, aggressive bool) ([]byte,err
 // reports whether the result is smaller. Dead records left behind by score
 // updates are dropped as well. A later ZADD of a new member regrows it.
 func trimIndexedZSet(data []byte) ([]byte, bool) {
-	items, err := decodeIndexedZSet(data)
+	items, err := liveIndexedZSetItems(data, 0)
 	if err != nil {
 		return nil, false
 	}
-	trimmed, err := encodeIndexedZSetSized(items, false, true)
+	trimmed, err := buildIndexedZSetUnique(items, false, true)
 	if err != nil || len(trimmed) >= len(data) {
 		return nil, false
 	}
@@ -215,26 +215,56 @@ func encodeIndexedZSetSized(items []ZSetItem, aggressive, exact bool) ([]byte,er
 	}
 	sort.Slice(canonical,func(i,j int)bool{return zsetLess(canonical[i],canonical[j])})
 
+	return buildIndexedZSetUnique(canonical,aggressive,exact)
+}
+
+func indexedZSetUvarintLen(v uint64) int {
+	n := 1
+	for v >= 0x80 {
+		v >>= 7
+		n++
+	}
+	return n
+}
+
+func indexedZSetRecordLen(member []byte, score float64) int {
+	score = normalizeZSetScore(score)
+	n := 0
+	if score == math.Trunc(score) && math.Abs(score) < indexedZSetMaxIntScore {
+		i := int64(score)
+		z := uint64(i<<1) ^ uint64(i>>63)
+		n = indexedZSetUvarintLen(z << 1)
+	} else {
+		n = 1 + 8
+	}
+	return n + indexedZSetUvarintLen(uint64(len(member))) + len(member)
+}
+
+// buildIndexedZSetUnique builds an indexed zset from items whose members are
+// already unique and whose scores are not NaN. Items may be in any order and
+// may alias other buffers; nothing is retained. It performs no sorting, map
+// building or per-record allocation, so growth rebuilds stay cheap.
+func buildIndexedZSetUnique(items []ZSetItem, aggressive, exact bool) ([]byte,error) {
+	if len(items)==0 {
+		return nil,errors.New("invalid empty indexed zset")
+	}
 	// Target at most 80% occupancy instead of reserving a fixed 2x slot
 	// table. For medium ZSETs (for example 100 members), 128 slots are enough
 	// and keep the compact representation below the next arena size class;
 	// large ZSETs still naturally round to the same 2048-slot table at 1000
 	// members.
-	slotTarget := (len(canonical)*5 + 3) / 4
+	slotTarget := (len(items)*5 + 3) / 4
 	slots := nextZSetPow2(slotTarget)
-	records := make([][]byte,len(canonical))
 	used := 0
-	for i,item := range canonical {
-		records[i] = indexedZSetRecordBytes(item.Member,item.Score)
-		used += len(records[i])
+	for _,item := range items {
+		used += indexedZSetRecordLen(item.Member,item.Score)
 	}
 	dataCap := used + used/4
-	if aggressive && len(canonical) >= 64 {
+	if aggressive && len(items) >= 64 {
 		// Medium and large ZSETs are commonly built incrementally. A 25% payload
-		// reserve causes repeated decode/map/sort/re-encode rebuilds while the set
-		// grows. Give indexed ZSETs one full payload of append headroom once they
-		// reach 64 members; maintenance trims the completed value after writes go
-		// quiet.
+		// reserve causes repeated rebuilds while the set grows. Give indexed
+		// ZSETs one full payload of append headroom once they reach 64 members;
+		// maintenance trims the completed value after writes go quiet.
 		dataCap = used * 2
 	}
 	if exact {
@@ -255,24 +285,47 @@ func encodeIndexedZSetSized(items []ZSetItem, aggressive, exact bool) ([]byte,er
 	out := make([]byte,total)
 	copy(out[:3],indexedZSetHeader[:])
 	out[2] = version
-	binary.LittleEndian.PutUint32(out[3:7],uint32(len(canonical)))
+	binary.LittleEndian.PutUint32(out[3:7],uint32(len(items)))
 	binary.LittleEndian.PutUint32(out[7:11],uint32(slots))
 	start := indexedZSetFixed + slots*slotWidth
-	cursor:=0
-	for i,item := range canonical {
-		slot,_,found,_,err := indexedZSetFind(out,item.Member)
-		if err != nil {
-			return nil,err
+	mask := slots-1
+	cursor := 0
+	for _,item := range items {
+		slot := int(hashField64(item.Member)) & mask
+		for indexedZSetSlotGet(out,slot) != 0 {
+			slot = (slot+1) & mask
 		}
-		if found {
-			return nil,errors.New("duplicate sorted set member")
-		}
-		copy(out[start+cursor:],records[i])
+		rec := indexedZSetAppendRecord(out[start+cursor:start+cursor],item.Member,item.Score)
 		indexedZSetSlotSet(out,slot,uint32(cursor+1))
-		cursor += len(records[i])
-		binary.LittleEndian.PutUint32(out[11:15],uint32(cursor))
+		cursor += len(rec)
 	}
+	binary.LittleEndian.PutUint32(out[11:15],uint32(cursor))
 	return out,nil
+}
+
+// liveIndexedZSetItems lists the live members of an indexed zset in table
+// order. Members alias data.
+func liveIndexedZSetItems(data []byte, extra int) ([]ZSetItem,error) {
+	count,slots,used,start,err := indexedZSetMeta(data)
+	if err != nil {
+		return nil,err
+	}
+	items := make([]ZSetItem,0,count+extra)
+	for slot:=0;slot<slots;slot++ {
+		raw := indexedZSetSlotGet(data,slot)
+		if raw==0 {
+			continue
+		}
+		member,score,_,e := indexedZSetRecordKnown(data,int(raw-1),used,start)
+		if e != nil {
+			return nil,e
+		}
+		items = append(items,ZSetItem{Member:member,Score:score})
+	}
+	if len(items)!=count {
+		return nil,errors.New("invalid indexed zset count")
+	}
+	return items,nil
 }
 
 func decodeIndexedZSet(data []byte) ([]ZSetItem,error) {
@@ -471,30 +524,47 @@ func indexedZSetAddSimple(data []byte, pairs []ZSetItem)(added int64, rebuilt []
 		// cardinalities such as 100 members.
 		needRehash := !found && (count+1)*5 >= slots*4
 		if needRehash || start+used+len(rec) > len(data) {
-			items,e := decodeIndexedZSet(data)
+			items,e := liveIndexedZSetItems(data,len(pairs)-i)
 			if e != nil {
 				return added,nil,e
 			}
-			byMember := make(map[string]ZSetItem,len(items)+len(pairs)-i)
-			for _,item := range items {
-				byMember[string(item.Member)] = item
+			var index map[string]int
+			if len(pairs)-i > 4 {
+				index = make(map[string]int,len(items)+len(pairs)-i)
+				for k,item := range items {
+					index[string(item.Member)] = k
+				}
 			}
 			for j:=i;j<len(pairs);j++ {
 				next := pairs[j]
 				if math.IsNaN(next.Score) {
 					return added,nil,errors.New("ERR resulting score is not a number (NaN)")
 				}
-				key := string(next.Member)
-				if _,ok := byMember[key]; !ok {
-					added++
+				sc := normalizeZSetScore(next.Score)
+				at := -1
+				if index != nil {
+					if k,ok := index[string(next.Member)]; ok {
+						at = k
+					}
+				} else {
+					for k := range items {
+						if bytes.Equal(items[k].Member,next.Member) {
+							at = k
+							break
+						}
+					}
 				}
-				byMember[key] = ZSetItem{Member:append([]byte(nil),next.Member...),Score:normalizeZSetScore(next.Score)}
+				if at >= 0 {
+					items[at].Score = sc
+					continue
+				}
+				added++
+				items = append(items,ZSetItem{Member:next.Member,Score:sc})
+				if index != nil {
+					index[string(next.Member)] = len(items)-1
+				}
 			}
-			items = items[:0]
-			for _,item := range byMember {
-				items = append(items,item)
-			}
-			rebuilt,e = encodeIndexedZSet(items)
+			rebuilt,e = buildIndexedZSetUnique(items,true,false)
 			return added,rebuilt,e
 		}
 
