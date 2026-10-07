@@ -5,6 +5,7 @@
 - Compaction now trims idle indexed sorted sets (payload headroom and dead records), as it already does for lists.
 - Indexed zset records store integer scores as 1-4 byte varints instead of a fixed 8 bytes; non-integral scores keep the IEEE-754 form.
 - Indexed zsets whose payload capacity fits in 16 bits use 2-byte slot offsets (header version 6) instead of 4 bytes.
+- Plain ZADD on small packed sorted sets reuses pooled decode/encode buffers: 1,641 ns and 3 allocations per op drop to about 1,230 ns and none in the engine benchmark (10 members).
 - Physical formats are internal; persistence still uses the logical form.
 
 ### Memory — trim idle list headroom during compaction (pending live benchmark)

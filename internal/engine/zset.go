@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math"
 	"sort"
+	"sync"
 )
 
 const maxPackedZSetBytes = 32 << 20
@@ -169,6 +170,11 @@ func zsetPrefixMemberBytes(items []ZSetItem) (int, bool) {
 }
 
 func encodePackedZSet(items []ZSetItem) ([]byte, error) {
+	return encodePackedZSetInto(nil, items)
+}
+
+// encodePackedZSetInto encodes into dst's storage when it is large enough.
+func encodePackedZSetInto(dst []byte, items []ZSetItem) ([]byte, error) {
 	for _, item := range items {
 		if math.IsNaN(item.Score) {
 			return nil, errors.New("ERR resulting score is not a number (NaN)")
@@ -195,7 +201,12 @@ func encodePackedZSet(items []ZSetItem) ([]byte, error) {
 		return nil, errors.New("ERR sorted set exceeds 32 MiB limit")
 	}
 
-	out := make([]byte, 0, capacity)
+	var out []byte
+	if cap(dst) >= capacity {
+		out = dst[:0]
+	} else {
+		out = make([]byte, 0, capacity)
+	}
 	if useMemberPrefix {
 		out = append(out, packedZSetHeaderAdaptive[:]...)
 		var mode byte = zsetModeMemberPrefix
@@ -244,37 +255,52 @@ func encodePackedZSet(items []ZSetItem) ([]byte, error) {
 }
 
 func decodePackedZSet(data []byte) ([]ZSetItem, error) {
+	items, _, err := decodePackedZSetInto(data, nil, nil)
+	return items, err
+}
+
+// decodePackedZSetInto decodes into the caller's items and member buffers when
+// they are large enough, and returns the (possibly grown) buffers for reuse.
+// The returned items alias backing, so both are valid only until the caller
+// reuses them.
+func decodePackedZSetInto(data []byte, items []ZSetItem, backing []byte) ([]ZSetItem, []byte, error) {
 	if len(data) < 3 || data[0] != 'S' || data[1] != 'Z' {
-		return nil, errors.New("invalid packed zset")
+		return nil, backing, errors.New("invalid packed zset")
 	}
 	version := data[2]
 	if version != packedZSetHeaderV1[2] && version != packedZSetHeaderIntDelta[2] && version != packedZSetHeaderFloat64[2] && version != packedZSetHeaderAdaptive[2] {
-		return nil, errors.New("invalid packed zset")
+		return nil, backing, errors.New("invalid packed zset")
 	}
 	offset := 3
 	var mode byte
 	if version == packedZSetHeaderAdaptive[2] {
 		if offset >= len(data) {
-			return nil, errors.New("invalid packed zset")
+			return nil, backing, errors.New("invalid packed zset")
 		}
 		mode = data[offset]
 		offset++
 		if mode&^(zsetModeIntDelta|zsetModeMemberPrefix) != 0 || mode&zsetModeMemberPrefix == 0 {
-			return nil, errors.New("invalid packed zset")
+			return nil, backing, errors.New("invalid packed zset")
 		}
 	}
 	count64, err := readZSetUvarint(data, &offset)
 	if err != nil || count64 > uint64(maxPackedZSetBytes) {
-		return nil, errors.New("invalid packed zset")
+		return nil, backing, errors.New("invalid packed zset")
 	}
-	items := make([]ZSetItem, 0, int(count64))
+	if cap(items) < int(count64)+1 {
+		items = make([]ZSetItem, 0, int(count64)+1)
+	}
+	items = items[:0]
 	useIntegerDelta := version == packedZSetHeaderIntDelta[2] || version == packedZSetHeaderAdaptive[2] && mode&zsetModeIntDelta != 0
 	useMemberPrefix := version == packedZSetHeaderAdaptive[2] && mode&zsetModeMemberPrefix != 0
 	// Decoded members share one backing buffer instead of one allocation each.
 	// Each member is a capacity-limited sub-slice, so appending to a member never
 	// overwrites its neighbour. If the buffer has to grow, earlier members keep
 	// pointing at the old (still valid) array.
-	backing := make([]byte, 0, len(data)+len(data)/2)
+	if cap(backing) < len(data)+len(data)/2 {
+		backing = make([]byte, 0, len(data)+len(data)/2)
+	}
+	backing = backing[:0]
 	var previousInt int64
 	var previousMember []byte
 	for i := 0; i < int(count64); i++ {
@@ -282,7 +308,7 @@ func decodePackedZSet(data []byte) ([]ZSetItem, error) {
 		if useIntegerDelta {
 			encoded, err := readZSetUvarint(data, &offset)
 			if err != nil {
-				return nil, errors.New("invalid packed zset")
+				return nil, backing, errors.New("invalid packed zset")
 			}
 			var scoreInt int64
 			if i == 0 {
@@ -290,23 +316,23 @@ func decodePackedZSet(data []byte) ([]ZSetItem, error) {
 			} else {
 				scoreInt = int64(uint64(previousInt) + encoded)
 				if scoreInt < previousInt {
-					return nil, errors.New("invalid packed zset")
+					return nil, backing, errors.New("invalid packed zset")
 				}
 			}
 			score = float64(scoreInt)
 			roundTrip, ok := zsetExactInt64(score)
 			if !ok || roundTrip != scoreInt {
-				return nil, errors.New("invalid packed zset")
+				return nil, backing, errors.New("invalid packed zset")
 			}
 			previousInt = scoreInt
 		} else {
 			if len(data)-offset < 8 {
-				return nil, errors.New("invalid packed zset")
+				return nil, backing, errors.New("invalid packed zset")
 			}
 			score = math.Float64frombits(binary.LittleEndian.Uint64(data[offset : offset+8]))
 			offset += 8
 			if math.IsNaN(score) {
-				return nil, errors.New("invalid packed zset")
+				return nil, backing, errors.New("invalid packed zset")
 			}
 			score = normalizeZSetScore(score)
 		}
@@ -315,7 +341,7 @@ func decodePackedZSet(data []byte) ([]ZSetItem, error) {
 		if !useMemberPrefix || i == 0 {
 			length64, err := readZSetUvarint(data, &offset)
 			if err != nil || length64 > uint64(len(data)-offset) {
-				return nil, errors.New("invalid packed zset")
+				return nil, backing, errors.New("invalid packed zset")
 			}
 			end := offset + int(length64)
 			start := len(backing)
@@ -325,11 +351,11 @@ func decodePackedZSet(data []byte) ([]ZSetItem, error) {
 		} else {
 			prefix64, err := readZSetUvarint(data, &offset)
 			if err != nil || prefix64 > uint64(len(previousMember)) {
-				return nil, errors.New("invalid packed zset")
+				return nil, backing, errors.New("invalid packed zset")
 			}
 			suffix64, err := readZSetUvarint(data, &offset)
 			if err != nil || suffix64 > uint64(len(data)-offset) || prefix64+suffix64 > uint64(maxPackedZSetBytes) {
-				return nil, errors.New("invalid packed zset")
+				return nil, backing, errors.New("invalid packed zset")
 			}
 			end := offset + int(suffix64)
 			start := len(backing)
@@ -342,14 +368,14 @@ func decodePackedZSet(data []byte) ([]ZSetItem, error) {
 		previousMember = member
 	}
 	if offset != len(data) {
-		return nil, errors.New("invalid packed zset trailing data")
+		return nil, backing, errors.New("invalid packed zset trailing data")
 	}
 	for i := 1; i < len(items); i++ {
 		if !zsetLess(items[i-1], items[i]) {
-			return nil, errors.New("invalid packed zset order")
+			return nil, backing, errors.New("invalid packed zset order")
 		}
 	}
-	return items, nil
+	return items, backing, nil
 }
 
 func packedZSetScore(data, target []byte) (float64, bool, error) {
@@ -548,7 +574,32 @@ func zsetInsertSorted(items []ZSetItem, item ZSetItem) []ZSetItem {
 // members and changed scores are inserted at their sorted position. It publishes
 // the result and returns the number of newly added members. The caller holds the
 // shard lock and has validated scores.
-func (s *Store) zsetPlainAddLocked(sh *shard, key string, items []ZSetItem, pairs []ZSetItem, expiresAt stamp) (int64, bool, float64, error) {
+// zsetScratch holds reusable buffers for small packed-zset writes so ZADD does
+// not allocate a decode slice, a member buffer and an encode buffer per call.
+// It lives in a pool rather than in shard so the shard struct stays small.
+type zsetScratch struct {
+	items   []ZSetItem
+	backing []byte
+	enc     []byte
+}
+
+var zsetScratchPool = sync.Pool{New: func() any { return new(zsetScratch) }}
+
+func (s *Store) zsetPlainAddLocked(sh *shard, scr *zsetScratch, key string, items []ZSetItem, pairs []ZSetItem, expiresAt stamp) (int64, bool, float64, error) {
+	// Keep the (possibly grown) item slice for the next small write, but do not
+	// let it pin caller memory or grow without bound.
+	defer func() {
+		clear(items[:cap(items)])
+		if cap(items) <= 4*indexedZSetPromoteMembers {
+			scr.items = items[:0]
+		} else {
+			scr.items = nil
+		}
+		if cap(scr.backing) > 64<<10 {
+			scr.backing = nil
+		}
+	}()
+
 	var added int64
 	changed := false
 	for _, pair := range pairs {
@@ -585,9 +636,13 @@ func (s *Store) zsetPlainAddLocked(sh *shard, key string, items []ZSetItem, pair
 			data:  indexed,
 		}
 	} else {
-		packed, err := encodePackedZSet(items)
+		packed, err := encodePackedZSetInto(scr.enc, items)
 		if err != nil {
 			return 0, false, 0, err
+		}
+		// publish copies the bytes into the arena, so the buffer can be reused.
+		if cap(packed) <= 64<<10 {
+			scr.enc = packed[:0]
 		}
 		updated = preparedEntry{
 			entry: entry{entryData: entryData{valueType: TypeZSet, rawLength: uint32(len(packed))}},
@@ -684,18 +739,26 @@ func (s *Store) ZSetAdd(key string, pairs []ZSetItem, options ZSetAddOptions) (c
 			return 0, true, score, nil
 		}
 		if options == (ZSetAddOptions{}) && len(pairs) <= zsetPlainAddMaxPairs {
-			items, err = s.zsetItemsFromEntry(sh, old)
+			scr := zsetScratchPool.Get().(*zsetScratch)
+			defer zsetScratchPool.Put(scr)
+			if !isIndexedZSet(physical) {
+				items, scr.backing, err = decodePackedZSetInto(physical, scr.items, scr.backing)
+			} else {
+				items, err = s.zsetItemsFromEntry(sh, old)
+			}
 			if err != nil {
 				return 0, false, 0, err
 			}
-			return s.zsetPlainAddLocked(sh, key, items, pairs, expiresAt)
+			return s.zsetPlainAddLocked(sh, scr, key, items, pairs, expiresAt)
 		}
 		items, err = s.zsetItemsFromEntry(sh, old)
 		if err != nil {
 			return 0, false, 0, err
 		}
 	} else if options == (ZSetAddOptions{}) && len(pairs) <= zsetPlainAddMaxPairs {
-		return s.zsetPlainAddLocked(sh, key, nil, pairs, 0)
+		scr := zsetScratchPool.Get().(*zsetScratch)
+		defer zsetScratchPool.Put(scr)
+		return s.zsetPlainAddLocked(sh, scr, key, scr.items[:0], pairs, 0)
 	}
 
 	changedMembers := make(map[string]struct{})
