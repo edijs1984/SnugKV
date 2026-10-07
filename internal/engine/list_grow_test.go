@@ -115,9 +115,9 @@ func TestGrowIndexedListRawPreservesElementsAndOrder(t *testing.T) {
 	}
 }
 
-// Unreferenced payload (e.g. left by earlier removals) must not be copied
-// forward; the caller falls back to the compacting rebuild.
-func TestGrowIndexedListRawDeclinesWhenPayloadHasDeadSpace(t *testing.T) {
+// Unreferenced payload (e.g. left by earlier pops) must not be copied forward:
+// the regrow drops it while copying the live records.
+func TestGrowIndexedListRawDropsDeadPayloadSpace(t *testing.T) {
 	var elements [][]byte
 	for i := 0; i < indexedListPromoteElements+2; i++ {
 		elements = append(elements, []byte{byte('a' + i%26)})
@@ -135,8 +135,12 @@ func TestGrowIndexedListRawDeclinesWhenPayloadHasDeadSpace(t *testing.T) {
 	data[12] = byte((used + 1) >> 8)
 	data[13] = byte((used + 1) >> 16)
 	data[14] = byte((used + 1) >> 24)
-	if _, _, ok, err := growIndexedListRaw(data, [][]byte{[]byte("z")}); err != nil || ok {
-		t.Fatalf("expected decline, ok=%v err=%v", ok, err)
+	_, grown, ok, err := growIndexedListRaw(data, [][]byte{[]byte("z")})
+	if err != nil || !ok {
+		t.Fatalf("expected compacting regrow, ok=%v err=%v", ok, err)
+	}
+	if _, _, gotUsed, _, err := indexedListMeta(grown); err != nil || gotUsed != used+2 {
+		t.Fatalf("grown used=%d want %d (live %d + new record 2) err=%v", gotUsed, used+2, used, err)
 	}
 	// The public append path must still succeed via the fallback.
 	count, rebuilt, err := indexedListAppend(data, [][]byte{[]byte("z"), bytes.Repeat([]byte("q"), 2000)})
