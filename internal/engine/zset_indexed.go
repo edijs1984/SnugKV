@@ -114,6 +114,25 @@ func encodeIndexedZSetCompact(items []ZSetItem) ([]byte,error) {
 }
 
 func encodeIndexedZSetWithReserve(items []ZSetItem, aggressive bool) ([]byte,error) {
+	return encodeIndexedZSetSized(items, aggressive, false)
+}
+
+// trimIndexedZSet rebuilds an idle indexed zset with no payload headroom and
+// reports whether the result is smaller. Dead records left behind by score
+// updates are dropped as well. A later ZADD of a new member regrows it.
+func trimIndexedZSet(data []byte) ([]byte, bool) {
+	items, err := decodeIndexedZSet(data)
+	if err != nil {
+		return nil, false
+	}
+	trimmed, err := encodeIndexedZSetSized(items, false, true)
+	if err != nil || len(trimmed) >= len(data) {
+		return nil, false
+	}
+	return trimmed, true
+}
+
+func encodeIndexedZSetSized(items []ZSetItem, aggressive, exact bool) ([]byte,error) {
 	if len(items)==0 {
 		return nil,errors.New("invalid empty indexed zset")
 	}
@@ -152,7 +171,9 @@ func encodeIndexedZSetWithReserve(items []ZSetItem, aggressive bool) ([]byte,err
 		// quiet.
 		dataCap = used * 2
 	}
-	if dataCap-used < 512 {
+	if exact {
+		dataCap = used
+	} else if dataCap-used < 512 {
 		dataCap = used + 512
 	}
 	total := indexedZSetFixed + slots*4 + dataCap

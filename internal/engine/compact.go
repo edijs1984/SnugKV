@@ -124,6 +124,33 @@ func (s *Store) Compact(scratch uint64) int {
 			_ = s.publish(sh, key, updated)
 		}
 
+		// Idle indexed sorted sets carry the same append headroom; trim it too.
+		zsetKeys := make([]string, 0)
+		for key, e := range sh.all() {
+			if e.valueType == TypeZSet && isIndexedZSet(sh.encoded(e)) {
+				zsetKeys = append(zsetKeys, key)
+			}
+		}
+		for _, key := range zsetKeys {
+			e, ok := sh.get(key)
+			if !ok {
+				continue
+			}
+			trimmed, ok := trimIndexedZSet(sh.encoded(e))
+			if !ok {
+				continue
+			}
+			updated := preparedEntry{
+				entry: entry{entryData: entryData{
+					valueType: TypeZSet,
+					rawLength: uint32(len(trimmed)),
+				}},
+				data:      trimmed,
+				expiresAt: sh.expirationAt(key, e),
+			}
+			_ = s.publish(sh, key, updated)
+		}
+
 		oldArena, oldIndex := sh.arena.TotalMemoryBytes(), sh.data.CapacityBytes()
 		oldEntries := shardEntryStorageBytes(sh)
 		oldHotSidecar := hotHashSidecarBytes(sh)
