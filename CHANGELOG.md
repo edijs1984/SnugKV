@@ -1,5 +1,12 @@
 # Changelog
 
+### Performance — in-place LPOP/RPOP and range-limited LRANGE on indexed lists (pending live benchmark)
+
+- LPOP/RPOP on an indexed list now edit the list in place (offset-table shift for the left end, tail reclaim for the right end) instead of decoding every element and re-encoding a packed copy. A 10,000-element queue pop+push drops from about 3.6 ms to about 1 µs in the engine benchmark.
+- Pops no longer demote a large list to the packed form, so LINDEX stays O(1) afterwards. Lists fall back to the packed form below 16 elements.
+- LRANGE on an indexed list reads only the requested records. LRANGE 0 9 on 10,000 elements drops from about 820 µs to about 1 µs.
+- Regrow and compaction trim drop dead records left at the front of the payload by left pops.
+
 ### Memory — trim idle list headroom during compaction (pending live benchmark)
 
 - `Compact` now rewrites idle indexed lists (32+ elements) to exact size, dropping append headroom (payload slack and the power-of-two offset table). Engine-level settled size for 64 B values: 100 items/list 83.1 -> 76.9 B/item, 1000 items/list 86.7 -> 77.1 B/item. A later RPUSH regrows the list on demand.

@@ -252,6 +252,43 @@ func indexedListFullyReferenced(data []byte, count, used, start int) bool {
 	return live == used
 }
 
+// indexedListLiveBytes sums the record sizes of the live elements. Left pops
+// leave dead records at the front of the payload, so live can be below used.
+// ok is false on any inconsistency so callers fall back to the validating path.
+func indexedListLiveBytes(data []byte, count, used, start int) (live int, ok bool) {
+	for i := 0; i < count; i++ {
+		raw := binary.LittleEndian.Uint32(data[indexedListFixed+i*4 : indexedListFixed+i*4+4])
+		if raw == 0 || int(raw-1) >= used {
+			return 0, false
+		}
+		off := start + int(raw-1)
+		length, err := readListUvarint(data, &off)
+		if err != nil || length > uint64(start+used-off) {
+			return 0, false
+		}
+		live += (off - (start + int(raw-1))) + int(length)
+	}
+	return live, true
+}
+
+// copyIndexedListLive writes the live records of data, in list order, into
+// payload (which must hold at least live bytes) and fills the matching offset
+// table entries. It returns the bytes written.
+func copyIndexedListLive(data []byte, count, start int, table, payload []byte) int {
+	cursor := 0
+	for i := 0; i < count; i++ {
+		raw := int(binary.LittleEndian.Uint32(data[indexedListFixed+i*4:indexedListFixed+i*4+4])) - 1
+		off := start + raw
+		rec := off
+		length, _ := readListUvarint(data, &off)
+		end := off + int(length)
+		n := copy(payload[cursor:], data[rec:end])
+		binary.LittleEndian.PutUint32(table[i*4:i*4+4], uint32(cursor+1))
+		cursor += n
+	}
+	return cursor
+}
+
 // growIndexedListRaw returns a larger copy of an indexed list with values
 // appended. The existing offset table and payload are copied verbatim, so the
 // cost is a memmove rather than one decode and one re-encode allocation per
@@ -260,7 +297,11 @@ func indexedListFullyReferenced(data []byte, count, used, start int) bool {
 // any corruption error.
 func growIndexedListRaw(data []byte, values [][]byte) (newCount int, grown []byte, ok bool, err error) {
 	count, capacity, used, start, metaErr := indexedListMeta(data)
-	if metaErr != nil || !indexedListFullyReferenced(data, count, used, start) {
+	if metaErr != nil {
+		return 0, nil, false, nil
+	}
+	live, liveOK := indexedListLiveBytes(data, count, used, start)
+	if !liveOK {
 		return 0, nil, false, nil
 	}
 
@@ -273,7 +314,7 @@ func growIndexedListRaw(data []byte, values [][]byte) (newCount int, grown []byt
 	if newCount > capacity {
 		newCapacity = nextListPow2(newCount * 2)
 	}
-	newUsed := used + extra
+	newUsed := live + extra
 	// Large lists double their payload reserve (capped, like Redis SDS
 	// preallocation) so repeated RPUSH regrows O(log n) times. Each regrow leaves
 	// a dead copy in the arena and a temporary heap buffer, so a small growth
@@ -299,10 +340,14 @@ func growIndexedListRaw(data []byte, values [][]byte) (newCount int, grown []byt
 
 	out := make([]byte, total)
 	copy(out[:indexedListFixed], data[:indexedListFixed])
-	copy(out[indexedListFixed:indexedListFixed+count*4], data[indexedListFixed:indexedListFixed+count*4])
-	copy(out[newStart:newStart+used], data[start:start+used])
-
-	cursor := used
+	cursor := live
+	if live == used {
+		copy(out[indexedListFixed:indexedListFixed+count*4], data[indexedListFixed:indexedListFixed+count*4])
+		copy(out[newStart:newStart+used], data[start:start+used])
+	} else {
+		// Dead records (left pops) are dropped while copying.
+		copyIndexedListLive(data, count, start, out[indexedListFixed:newStart], out[newStart:newStart+live])
+	}
 	for i, value := range values {
 		recordStart := cursor
 		cursor += binary.PutUvarint(out[newStart+cursor:], uint64(len(value)))
@@ -326,19 +371,125 @@ func trimIndexedList(data []byte) (trimmed []byte, ok bool) {
 	if err != nil {
 		return nil, false
 	}
+	live, liveOK := indexedListLiveBytes(data, count, used, start)
+	if !liveOK {
+		return nil, false
+	}
 	newCapacity := count
 	if newCapacity < indexedListPromoteElements {
 		newCapacity = indexedListPromoteElements
 	}
 	newStart := indexedListFixed + newCapacity*4
-	total := newStart + used
+	total := newStart + live
 	if total >= len(data) {
 		return nil, false
 	}
 	out := make([]byte, total)
 	copy(out[:indexedListFixed], data[:indexedListFixed])
-	copy(out[indexedListFixed:indexedListFixed+count*4], data[indexedListFixed:indexedListFixed+count*4])
-	copy(out[newStart:], data[start:start+used])
+	if live == used {
+		copy(out[indexedListFixed:indexedListFixed+count*4], data[indexedListFixed:indexedListFixed+count*4])
+		copy(out[newStart:], data[start:start+used])
+	} else {
+		copyIndexedListLive(data, count, start, out[indexedListFixed:newStart], out[newStart:])
+	}
 	binary.LittleEndian.PutUint32(out[7:11], uint32(newCapacity))
+	binary.LittleEndian.PutUint32(out[11:15], uint32(live))
 	return out, true
+}
+
+// indexedListPopMinCount is the element count below which a pop falls back to
+// the packed representation, so small lists stay tight and a list hovering
+// around the promote threshold does not flip between formats.
+const indexedListPopMinCount = indexedListPromoteElements / 2
+
+// indexedListPop removes up to n elements from the left or right end in place
+// and returns them in pop order. It never allocates a new list. ok is false
+// when the pop would leave fewer than indexedListPopMinCount elements or the
+// list fails validation; the caller then uses the generic path, which also
+// reports corruption.
+func indexedListPop(data []byte, n int, left bool) (out [][]byte, ok bool) {
+	count, _, used, start, err := indexedListMeta(data)
+	if err != nil || n <= 0 || n > count || count-n < indexedListPopMinCount {
+		return nil, false
+	}
+	out = make([][]byte, n)
+	var lo, hi int
+	if left {
+		lo, hi = 0, n
+	} else {
+		lo, hi = count-n, count
+	}
+	type span struct{ start, end int }
+	spans := make([]span, 0, n)
+	for i := lo; i < hi; i++ {
+		raw := binary.LittleEndian.Uint32(data[indexedListFixed+i*4 : indexedListFixed+i*4+4])
+		if raw == 0 || int(raw-1) >= used {
+			return nil, false
+		}
+		value, end, e := indexedListRecord(data, int(raw-1))
+		if e != nil {
+			return nil, false
+		}
+		spans = append(spans, span{int(raw - 1), end})
+		j := i - lo
+		if !left {
+			j = hi - 1 - i
+		}
+		out[j] = append([]byte(nil), value...)
+	}
+	newCount := count - n
+	if left {
+		table := data[indexedListFixed : indexedListFixed+count*4]
+		copy(table, table[n*4:])
+		clear(table[newCount*4:])
+	} else {
+		clear(data[indexedListFixed+newCount*4 : indexedListFixed+count*4])
+		// Right pops reclaim payload when the removed records are the tail.
+		for i := len(spans) - 1; i >= 0 && spans[i].end == used; i-- {
+			used = spans[i].start
+		}
+		binary.LittleEndian.PutUint32(data[11:15], uint32(used))
+	}
+	binary.LittleEndian.PutUint32(data[3:7], uint32(newCount))
+	_ = start
+	return out, true
+}
+
+// indexedListRange returns the elements in [start, stop] after Redis-style
+// negative index normalisation, reading only those records.
+func indexedListRange(data []byte, startIdx, stopIdx int64) ([][]byte, error) {
+	count, _, used, start, err := indexedListMeta(data)
+	if err != nil {
+		return nil, err
+	}
+	n := int64(count)
+	if startIdx < 0 {
+		startIdx += n
+	}
+	if stopIdx < 0 {
+		stopIdx += n
+	}
+	if startIdx < 0 {
+		startIdx = 0
+	}
+	if stopIdx < 0 || startIdx >= n || startIdx > stopIdx {
+		return nil, nil
+	}
+	if stopIdx >= n {
+		stopIdx = n - 1
+	}
+	out := make([][]byte, 0, stopIdx-startIdx+1)
+	for i := startIdx; i <= stopIdx; i++ {
+		raw := binary.LittleEndian.Uint32(data[indexedListFixed+int(i)*4 : indexedListFixed+int(i)*4+4])
+		if raw == 0 || int(raw-1) >= used {
+			return nil, errors.New("invalid indexed list index")
+		}
+		value, _, e := indexedListRecord(data, int(raw-1))
+		if e != nil {
+			return nil, e
+		}
+		out = append(out, append([]byte(nil), value...))
+	}
+	_ = start
+	return out, nil
 }

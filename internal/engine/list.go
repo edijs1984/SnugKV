@@ -332,6 +332,13 @@ func (s *Store) listPop(key string, count int, left bool) ([][]byte, error) {
 	if e.valueType != TypeList {
 		return nil, listWrongType()
 	}
+	if count > 0 {
+		if physical := sh.encoded(e); isIndexedList(physical) {
+			if popped, ok := indexedListPop(physical, count, left); ok {
+				return popped, nil
+			}
+		}
+	}
 	elements, err := s.listElementsFromEntry(sh, e)
 	if err != nil {
 		return nil, err
@@ -419,6 +426,9 @@ func (s *Store) ListRange(key string, start, stop int64) ([][]byte, error) {
 	}
 	if e.valueType != TypeList {
 		return nil, listWrongType()
+	}
+	if physical := sh.encoded(e); isIndexedList(physical) {
+		return indexedListRange(physical, start, stop)
 	}
 	elements, err := s.listElementsFromEntry(sh, e)
 	if err != nil {
