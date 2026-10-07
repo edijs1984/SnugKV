@@ -15,7 +15,8 @@ SETTLE_MAX_MS="${SETTLE_MAX_MS:-120000}"
 FRESH_SERVERS="${FRESH_SERVERS:-1}"
 WORKERS="${WORKERS:-4}"
 PIPELINE="${PIPELINE:-256}"
-RUNS="${RUNS:-3}"
+# One run per server by default. Set RUNS=3 explicitly for a median of repeats.
+RUNS="${RUNS:-1}"
 
 REDIS_PIDFILE="${REDIS_PIDFILE:-/tmp/snug-bench-redis.pid}"
 SNUG_PIDFILE="${SNUG_PIDFILE:-/tmp/snug-bench-snug.pid}"
