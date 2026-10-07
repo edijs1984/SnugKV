@@ -47,8 +47,12 @@ func BenchmarkZSetScore(b *testing.B) {
 			for i := range keys {
 				keys[i] = "zset:" + strconv.Itoa(i)
 			}
+			members := make([][]byte, items)
+			for i := range members {
+				members[i] = zsetBenchMember(i%card, i)
+			}
 			for i := 0; i < items; i++ {
-				pairs := []ZSetItem{{Member: zsetBenchMember(i%card, i), Score: float64(i)}}
+				pairs := []ZSetItem{{Member: members[i], Score: float64(i)}}
 				if _, _, _, err := s.ZSetAdd(keys[i/card], pairs, ZSetAddOptions{}); err != nil {
 					b.Fatal(err)
 				}
@@ -57,7 +61,7 @@ func BenchmarkZSetScore(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				idx := (i * 7919) % items
-				if _, ok, err := s.ZSetScore(keys[idx/card], zsetBenchMember(idx%card, idx)); err != nil || !ok {
+				if _, ok, err := s.ZSetScore(keys[idx/card], members[idx]); err != nil || !ok {
 					b.Fatalf("ZSCORE ok=%v err=%v", ok, err)
 				}
 			}

@@ -270,6 +270,11 @@ func decodePackedZSet(data []byte) ([]ZSetItem, error) {
 	items := make([]ZSetItem, 0, int(count64))
 	useIntegerDelta := version == packedZSetHeaderIntDelta[2] || version == packedZSetHeaderAdaptive[2] && mode&zsetModeIntDelta != 0
 	useMemberPrefix := version == packedZSetHeaderAdaptive[2] && mode&zsetModeMemberPrefix != 0
+	// Decoded members share one backing buffer instead of one allocation each.
+	// Each member is a capacity-limited sub-slice, so appending to a member never
+	// overwrites its neighbour. If the buffer has to grow, earlier members keep
+	// pointing at the old (still valid) array.
+	backing := make([]byte, 0, len(data)+len(data)/2)
 	var previousInt int64
 	var previousMember []byte
 	for i := 0; i < int(count64); i++ {
@@ -313,7 +318,9 @@ func decodePackedZSet(data []byte) ([]ZSetItem, error) {
 				return nil, errors.New("invalid packed zset")
 			}
 			end := offset + int(length64)
-			member = append([]byte(nil), data[offset:end]...)
+			start := len(backing)
+			backing = append(backing, data[offset:end]...)
+			member = backing[start:len(backing):len(backing)]
 			offset = end
 		} else {
 			prefix64, err := readZSetUvarint(data, &offset)
@@ -325,9 +332,10 @@ func decodePackedZSet(data []byte) ([]ZSetItem, error) {
 				return nil, errors.New("invalid packed zset")
 			}
 			end := offset + int(suffix64)
-			member = make([]byte, int(prefix64)+int(suffix64))
-			copy(member, previousMember[:int(prefix64)])
-			copy(member[int(prefix64):], data[offset:end])
+			start := len(backing)
+			backing = append(backing, previousMember[:int(prefix64)]...)
+			backing = append(backing, data[offset:end]...)
+			member = backing[start:len(backing):len(backing)]
 			offset = end
 		}
 		items = append(items, ZSetItem{Member: member, Score: score})
@@ -521,6 +529,78 @@ func zsetFindMember(items []ZSetItem, member []byte) int {
 // ZSetAdd applies Redis-style ZADD options. The returned integer is the number
 // of newly added members, or the number of changed members when CH is set.
 // When INCR is set, incremented is true only if the update was applied.
+// zsetPlainAddMaxPairs bounds the batch size handled by zsetPlainAddLocked, which
+// finds members with a linear scan.
+const zsetPlainAddMaxPairs = 8
+
+// zsetInsertSorted inserts item into the sorted slice at its (score, member)
+// position.
+func zsetInsertSorted(items []ZSetItem, item ZSetItem) []ZSetItem {
+	pos := sort.Search(len(items), func(i int) bool { return !zsetLess(items[i], item) })
+	items = append(items, ZSetItem{})
+	copy(items[pos+1:], items[pos:])
+	items[pos] = item
+	return items
+}
+
+// zsetPlainAddLocked applies a plain ZADD (no NX/XX/GT/LT/CH/INCR) to an already
+// sorted member list without re-sorting it or tracking changes in a map: new
+// members and changed scores are inserted at their sorted position. It publishes
+// the result and returns the number of newly added members. The caller holds the
+// shard lock and has validated scores.
+func (s *Store) zsetPlainAddLocked(sh *shard, key string, items []ZSetItem, pairs []ZSetItem, expiresAt stamp) (int64, bool, float64, error) {
+	var added int64
+	changed := false
+	for _, pair := range pairs {
+		score := normalizeZSetScore(pair.Score)
+		idx := zsetFindMember(items, pair.Member)
+		if idx < 0 {
+			// The member bytes are only read by the encoder below, so the caller's
+			// slice can be referenced instead of copied.
+			items = zsetInsertSorted(items, ZSetItem{Member: pair.Member, Score: score})
+			added++
+			changed = true
+			continue
+		}
+		if items[idx].Score == score {
+			continue
+		}
+		member := items[idx].Member
+		items = append(items[:idx], items[idx+1:]...)
+		items = zsetInsertSorted(items, ZSetItem{Member: member, Score: score})
+		changed = true
+	}
+	if !changed {
+		return added, false, 0, nil
+	}
+
+	var updated preparedEntry
+	if len(items) >= indexedZSetPromoteMembers {
+		indexed, err := encodeIndexedZSet(items)
+		if err != nil {
+			return 0, false, 0, err
+		}
+		updated = preparedEntry{
+			entry: entry{entryData: entryData{valueType: TypeZSet, rawLength: uint32(len(indexed))}},
+			data:  indexed,
+		}
+	} else {
+		packed, err := encodePackedZSet(items)
+		if err != nil {
+			return 0, false, 0, err
+		}
+		updated = preparedEntry{
+			entry: entry{entryData: entryData{valueType: TypeZSet, rawLength: uint32(len(packed))}},
+			data:  packed,
+		}
+	}
+	updated.expiresAt = expiresAt
+	if err := s.publish(sh, key, updated); err != nil {
+		return 0, false, 0, err
+	}
+	return added, false, 0, nil
+}
+
 func (s *Store) ZSetAdd(key string, pairs []ZSetItem, options ZSetAddOptions) (count int64, incremented bool, incrementScore float64, err error) {
 	if len(pairs) == 0 {
 		return 0, false, 0, errors.New("ERR invalid sorted set member count")
@@ -603,10 +683,19 @@ func (s *Store) ZSetAdd(key string, pairs []ZSetItem, options ZSetAddOptions) (c
 			}
 			return 0, true, score, nil
 		}
+		if options == (ZSetAddOptions{}) && len(pairs) <= zsetPlainAddMaxPairs {
+			items, err = s.zsetItemsFromEntry(sh, old)
+			if err != nil {
+				return 0, false, 0, err
+			}
+			return s.zsetPlainAddLocked(sh, key, items, pairs, expiresAt)
+		}
 		items, err = s.zsetItemsFromEntry(sh, old)
 		if err != nil {
 			return 0, false, 0, err
 		}
+	} else if options == (ZSetAddOptions{}) && len(pairs) <= zsetPlainAddMaxPairs {
+		return s.zsetPlainAddLocked(sh, key, nil, pairs, 0)
 	}
 
 	changedMembers := make(map[string]struct{})
