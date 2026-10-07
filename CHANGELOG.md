@@ -84,6 +84,10 @@ All notable changes to SnugKV will be documented in this file.
 
 ## [Unreleased]
 
+### Performance — optimizer yields to foreground writes (pending live benchmark)
+
+- Optimizer workers now stay idle for the whole foreground write burst (bounded at 2 s, or earlier when the queue is more than half full) instead of doing one key every 50 ms per worker, and the quiet poll reuses one timer instead of allocating one per poll. Shard write locks and CPU taken by `Rewrite`/`MarkOptimizationAttempt` during load were showing up as write p99. Catch-up still runs at full speed as soon as writes stop.
+
 ### Added
 
 - Post-merge project-wide validation for the distributed hardening milestone passed
