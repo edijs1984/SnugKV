@@ -769,6 +769,7 @@ func waitForMemoryConvergence(addr string, maxWait, poll time.Duration, keys, va
 		lastRewritten            uint64
 		lastRewrittenInitialized bool
 		lastRewriteChange        = start
+		noOptimizerWork          bool
 	)
 
 	for {
@@ -822,16 +823,14 @@ func waitForMemoryConvergence(addr string, maxWait, poll time.Duration, keys, va
 			}
 			progress.OptimizerRewrittenRun = rewrittenSinceStart
 
-			// Scalar codecs such as integer/UUID run synchronously during SET.
-			// If the workload did not enqueue any optimizer work and the queue is
-			// empty, the post-workload representation is already final. Do not
-			// wait for the background convergence/compaction window.
-			if snug["optimizer_queued"] == startQueued &&
+			// Scalar codecs such as integer/UUID run synchronously during SET, so
+			// no optimizer work is expected. Idle compaction can still shrink the
+			// index and entry array about one maintenance interval after writes
+			// stop, so skip only the optimizer-complete requirement below and keep
+			// waiting for memory itself to stay stable.
+			noOptimizerWork = snug["optimizer_queued"] == startQueued &&
 				rewritten == startRewritten &&
-				snug["optimizer_queue_depth"] == 0 {
-				emitConvergenceProgress(progress)
-				return used, true, now.Sub(start).Milliseconds(), samples, nil
-			}
+				snug["optimizer_queue_depth"] == 0
 
 			// After the first meaningful sample, estimate the final steady-state
 			// footprint from observed live-block savings per rewrite. Exclude
@@ -883,8 +882,8 @@ func waitForMemoryConvergence(addr string, maxWait, poll time.Duration, keys, va
 			}
 		}
 
-		optimizerComplete := false
-		if snug != nil {
+		optimizerComplete := noOptimizerWork
+		if snug != nil && !noOptimizerWork {
 			// Recovery sampling may keep generating duplicate/skipped attempts
 			// indefinitely. Those are not useful work. Consider optimization
 			// complete once successful rewrites have stopped, the work queue is

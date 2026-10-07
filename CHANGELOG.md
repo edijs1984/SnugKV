@@ -91,6 +91,7 @@ All notable changes to SnugKV will be documented in this file.
 
 - Shard indexes no longer have to be a power-of-two size. Lookups map the hash onto any capacity with a multiply and shift, and compaction rebuilds each index at the smallest capacity that keeps the existing 80% occupancy ceiling. A counter-style workload (1M keys, about 3,900 per shard) was holding 8,192 slots per shard (33.6 B/key); it now needs about 4,900 (20 B/key). Growth after a rebuild still doubles.
 - Idle maintenance now also triggers compaction when the index reservation is well above what the live keys need, not only when the arena or entry array is loose. Compaction still only runs while writes are quiet.
+- `rediswirebench` convergence no longer returns immediately for workloads that queue no optimizer work (counter, uuid, ints); it waits for memory to stay stable so idle compaction is measured. First live run on this branch: counter settles at 59.1 B/key (index 20.1, was 33.6) against 78.8 before.
 
 ### Added
 
