@@ -741,6 +741,24 @@ func (s *Store) ZSetAdd(key string, pairs []ZSetItem, options ZSetAddOptions) (c
 		if options == (ZSetAddOptions{}) && len(pairs) <= zsetPlainAddMaxPairs {
 			scr := zsetScratchPool.Get().(*zsetScratch)
 			defer zsetScratchPool.Put(scr)
+			if len(pairs) == 1 && !isIndexedZSet(physical) {
+				// A new member that sorts last (timestamps, ever-growing scores,
+				// leaderboards filling up) is appended without decode or re-encode.
+				if out, ok := packedZSetAppendLast(physical, pairs[0].Member, pairs[0].Score, scr.enc); ok {
+					if cap(out) <= 64<<10 {
+						scr.enc = out[:0]
+					}
+					updated := preparedEntry{
+						entry:     entry{entryData: entryData{valueType: TypeZSet, rawLength: uint32(len(out))}},
+						data:      out,
+						expiresAt: expiresAt,
+					}
+					if err := s.publish(sh, key, updated); err != nil {
+						return 0, false, 0, err
+					}
+					return 1, false, 0, nil
+				}
+			}
 			if !isIndexedZSet(physical) {
 				items, scr.backing, err = decodePackedZSetInto(physical, scr.items, scr.backing)
 			} else {
