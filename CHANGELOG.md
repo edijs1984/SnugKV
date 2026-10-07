@@ -87,6 +87,10 @@ All notable changes to SnugKV will be documented in this file.
 ### Performance — optimizer yields to foreground writes (pending live benchmark)
 
 - Optimizer workers now stay idle for the whole foreground write burst (bounded at 2 s, or earlier when the queue is more than half full) instead of doing one key every 50 ms per worker, and the quiet poll reuses one timer instead of allocating one per poll. Shard write locks and CPU taken by `Rewrite`/`MarkOptimizationAttempt` during load were showing up as write p99. Catch-up still runs at full speed as soon as writes stop.
+### Memory — tight shard index after compaction (pending live benchmark)
+
+- Shard indexes no longer have to be a power-of-two size. Lookups map the hash onto any capacity with a multiply and shift, and compaction rebuilds each index at the smallest capacity that keeps the existing 80% occupancy ceiling. A counter-style workload (1M keys, about 3,900 per shard) was holding 8,192 slots per shard (33.6 B/key); it now needs about 4,900 (20 B/key). Growth after a rebuild still doubles.
+- Idle maintenance now also triggers compaction when the index reservation is well above what the live keys need, not only when the arena or entry array is loose. Compaction still only runs while writes are quiet.
 
 ### Added
 

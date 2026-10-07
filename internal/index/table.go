@@ -106,6 +106,14 @@ func (s *slot[V]) setDeleted() {
 	s.meta = stateDeleted << stateShift
 }
 
+// probeStart maps the low 32 hash bits onto [0, len(slots)) with a multiply
+// and shift, so table capacities need not be powers of two. The shard selector
+// uses hash bits 32-39 and the fingerprint bits 58-61, so the probe start stays
+// independent of both.
+func (t *Table[V]) probeStart(hash uint64) int {
+	return int((uint64(uint32(hash)) * uint64(len(t.slots))) >> 32)
+}
+
 func (t *Table[V]) CapacityBytes() uint64 {
 	return uint64(cap(t.slots)) * slotBytes[V]()
 }
@@ -119,6 +127,53 @@ func capacityAccepts(n, capacity int) bool {
 		return n <= capacity
 	}
 	return n <= capacity*8/10
+}
+
+// tightCapacity returns the smallest capacity, in steps of 8 slots, that holds
+// n live keys under the same occupancy rule as capacityAccepts. Growth still
+// doubles; tight sizing is for tables that are idle or rebuilt in one pass,
+// where power-of-two rounding would leave up to half the slots empty.
+func tightCapacity(n int) int {
+	if n <= initialCapacity {
+		return initialCapacity
+	}
+	capacity := (n*5 + 3) / 4
+	capacity = (capacity + 7) &^ 7
+	for !capacityAccepts(n, capacity) {
+		capacity += 8
+	}
+	return capacity
+}
+
+// Reserve rebuilds the table at the tightest capacity that holds max(n, Len())
+// keys. It also drops tombstones. Callers provide synchronization.
+func (t *Table[V]) Reserve(n int) {
+	if n < int(t.count) {
+		n = int(t.count)
+	}
+	if n == 0 {
+		t.slots = nil
+		t.tinyFilter = 0
+		return
+	}
+	capacity := tightCapacity(n)
+	if capacity == len(t.slots) {
+		return
+	}
+	t.rebuild(capacity)
+}
+
+func (t *Table[V]) rebuild(capacity int) {
+	old := t.slots
+	t.slots = make([]slot[V], capacity)
+	t.count = 0
+	t.tinyFilter = 0
+	for i := range old {
+		s := &old[i]
+		if s.state() == stateLive {
+			t.insert(s.key(), s.value())
+		}
+	}
 }
 
 func (t *Table[V]) capacityFor(n int) int {
@@ -154,11 +209,14 @@ func (t *Table[V]) GetHashed(key string, hash uint64) (V, bool) {
 			return zero, false
 		}
 	}
-	mask := uint64(len(t.slots) - 1)
+	size := len(t.slots)
 	keyLen := uint64(len(key))
 	fingerprint := hashFingerprint(hash)
-	for n := 0; n < len(t.slots); n++ {
-		s := &t.slots[(hash+uint64(n))&mask]
+	for n, i := 0, t.probeStart(hash); n < size; n, i = n+1, i+1 {
+		if i == size {
+			i = 0
+		}
+		s := &t.slots[i]
 		meta := s.meta
 		switch meta >> stateShift {
 		case stateEmpty:
@@ -195,11 +253,14 @@ func (t *Table[V]) GetHashedBytes(key []byte, hash uint64) (V, bool) {
 		lookup = unsafe.String(unsafe.SliceData(key), len(key))
 	}
 
-	mask := uint64(len(t.slots) - 1)
+	size := len(t.slots)
 	keyLen := uint64(len(key))
 	fingerprint := hashFingerprint(hash)
-	for n := 0; n < len(t.slots); n++ {
-		s := &t.slots[(hash+uint64(n))&mask]
+	for n, i := 0, t.probeStart(hash); n < size; n, i = n+1, i+1 {
+		if i == size {
+			i = 0
+		}
+		s := &t.slots[i]
 		meta := s.meta
 		switch meta >> stateShift {
 		case stateEmpty:
@@ -247,10 +308,12 @@ func (t *Table[V]) insertKnownAbsentHashed(key string, value V, hash uint64) {
 	if len(t.slots) == initialCapacity {
 		t.tinyFilter |= tinyFilterBits(hash)
 	}
-	mask := uint64(len(t.slots) - 1)
+	size := len(t.slots)
 	deleted := -1
-	for n := 0; n < len(t.slots); n++ {
-		i := int((hash + uint64(n)) & mask)
+	for n, i := 0, t.probeStart(hash); n < size; n, i = n+1, i+1 {
+		if i == size {
+			i = 0
+		}
 		s := &t.slots[i]
 		switch s.state() {
 		case stateLive:
@@ -281,16 +344,7 @@ func (t *Table[V]) growForInsert() {
 	if capacity == len(t.slots) {
 		return
 	}
-	old := t.slots
-	t.slots = make([]slot[V], capacity)
-	t.count = 0
-	t.tinyFilter = 0
-	for i := range old {
-		s := &old[i]
-		if s.state() == stateLive {
-			t.insert(s.key(), s.value())
-		}
-	}
+	t.rebuild(capacity)
 }
 
 func (t *Table[V]) insert(key string, value V) {
@@ -301,10 +355,12 @@ func (t *Table[V]) insertHashed(key string, value V, hash uint64) {
 	if len(t.slots) == initialCapacity {
 		t.tinyFilter |= tinyFilterBits(hash)
 	}
-	mask := uint64(len(t.slots) - 1)
+	size := len(t.slots)
 	deleted := -1
-	for n := 0; n < len(t.slots); n++ {
-		i := int((hash + uint64(n)) & mask)
+	for n, i := 0, t.probeStart(hash); n < size; n, i = n+1, i+1 {
+		if i == size {
+			i = 0
+		}
 		s := &t.slots[i]
 		switch s.state() {
 		case stateLive:
@@ -344,11 +400,14 @@ func (t *Table[V]) Delete(key string) {
 			return
 		}
 	}
-	mask := uint64(len(t.slots) - 1)
+	size := len(t.slots)
 	keyLen := uint64(len(key))
 	fingerprint := hashFingerprint(hash)
-	for n := 0; n < len(t.slots); n++ {
-		s := &t.slots[(hash+uint64(n))&mask]
+	for n, i := 0, t.probeStart(hash); n < size; n, i = n+1, i+1 {
+		if i == size {
+			i = 0
+		}
+		s := &t.slots[i]
 		meta := s.meta
 		switch meta >> stateShift {
 		case stateEmpty:
@@ -383,25 +442,7 @@ func (t *Table[V]) All() func(func(string, V) bool) {
 }
 
 func (t *Table[V]) Compact() {
-	capacity := initialCapacity
-	if t.count == 0 {
-		t.slots = nil
-		t.tinyFilter = 0
-		return
-	}
-	for !capacityAccepts(int(t.count), capacity) {
-		capacity *= 2
-	}
-	old := t.slots
-	t.slots = make([]slot[V], capacity)
-	t.count = 0
-	t.tinyFilter = 0
-	for i := range old {
-		s := &old[i]
-		if s.state() == stateLive {
-			t.insert(s.key(), s.value())
-		}
-	}
+	t.Reserve(int(t.count))
 }
 
 // Sample advances a cursor with a bounded slot-scan budget.
