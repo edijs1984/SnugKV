@@ -12,7 +12,7 @@ const firstSmallSegmentBytes = 256
 const tinyFirstSegmentBytes = 192
 const secondSmallSegmentBytes = 1 << 10
 const segmentMetadata = 24
-const freeBucketCount = 130
+const freeBucketCount = 137
 
 // Ref is an opaque allocation identity. Generation prevents aliasing after reuse.
 //
@@ -135,6 +135,7 @@ type Arena struct {
 	segments []segment
 	// Buckets 128 and 129 are reserved for exact 24- and 88-byte blocks used
 	// by tiny native-container payloads. Large 32 MiB values top out at 127.
+	// Buckets 130-136 hold the 16-byte steps between 385 and 512 bytes.
 	//
 	// Keep the free-head table out of the Arena struct until a shard actually
 	// frees an allocation. Sparse/write-once shards otherwise paid 130 uint64
@@ -203,8 +204,15 @@ func class(n int) (int, int) {
 		return 13 + (block-272)/16, block
 
 	case size <= 512:
-		block := (size + 63) &^ 63
-		return 21 + (block-448)/64, block
+		block := (size + 15) &^ 15
+		if block == 448 || block == 512 {
+			return 21 + (block-448)/64, block
+		}
+		// 16-byte steps keep a 407-byte record (a 384-byte value plus key and
+		// header) in a 416-byte block instead of 448. Buckets 21 and 22 keep
+		// the established 448/512 classes; the intermediate sizes take the
+		// appended buckets 130-136 so existing numbering never shifts.
+		return 130 + (block-400)/16, block
 
 	case size <= 1024:
 		// Medium-small values are extremely common for JSON/API payloads.

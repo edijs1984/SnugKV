@@ -1,5 +1,10 @@
 # Changelog
 
+### Memory — 16-byte arena classes between 385 and 512 bytes (pending live benchmark)
+
+- Arena blocks in the 385-512 byte range were rounded up to 64-byte steps, so a session-json record (384-byte value + key + header, 407 bytes) used a 448-byte block. They now use 16-byte steps (416 bytes there); the established 448 and 512 classes keep their buckets and the new intermediate sizes use appended buckets, so no existing class numbering shifts.
+- Engine probe of the session-json load shape (200,000 keys): footprint right after load drops from about 509 to about 464 bytes/key; settled memory is unchanged (about 257 bytes/key).
+
 ### Performance — in-place LPOP/RPOP and range-limited LRANGE on indexed lists (pending live benchmark)
 
 - LPOP/RPOP on an indexed list now edit the list in place (offset-table shift for the left end, tail reclaim for the right end) instead of decoding every element and re-encoding a packed copy. A 10,000-element queue pop+push drops from about 3.6 ms to about 1 µs in the engine benchmark.
