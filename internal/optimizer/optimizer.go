@@ -224,7 +224,15 @@ func shouldCompactArena(arenaBytes, liveBytes uint64, queueDepth int) bool {
 	dead := arenaBytes - liveBytes
 
 	if queueDepth == 0 {
-		return dead >= 1<<20 && dead*4 >= arenaBytes
+		if dead >= 1<<20 && dead*4 >= arenaBytes {
+			return true
+		}
+		// Growing values (list pushes, hash appends) leave freed blocks in the
+		// shared segments that never match a later allocation size. At 10% dead
+		// and 4 MiB or more, a pass reclaims real memory. The 4 MiB floor stays
+		// above the partially filled tail segment each shard keeps (at most
+		// 256 x 8 KiB), which compaction cannot remove, so it cannot re-trigger.
+		return dead >= 4<<20 && dead*10 >= arenaBytes
 	}
 
 	return dead >= 8<<20 && dead*5 >= arenaBytes*2
