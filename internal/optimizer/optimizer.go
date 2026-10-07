@@ -263,6 +263,11 @@ func shouldCompactEntries(capacity, live uint64, queueDepth int) bool {
 
 func (o *Optimizer) maintenanceStep() {
 	quiet := o.foregroundQuietFor(2 * time.Second)
+	// HOT hashes (large, recently written) keep a mutable sidecar that costs
+	// roughly twice the compact form. Compaction freezes them once idle, but
+	// that memory is neither arena nor index slack, so none of the slack
+	// triggers below would ever fire for it.
+	hotIdle := o.foregroundQuietFor(engine.HotHashIdleFreeze + time.Second)
 
 	// Native ZSET cleanup is independent of the generic scalar optimizer queue.
 	// Once foreground writes are quiet, compact indexed ZSET headroom directly
@@ -294,7 +299,8 @@ func (o *Optimizer) maintenanceStep() {
 	if quiet &&
 		(shouldCompactArena(m.ArenaBytes, m.ArenaLiveBlockBytes, len(o.queue)) ||
 			shouldCompactEntries(layout.EntryCapacity, layout.EntryCount, len(o.queue)) ||
-			shouldCompactIndex(m.IndexReservedBytes, layout.EntryCount, layout.IndexSlotBytes, len(o.queue))) {
+			shouldCompactIndex(m.IndexReservedBytes, layout.EntryCount, layout.IndexSlotBytes, len(o.queue)) ||
+			(hotIdle && shouldCompactHotHashes(m.HotHashBytes))) {
 		if compacted := o.store.Compact(uint64(o.config.MaxScratchBytes)); compacted > 0 {
 			// Compaction replaces shard arenas and dense storage with fresh
 			// allocations. The old backing pages are then unreachable, but Go may
@@ -305,6 +311,13 @@ func (o *Optimizer) maintenanceStep() {
 			debug.FreeOSMemory()
 		}
 	}
+}
+
+// shouldCompactHotHashes reports whether enough HOT-hash sidecar memory exists
+// to justify a compaction pass once the store has been write-idle long enough
+// for those hashes to be freezable.
+func shouldCompactHotHashes(hotBytes uint64) bool {
+	return hotBytes >= 1<<20
 }
 
 func (o *Optimizer) maintenance() {

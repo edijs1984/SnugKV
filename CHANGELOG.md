@@ -84,6 +84,10 @@ All notable changes to SnugKV will be documented in this file.
 
 ## [Unreleased]
 
+### Memory — idle maintenance collapses HOT hashes (pending live benchmark)
+
+- Hashes above 256 fields become HOT (mutable sidecar, ~131 B/field in the engine probe) and only returned to the compact form (~69 B/field) when a compaction pass ran. HOT-hash memory is neither arena nor index slack, so no maintenance trigger ever fired for it and hash-large stayed at ~114 B/field indefinitely. Maintenance now compacts once the store has been write-idle past the freeze window and at least 1 MiB of HOT sidecar exists.
+
 ### Memory — large freed arena blocks are returned to the heap (pending live benchmark)
 
 - A value that outgrows its block (every RPUSH/APPEND-style rewrite) used to leave the old block on a per-size free list. A growing list passes through every size class once, so each shard kept one idle block per class that no other value could reuse. Freed blocks that own a whole segment (above 4 KiB) are now released to the Go heap and the segment slot is reused. Right after loading 1000-item lists this cuts reserved arena from ~174 to ~110 B/item in the engine probe.
