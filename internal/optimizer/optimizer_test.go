@@ -490,3 +490,12 @@ func TestShouldCompactIndex(t *testing.T) {
 		t.Fatal("large slack should still compact under a backlog")
 	}
 }
+
+func TestShouldCompactHotHashes(t *testing.T) {
+	if shouldCompactHotHashes(0) || shouldCompactHotHashes(1<<20-1) {
+		t.Fatal("small hot-hash footprint must not trigger compaction")
+	}
+	if !shouldCompactHotHashes(1<<20) || !shouldCompactHotHashes(100<<20) {
+		t.Fatal("large hot-hash footprint must trigger compaction")
+	}
+}

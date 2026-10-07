@@ -17,6 +17,10 @@ const (
 	hotHashIdleFreeze    = 6 * time.Second
 )
 
+// HotHashIdleFreeze is how long a HOT hash must be unmodified before
+// maintenance may collapse it back into its compact stored form.
+const HotHashIdleFreeze = hotHashIdleFreeze
+
 type hotHashRecord struct {
 	hash       uint64
 	fieldOff   uint32
