@@ -292,3 +292,31 @@ func growIndexedListRaw(data []byte, values [][]byte) (newCount int, grown []byt
 	binary.LittleEndian.PutUint32(out[11:15], uint32(cursor))
 	return newCount, out, true, nil
 }
+
+// trimIndexedList returns a copy of an indexed list sized exactly to its
+// contents: the offset table keeps only max(count, promote threshold) slots and
+// the payload keeps only the used bytes. Append headroom exists to make RPUSH
+// cheap on hot lists; once a list is idle it is pure overhead. A later RPUSH
+// simply regrows the list through growIndexedListRaw. ok is false when the list
+// is invalid or trimming would not shrink it.
+func trimIndexedList(data []byte) (trimmed []byte, ok bool) {
+	count, _, used, start, err := indexedListMeta(data)
+	if err != nil {
+		return nil, false
+	}
+	newCapacity := count
+	if newCapacity < indexedListPromoteElements {
+		newCapacity = indexedListPromoteElements
+	}
+	newStart := indexedListFixed + newCapacity*4
+	total := newStart + used
+	if total >= len(data) {
+		return nil, false
+	}
+	out := make([]byte, total)
+	copy(out[:indexedListFixed], data[:indexedListFixed])
+	copy(out[indexedListFixed:indexedListFixed+count*4], data[indexedListFixed:indexedListFixed+count*4])
+	copy(out[newStart:], data[start:start+used])
+	binary.LittleEndian.PutUint32(out[7:11], uint32(newCapacity))
+	return out, true
+}

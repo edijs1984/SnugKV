@@ -1,5 +1,9 @@
 # Changelog
 
+### Memory — trim idle list headroom during compaction (pending live benchmark)
+
+- `Compact` now rewrites idle indexed lists (32+ elements) to exact size, dropping append headroom (payload slack and the power-of-two offset table). Engine-level settled size for 64 B values: 100 items/list 83.1 -> 76.9 B/item, 1000 items/list 86.7 -> 77.1 B/item. A later RPUSH regrows the list on demand.
+
 ### Performance — RPUSH on indexed lists (pending live benchmark)
 
 - Growing an indexed list (32+ elements) now copies the stored bytes instead of decoding and re-encoding every element; 1000-element pushes about 2x faster with zero allocations. Evidence and remaining gaps: `docs/LIST-THROUGHPUT-AUDIT.md`.
