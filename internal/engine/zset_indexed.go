@@ -8,12 +8,43 @@ import (
 	"sort"
 )
 
+// Header byte 5 stores 4-byte slot offsets; 6 stores 2-byte offsets and is
+// used when the payload capacity fits in 16 bits (medium zsets).
 var indexedZSetHeader = [...]byte{'S','Z',5}
+
+const indexedZSetNarrowVersion = 6
+const indexedZSetNarrowMaxPayload = 65534
+
+func indexedZSetSlotWidth(data []byte) int {
+	if data[2] == indexedZSetNarrowVersion {
+		return 2
+	}
+	return 4
+}
+
+func indexedZSetSlotGet(data []byte, slot int) uint32 {
+	if data[2] == indexedZSetNarrowVersion {
+		o := indexedZSetFixed + slot*2
+		return uint32(binary.LittleEndian.Uint16(data[o : o+2]))
+	}
+	o := indexedZSetFixed + slot*4
+	return binary.LittleEndian.Uint32(data[o : o+4])
+}
+
+func indexedZSetSlotSet(data []byte, slot int, v uint32) {
+	if data[2] == indexedZSetNarrowVersion {
+		o := indexedZSetFixed + slot*2
+		binary.LittleEndian.PutUint16(data[o:o+2], uint16(v))
+		return
+	}
+	o := indexedZSetFixed + slot*4
+	binary.LittleEndian.PutUint32(data[o:o+4], v)
+}
 const indexedZSetFixed = 15
 const indexedZSetPromoteMembers = 32
 
 func isIndexedZSet(data []byte) bool {
-	return len(data) >= indexedZSetFixed && bytes.Equal(data[:3], indexedZSetHeader[:])
+	return len(data) >= indexedZSetFixed && data[0] == 'S' && data[1] == 'Z' && (data[2] == indexedZSetHeader[2] || data[2] == indexedZSetNarrowVersion)
 }
 
 func indexedZSetMeta(data []byte) (count, slots, used, dataStart int, err error) {
@@ -26,7 +57,7 @@ func indexedZSetMeta(data []byte) (count, slots, used, dataStart int, err error)
 	if slots < 8 || slots&(slots-1) != 0 || count < 0 || count > slots {
 		return 0,0,0,0,errors.New("invalid indexed zset")
 	}
-	dataStart = indexedZSetFixed + slots*4
+	dataStart = indexedZSetFixed + slots*indexedZSetSlotWidth(data)
 	if dataStart > len(data) || used < 0 || dataStart+used > len(data) {
 		return 0,0,0,0,errors.New("invalid indexed zset")
 	}
@@ -41,19 +72,39 @@ func nextZSetPow2(n int) int {
 	return p
 }
 
+// Record layout: uvarint score tag, uvarint member length, member bytes.
+// Integral scores (|n| < 2^52) are stored as zigzag(n)<<1; any other score is
+// tag 1 followed by 8 bytes of IEEE-754. Integer scores are the common case
+// (ranks, timestamps, counters) and shrink from 8 bytes to 1-4.
+const indexedZSetMaxIntScore = 1 << 52
+
 func indexedZSetRecordKnown(data []byte, pos, used, start int) (member []byte, score float64, end int, err error) {
-	if pos < 0 || pos >= used || start+pos+8 > start+used {
+	if pos < 0 || pos >= used {
 		return nil,0,0,errors.New("invalid indexed zset offset")
 	}
+	limit := start + used
 	off := start + pos
-	score = math.Float64frombits(binary.LittleEndian.Uint64(data[off:off+8]))
-	off += 8
-	if math.IsNaN(score) {
+	tag, n := binary.Uvarint(data[off:limit])
+	if n <= 0 {
 		return nil,0,0,errors.New("invalid indexed zset score")
 	}
-	score = normalizeZSetScore(score)
-	length,e := readZSetUvarint(data,&off)
-	if e != nil || length > uint64(start+used-off) {
+	off += n
+	if tag&1 == 0 {
+		z := tag >> 1
+		score = float64(int64(z>>1) ^ -int64(z&1))
+	} else {
+		if tag != 1 || off+8 > limit {
+			return nil,0,0,errors.New("invalid indexed zset score")
+		}
+		score = math.Float64frombits(binary.LittleEndian.Uint64(data[off:off+8]))
+		off += 8
+		if math.IsNaN(score) {
+			return nil,0,0,errors.New("invalid indexed zset score")
+		}
+		score = normalizeZSetScore(score)
+	}
+	length,e := readZSetUvarint(data[:limit],&off)
+	if e != nil || length > uint64(limit-off) {
 		return nil,0,0,errors.New("invalid indexed zset member")
 	}
 	valueEnd := off + int(length)
@@ -73,7 +124,7 @@ func indexedZSetFindKnown(data, target []byte, slots, used, dataStart int) (slot
 	hashStart := int(hashField64(target)) & mask
 	for probe:=0;probe<slots;probe++ {
 		slot=(hashStart+probe)&mask
-		raw := binary.LittleEndian.Uint32(data[indexedZSetFixed+slot*4:indexedZSetFixed+slot*4+4])
+		raw := indexedZSetSlotGet(data,slot)
 		if raw==0 {
 			return slot,0,false,0,nil
 		}
@@ -98,8 +149,18 @@ func indexedZSetFind(data, target []byte) (slot,pos int, found bool, score float
 }
 
 func indexedZSetRecordBytes(member []byte, score float64) []byte {
-	out := make([]byte,8,8+binary.MaxVarintLen64+len(member))
-	binary.LittleEndian.PutUint64(out[:8],math.Float64bits(normalizeZSetScore(score)))
+	score = normalizeZSetScore(score)
+	out := make([]byte,0,2*binary.MaxVarintLen64+8+len(member))
+	if score == math.Trunc(score) && math.Abs(score) < indexedZSetMaxIntScore {
+		n := int64(score)
+		z := uint64(n<<1) ^ uint64(n>>63)
+		out = appendZSetUvarint(out,z<<1)
+	} else {
+		out = appendZSetUvarint(out,1)
+		var raw [8]byte
+		binary.LittleEndian.PutUint64(raw[:],math.Float64bits(score))
+		out = append(out,raw[:]...)
+	}
 	out = appendZSetUvarint(out,uint64(len(member)))
 	out = append(out,member...)
 	return out
@@ -176,15 +237,22 @@ func encodeIndexedZSetSized(items []ZSetItem, aggressive, exact bool) ([]byte,er
 	} else if dataCap-used < 512 {
 		dataCap = used + 512
 	}
-	total := indexedZSetFixed + slots*4 + dataCap
+	slotWidth := 4
+	version := indexedZSetHeader[2]
+	if dataCap <= indexedZSetNarrowMaxPayload {
+		slotWidth = 2
+		version = indexedZSetNarrowVersion
+	}
+	total := indexedZSetFixed + slots*slotWidth + dataCap
 	if total > maxPackedZSetBytes {
 		return nil,errors.New("ERR sorted set exceeds 32 MiB limit")
 	}
 	out := make([]byte,total)
 	copy(out[:3],indexedZSetHeader[:])
+	out[2] = version
 	binary.LittleEndian.PutUint32(out[3:7],uint32(len(canonical)))
 	binary.LittleEndian.PutUint32(out[7:11],uint32(slots))
-	start := indexedZSetFixed + slots*4
+	start := indexedZSetFixed + slots*slotWidth
 	cursor:=0
 	for i,item := range canonical {
 		slot,_,found,_,err := indexedZSetFind(out,item.Member)
@@ -195,7 +263,7 @@ func encodeIndexedZSetSized(items []ZSetItem, aggressive, exact bool) ([]byte,er
 			return nil,errors.New("duplicate sorted set member")
 		}
 		copy(out[start+cursor:],records[i])
-		binary.LittleEndian.PutUint32(out[indexedZSetFixed+slot*4:indexedZSetFixed+slot*4+4],uint32(cursor+1))
+		indexedZSetSlotSet(out,slot,uint32(cursor+1))
 		cursor += len(records[i])
 		binary.LittleEndian.PutUint32(out[11:15],uint32(cursor))
 	}
@@ -209,7 +277,7 @@ func decodeIndexedZSet(data []byte) ([]ZSetItem,error) {
 	}
 	items := make([]ZSetItem,0,count)
 	for slot:=0;slot<slots;slot++ {
-		raw:=binary.LittleEndian.Uint32(data[indexedZSetFixed+slot*4:indexedZSetFixed+slot*4+4])
+		raw:=indexedZSetSlotGet(data,slot)
 		if raw==0 {
 			continue
 		}
@@ -262,10 +330,7 @@ func indexedZSetIncrBy(data, member []byte, increment float64) (added bool, scor
 	}
 
 	copy(data[start+used:], rec)
-	binary.LittleEndian.PutUint32(
-		data[indexedZSetFixed+slot*4:indexedZSetFixed+slot*4+4],
-		uint32(used+1),
-	)
+	indexedZSetSlotSet(data, slot, uint32(used+1))
 	used += len(rec)
 	if !found {
 		count++
@@ -289,7 +354,7 @@ func indexedZSetRank(data, target []byte, reverse bool) (int64, bool, error) {
 	rank := int64(0)
 	seen := 0
 	for slot := 0; slot < slots; slot++ {
-		raw := binary.LittleEndian.Uint32(data[indexedZSetFixed+slot*4 : indexedZSetFixed+slot*4+4])
+		raw := indexedZSetSlotGet(data,slot)
 		if raw == 0 {
 			continue
 		}
@@ -331,7 +396,7 @@ func indexedZSetSmallRange(data []byte, startRank, stopRank int64, reverse bool)
 	best := make([]ZSetItem, 0, limit)
 	seen := 0
 	for slot := 0; slot < slots; slot++ {
-		raw := binary.LittleEndian.Uint32(data[indexedZSetFixed+slot*4 : indexedZSetFixed+slot*4+4])
+		raw := indexedZSetSlotGet(data,slot)
 		if raw == 0 {
 			continue
 		}
@@ -427,7 +492,7 @@ func indexedZSetAddSimple(data []byte, pairs []ZSetItem)(added int64, rebuilt []
 		}
 
 		copy(data[start+used:],rec)
-		binary.LittleEndian.PutUint32(data[indexedZSetFixed+slot*4:indexedZSetFixed+slot*4+4],uint32(used+1))
+		indexedZSetSlotSet(data,slot,uint32(used+1))
 		used += len(rec)
 		if !found {
 			count++

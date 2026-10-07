@@ -1,5 +1,12 @@
 # Changelog
 
+### Memory — smaller indexed sorted sets (pending live benchmark)
+
+- Compaction now trims idle indexed sorted sets (payload headroom and dead records), as it already does for lists.
+- Indexed zset records store integer scores as 1-4 byte varints instead of a fixed 8 bytes; non-integral scores keep the IEEE-754 form.
+- Indexed zsets whose payload capacity fits in 16 bits use 2-byte slot offsets (header version 6) instead of 4 bytes.
+- Physical formats are internal; persistence still uses the logical form.
+
 ### Memory — trim idle list headroom during compaction (pending live benchmark)
 
 - `Compact` now rewrites idle indexed lists (32+ elements) to exact size, dropping append headroom (payload slack and the power-of-two offset table). Engine-level settled size for 64 B values: 100 items/list 83.1 -> 76.9 B/item, 1000 items/list 86.7 -> 77.1 B/item. A later RPUSH regrows the list on demand.
