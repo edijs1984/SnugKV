@@ -1,5 +1,9 @@
 # Changelog
 
+### Performance — RPUSH on indexed lists (pending live benchmark)
+
+- Growing an indexed list (32+ elements) now copies the stored bytes instead of decoding and re-encoding every element; 1000-element pushes about 2x faster with zero allocations. Evidence and remaining gaps: `docs/LIST-THROUGHPUT-AUDIT.md`.
+
 ### Implemented — SLOWLOG and persistence controls (pending review)
 
 - Added audited SLOWLOG operations, client identity capture, SAVE/BGSAVE/BGREWRITEAOF controls, one-off AOF export, background status/error reporting, and queued save/rewrite handoffs.
