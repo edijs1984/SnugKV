@@ -150,6 +150,22 @@ func (s *Store) SetPlainBatchFresh(keys [][]byte, values [][]byte) (bool, error)
 		return items[i].shardIndex < items[j].shardIndex
 	})
 
+	// Encoding, classification and optimizer-class checks do not depend on any
+	// shard state, so do them before taking locks. A batch holds every shard it
+	// touches (often most of the 256) until it finishes, so work done under the
+	// lock directly lengthens other connections' waits.
+	for i := range items {
+		item := &items[i]
+		item.entry = s.makeEntryForShard(nil, item.value)
+		// Specialized scalar encodings (integer/UUID/timestamp/float/bool)
+		// are already in their terminal representation and are never queued for
+		// background optimization. Keep those entries metadata-free so tiny
+		// scalars remain inline and compact scalar codecs avoid a sidecar.
+		if s.OptimizationClassForValue(item.value) != OptimizationNone {
+			item.entry.entryMeta = &entryMeta{}
+		}
+	}
+
 	lastShard := -1
 	for i := range items {
 		shardIndex := items[i].shardIndex
@@ -178,14 +194,6 @@ func (s *Store) SetPlainBatchFresh(keys [][]byte, values [][]byte) (bool, error)
 			_ = old
 			unlock()
 			return false, nil
-		}
-		item.entry = s.makeEntryForShard(sh, item.value)
-		// Specialized scalar encodings (integer/UUID/timestamp/float/bool)
-		// are already in their terminal representation and are never queued for
-		// background optimization. Keep those entries metadata-free so tiny
-		// scalars remain inline and compact scalar codecs avoid a sidecar.
-		if s.OptimizationClassForValue(item.value) != OptimizationNone {
-			item.entry.entryMeta = &entryMeta{}
 		}
 	}
 

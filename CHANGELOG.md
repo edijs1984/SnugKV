@@ -17,6 +17,7 @@
 - ZSCORE on small packed sorted sets scans without allocating (10-member lookup: about 704 ns and 28 B/op down to about 530 ns and 0 allocations in the engine benchmark).
 - Growing an indexed sorted set (and trimming it when idle) rebuilds straight from the live records: no decode, map or sort, and no per-record allocation. In a profile of the 100-member lab workload the old rebuild path was about 17% of server CPU.
 - Per-command client bookkeeping no longer allocates when a connection repeats the same command (it was about 14M allocations in one lab run).
+- Pipelined SET batches encode and classify values before taking shard locks. A 256-command batch holds every shard it touches (often most of the 256), so that work used to lengthen other connections' waits; in a profile of the counter load it was 83% of all mutex delay. Engine benchmark with 8 concurrent batch writers: batch p50 about 1.4 ms down to about 0.3-0.5 ms, throughput about 25-30% higher.
 - Physical formats are internal; persistence still uses the logical form.
 
 ### Memory — trim idle list headroom during compaction (pending live benchmark)
