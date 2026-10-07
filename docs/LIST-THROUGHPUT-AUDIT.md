@@ -68,3 +68,17 @@ Findings from the diagnostics export:
 
 - Lists under 32 elements (SL1) rewrite the whole blob per push (~1 us).
 - list-small `LINDEX` gap vs Redis is unproven; needs isolated measurement.
+
+## Final operator run (hybrid regrow headroom, `perf/list-memory` at 16c4dce)
+
+| Profile | Load ops/s | Read ops/s | Read p99 us | Bytes/item right after load | Bytes/item settled |
+|---|---|---|---|---|---|
+| list-small (10/key) | 476,671 | 541,523 | 46.0 | 78.3 | 78.3 |
+| list-medium (100/key) | 534,508 | 562,242 | 36.2 | 98.4 | 76.8 |
+| list-large (1000/key) | 609,560 | 578,192 | 36.1 | 110.4 | 76.9 |
+
+Right after load, list-large went 194 -> 110 B/item; list-medium is unchanged at 98 B/item
+(it never reaches the 8 KiB doubling threshold). Single repetition on a 4-core laptop; throughput
+varies by roughly +/-10% between runs, memory figures are stable.
+
+Remaining gaps vs Redis: settled memory +6% (medium) and +13% (large), read p99 +9% to +70%.
