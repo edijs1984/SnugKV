@@ -7,6 +7,7 @@
 - Indexed zsets whose payload capacity fits in 16 bits use 2-byte slot offsets (header version 6) instead of 4 bytes.
 - Plain ZADD on small packed sorted sets reuses pooled decode/encode buffers: 1,641 ns and 3 allocations per op drop to about 1,230 ns and none in the engine benchmark (10 members).
 - A new member that sorts after every existing member of a small packed sorted set is appended in place (one scan, no decode, no re-sort): 10-member ZADD drops to about 730 ns in the engine benchmark, from 1,640 ns.
+- ZSCORE on small packed sorted sets scans without allocating (10-member lookup: about 704 ns and 28 B/op down to about 530 ns and 0 allocations in the engine benchmark).
 - Physical formats are internal; persistence still uses the logical form.
 
 ### Memory — trim idle list headroom during compaction (pending live benchmark)

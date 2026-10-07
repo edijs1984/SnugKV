@@ -412,40 +412,35 @@ func packedZSetScore(data, target []byte) (float64, bool, error) {
 		version == packedZSetHeaderAdaptive[2] && mode&zsetModeIntDelta != 0
 	useMemberPrefix := version == packedZSetHeaderAdaptive[2] && mode&zsetModeMemberPrefix != 0
 
+	// This is the ZSCORE hot path: it only needs the score of the matching
+	// member, so scores are accumulated as raw integers (or bits) and converted
+	// once on a match. Full validation stays in decodePackedZSet. Member
+	// reconstruction uses a stack buffer for typical member sizes.
 	var previousInt int64
-	var previousMember []byte
+	var scoreBits uint64
+	var memberStack [128]byte
+	previousMember := memberStack[:0]
 	for i := 0; i < count; i++ {
-		var score float64
 		if useIntegerDelta {
 			encoded, err := readZSetUvarint(data, &offset)
 			if err != nil {
 				return 0, false, errors.New("invalid packed zset")
 			}
-			var scoreInt int64
 			if i == 0 {
-				scoreInt = zsetUnZigZag(encoded)
+				previousInt = zsetUnZigZag(encoded)
 			} else {
-				scoreInt = int64(uint64(previousInt) + encoded)
-				if scoreInt < previousInt {
+				next := int64(uint64(previousInt) + encoded)
+				if next < previousInt {
 					return 0, false, errors.New("invalid packed zset")
 				}
+				previousInt = next
 			}
-			score = float64(scoreInt)
-			roundTrip, ok := zsetExactInt64(score)
-			if !ok || roundTrip != scoreInt {
-				return 0, false, errors.New("invalid packed zset")
-			}
-			previousInt = scoreInt
 		} else {
 			if len(data)-offset < 8 {
 				return 0, false, errors.New("invalid packed zset")
 			}
-			score = math.Float64frombits(binary.LittleEndian.Uint64(data[offset : offset+8]))
+			scoreBits = binary.LittleEndian.Uint64(data[offset : offset+8])
 			offset += 8
-			if math.IsNaN(score) {
-				return 0, false, errors.New("invalid packed zset")
-			}
-			score = normalizeZSetScore(score)
 		}
 
 		if !useMemberPrefix || i == 0 {
@@ -456,7 +451,7 @@ func packedZSetScore(data, target []byte) (float64, bool, error) {
 			end := offset + int(length64)
 			member := data[offset:end]
 			if bytes.Equal(member, target) {
-				return score, true, nil
+				return packedZSetMatchScore(useIntegerDelta, previousInt, scoreBits)
 			}
 			if useMemberPrefix {
 				previousMember = append(previousMember[:0], member...)
@@ -486,7 +481,7 @@ func packedZSetScore(data, target []byte) (float64, bool, error) {
 		}
 		previousMember = append(previousMember, data[offset:end]...)
 		if bytes.Equal(previousMember, target) {
-			return score, true, nil
+			return packedZSetMatchScore(useIntegerDelta, previousInt, scoreBits)
 		}
 		offset = end
 	}
@@ -494,6 +489,22 @@ func packedZSetScore(data, target []byte) (float64, bool, error) {
 		return 0, false, errors.New("invalid packed zset trailing data")
 	}
 	return 0, false, nil
+}
+
+// packedZSetMatchScore converts the accumulated raw score of a matched member.
+func packedZSetMatchScore(integer bool, scoreInt int64, bits uint64) (float64, bool, error) {
+	if integer {
+		score := float64(scoreInt)
+		if roundTrip, ok := zsetExactInt64(score); !ok || roundTrip != scoreInt {
+			return 0, false, errors.New("invalid packed zset")
+		}
+		return score, true, nil
+	}
+	score := math.Float64frombits(bits)
+	if math.IsNaN(score) {
+		return 0, false, errors.New("invalid packed zset")
+	}
+	return normalizeZSetScore(score), true, nil
 }
 
 func zsetEncodingName(data []byte) string {
