@@ -170,13 +170,21 @@ func indexedListAppend(data []byte, values [][]byte) (newCount int, rebuilt []by
 		}
 	}
 
-	records := make([][]byte,len(values))
 	extra := 0
-	for i,value := range values {
-		records[i] = indexedListRecordBytes(value)
-		extra += len(records[i])
+	for _,value := range values {
+		extra += listUvarintLen(uint64(len(value))) + len(value)
 	}
 	if count+len(values) > capacity || start+used+extra > len(data) {
+		// Out of room: grow by copying the stored bytes verbatim. This avoids
+		// decoding and re-encoding every element (one allocation each), which
+		// made RPUSH cost grow with list length.
+		grownCount,grown,ok,growErr := growIndexedListRaw(data,values)
+		if growErr != nil {
+			return 0,nil,growErr
+		}
+		if ok {
+			return grownCount,grown,nil
+		}
 		elements,err := decodeIndexedList(data)
 		if err != nil {
 			return 0,nil,err
@@ -192,14 +200,95 @@ func indexedListAppend(data []byte, values [][]byte) (newCount int, rebuilt []by
 	}
 
 	cursor := used
-	for i,rec := range records {
-		copy(data[start+cursor:],rec)
+	for i,value := range values {
+		recordStart := cursor
+		cursor += binary.PutUvarint(data[start+cursor:],uint64(len(value)))
+		cursor += copy(data[start+cursor:],value)
 		idx := count+i
-		binary.LittleEndian.PutUint32(data[indexedListFixed+idx*4:indexedListFixed+idx*4+4],uint32(cursor+1))
-		cursor += len(rec)
+		binary.LittleEndian.PutUint32(data[indexedListFixed+idx*4:indexedListFixed+idx*4+4],uint32(recordStart+1))
 	}
 	count += len(values)
 	binary.LittleEndian.PutUint32(data[3:7],uint32(count))
 	binary.LittleEndian.PutUint32(data[11:15],uint32(cursor))
 	return count,nil,nil
+}
+
+func listUvarintLen(n uint64) int {
+	length := 1
+	for n >= 0x80 {
+		n >>= 7
+		length++
+	}
+	return length
+}
+
+// indexedListFullyReferenced reports whether every payload byte is owned by a
+// live element, i.e. the summed record sizes equal the used payload length. It
+// walks the offset table without allocating. Any inconsistency returns false so
+// callers fall back to the validating decode/encode path.
+func indexedListFullyReferenced(data []byte, count, used, start int) bool {
+	live := 0
+	for i := 0; i < count; i++ {
+		raw := binary.LittleEndian.Uint32(data[indexedListFixed+i*4 : indexedListFixed+i*4+4])
+		if raw == 0 || int(raw-1) >= used {
+			return false
+		}
+		off := start + int(raw-1)
+		length, err := readListUvarint(data, &off)
+		if err != nil || length > uint64(start+used-off) {
+			return false
+		}
+		live += (off - (start + int(raw-1))) + int(length)
+	}
+	return live == used
+}
+
+// growIndexedListRaw returns a larger copy of an indexed list with values
+// appended. The existing offset table and payload are copied verbatim, so the
+// cost is a memmove rather than one decode and one re-encode allocation per
+// element. ok is false when the list has unreferenced payload or fails
+// validation; the caller then uses the compacting rebuild, which also reports
+// any corruption error.
+func growIndexedListRaw(data []byte, values [][]byte) (newCount int, grown []byte, ok bool, err error) {
+	count, capacity, used, start, metaErr := indexedListMeta(data)
+	if metaErr != nil || !indexedListFullyReferenced(data, count, used, start) {
+		return 0, nil, false, nil
+	}
+
+	extra := 0
+	for _, value := range values {
+		extra += listUvarintLen(uint64(len(value))) + len(value)
+	}
+	newCount = count + len(values)
+	newCapacity := capacity
+	if newCount > capacity {
+		newCapacity = nextListPow2(newCount * 2)
+	}
+	newUsed := used + extra
+	dataCap := newUsed + newUsed/4
+	if dataCap-newUsed < 512 {
+		dataCap = newUsed + 512
+	}
+	newStart := indexedListFixed + newCapacity*4
+	total := newStart + dataCap
+	if total > maxPackedListBytes {
+		return 0, nil, false, errors.New("ERR list exceeds 32 MiB limit")
+	}
+
+	out := make([]byte, total)
+	copy(out[:indexedListFixed], data[:indexedListFixed])
+	copy(out[indexedListFixed:indexedListFixed+count*4], data[indexedListFixed:indexedListFixed+count*4])
+	copy(out[newStart:newStart+used], data[start:start+used])
+
+	cursor := used
+	for i, value := range values {
+		recordStart := cursor
+		cursor += binary.PutUvarint(out[newStart+cursor:], uint64(len(value)))
+		cursor += copy(out[newStart+cursor:], value)
+		binary.LittleEndian.PutUint32(out[indexedListFixed+(count+i)*4:indexedListFixed+(count+i)*4+4], uint32(recordStart+1))
+	}
+	binary.LittleEndian.PutUint32(out[3:7], uint32(newCount))
+	binary.LittleEndian.PutUint32(out[7:11], uint32(newCapacity))
+	binary.LittleEndian.PutUint32(out[11:15], uint32(cursor))
+	return newCount, out, true, nil
 }
