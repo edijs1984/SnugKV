@@ -1,5 +1,15 @@
 # Changelog
 
+### Memory — smaller indexed sorted sets (pending live benchmark)
+
+- Compaction now trims idle indexed sorted sets (payload headroom and dead records), as it already does for lists.
+- Indexed zset records store integer scores as 1-4 byte varints instead of a fixed 8 bytes; non-integral scores keep the IEEE-754 form.
+- Indexed zsets whose payload capacity fits in 16 bits use 2-byte slot offsets (header version 6) instead of 4 bytes.
+- Plain ZADD on small packed sorted sets reuses pooled decode/encode buffers: 1,641 ns and 3 allocations per op drop to about 1,230 ns and none in the engine benchmark (10 members).
+- A new member that sorts after every existing member of a small packed sorted set is appended in place (one scan, no decode, no re-sort): 10-member ZADD drops to about 730 ns in the engine benchmark, from 1,640 ns.
+- ZSCORE on small packed sorted sets scans without allocating (10-member lookup: about 704 ns and 28 B/op down to about 530 ns and 0 allocations in the engine benchmark).
+- Physical formats are internal; persistence still uses the logical form.
+
 ### Memory — trim idle list headroom during compaction (pending live benchmark)
 
 - `Compact` now rewrites idle indexed lists (32+ elements) to exact size, dropping append headroom (payload slack and the power-of-two offset table). Engine-level settled size for 64 B values: 100 items/list 83.1 -> 76.9 B/item, 1000 items/list 86.7 -> 77.1 B/item. A later RPUSH regrows the list on demand.
