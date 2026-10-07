@@ -3,6 +3,20 @@ set -euo pipefail
 
 # Isolated native Redis vs adaptive SnugKV benchmark.
 # One database process is resident at a time.
+#
+# Selecting data types (PROFILE):
+#   PROFILE unset            the default string profiles (unchanged behavior)
+#   PROFILE=all              every profile: strings plus hash/list/set/zset
+#   PROFILE=hash-small       a single profile
+#   PROFILE="hash-small,list-small zset-large"   any comma/space separated set
+#
+# Every selected profile runs exactly RUNS time(s) on EACH server in SERVERS
+# (default RUNS=1, SERVERS="redis snug"), so "all" means both Redis and SnugKV
+# once per selected data type. A profile named twice is still run once.
+#
+# Native structure profiles (hash-*, list-*, set-*, zset-*) use
+# cmd/redisstructurebench; string profiles use cmd/rediswirebench. Memory for
+# structure profiles is reported per logical item, not per container key.
 
 KEYS="${KEYS:-1000000}"
 GET_OPS="${GET_OPS:-2000000}"
@@ -16,7 +30,11 @@ SERVERS="${SERVERS:-redis snug}"
 WORKLOADS="${WORKLOADS:-load get}"
 ROOT_OUT="${ROOT_OUT:-benchmark-results/realistic-$(date +%Y%m%d-%H%M%S)}"
 BUILD_SNUG="${BUILD_SNUG:-1}"
+# Set BUILD_BENCH=0 to reuse existing /tmp/rediswirebench and
+# /tmp/redisstructurebench binaries instead of rebuilding them.
+BUILD_BENCH="${BUILD_BENCH:-1}"
 PROFILE="${PROFILE:-}"
+SEED="${SEED:-1}"
 
 REDIS_ADDR="${REDIS_ADDR:-127.0.0.1:6390}"
 SNUG_ADDR="${SNUG_ADDR:-127.0.0.1:6383}"
@@ -24,7 +42,9 @@ REDIS_PIDFILE="${REDIS_PIDFILE:-/tmp/snug-bench-redis.pid}"
 SNUG_PIDFILE="${SNUG_PIDFILE:-/tmp/snug-bench-snug.pid}"
 SNUG_BIN="${SNUG_BIN:-/tmp/snugkv-bench}"
 
-profiles=(
+# Profile spec format: name:value_bytes[:structure_type:cardinality]
+# Specs with the last two fields are native structures (redisstructurebench).
+string_profiles=(
   "session-json:384"
   "api-json:768"
   "cache-json:1024"
@@ -36,24 +56,65 @@ profiles=(
   "random:256"
 )
 
-if [[ -n "$PROFILE" ]]; then
-  selected=""
-  for spec in "${profiles[@]}"; do
-    if [[ "${spec%%:*}" == "$PROFILE" ]]; then
-      selected="$spec"
-      break
+structure_profiles=(
+  "hash-small:64:hash:10"
+  "hash-medium:64:hash:100"
+  "hash-large:64:hash:1000"
+  "list-small:64:list:10"
+  "list-medium:64:list:100"
+  "list-large:64:list:1000"
+  "set-small:24:set:10"
+  "set-medium:24:set:100"
+  "set-large:24:set:1000"
+  "zset-small:24:zset:10"
+  "zset-medium:24:zset:100"
+  "zset-large:24:zset:1000"
+)
+
+all_profiles=("${string_profiles[@]}" "${structure_profiles[@]}")
+
+find_profile_spec() {
+  local name="$1" spec
+  for spec in "${all_profiles[@]}"; do
+    if [[ "${spec%%:*}" == "$name" ]]; then
+      echo "$spec"
+      return 0
     fi
   done
-  if [[ -z "$selected" ]]; then
-    echo "unknown PROFILE: $PROFILE" >&2
-    echo "available: ${profiles[*]}" >&2
-    exit 2
-  fi
-  profiles=("$selected")
+  return 1
+}
+
+if [[ -z "$PROFILE" ]]; then
+  profiles=("${string_profiles[@]}")
+elif [[ " ${PROFILE//,/ } " == *" all "* ]]; then
+  profiles=("${all_profiles[@]}")
+else
+  profiles=()
+  seen=" "
+  for name in ${PROFILE//,/ }; do
+    # Each selected data type runs once, even if it is listed twice.
+    [[ "$seen" == *" $name "* ]] && continue
+    if ! spec="$(find_profile_spec "$name")"; then
+      echo "unknown PROFILE: $name" >&2
+      available=""
+      for s in "${all_profiles[@]}"; do available+="${s%%:*} "; done
+      echo "available: all $available" >&2
+      exit 2
+    fi
+    profiles+=("$spec")
+    seen+="$name "
+  done
 fi
 
 mkdir -p "$ROOT_OUT"
-go build -o /tmp/rediswirebench ./cmd/rediswirebench
+
+if [[ "$BUILD_BENCH" == "1" ]]; then
+  go build -o /tmp/rediswirebench ./cmd/rediswirebench
+  go build -o /tmp/redisstructurebench ./cmd/redisstructurebench
+elif [[ ! -x /tmp/rediswirebench || ! -x /tmp/redisstructurebench ]]; then
+  echo "error: benchmark binaries missing in /tmp; set BUILD_BENCH=1" >&2
+  exit 2
+fi
 
 if [[ "$BUILD_SNUG" == "1" ]]; then
   echo "Building fresh native SnugKV benchmark binary..."
@@ -141,6 +202,50 @@ run_workload() {
 
   echo "===== $profile | $server | run $run/$RUNS | $workload ====="
 
+  if [[ -n "$STRUCT_TYPE" ]]; then
+    # Native structures: load/read only (redisstructurebench has no
+    # mixed/ttl workloads). "get" is the string-profile name for "read".
+    local mode converge
+    case "$workload" in
+      load) mode=load ;;
+      get) mode=read ;;
+      *)
+        echo "skipping $workload for structure profile $profile (only load/get are supported)" >&2
+        return 0
+        ;;
+    esac
+    # SnugKV converges its physical layout after load; wait for it to finish.
+    if [[ "$server" == "snug" ]]; then converge=-1; else converge=0; fi
+
+    sargs=(
+      -server "$server"
+      -addr "$addr"
+      -mode "$mode"
+      -type "$STRUCT_TYPE"
+      -items "$KEYS"
+      -cardinality "$STRUCT_CARDINALITY"
+      -workers "$WORKERS"
+      -pipeline "$PIPELINE"
+      -value-bytes "$bytes"
+      -seed "$SEED"
+    )
+    if [[ "$mode" == "load" ]]; then
+      sargs+=( -reset -converge-ms "$converge" )
+      [[ "$SETTLE_MS" -gt 0 ]] && sleep "$(python3 -c "print($SETTLE_MS/1000)")"
+    else
+      sargs+=( -ops "$ops" )
+    fi
+
+    /tmp/redisstructurebench "${sargs[@]}" > "$out"
+
+    if [[ "$workload" == "load" ]]; then
+      annotate_process_memory "$out" "$(process_rss_bytes "$(server_pidfile "$server")")"
+    fi
+
+    cat "$out"
+    return 0
+  fi
+
   args=(
     -server "$server"
     -addr "$addr"
@@ -188,8 +293,9 @@ echo "  output:     $ROOT_OUT"
 echo "  snug_bin:   $SNUG_BIN"
 
 for spec in "${profiles[@]}"; do
-  profile="${spec%%:*}"
-  bytes="${spec##*:}"
+  IFS=: read -r profile bytes STRUCT_TYPE STRUCT_CARDINALITY <<<"$spec"
+  STRUCT_TYPE="${STRUCT_TYPE:-}"
+  STRUCT_CARDINALITY="${STRUCT_CARDINALITY:-}"
 
   echo
   echo "################################################################"
@@ -225,6 +331,9 @@ for path in sorted(root.glob("*/*.json")):
     with path.open() as f:
         d=json.load(f)
     d["profile"]=path.parent.name
+    # redisstructurebench names its read workload "read"; string profiles use "get".
+    if d.get("workload")=="read":
+        d["workload"]="get"
     rows.append(d)
 
 groups={}
