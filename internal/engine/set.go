@@ -285,6 +285,14 @@ func tinyFixedSetAddOne(data, target []byte) (updated []byte, added bool, count 
 		return nil, false, 0, 0, errors.New("invalid tiny set")
 	}
 
+	// Re-adding an existing member is a no-op. Detect it with the allocation-free
+	// lookup before building the rewritten set.
+	if present, err := tinyFixedSetContains(data, target); err != nil {
+		return nil, false, 0, 0, err
+	} else if present {
+		return nil, false, count, width, nil
+	}
+
 	// Decode one member at a time into a reusable buffer. We only retain the
 	// insertion neighborhood, so hot SADD avoids constructing [][]byte for the
 	// complete tiny set.
@@ -374,36 +382,66 @@ func tinyFixedSetContains(data, target []byte) (bool, error) {
 		return false, errors.New("invalid tiny set")
 	}
 
-	current := make([]byte, width)
-	copy(current, data[offset:offset+width])
+	// Members are sorted and front-coded against their predecessor. Track how
+	// many leading bytes the current member shares with the target: a member
+	// whose shared prefix with its predecessor is longer than that is still
+	// smaller than the target (skip it without copying), a shorter one is larger
+	// (the target is absent), and an equal one needs only its suffix compared.
+	first := data[offset : offset+width]
 	offset += width
-	cmp := bytes.Compare(current, target)
-	if cmp == 0 {
+	match := 0
+	for match < width && first[match] == target[match] {
+		match++
+	}
+	if match == width {
 		return true, nil
 	}
-	if cmp > 0 {
+	if first[match] > target[match] {
 		return false, nil
 	}
 
 	for i := 1; i < count; i++ {
-		prefix64, err := readSetUvarint(data, &offset)
-		if err != nil || prefix64 > uint64(width) {
+		if offset >= len(data) {
 			return false, errors.New("invalid tiny set")
 		}
-		prefix := int(prefix64)
+		prefix := int(data[offset])
+		if prefix >= 0x80 {
+			prefix64, err := readSetUvarint(data, &offset)
+			if err != nil {
+				return false, errors.New("invalid tiny set")
+			}
+			prefix = int(prefix64)
+		} else {
+			offset++
+		}
+		if prefix >= width {
+			return false, errors.New("invalid tiny set")
+		}
 		suffixLen := width - prefix
 		if suffixLen > len(data)-offset {
 			return false, errors.New("invalid tiny set")
 		}
-		copy(current[prefix:], data[offset:offset+suffixLen])
-		offset += suffixLen
-		cmp = bytes.Compare(current, target)
-		if cmp == 0 {
-			return true, nil
+		if prefix > match {
+			offset += suffixLen
+			continue
 		}
-		if cmp > 0 {
+		if prefix < match {
 			return false, nil
 		}
+		suffix := data[offset : offset+suffixLen]
+		rest := target[prefix:]
+		k := 0
+		for k < suffixLen && suffix[k] == rest[k] {
+			k++
+		}
+		if k == suffixLen {
+			return true, nil
+		}
+		if suffix[k] > rest[k] {
+			return false, nil
+		}
+		match = prefix + k
+		offset += suffixLen
 	}
 	if offset != len(data) {
 		return false, errors.New("invalid tiny set trailing data")
@@ -496,7 +534,7 @@ func (s *Store) setAddLocked(sh *shard, key string, hash uint64, members [][]byt
 			if !added {
 				return 0, nil
 			}
-			if newCount < indexedSetPromoteMembers {
+			if newCount < tinySetMaxMembers {
 				oldCount := newCount - 1
 				oldCountLen := len(appendSetUvarint(nil, uint64(oldCount)))
 				newCountLen := len(appendSetUvarint(nil, uint64(newCount)))
@@ -561,7 +599,7 @@ func (s *Store) setAddLocked(sh *shard, key string, hash uint64, members [][]byt
 		return 0, nil
 	}
 	var updated preparedEntry
-	if len(current) >= indexedSetPromoteMembers {
+	if len(current) >= setPromoteThreshold(current) {
 		indexed, err := encodeIndexedSet(current)
 		if err != nil {
 			return 0, err
