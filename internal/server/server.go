@@ -1201,7 +1201,7 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			s.store.Compact(64 << 20)
 			return []byte("+QUEUED\r\n"), nil
 		}
-		if !s.optimizer.Queue(key) {
+		if !s.optimizer.QueueNow(key) {
 			return nil, errors.New("ERR optimizer queue is full")
 		}
 		return []byte("+QUEUED\r\n"), nil

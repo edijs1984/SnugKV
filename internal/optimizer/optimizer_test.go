@@ -514,3 +514,46 @@ func TestShouldCompactHotHashes(t *testing.T) {
 		t.Fatal("large hot-hash footprint must trigger compaction")
 	}
 }
+
+func TestFutileAttemptsThinWriteTimeEnqueues(t *testing.T) {
+	o := &Optimizer{
+		ctx:   context.Background(),
+		queue: make(chan string, 4096),
+	}
+
+	// Before any run of failed attempts every key is queued.
+	for i := 0; i < 64; i++ {
+		o.Queue("key:"+strconv.Itoa(100000+i))
+	}
+	if got := len(o.queue); got != 64 {
+		t.Fatalf("queued %d keys before shedding, want 64", got)
+	}
+	for len(o.queue) > 0 {
+		<-o.queue
+	}
+
+	// After a long run of attempts without a rewrite only a fraction is
+	// queued, but never none.
+	atomic.StoreUint32(&o.futileAttempts, futileAttemptsBeforeShedding)
+	const writes = 2048
+	for i := 0; i < writes; i++ {
+		o.Queue("key:"+strconv.Itoa(100000+i))
+	}
+	got := len(o.queue)
+	if got == 0 || got > writes/4 {
+		t.Fatalf("queued %d of %d keys while shedding, want roughly 1/8", got, writes)
+	}
+
+	// Recovery sampling and explicit requests are never thinned.
+	for len(o.queue) > 0 {
+		<-o.queue
+	}
+	for i := 0; i < 64; i++ {
+		if !o.QueueNow("key:"+strconv.Itoa(100000+i)) {
+			t.Fatal("QueueNow refused a key")
+		}
+	}
+	if got := len(o.queue); got != 64 {
+		t.Fatalf("QueueNow queued %d keys, want 64", got)
+	}
+}

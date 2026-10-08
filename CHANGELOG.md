@@ -1,5 +1,9 @@
 # Changelog
 
+### Throughput — incompressible values no longer flood the optimizer (pending live benchmark)
+
+- After 512 consecutive optimizer attempts that produced no rewrite, write-time enqueues are thinned to one in eight until any attempt succeeds, which resets it at once. Recovery sampling and explicit SNUG.COMPACT requests are never thinned. Random 256-byte values spent about a third of load CPU on candidate copies and LZ4 attempts that all ended as raw; local SET load of 1M random keys goes from about 260k to about 340k ops/s (Redis locally: 355-415k). Text, repetitive, counter and uuid are unchanged in throughput and settled memory.
+
 ### Memory — idle lists compact into a cold layout (pending live benchmark)
 
 - Idle trim now rewrites an indexed list of 32 or more elements into a cold layout when that lands in a smaller arena block: the records stored back to back with a skip table of one offset per 8 elements instead of one per element, and no append headroom. LINDEX and LRANGE read it directly (one table lookup and at most 7 record skips); LLEN reads the count; every write decodes it and stores the list in the regular layout, so no mutation path knows about it.
