@@ -157,13 +157,12 @@ func (s *Store) SetPlainBatchFresh(keys [][]byte, values [][]byte) (bool, error)
 	for i := range items {
 		item := &items[i]
 		item.entry = s.makeEntryForShard(nil, item.value)
-		// Specialized scalar encodings (integer/UUID/timestamp/float/bool)
-		// are already in their terminal representation and are never queued for
-		// background optimization. Keep those entries metadata-free so tiny
-		// scalars remain inline and compact scalar codecs avoid a sidecar.
-		if s.OptimizationClassForValue(item.value) != OptimizationNone {
-			item.entry.entryMeta = &entryMeta{}
-		}
+		// Every key in this batch is new, and a new key has no write history to
+		// carry forward, so it gets no activity sidecar: 24 bytes plus an
+		// 8-byte slot per key that nothing reads until the optimizer decides
+		// the value is worth rewriting (a successful rewrite allocates the
+		// sidecar then, when it needs one). Overwrites still get one below, so
+		// write-heavy detection is unchanged.
 	}
 
 	lastShard := -1
@@ -376,7 +375,7 @@ func (s *Store) SetPlainBatchFreshShardLocal(keys [][]byte, values [][]byte) (bo
 			}
 
 			e := s.makeEntryForShard(sh, item.value)
-			if s.OptimizationClassForValue(item.value) != OptimizationNone {
+			if exists && s.OptimizationClassForValue(item.value) != OptimizationNone {
 				e.entryMeta = &entryMeta{}
 			}
 			if err := s.publishRecordKnownHashed(
