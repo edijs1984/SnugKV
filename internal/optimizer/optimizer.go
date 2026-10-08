@@ -251,7 +251,7 @@ func shouldCompactIndex(reservedBytes, live, slotBytes uint64, queueDepth int) b
 	}
 	slack := reservedBytes - needed
 	if queueDepth == 0 {
-		return slack >= 1<<20 && slack*8 >= reservedBytes
+		return slack >= 1<<20 && slack*16 >= reservedBytes
 	}
 	return slack >= 8<<20 && slack*4 >= reservedBytes
 }
@@ -263,7 +263,7 @@ func shouldCompactEntries(capacity, live uint64, queueDepth int) bool {
 
 	slack := capacity - live
 	if queueDepth == 0 {
-		return slack >= 1024 && slack*4 >= capacity
+		return slack >= 1024 && slack*8 >= capacity
 	}
 
 	return slack >= 4096 && slack*5 >= capacity*2
@@ -294,6 +294,12 @@ func (o *Optimizer) maintenanceStep() {
 		}
 	}
 
+	// The queue depth that decides how much slack justifies a compaction is the
+	// backlog left from foreground work. Sampling below refills the queue with
+	// candidates every tick, so measuring after it made every pass look backed
+	// up and held idle stores to the much stricter backlog thresholds.
+	backlog := len(o.queue)
+
 	// Periodic sampling guarantees eventual recovery for dropped write-time
 	// queue attempts and lets JSON values be reconsidered after shared-shape
 	// admission matures. Avoid generating more catch-up work while a meaningful
@@ -305,9 +311,9 @@ func (o *Optimizer) maintenanceStep() {
 	m := o.store.Memory()
 	layout := o.store.Layout()
 	if quiet &&
-		(shouldCompactArena(m.ArenaBytes, m.ArenaLiveBlockBytes, len(o.queue)) ||
-			shouldCompactEntries(layout.EntryCapacity, layout.EntryCount, len(o.queue)) ||
-			shouldCompactIndex(m.IndexReservedBytes, layout.EntryCount, layout.IndexSlotBytes, len(o.queue)) ||
+		(shouldCompactArena(m.ArenaBytes, m.ArenaLiveBlockBytes, backlog) ||
+			shouldCompactEntries(layout.EntryCapacity, layout.EntryCount, backlog) ||
+			shouldCompactIndex(m.IndexReservedBytes, layout.EntryCount, layout.IndexSlotBytes, backlog) ||
 			(hotIdle && shouldCompactHotHashes(m.HotHashBytes))) {
 		if compacted := o.store.Compact(uint64(o.config.MaxScratchBytes)); compacted > 0 {
 			// Compaction replaces shard arenas and dense storage with fresh

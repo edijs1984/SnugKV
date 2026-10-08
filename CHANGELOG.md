@@ -1,5 +1,10 @@
 # Changelog
 
+### Memory — idle trim now reclaims entry and index slack (pending live benchmark)
+
+- The maintenance step queued a fresh sample of keys and only then read the queue depth to decide how much slack justifies a compaction, so every pass saw a backlog and applied the strict backlog thresholds (40% entry slack, 25% index slack). Stores of plain strings never reached them: 1M counters sat at 26% entry slack and 11% index slack forever. The depth is now read before sampling, and the idle thresholds are 12.5% entry slack and 6.25% index slack.
+- Local runs through the server (1M keys, bytes per key once the trim has run, about 5 s after the load): counter 67.7 -> 59.1 (Redis in the lab: 54.1), uuid 93.3 -> 84.6, random 149.6 -> 140.8, text 149.4 -> 140.9. Hash, list and set profiles are unchanged.
+
 ### Memory — maintenance runs every 2 s for a minute after writes (pending live benchmark)
 
 - The optimizer's maintenance step (idle trim of free blocks, index slack and indexed-container headroom) ran on a fixed 10 s tick and then needed 2 s of write quiet, so memory left behind by a write burst was reclaimed 10 s or more after the burst. The tick is now 2 s while foreground writes happened in the last 60 s and stays 10 s on an idle store.
