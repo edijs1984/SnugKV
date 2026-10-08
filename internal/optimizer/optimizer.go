@@ -75,7 +75,8 @@ type Optimizer struct {
 	mu                                         sync.Mutex
 	scratch, bytes                             int
 	window                                     time.Time
-	queued, rewritten, skipped, stale, dropped uint64
+	queued, rewritten, skipped, stale, dropped, shed uint64
+	futileAttempts                              uint32
 
 	// rewriteActivity is rewritten+stale as of the previous maintenance step. It
 	// is only touched by the maintenance goroutine.
@@ -147,6 +148,46 @@ func (o *Optimizer) waitForForegroundQuiet() bool {
 }
 
 func (o *Optimizer) Queue(key string) bool {
+	if o.shedFutile(key) {
+		return true
+	}
+	return o.QueueNow(key)
+}
+
+// futileAttemptsBeforeShedding is how many consecutive encode attempts must
+// fail to produce any rewrite before write-time enqueues are thinned out.
+const futileAttemptsBeforeShedding = 512
+
+// futileKeepMask keeps one write-time enqueue in eight while shedding.
+const futileKeepMask = 7
+
+// shedFutile reports whether a write-time enqueue should be skipped because
+// the optimizer has just spent a long run of attempts without a single
+// rewrite (incompressible data). Shedding is thinning, not stopping: a kept
+// sample that rewrites resets the counter immediately, and recovery sampling
+// and explicit requests bypass it, so a workload that turns compressible is
+// noticed within a few writes.
+func (o *Optimizer) shedFutile(key string) bool {
+	if atomic.LoadUint32(&o.futileAttempts) < futileAttemptsBeforeShedding {
+		return false
+	}
+	h := uint32(2166136261)
+	start := len(key) - 8
+	if start < 0 {
+		start = 0
+	}
+	for i := start; i < len(key); i++ {
+		h = (h ^ uint32(key[i])) * 16777619
+	}
+	if (h>>16)&futileKeepMask == 0 {
+		return false
+	}
+	atomic.AddUint64(&o.shed, 1)
+	return true
+}
+
+// QueueNow enqueues key without write-time shedding.
+func (o *Optimizer) QueueNow(key string) bool {
 	select {
 	case <-o.ctx.Done():
 		return false
@@ -189,7 +230,7 @@ func (o *Optimizer) Sample(limit int) {
 		); !eligible {
 			continue
 		}
-		if !o.Queue(key) {
+		if !o.QueueNow(key) {
 			break
 		}
 	}
@@ -480,6 +521,13 @@ func (o *Optimizer) worker() {
 			}
 
 			record := o.store.EncodeCandidate(candidate)
+			if record.ID == codec.Raw {
+				if atomic.LoadUint32(&o.futileAttempts) < 1<<30 {
+					atomic.AddUint32(&o.futileAttempts, 1)
+				}
+			} else {
+				atomic.StoreUint32(&o.futileAttempts, 0)
+			}
 			saving := candidate.EncodedBytes - len(record.Data)
 
 			// A key that does not yet own optimizer metadata must also earn back
