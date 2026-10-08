@@ -107,16 +107,27 @@ func (s *Store) Compact(scratch uint64) int {
 			if !ok {
 				continue
 			}
-			trimmed, ok := trimIndexedList(sh.encoded(e))
-			if !ok {
+			physical := sh.encoded(e)
+			best, changed := physical, false
+			if trimmed, ok := trimIndexedList(physical); ok {
+				best, changed = trimmed, true
+			}
+			// A list nobody writes needs neither its per-element offsets nor
+			// append headroom. The cold layout is smaller still, but only worth
+			// the conversion when it lands in a smaller arena block.
+			if cold, ok := coldFromIndexedList(physical); ok &&
+				arena.AllocationBytesForLength(len(cold)) < arena.AllocationBytesForLength(len(best)) {
+				best, changed = cold, true
+			}
+			if !changed {
 				continue
 			}
 			updated := preparedEntry{
 				entry: entry{entryData: entryData{
 					valueType: TypeList,
-					rawLength: uint32(len(trimmed)),
+					rawLength: uint32(len(best)),
 				}},
-				data:      trimmed,
+				data:      best,
 				expiresAt: sh.expirationAt(key, e),
 			}
 			// Under memory pressure the replacement may not fit; the list
