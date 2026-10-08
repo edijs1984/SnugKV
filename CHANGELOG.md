@@ -1,5 +1,10 @@
 # Changelog
 
+### Memory — idle lists compact into a cold layout (pending live benchmark)
+
+- Idle trim now rewrites an indexed list of 32 or more elements into a cold layout when that lands in a smaller arena block: the records stored back to back with a skip table of one offset per 8 elements instead of one per element, and no append headroom. LINDEX and LRANGE read it directly (one table lookup and at most 7 record skips); LLEN reads the count; every write decodes it and stores the list in the regular layout, so no mutation path knows about it.
+- A 1000-element list of 64-byte values is 65,261 bytes cold against 67,015 trimmed. Go rounds blocks above 32 KiB up to whole 8 KiB pages, so that is 8 pages instead of 9. Local run through the server (list-large, 1M items): 73.9 -> 65.7 bytes/item settled (Redis in the lab: 67.8). Right after load is unchanged (85.5). LINDEX throughput on a list that has gone cold is about 8% lower (about 515k against 565k ops/s locally). list-medium is unchanged because its trimmed form already lands in the same block size.
+
 ### Memory — idle trim thresholds wait for optimizer rewrites to finish (pending live benchmark)
 
 - The lower idle thresholds for entry and index slack apply only when no optimizer rewrite landed since the previous maintenance step. In the lab run after the previous change, text settled at 182.4 bytes/key (173.0 before) and repetitive took 113 s to converge (60 s before): a compaction during the rewrite phase made in-flight rewrites stale, and on the slower machine they were not redone before the lab's 12 s flat-memory check ended. Counter (59.1) and uuid (84.5) still trim about 5 s after load.

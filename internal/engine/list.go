@@ -179,6 +179,9 @@ func (s *Store) listElementsFromEntry(sh *shard, e entry) ([][]byte, error) {
 	if isIndexedList(data) {
 		return decodeIndexedList(data)
 	}
+	if isColdList(data) {
+		return decodeColdList(data)
+	}
 	return decodePackedList(data)
 }
 
@@ -240,7 +243,15 @@ func (s *Store) listPush(key string, values [][]byte, left bool) (int64, error) 
 			}
 			return int64(length), nil
 		}
-		if !left {
+		if isColdList(physical) {
+			// An idle list was compacted into the cold layout. The first write
+			// stores it again in the regular layout.
+			var err error
+			current, err = decodeColdList(physical)
+			if err != nil {
+				return 0, err
+			}
+		} else if !left {
 			length, packed, err := appendPackedListRight(physical, values)
 			if err != nil {
 				return 0, err
@@ -394,6 +405,10 @@ func (s *Store) ListLen(key string) (int64, error) {
 		count, _, _, _, err := indexedListMeta(physical)
 		return int64(count), err
 	}
+	if isColdList(physical) {
+		count, _, _, _, err := coldListMeta(physical)
+		return int64(count), err
+	}
 	count, _, err := packedListMeta(physical)
 	return int64(count), err
 }
@@ -413,6 +428,9 @@ func (s *Store) ListIndex(key string, index int64) ([]byte, bool, error) {
 	if isIndexedList(physical) {
 		return indexedListElement(physical, int(index))
 	}
+	if isColdList(physical) {
+		return coldListElement(physical, int(index))
+	}
 	return packedListElement(physical, int(index))
 }
 
@@ -429,6 +447,8 @@ func (s *Store) ListRange(key string, start, stop int64) ([][]byte, error) {
 	}
 	if physical := sh.encoded(e); isIndexedList(physical) {
 		return indexedListRange(physical, start, stop)
+	} else if isColdList(physical) {
+		return coldListRange(physical, start, stop)
 	}
 	elements, err := s.listElementsFromEntry(sh, e)
 	if err != nil {
@@ -479,6 +499,8 @@ func (s *Store) ListStorageStats(key string) (ListStats, bool, error) {
 	encoding := "packed"
 	if isIndexedList(sh.encoded(e)) {
 		encoding = "indexed"
+	} else if isColdList(sh.encoded(e)) {
+		encoding = "cold"
 	}
 	stats := ListStats{Elements: len(elements), PackedBytes: len(logical), StoredBytes: len(sh.encoded(e)), Encoding: encoding}
 	for _, element := range elements {
