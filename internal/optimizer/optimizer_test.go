@@ -219,6 +219,8 @@ func TestShouldCompactEntriesPolicy(t *testing.T) {
 		{"no slack", 4096, 4096, 0, false},
 		{"idle below minimum slack", 4096, 3200, 0, false},
 		{"idle 25 percent slack", 4096, 3072, 0, true},
+		{"idle 14 percent slack", 8192, 7000, 0, true},
+		{"idle 6 percent slack", 8192, 7700, 0, false},
 		{"backlog requires larger slack", 8192, 5120, 1, false},
 		{"backlog 50 percent slack", 8192, 4096, 1, true},
 	}
@@ -485,6 +487,11 @@ func TestShouldCompactIndex(t *testing.T) {
 	// Already tight: about 1.25 slots per key.
 	if shouldCompactIndex(20_000_000, 1_000_000, slot, 0) {
 		t.Fatal("tight index must not compact")
+	}
+	// Counter-sized keys leave the grown table about 1.39 slots per key against
+	// 1.25 once rebuilt; that gap is worth reclaiming when idle.
+	if !shouldCompactIndex(22_700_000, 1_000_000, slot, 0) {
+		t.Fatal("index 10 percent over the tight size should compact when idle")
 	}
 	// Small slack stays below the absolute floor.
 	if shouldCompactIndex(300_000, 10_000, slot, 0) {
