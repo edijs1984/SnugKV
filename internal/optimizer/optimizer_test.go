@@ -179,7 +179,9 @@ func TestShouldCompactArenaPolicy(t *testing.T) {
 		want       bool
 	}{
 		{"empty arena", 0, 0, false},
-		{"idle below 25 percent dead", 80 << 20, 0, false},
+		{"idle below 10 percent dead", 91 << 20, 0, false},
+		{"idle at 10 percent dead", 90 << 20, 0, true},
+		{"idle 15 percent dead", 85 << 20, 0, true},
 		{"idle at 25 percent dead", 75 << 20, 0, true},
 		{"backlog below 40 percent dead", 70 << 20, 1, false},
 		{"backlog at 40 percent dead", 60 << 20, 1, true},
@@ -189,6 +191,12 @@ func TestShouldCompactArenaPolicy(t *testing.T) {
 	if shouldCompactArena(0, 0, 0) {
 		t.Fatal("zero arena should never compact")
 	}
+
+	t.Run("idle small dead bytes", func(t *testing.T) {
+		if shouldCompactArena(30<<20, 27<<20, 0) { // 10% dead but under 4 MiB
+			t.Fatal("3 MiB dead must not compact")
+		}
+	})
 
 	for _, tc := range tests[1:] {
 		t.Run(tc.name, func(t *testing.T) {
