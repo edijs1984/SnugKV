@@ -1,5 +1,10 @@
 # Changelog
 
+### Memory — maintenance runs every 2 s for a minute after writes (pending live benchmark)
+
+- The optimizer's maintenance step (idle trim of free blocks, index slack and indexed-container headroom) ran on a fixed 10 s tick and then needed 2 s of write quiet, so memory left behind by a write burst was reclaimed 10 s or more after the burst. The tick is now 2 s while foreground writes happened in the last 60 s and stays 10 s on an idle store.
+- hash-large (1000 fields of 64 B, 1M items) goes from 114.1 to 65.9 bytes/item after the trim, which now lands about 5 s after the load instead of about 10 s. The lab's convergence check waits for 12 s of flat memory, and the trim had not fired yet in that window on the lab machine, so it reported the pre-trim 114.3 as settled.
+
 ### Memory — hashes stay packed up to 128 fields (pending live benchmark)
 
 - Hashes promote to the indexed layout at 128 fields instead of 32 (and 128 instead of 16 for single-field HSET). Batched HSET to one key already rewrites the packed form once per batch, and the packed/shaped form has no slot table or payload reserve. 100-field hash of 64-byte values (1M items through the server): 117.3 -> 76.0 bytes/item right after load; settled stays 66.4 (Redis in the lab: 82.5 after load).

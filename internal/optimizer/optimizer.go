@@ -328,19 +328,38 @@ func shouldCompactHotHashes(hotBytes uint64) bool {
 	return hotBytes >= 1<<20
 }
 
+// maintenanceIdleInterval is the maintenance cadence on an idle store.
+// maintenanceActiveInterval applies for maintenanceActiveWindow after the last
+// foreground write, so memory a write burst leaves behind (free blocks, spare
+// index slots, indexed headroom) is reclaimed a few seconds after the burst
+// instead of waiting for the next 10 s tick.
+const (
+	maintenanceIdleInterval   = 10 * time.Second
+	maintenanceActiveInterval = 2 * time.Second
+	maintenanceActiveWindow   = 60 * time.Second
+)
+
+func (o *Optimizer) maintenanceDelay() time.Duration {
+	if o.foregroundQuietFor(maintenanceActiveWindow) {
+		return maintenanceIdleInterval
+	}
+	return maintenanceActiveInterval
+}
+
 func (o *Optimizer) maintenance() {
 	defer o.wg.Done()
 
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
+	timer := time.NewTimer(o.maintenanceDelay())
+	defer timer.Stop()
 
 	for {
 		select {
 		case <-o.ctx.Done():
 			return
 
-		case <-ticker.C:
+		case <-timer.C:
 			o.maintenanceStep()
+			timer.Reset(o.maintenanceDelay())
 		}
 	}
 }
