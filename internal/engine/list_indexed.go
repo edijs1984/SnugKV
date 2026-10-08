@@ -7,6 +7,56 @@ import (
 )
 
 var indexedListHeader = [...]byte{'S','L',2}
+
+// indexedListHeaderNarrow marks a list whose offset table uses 16-bit entries.
+// Payloads below 64 KiB can address every record with two bytes, which saves two
+// bytes per element; larger lists keep 32-bit entries.
+var indexedListHeaderNarrow = [...]byte{'S','L',3}
+
+// indexedListNarrowMaxPayload is the largest payload (including headroom) a
+// narrow list may reserve: stored offsets are record start + 1 and must fit in
+// 16 bits.
+const indexedListNarrowMaxPayload = 1<<16 - 2
+
+func indexedListOffsetWidth(data []byte) int {
+	if len(data) >= 3 && data[2] == indexedListHeaderNarrow[2] {
+		return 2
+	}
+	return 4
+}
+
+// indexedListWidthFor picks the offset width for a payload reservation.
+func indexedListWidthFor(dataCap int) int {
+	if dataCap <= indexedListNarrowMaxPayload {
+		return 2
+	}
+	return 4
+}
+
+func putIndexedListHeader(out []byte, width int) {
+	if width == 2 {
+		copy(out[:3], indexedListHeaderNarrow[:])
+		return
+	}
+	copy(out[:3], indexedListHeader[:])
+}
+
+// listOffset returns the stored offset (record start + 1, 0 when unset) of
+// element i.
+func listOffset(table []byte, width, i int) uint32 {
+	if width == 2 {
+		return uint32(binary.LittleEndian.Uint16(table[i*2 : i*2+2]))
+	}
+	return binary.LittleEndian.Uint32(table[i*4 : i*4+4])
+}
+
+func putListOffset(table []byte, width, i int, v uint32) {
+	if width == 2 {
+		binary.LittleEndian.PutUint16(table[i*2:i*2+2], uint16(v))
+		return
+	}
+	binary.LittleEndian.PutUint32(table[i*4:i*4+4], v)
+}
 const indexedListFixed = 15
 const indexedListPromoteElements = 32
 
@@ -20,7 +70,8 @@ const indexedListMaxPayloadHeadroom = 1 << 20
 const indexedListDoublingPayloadBytes = 8 << 10
 
 func isIndexedList(data []byte) bool {
-	return len(data) >= indexedListFixed && bytes.Equal(data[:3], indexedListHeader[:])
+	return len(data) >= indexedListFixed &&
+		(bytes.Equal(data[:3], indexedListHeader[:]) || bytes.Equal(data[:3], indexedListHeaderNarrow[:]))
 }
 
 func indexedListMeta(data []byte) (count, capacity, used, dataStart int, err error) {
@@ -33,7 +84,7 @@ func indexedListMeta(data []byte) (count, capacity, used, dataStart int, err err
 	if capacity < indexedListPromoteElements || count < 0 || count > capacity {
 		return 0,0,0,0,errors.New("invalid indexed list")
 	}
-	dataStart = indexedListFixed + capacity*4
+	dataStart = indexedListFixed + capacity*indexedListOffsetWidth(data)
 	if dataStart > len(data) || used < 0 || dataStart+used > len(data) {
 		return 0,0,0,0,errors.New("invalid indexed list")
 	}
@@ -76,7 +127,7 @@ func indexedListElement(data []byte, index int) ([]byte,bool,error) {
 	if index < 0 || index >= count {
 		return nil,false,nil
 	}
-	raw := binary.LittleEndian.Uint32(data[indexedListFixed+index*4:indexedListFixed+index*4+4])
+	raw := listOffset(data[indexedListFixed:], indexedListOffsetWidth(data), index)
 	if raw == 0 {
 		return nil,false,errors.New("invalid indexed list index")
 	}
@@ -110,19 +161,20 @@ func encodeIndexedList(elements [][]byte) ([]byte,error) {
 	if dataCap-used < 512 {
 		dataCap = used + 512
 	}
-	total := indexedListFixed + capacity*4 + dataCap
+	width := indexedListWidthFor(dataCap)
+	total := indexedListFixed + capacity*width + dataCap
 	if total > maxPackedListBytes {
 		return nil,errors.New("ERR list exceeds 32 MiB limit")
 	}
 	out := make([]byte,total)
-	copy(out[:3],indexedListHeader[:])
+	putIndexedListHeader(out,width)
 	binary.LittleEndian.PutUint32(out[3:7],uint32(len(elements)))
 	binary.LittleEndian.PutUint32(out[7:11],uint32(capacity))
-	start := indexedListFixed + capacity*4
+	start := indexedListFixed + capacity*width
 	cursor := 0
 	for i,rec := range records {
 		copy(out[start+cursor:],rec)
-		binary.LittleEndian.PutUint32(out[indexedListFixed+i*4:indexedListFixed+i*4+4],uint32(cursor+1))
+		putListOffset(out[indexedListFixed:],width,i,uint32(cursor+1))
 		cursor += len(rec)
 	}
 	binary.LittleEndian.PutUint32(out[11:15],uint32(cursor))
@@ -170,7 +222,7 @@ func indexedListAppend(data []byte, values [][]byte) (newCount int, rebuilt []by
 			copy(data[cursor:cursor+lenBytes], lenBuf[:lenBytes])
 			cursor += lenBytes
 			copy(data[cursor:cursor+len(value)], value)
-			binary.LittleEndian.PutUint32(data[indexedListFixed+count*4:indexedListFixed+count*4+4], uint32(used+1))
+			putListOffset(data[indexedListFixed:], indexedListOffsetWidth(data), count, uint32(used+1))
 			count++
 			used += extra
 			binary.LittleEndian.PutUint32(data[3:7], uint32(count))
@@ -214,7 +266,7 @@ func indexedListAppend(data []byte, values [][]byte) (newCount int, rebuilt []by
 		cursor += binary.PutUvarint(data[start+cursor:],uint64(len(value)))
 		cursor += copy(data[start+cursor:],value)
 		idx := count+i
-		binary.LittleEndian.PutUint32(data[indexedListFixed+idx*4:indexedListFixed+idx*4+4],uint32(recordStart+1))
+		putListOffset(data[indexedListFixed:],indexedListOffsetWidth(data),idx,uint32(recordStart+1))
 	}
 	count += len(values)
 	binary.LittleEndian.PutUint32(data[3:7],uint32(count))
@@ -238,7 +290,7 @@ func listUvarintLen(n uint64) int {
 func indexedListFullyReferenced(data []byte, count, used, start int) bool {
 	live := 0
 	for i := 0; i < count; i++ {
-		raw := binary.LittleEndian.Uint32(data[indexedListFixed+i*4 : indexedListFixed+i*4+4])
+		raw := listOffset(data[indexedListFixed:], indexedListOffsetWidth(data), i)
 		if raw == 0 || int(raw-1) >= used {
 			return false
 		}
@@ -257,7 +309,7 @@ func indexedListFullyReferenced(data []byte, count, used, start int) bool {
 // ok is false on any inconsistency so callers fall back to the validating path.
 func indexedListLiveBytes(data []byte, count, used, start int) (live int, ok bool) {
 	for i := 0; i < count; i++ {
-		raw := binary.LittleEndian.Uint32(data[indexedListFixed+i*4 : indexedListFixed+i*4+4])
+		raw := listOffset(data[indexedListFixed:], indexedListOffsetWidth(data), i)
 		if raw == 0 || int(raw-1) >= used {
 			return 0, false
 		}
@@ -274,16 +326,17 @@ func indexedListLiveBytes(data []byte, count, used, start int) (live int, ok boo
 // copyIndexedListLive writes the live records of data, in list order, into
 // payload (which must hold at least live bytes) and fills the matching offset
 // table entries. It returns the bytes written.
-func copyIndexedListLive(data []byte, count, start int, table, payload []byte) int {
+func copyIndexedListLive(data []byte, count, start int, table []byte, tableWidth int, payload []byte) int {
+	srcWidth := indexedListOffsetWidth(data)
 	cursor := 0
 	for i := 0; i < count; i++ {
-		raw := int(binary.LittleEndian.Uint32(data[indexedListFixed+i*4:indexedListFixed+i*4+4])) - 1
+		raw := int(listOffset(data[indexedListFixed:], srcWidth, i)) - 1
 		off := start + raw
 		rec := off
 		length, _ := readListUvarint(data, &off)
 		end := off + int(length)
 		n := copy(payload[cursor:], data[rec:end])
-		binary.LittleEndian.PutUint32(table[i*4:i*4+4], uint32(cursor+1))
+		putListOffset(table, tableWidth, i, uint32(cursor+1))
 		cursor += n
 	}
 	return cursor
@@ -332,7 +385,9 @@ func growIndexedListRaw(data []byte, values [][]byte) (newCount int, grown []byt
 		headroom = 512
 	}
 	dataCap := newUsed + headroom
-	newStart := indexedListFixed + newCapacity*4
+	newWidth := indexedListWidthFor(dataCap)
+	oldWidth := indexedListOffsetWidth(data)
+	newStart := indexedListFixed + newCapacity*newWidth
 	total := newStart + dataCap
 	if total > maxPackedListBytes {
 		return 0, nil, false, errors.New("ERR list exceeds 32 MiB limit")
@@ -340,19 +395,26 @@ func growIndexedListRaw(data []byte, values [][]byte) (newCount int, grown []byt
 
 	out := make([]byte, total)
 	copy(out[:indexedListFixed], data[:indexedListFixed])
+	putIndexedListHeader(out, newWidth)
 	cursor := live
 	if live == used {
-		copy(out[indexedListFixed:indexedListFixed+count*4], data[indexedListFixed:indexedListFixed+count*4])
+		if newWidth == oldWidth {
+			copy(out[indexedListFixed:indexedListFixed+count*newWidth], data[indexedListFixed:indexedListFixed+count*newWidth])
+		} else {
+			for i := 0; i < count; i++ {
+				putListOffset(out[indexedListFixed:], newWidth, i, listOffset(data[indexedListFixed:], oldWidth, i))
+			}
+		}
 		copy(out[newStart:newStart+used], data[start:start+used])
 	} else {
 		// Dead records (left pops) are dropped while copying.
-		copyIndexedListLive(data, count, start, out[indexedListFixed:newStart], out[newStart:newStart+live])
+		copyIndexedListLive(data, count, start, out[indexedListFixed:newStart], newWidth, out[newStart:newStart+live])
 	}
 	for i, value := range values {
 		recordStart := cursor
 		cursor += binary.PutUvarint(out[newStart+cursor:], uint64(len(value)))
 		cursor += copy(out[newStart+cursor:], value)
-		binary.LittleEndian.PutUint32(out[indexedListFixed+(count+i)*4:indexedListFixed+(count+i)*4+4], uint32(recordStart+1))
+		putListOffset(out[indexedListFixed:], newWidth, count+i, uint32(recordStart+1))
 	}
 	binary.LittleEndian.PutUint32(out[3:7], uint32(newCount))
 	binary.LittleEndian.PutUint32(out[7:11], uint32(newCapacity))
@@ -379,18 +441,27 @@ func trimIndexedList(data []byte) (trimmed []byte, ok bool) {
 	if newCapacity < indexedListPromoteElements {
 		newCapacity = indexedListPromoteElements
 	}
-	newStart := indexedListFixed + newCapacity*4
+	newWidth := indexedListWidthFor(live)
+	oldWidth := indexedListOffsetWidth(data)
+	newStart := indexedListFixed + newCapacity*newWidth
 	total := newStart + live
 	if total >= len(data) {
 		return nil, false
 	}
 	out := make([]byte, total)
 	copy(out[:indexedListFixed], data[:indexedListFixed])
+	putIndexedListHeader(out, newWidth)
 	if live == used {
-		copy(out[indexedListFixed:indexedListFixed+count*4], data[indexedListFixed:indexedListFixed+count*4])
+		if newWidth == oldWidth {
+			copy(out[indexedListFixed:indexedListFixed+count*newWidth], data[indexedListFixed:indexedListFixed+count*newWidth])
+		} else {
+			for i := 0; i < count; i++ {
+				putListOffset(out[indexedListFixed:], newWidth, i, listOffset(data[indexedListFixed:], oldWidth, i))
+			}
+		}
 		copy(out[newStart:], data[start:start+used])
 	} else {
-		copyIndexedListLive(data, count, start, out[indexedListFixed:newStart], out[newStart:])
+		copyIndexedListLive(data, count, start, out[indexedListFixed:newStart], newWidth, out[newStart:])
 	}
 	binary.LittleEndian.PutUint32(out[7:11], uint32(newCapacity))
 	binary.LittleEndian.PutUint32(out[11:15], uint32(live))
@@ -412,6 +483,7 @@ func indexedListPop(data []byte, n int, left bool) (out [][]byte, ok bool) {
 	if err != nil || n <= 0 || n > count || count-n < indexedListPopMinCount {
 		return nil, false
 	}
+	width := indexedListOffsetWidth(data)
 	out = make([][]byte, n)
 	var lo, hi int
 	if left {
@@ -422,7 +494,7 @@ func indexedListPop(data []byte, n int, left bool) (out [][]byte, ok bool) {
 	type span struct{ start, end int }
 	spans := make([]span, 0, n)
 	for i := lo; i < hi; i++ {
-		raw := binary.LittleEndian.Uint32(data[indexedListFixed+i*4 : indexedListFixed+i*4+4])
+		raw := listOffset(data[indexedListFixed:], width, i)
 		if raw == 0 || int(raw-1) >= used {
 			return nil, false
 		}
@@ -439,11 +511,11 @@ func indexedListPop(data []byte, n int, left bool) (out [][]byte, ok bool) {
 	}
 	newCount := count - n
 	if left {
-		table := data[indexedListFixed : indexedListFixed+count*4]
-		copy(table, table[n*4:])
-		clear(table[newCount*4:])
+		table := data[indexedListFixed : indexedListFixed+count*width]
+		copy(table, table[n*width:])
+		clear(table[newCount*width:])
 	} else {
-		clear(data[indexedListFixed+newCount*4 : indexedListFixed+count*4])
+		clear(data[indexedListFixed+newCount*width : indexedListFixed+count*width])
 		// Right pops reclaim payload when the removed records are the tail.
 		for i := len(spans) - 1; i >= 0 && spans[i].end == used; i-- {
 			used = spans[i].start
@@ -480,7 +552,7 @@ func indexedListRange(data []byte, startIdx, stopIdx int64) ([][]byte, error) {
 	}
 	out := make([][]byte, 0, stopIdx-startIdx+1)
 	for i := startIdx; i <= stopIdx; i++ {
-		raw := binary.LittleEndian.Uint32(data[indexedListFixed+int(i)*4 : indexedListFixed+int(i)*4+4])
+		raw := listOffset(data[indexedListFixed:], indexedListOffsetWidth(data), int(i))
 		if raw == 0 || int(raw-1) >= used {
 			return nil, errors.New("invalid indexed list index")
 		}
