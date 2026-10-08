@@ -1,5 +1,10 @@
 # Changelog
 
+### Memory — optimizer rewrites wait out the whole write burst (pending live benchmark)
+
+- Workers used to start rewriting as soon as the queue passed half full, so during a large load every raw record was replaced by a compressed one while writes were still arriving. The freed raw blocks cannot be reused by the smaller records, so the footprint right after a session-json load (and the RSS peak, 2.6 GB at 1M keys) included that transient, and the rewrites competed with the load for CPU.
+- Workers now stay idle for the whole burst. A shared 5 s deadline still lets them run under continuous writes. Keys that overflow the queue are picked up by the existing drop recovery after the burst. Raw load measures about 468 bytes/key in the engine probe (Redis: 502); settled memory is unchanged.
+
 ### Memory — 16-byte arena classes between 385 and 512 bytes (pending live benchmark)
 
 - Arena blocks in the 385-512 byte range were rounded up to 64-byte steps, so a session-json record (384-byte value + key + header, 407 bytes) used a 448-byte block. They now use 16-byte steps (416 bytes there); the established 448 and 512 classes keep their buckets and the new intermediate sizes use appended buckets, so no existing class numbering shifts.

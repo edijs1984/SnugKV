@@ -77,6 +77,7 @@ type Optimizer struct {
 	window                                     time.Time
 	queued, rewritten, skipped, stale, dropped uint64
 	lastForegroundWrite                      int64
+	deferralStart                            int64
 }
 
 func New(store *engine.Store, c Config) (*Optimizer, error) {
@@ -112,19 +113,29 @@ func (o *Optimizer) foregroundQuietFor(d time.Duration) bool {
 func (o *Optimizer) waitForForegroundQuiet() bool {
 	const quietWindow = 2 * time.Millisecond
 	// Foreground writes own the machine. Workers hold shard write locks and
-	// burn CPU, which shows up directly as write tail latency, so they stay
-	// out of the way for the whole write burst. The bounds below only keep
-	// continuous workloads and a full queue from starving the optimizer.
-	const maxDeferral = 2 * time.Second
-	deadline := time.Now().Add(maxDeferral)
+	// burn CPU, which shows up directly as write tail latency, and every
+	// rewrite during a load burst parks a freed raw block next to a new
+	// compressed one, so the footprint peaks while the burst is still running.
+	// Workers therefore stay idle for the whole burst. Overflow of the queue
+	// is already handled by drop recovery sampling after the burst. The shared
+	// burst deadline only keeps a continuous write workload from starving the
+	// optimizer forever.
+	const maxBurstDeferral = 5 * time.Second
 	var timer *time.Timer
 
 	for {
 		last := atomic.LoadInt64(&o.lastForegroundWrite)
 		if last == 0 || time.Since(time.Unix(0, last)) >= quietWindow {
+			atomic.StoreInt64(&o.deferralStart, 0)
 			return true
 		}
-		if !time.Now().Before(deadline) || len(o.queue) > cap(o.queue)/2 {
+		now := time.Now().UnixNano()
+		start := atomic.LoadInt64(&o.deferralStart)
+		if start == 0 {
+			atomic.CompareAndSwapInt64(&o.deferralStart, 0, now)
+			start = now
+		}
+		if time.Duration(now-start) >= maxBurstDeferral {
 			return true
 		}
 
