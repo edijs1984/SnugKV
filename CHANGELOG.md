@@ -1,5 +1,9 @@
 # Changelog
 
+### Memory — idle trim thresholds wait for optimizer rewrites to finish (pending live benchmark)
+
+- The lower idle thresholds for entry and index slack apply only when no optimizer rewrite landed since the previous maintenance step. In the lab run after the previous change, text settled at 182.4 bytes/key (173.0 before) and repetitive took 113 s to converge (60 s before): a compaction during the rewrite phase made in-flight rewrites stale, and on the slower machine they were not redone before the lab's 12 s flat-memory check ended. Counter (59.1) and uuid (84.5) still trim about 5 s after load.
+
 ### Memory — idle trim now reclaims entry and index slack (pending live benchmark)
 
 - The maintenance step queued a fresh sample of keys and only then read the queue depth to decide how much slack justifies a compaction, so every pass saw a backlog and applied the strict backlog thresholds (40% entry slack, 25% index slack). Stores of plain strings never reached them: 1M counters sat at 26% entry slack and 11% index slack forever. The depth is now read before sampling, and the idle thresholds are 12.5% entry slack and 6.25% index slack.
