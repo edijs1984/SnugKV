@@ -185,10 +185,24 @@ func (t *Table[V]) capacityFor(n int) int {
 		capacity = initialCapacity
 	}
 	for !capacityAccepts(n, capacity) {
-		capacity *= 2
+		if capacity < gradualGrowthMin {
+			capacity *= 2
+			continue
+		}
+		// Doubling leaves a table anywhere from 40% to 80% full, so a shard
+		// that happens to stop growing just after a doubling carries almost
+		// 2x its slots for the whole load. Larger tables instead grow to hold
+		// a quarter more keys than they need now, which keeps the slack near
+		// 25-55% at the cost of more (cheap, shard-local) rebuilds.
+		capacity = tightCapacity(n + n/4)
 	}
 	return capacity
 }
+
+// gradualGrowthMin is the table size from which growth stops doubling. Below
+// it the tables are tiny and doubling's few rebuilds are cheaper than the
+// memory it wastes.
+const gradualGrowthMin = 256
 
 func (t *Table[V]) GrowthBytes(additional int) uint64 {
 	return uint64(t.capacityFor(int(t.count)+additional)-len(t.slots)) * slotBytes[V]()

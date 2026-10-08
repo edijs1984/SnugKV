@@ -6,6 +6,11 @@
 - Blocks above half a segment own a Go allocation, and Go rounds every request up to its own size class (or 8 KiB pages above 32 KiB). The arena used 12.5% geometric classes for them, so a 7,168-byte block cost 8,192 bytes of heap while being accounted as 7,168. Dedicated blocks now use the allocator's classes, so the accounting equals the real cost and a value that just fits a class uses it (the 100-element list above lands in the 6,784-byte class instead of 8,192).
 - Local runs through the server (1M items, process RSS after settling): list-medium 76.8 -> 68.9 bytes/item (Redis 7.0 on the same machine: 73.6), RSS 109.5 -> 99.3 MB; list-large 76.9 -> 73.9, RSS 102.8 -> 96.5 MB; hash-large 68.6 -> 65.9, RSS 97.1 -> 89.3 MB; hash-medium 68.4 -> 66.4; set-large 43.2 -> 42.5. Right-after-load figures are unchanged for lists, slightly better for list-large (88.5 -> 85.3), and worse for hash-medium (111.7 -> 117.2) because values grown through the coarse 4.8-8 KiB classes park larger dead blocks until idle compaction.
 
+### Memory — index tables grow by a quarter instead of doubling (pending live benchmark)
+
+- Shard index tables doubled whenever they passed 80% full, so a shard that stopped growing just after a doubling held nearly twice the slots it needed until idle compaction ran (1M counters over 256 shards: 33.6 bytes/key of index against 20.1 once tight). From 256 slots up they now grow to fit a quarter more keys than they hold, which keeps the table within about 25-55% slack.
+- Local run, 1M counter keys through the server: footprint right after load 78.8 -> 67.6 bytes/key (Redis 7.0 on the same machine: 88.4); settled memory is unchanged (about 59 bytes/key). Load throughput and p99 were within run-to-run noise (about 660-700k ops/s, p99 47-51 us). Filling one 3,906-key shard takes about 1.2 ms against 0.5 ms, since the table is rebuilt more often.
+
 ### Memory — no optimizer sidecar for freshly inserted keys (pending live benchmark)
 
 - The batched fresh-SET path gave every new optimizable value a 24-byte activity sidecar plus an 8-byte slot, although a new key has no write history and nothing reads the sidecar until the optimizer rewrites it. Fresh inserts now start without one; a successful rewrite allocates it when it is needed (JSON-shape candidates), and overwrites still get one, so write-heavy detection is unchanged.
