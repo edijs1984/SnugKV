@@ -6,6 +6,12 @@
 - Local runs: HGET throughput about 560k -> 650k ops/s, HSET load about 575k -> 510k ops/s. The same threshold change for lists was tried and dropped: it halved load throughput for a small memory gain.
 - Tests that expected 100-field hashes to be indexed now use 200 fields; a new model-checked test crosses the threshold with single and batched writes, overwrites and deletes.
 
+### Memory — fixed-width sets stay in the front-coded layout up to 128 members (pending live benchmark)
+
+- Sets whose members all have the same length (IDs, UUIDs, fixed-width tokens) were promoted to the hash-table layout at 32 members. That layout spends a 4-byte slot table sized at 2.5 slots per member plus a 25% payload reserve, about 18 bytes per member on top of the member itself. They now stay in the existing front-coded layout (shared prefixes stored once, no table) until 128 members, the same size where Redis switches away from its compact encoding. Mixed-width sets still promote at 32, because their packed form is decoded member by member on every write.
+- Local run through the server, 1M x 24-byte members, 100 per set: footprint right after load 58.6 -> 26.9 bytes/member, settled 49.7 -> 22.1 (Redis 7.0 lab figure: 31.3). Members in that benchmark share prefixes; unrelated random members of the same width compress less but still avoid the table and reserve.
+- Lookup no longer copies or allocates: it walks the front-coded members and skips any whose shared-prefix length shows they sort below the target. Re-adding an existing member returns before any rewrite. Microbench at 100 members: SISMEMBER 174 -> 333 ns (about 5% fewer ops/s through the server with pipelining), SADD of an existing member 311 -> 347 ns, SMEMBERS 20.7 -> 5.4 us, SRANDMEMBER 19.9 -> 6.4 us; the load phase got faster (672k -> 723k SADD/s).
+
 ### Memory — 16-bit list offsets and allocator-aligned large blocks (pending live benchmark)
 
 - Indexed lists with a payload under 64 KiB now store 16-bit element offsets instead of 32-bit ones (two bytes per element saved); larger lists keep 32-bit offsets, and growth and trimming convert between the two. A 100-element list of 64-byte values trims to 6,715 bytes.

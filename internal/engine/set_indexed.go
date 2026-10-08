@@ -11,6 +11,27 @@ var indexedSetHeader = [...]byte{'S','S',4}
 const indexedSetFixed = 15
 const indexedSetPromoteMembers = 32
 
+// tinySetMaxMembers is the promotion threshold for sets whose members all have
+// the same length. Those are stored front-coded without a hash table, which is
+// smaller than the indexed layout (no slot table, no payload reserve) for the
+// sizes where a linear scan is still cheap. Mixed-width sets promote at
+// indexedSetPromoteMembers because their packed form has to be decoded member
+// by member on every write.
+const tinySetMaxMembers = 128
+
+func setPromoteThreshold(members [][]byte) int {
+	if len(members) < 2 {
+		return indexedSetPromoteMembers
+	}
+	width := len(members[0])
+	for _, member := range members[1:] {
+		if len(member) != width {
+			return indexedSetPromoteMembers
+		}
+	}
+	return tinySetMaxMembers
+}
+
 func isIndexedSet(data []byte) bool {
 	return len(data) >= indexedSetFixed && bytes.Equal(data[:3], indexedSetHeader[:])
 }
