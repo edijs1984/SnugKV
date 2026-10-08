@@ -76,6 +76,10 @@ type Optimizer struct {
 	scratch, bytes                             int
 	window                                     time.Time
 	queued, rewritten, skipped, stale, dropped uint64
+
+	// rewriteActivity is rewritten+stale as of the previous maintenance step. It
+	// is only touched by the maintenance goroutine.
+	rewriteActivity uint64
 	lastForegroundWrite                      int64
 }
 
@@ -299,6 +303,16 @@ func (o *Optimizer) maintenanceStep() {
 	// candidates every tick, so measuring after it made every pass look backed
 	// up and held idle stores to the much stricter backlog thresholds.
 	backlog := len(o.queue)
+	// Rewrites still landing mean values are being replaced in the arena. A
+	// compaction in that window turns the rewrites in flight stale and has to be
+	// repeated, so the idle thresholds only apply once rewriting has stopped.
+	activity := atomic.LoadUint64(&o.rewritten) + atomic.LoadUint64(&o.stale)
+	if activity != o.rewriteActivity {
+		o.rewriteActivity = activity
+		if backlog == 0 {
+			backlog = 1
+		}
+	}
 
 	// Periodic sampling guarantees eventual recovery for dropped write-time
 	// queue attempts and lets JSON values be reconsidered after shared-shape
