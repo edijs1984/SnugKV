@@ -1,5 +1,11 @@
 # Changelog
 
+### Memory — hashes stay packed up to 128 fields (pending live benchmark)
+
+- Hashes promote to the indexed layout at 128 fields instead of 32 (and 128 instead of 16 for single-field HSET). Batched HSET to one key already rewrites the packed form once per batch, and the packed/shaped form has no slot table or payload reserve. 100-field hash of 64-byte values (1M items through the server): 117.3 -> 76.0 bytes/item right after load; settled stays 66.4 (Redis in the lab: 82.5 after load).
+- Local runs: HGET throughput about 560k -> 650k ops/s, HSET load about 575k -> 510k ops/s. The same threshold change for lists was tried and dropped: it halved load throughput for a small memory gain.
+- Tests that expected 100-field hashes to be indexed now use 200 fields; a new model-checked test crosses the threshold with single and batched writes, overwrites and deletes.
+
 ### Memory — fixed-width sets stay in the front-coded layout up to 128 members (pending live benchmark)
 
 - Sets whose members all have the same length (IDs, UUIDs, fixed-width tokens) were promoted to the hash-table layout at 32 members. That layout spends a 4-byte slot table sized at 2.5 slots per member plus a 25% payload reserve, about 18 bytes per member on top of the member itself. They now stay in the existing front-coded layout (shared prefixes stored once, no table) until 128 members, the same size where Redis switches away from its compact encoding. Mixed-width sets still promote at 32, because their packed form is decoded member by member on every write.

@@ -163,7 +163,7 @@ func TestFlushDBDropsHashShapeCatalogAccounting(t *testing.T) {
 
 func TestHashShapeMediumDirectLookup(t *testing.T) {
 	store := New()
-	fields, values := repeatedHashFixture(100, 64)
+	fields, values := repeatedHashFixture(200, 64)
 
 	keys := make([]string, 0, 8)
 	for i := 0; i < 8; i++ {
@@ -174,7 +174,7 @@ func TestHashShapeMediumDirectLookup(t *testing.T) {
 		}
 		physical := physicalHashBytes(t, store, key)
 		if !isIndexedHash(physical) {
-			t.Fatalf("expected active 100-field HASH %q to use indexed representation, got header %x", key, physical[:min(5, len(physical))])
+			t.Fatalf("expected active 200-field HASH %q to use indexed representation, got header %x", key, physical[:min(5, len(physical))])
 		}
 	}
 
@@ -245,7 +245,7 @@ func TestHashShapeMediumDirectLookup(t *testing.T) {
 
 func TestCompactConvertsColdMediumIndexedHashToShape(t *testing.T) {
 	store := New()
-	fields, values := repeatedHashFixture(100, 64)
+	fields, values := repeatedHashFixture(200, 64)
 
 	// Warm the shape catalog with the same completed layout while each active
 	// hash still uses the indexed representation.
@@ -260,7 +260,7 @@ func TestCompactConvertsColdMediumIndexedHashToShape(t *testing.T) {
 		}
 		physical := physicalHashBytes(t, store, key)
 		if !isIndexedHash(physical) {
-			t.Fatalf("active 100-field hash %q encoding=%x, want indexed", key, physical[:min(5, len(physical))])
+			t.Fatalf("active 200-field hash %q encoding=%x, want indexed", key, physical[:min(5, len(physical))])
 		}
 	}
 
@@ -299,7 +299,7 @@ func TestCompactConvertsColdMediumIndexedHashToShape(t *testing.T) {
 
 func TestFixedWidthShapedHashDirectAddressing(t *testing.T) {
 	store := New()
-	fields, values := repeatedHashFixture(100, 64)
+	fields, values := repeatedHashFixture(200, 64)
 	keys := make([]string, 0, 8)
 	for i := 0; i < 8; i++ {
 		key := fmt.Sprintf("fixed-medium:%02d", i)
