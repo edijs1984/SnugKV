@@ -18,12 +18,14 @@ func TestTightCapacityHoldsKeysAtNoMoreThanEightyPercent(t *testing.T) {
 	}
 }
 
-func TestReserveShrinksPowerOfTwoTableToTightFit(t *testing.T) {
+func TestReserveShrinksLooseTableToTightFit(t *testing.T) {
 	table := New[uint32]()
 	const n = 3906
 	for i := 0; i < n; i++ {
 		table.Set(fmt.Sprintf("counter:%d", i), uint32(i))
 	}
+	// Force the loose shape doubling used to leave behind.
+	table.rebuild(8192)
 	before := len(table.slots)
 	table.Reserve(0)
 	after := len(table.slots)

@@ -1,5 +1,10 @@
 # Changelog
 
+### Memory — index tables grow by a quarter instead of doubling (pending live benchmark)
+
+- Shard index tables doubled whenever they passed 80% full, so a shard that stopped growing just after a doubling held nearly twice the slots it needed until idle compaction ran (1M counters over 256 shards: 33.6 bytes/key of index against 20.1 once tight). From 256 slots up they now grow to fit a quarter more keys than they hold, which keeps the table within about 25-55% slack.
+- Local run, 1M counter keys through the server: footprint right after load 78.8 -> 67.6 bytes/key (Redis 7.0 on the same machine: 88.4); settled memory is unchanged (about 59 bytes/key). Load throughput and p99 were within run-to-run noise (about 660-700k ops/s, p99 47-51 us). Filling one 3,906-key shard takes about 1.2 ms against 0.5 ms, since the table is rebuilt more often.
+
 ### Memory — no optimizer sidecar for freshly inserted keys (pending live benchmark)
 
 - The batched fresh-SET path gave every new optimizable value a 24-byte activity sidecar plus an 8-byte slot, although a new key has no write history and nothing reads the sidecar until the optimizer rewrites it. Fresh inserts now start without one; a successful rewrite allocates it when it is needed (JSON-shape candidates), and overwrites still get one, so write-heavy detection is unchanged.
