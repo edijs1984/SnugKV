@@ -220,10 +220,10 @@ func class(n int) (int, int) {
 		block := (size + 31) &^ 31
 		return 23 + (block-544)/32, block
 
-	case size <= 8192:
-		// Medium values use ~12.5% geometric classes. Starting from 1024 keeps
-		// the class progression compact while leaving enough buckets for the
-		// full 32 MiB value range.
+	case size <= SegmentBytes/2:
+		// Values up to half a segment still share 8 KiB segments, so their
+		// classes stay ~12.5% geometric steps that pack well. Starting from
+		// 1024 keeps the progression compact.
 		block := 1024
 		bucket := 38
 
@@ -236,35 +236,67 @@ func class(n int) (int, int) {
 			block += step
 			bucket++
 
-			if block > 8192 {
-				block = 8192
+			if block > SegmentBytes/2 {
+				block = SegmentBytes / 2
 			}
 		}
 
 		return bucket, block
 	}
 
-	// Large allocations continue using ~12.5% size classes. Medium classes
-	// end at bucket 56; a 32 MiB value reaches bucket 127. Buckets above that
-	// are intentionally reserved for the targeted tiny classes above.
-	block := 8192
-	bucket := 56
-
-	for block < size {
-		step := block / 8
-		if step < 1024 {
-			step = 1024
-		}
-
-		block += step
-		bucket++
-
-		if bucket >= 128 {
-			panic("arena allocation too large")
+	// Larger blocks own a whole Go allocation, and the Go allocator rounds every
+	// request up to its own size class (small objects) or to 8 KiB pages (large
+	// ones). Rounding to anything else wastes memory twice: a block of 7,168
+	// bytes still costs 8,192. Sizing the block to the allocator's class makes
+	// the arena's accounting equal the heap's real cost and lets a value that
+	// just fits a class (a 6,723-byte list lands in the 6,784 class) use it.
+	// A block no larger than a segment can still land in the free tail of a
+	// shared segment, and freeing it there parks it on a free list, so those
+	// classes (up to 8,192 bytes) get a bucket each. Anything larger always owns
+	// its segment, is returned to the heap on free, and shares one bucket.
+	if size > maxArenaBlock {
+		panic("arena allocation too large")
+	}
+	block := dedicatedBlockSize(size)
+	if block <= SegmentBytes {
+		for i, class := range goSmallSizeClasses {
+			if class == block {
+				return sharedLargeBucketBase + i, block
+			}
 		}
 	}
+	return dedicatedBucket, block
+}
 
-	return bucket, block
+// sharedLargeBucketBase starts the buckets for the 4,864..8,192 byte classes,
+// which follow bucket 50 (the 4,096-byte block); seven classes use 51..57.
+const sharedLargeBucketBase = 51
+
+// dedicatedBucket is the free-list bucket reported for blocks above one
+// segment. Their frees return memory to the heap, so the list stays empty.
+const dedicatedBucket = 58
+
+// maxArenaBlock bounds a single arena block: a 32 MiB value plus its header
+// and rounding.
+const maxArenaBlock = 33<<20 + 8<<10
+
+// goSmallSizeClasses lists the Go allocator's size classes above 4,096 bytes up
+// to the largest small object (32 KiB).
+var goSmallSizeClasses = [...]int{
+	4864, 5376, 6144, 6528, 6784, 6912, 8192, 9472, 9728, 10240, 10880,
+	12288, 13568, 14336, 16384, 18432, 19072, 20480, 21760, 24576, 27264,
+	28672, 32768,
+}
+
+const goPageBytes = 8 << 10
+
+func dedicatedBlockSize(size int) int {
+	for _, class := range goSmallSizeClasses {
+		if size <= class {
+			return class
+		}
+	}
+	return (size + goPageBytes - 1) &^ (goPageBytes - 1)
 }
 
 // segmentSizeForBlock keeps small allocations on 8 KiB segments after the

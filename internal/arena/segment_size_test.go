@@ -16,7 +16,8 @@ func TestSegmentSizeForMediumBlocksAvoidsTailWaste(t *testing.T) {
 		// Representative packed HASH sizes from the benchmark matrix.
 		{payload: 1412, wantBlock: 1458, wantSegment: 7290},
 		{payload: 2820, wantBlock: 2953, wantSegment: 5906},
-		{payload: 5637, wantBlock: 5985, wantSegment: 5985},
+		// Dedicated blocks follow the Go allocator's size classes.
+		{payload: 5637, wantBlock: 6144, wantSegment: 6144},
 	}
 
 	for _, tt := range tests {
@@ -42,7 +43,7 @@ func TestMediumGeometricClassesStayWithinFreelist(t *testing.T) {
 	previousBucket := 38
 	previousBlock := 1024
 
-	for payload := 1017; payload <= 8184; payload += 17 {
+	for payload := 1017; payload <= 4088; payload += 17 {
 		bucket, block := class(payload)
 		if bucket < previousBucket {
 			t.Fatalf("payload %d bucket regressed: %d < %d", payload, bucket, previousBucket)
@@ -60,14 +61,19 @@ func TestMediumGeometricClassesStayWithinFreelist(t *testing.T) {
 		previousBlock = block
 	}
 
-	bucket, block := class(8184)
-	if bucket != 56 || block != 8192 {
-		t.Fatalf("8 KiB boundary = bucket %d block %d, want bucket 56 block 8192", bucket, block)
+	bucket, block := class(4088)
+	if bucket != 50 || block != 4096 {
+		t.Fatalf("half-segment boundary = bucket %d block %d, want bucket 50 block 4096", bucket, block)
+	}
+
+	bucket, block = class(8184)
+	if bucket != sharedLargeBucketBase+6 || block != 8192 {
+		t.Fatalf("8 KiB boundary = bucket %d block %d, want bucket %d block 8192", bucket, block, sharedLargeBucketBase+6)
 	}
 
 	bucket, block = class(32 << 20)
-	if bucket != 127 {
-		t.Fatalf("32 MiB class bucket = %d, want 127", bucket)
+	if bucket != dedicatedBucket {
+		t.Fatalf("32 MiB class bucket = %d, want %d", bucket, dedicatedBucket)
 	}
 	if block < (32<<20)+8 {
 		t.Fatalf("32 MiB class block = %d, too small", block)
