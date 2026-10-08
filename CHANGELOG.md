@@ -1,5 +1,11 @@
 # Changelog
 
+### Memory — no optimizer sidecar for freshly inserted keys (pending live benchmark)
+
+- The batched fresh-SET path gave every new optimizable value a 24-byte activity sidecar plus an 8-byte slot, although a new key has no write history and nothing reads the sidecar until the optimizer rewrites it. Fresh inserts now start without one; a successful rewrite allocates it when it is needed (JSON-shape candidates), and overwrites still get one, so write-heavy detection is unchanged.
+- Fresh RAW values without a sidecar also take the zero-copy direct GET path instead of the activity-tracking one.
+- Local run, 1M session-json keys through the server: footprint right after load 525 -> 501 bytes/key (Redis: 502); settled memory is unchanged (about 248 bytes/key).
+
 ### Memory — 16-byte arena classes between 385 and 512 bytes (pending live benchmark)
 
 - Arena blocks in the 385-512 byte range were rounded up to 64-byte steps, so a session-json record (384-byte value + key + header, 407 bytes) used a 448-byte block. They now use 16-byte steps (416 bytes there); the established 448 and 512 classes keep their buckets and the new intermediate sizes use appended buckets, so no existing class numbering shifts.

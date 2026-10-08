@@ -103,6 +103,32 @@ func TestAdaptiveRawStableDropsOptimizerMetadataAndEnablesDirectRead(t *testing.
 		sh.mu.RUnlock()
 		t.Fatal("missing raw-stable entry")
 	}
+	if e.entryMeta != nil {
+		sh.mu.RUnlock()
+		t.Fatal("a fresh insert must not carry an optimizer sidecar")
+	}
+	sh.mu.RUnlock()
+	if store.Memory().MetaBytes != 0 {
+		t.Fatalf("fresh insert charged %d metadata bytes", store.Memory().MetaBytes)
+	}
+	if direct, err := store.VisitRawString("raw-stable", func([]byte) error { return nil }); err != nil || !direct {
+		t.Fatalf("fresh RAW insert should read directly: direct=%t err=%v", direct, err)
+	}
+
+	// Overwriting an existing key starts activity tracking, which keeps
+	// write-heavy detection working.
+	if handled, err = store.SetPlainBatchFreshShardLocal(
+		[][]byte{[]byte("raw-stable")},
+		[][]byte{value},
+	); err != nil || !handled {
+		t.Fatalf("overwrite batch handled=%t err=%v", handled, err)
+	}
+	sh.mu.RLock()
+	e, ok = sh.get("raw-stable")
+	if !ok {
+		sh.mu.RUnlock()
+		t.Fatal("missing raw-stable entry")
+	}
 	if e.entryMeta == nil {
 		sh.mu.RUnlock()
 		t.Fatal("optimization candidate should start with metadata")
