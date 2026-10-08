@@ -1,5 +1,11 @@
 # Changelog
 
+### Memory — hashes stay packed up to 128 fields (pending live benchmark)
+
+- Hashes promote to the indexed layout at 128 fields instead of 32 (and 128 instead of 16 for single-field HSET). Batched HSET to one key already rewrites the packed form once per batch, and the packed/shaped form has no slot table or payload reserve. 100-field hash of 64-byte values (1M items through the server): 117.3 -> 76.0 bytes/item right after load; settled stays 66.4 (Redis in the lab: 82.5 after load).
+- Local runs: HGET throughput about 560k -> 650k ops/s, HSET load about 575k -> 510k ops/s. The same threshold change for lists was tried and dropped: it halved load throughput for a small memory gain.
+- Tests that expected 100-field hashes to be indexed now use 200 fields; a new model-checked test crosses the threshold with single and batched writes, overwrites and deletes.
+
 ### Memory — 16-bit list offsets and allocator-aligned large blocks (pending live benchmark)
 
 - Indexed lists with a payload under 64 KiB now store 16-bit element offsets instead of 32-bit ones (two bytes per element saved); larger lists keep 32-bit offsets, and growth and trimming convert between the two. A 100-element list of 64-byte values trims to 6,715 bytes.

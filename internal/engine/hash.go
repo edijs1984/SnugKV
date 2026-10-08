@@ -390,9 +390,9 @@ func (s *Store) hashSetLocked(sh *shard, key string, fields, values [][]byte) (i
 	}
 
 	var updated preparedEntry
-	indexThreshold := indexedHashPromoteFields
+	indexThreshold := 128
 	if len(fields) == 1 {
-		indexThreshold = 16
+		indexThreshold = 128
 	}
 	canIndex := len(pairs) >= indexThreshold
 	if canIndex {
