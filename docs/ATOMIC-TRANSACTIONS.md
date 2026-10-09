@@ -76,6 +76,9 @@ retracted; they only cause an extra refetch.
 
 ## Cost
 
-Atomic transactions export the prior value of the touched keys once and, when an
-append-only file or replicas are in use, the new value once. Transactions with
-scripts or `FLUSH*` copy the whole keyspace, which is slow on large databases.
+Transactions export the prior value of the touched keys once and, when an
+append-only file or replicas are in use, the new value once. This applies when
+every write command in the transaction is on the verified list in
+`atomicScopedWriteCommands` (about 75 data commands). A transaction containing a
+script, `FLUSHALL`/`FLUSHDB`, `SORT` or any other write command copies the whole
+keyspace, which is slow on large databases.
