@@ -1,5 +1,9 @@
 # Changelog
 
+### Memory — less append headroom on growing sorted sets (pending live benchmark)
+
+- Indexed sorted sets of 64 or more members reserved a full payload of append headroom while they were written; they now reserve half. Right after loading 100,000 members into 100-member sets through the server, memory drops from 122 to 102 bytes/item (1000-member sets: 80 to 64); settled memory is unchanged (38 and 41 bytes/item) and write throughput is within noise. Most of the remaining right-after-load difference is freed blocks of earlier sizes that the maintenance pass reclaims once writes go quiet.
+
 ### Throughput — HSET no longer rebuilds the whole hash (pending live benchmark)
 
 - Writing a field to a hash of fewer than 128 fields decoded every field, inserted one and re-encoded the lot, with several allocations per field, all under the shard lock. A profile of 100 connections writing 100-field hashes showed most of the CPU in that rebuild. Hashes of 32 or more fields are now kept in the indexed layout while they are written, so HSET edits the record in place; idle compaction already packs them back down, so settled memory is unchanged (hash with 100 fields: 66 bytes/item settled before and after). The remaining small-hash rebuild no longer copies fields and values it only reads and encodes without sorting a second time.
