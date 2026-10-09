@@ -80,25 +80,34 @@ func packedHashCount(data []byte) (int, error) {
 
 func encodePackedHash(input []HashPair) ([]byte, error) {
 	pairs := make([]HashPair, len(input))
-	hasFieldExpiry := false
 	for i := range input {
 		pairs[i] = HashPair{
 			Field:       append([]byte(nil), input[i].Field...),
 			Value:       append([]byte(nil), input[i].Value...),
 			ExpiresAtMS: input[i].ExpiresAtMS,
 		}
-		if input[i].ExpiresAtMS != 0 {
-			hasFieldExpiry = true
-		}
 	}
 
 	sort.Slice(pairs, func(i, j int) bool {
 		return bytes.Compare(pairs[i].Field, pairs[j].Field) < 0
 	})
+	return encodePackedHashSorted(pairs)
+}
+
+// encodePackedHashSorted encodes pairs that are already sorted by field with
+// no duplicates. It reads the pairs and never retains or modifies them.
+func encodePackedHashSorted(pairs []HashPair) ([]byte, error) {
+	hasFieldExpiry := false
+	for i := range pairs {
+		if pairs[i].ExpiresAtMS != 0 {
+			hasFieldExpiry = true
+			break
+		}
+	}
 
 	capacity := len(packedHashHeader) + binary.MaxVarintLen64
 	for i := range pairs {
-		if i > 0 && bytes.Equal(pairs[i-1].Field, pairs[i].Field) {
+		if i > 0 && bytes.Compare(pairs[i-1].Field, pairs[i].Field) >= 0 {
 			return nil, errors.New("duplicate hash field")
 		}
 		capacity += len(pairs[i].Field) + len(pairs[i].Value) + 2*binary.MaxVarintLen64
@@ -138,6 +147,17 @@ func encodePackedHash(input []HashPair) ([]byte, error) {
 }
 
 func decodePackedHash(data []byte) ([]HashPair, error) {
+	return decodePackedHashMode(data, true)
+}
+
+// decodePackedHashView decodes a packed hash whose pairs alias data instead of
+// copying it. The result is only valid while data is neither modified nor
+// released, so callers use it for read-modify-encode inside one locked call.
+func decodePackedHashView(data []byte) ([]HashPair, error) {
+	return decodePackedHashMode(data, false)
+}
+
+func decodePackedHashMode(data []byte, copyBytes bool) ([]HashPair, error) {
 	if isIndexedHash(data) {
 		return decodeIndexedHash(data)
 	}
@@ -176,14 +196,20 @@ func decodePackedHash(data []byte) ([]HashPair, error) {
 			return nil, errors.New("invalid packed hash")
 		}
 		fieldEnd := offset + int(fieldLen)
-		field := append([]byte(nil), data[offset:fieldEnd]...)
+		field := data[offset:fieldEnd:fieldEnd]
+		if copyBytes {
+			field = append([]byte(nil), field...)
+		}
 		offset = fieldEnd
 
 		if valueLen > uint64(len(data)-offset) {
 			return nil, errors.New("invalid packed hash")
 		}
 		valueEnd := offset + int(valueLen)
-		value := append([]byte(nil), data[offset:valueEnd]...)
+		value := data[offset:valueEnd:valueEnd]
+		if copyBytes {
+			value = append([]byte(nil), value...)
+		}
 		offset = valueEnd
 
 		if len(pairs) > 0 && bytes.Compare(pairs[len(pairs)-1].Field, field) >= 0 {
@@ -273,6 +299,14 @@ func packedHashLookup(data, target []byte, nowMS int64) ([]byte, bool, error) {
 }
 
 func (s *Store) hashEntry(pairs []HashPair, packed []byte) preparedEntry {
+	prepared := s.hashEntryOwned(pairs, packed)
+	prepared.data = append([]byte(nil), prepared.data...)
+	return prepared
+}
+
+// hashEntryOwned is hashEntry for callers that hand over packed: the result's
+// data may be packed itself, so packed must not be used afterwards.
+func (s *Store) hashEntryOwned(pairs []HashPair, packed []byte) preparedEntry {
 	stored := packed
 	hasFieldExpiry := false
 	for _, pair := range pairs {
@@ -294,7 +328,7 @@ func (s *Store) hashEntry(pairs []HashPair, packed []byte) preparedEntry {
 			valueType: TypeHash,
 			rawLength: uint32(len(packed)),
 		}},
-		data: append([]byte(nil), stored...),
+		data: stored,
 	}
 }
 
@@ -359,7 +393,7 @@ func (s *Store) hashSetLocked(sh *shard, key string, fields, values [][]byte) (i
 			return added, nil
 		}
 		var err error
-		pairs, err = decodePackedHash(s.decode(sh, old))
+		pairs, err = decodePackedHashView(s.decode(sh, old))
 		if err != nil {
 			return 0, err
 		}
@@ -372,7 +406,7 @@ func (s *Store) hashSetLocked(sh *shard, key string, fields, values [][]byte) (i
 			return bytes.Compare(pairs[j].Field, field) >= 0
 		})
 
-		value := append([]byte(nil), values[i]...)
+		value := values[i]
 		if index < len(pairs) && bytes.Equal(pairs[index].Field, field) {
 			pairs[index].Value = value
 			pairs[index].ExpiresAtMS = 0
@@ -380,7 +414,7 @@ func (s *Store) hashSetLocked(sh *shard, key string, fields, values [][]byte) (i
 		}
 
 		pair := HashPair{
-			Field: append([]byte(nil), field...),
+			Field: field,
 			Value: value,
 		}
 		pairs = append(pairs, HashPair{})
@@ -390,11 +424,7 @@ func (s *Store) hashSetLocked(sh *shard, key string, fields, values [][]byte) (i
 	}
 
 	var updated preparedEntry
-	indexThreshold := 128
-	if len(fields) == 1 {
-		indexThreshold = 128
-	}
-	canIndex := len(pairs) >= indexThreshold
+	canIndex := len(pairs) >= indexedHashWriteFields
 	if canIndex {
 		for _, pair := range pairs {
 			if pair.ExpiresAtMS != 0 {
@@ -416,11 +446,11 @@ func (s *Store) hashSetLocked(sh *shard, key string, fields, values [][]byte) (i
 			data: indexed,
 		}
 	} else {
-		packed, err := encodePackedHash(pairs)
+		packed, err := encodePackedHashSorted(pairs)
 		if err != nil {
 			return 0, err
 		}
-		updated = s.hashEntry(pairs, packed)
+		updated = s.hashEntryOwned(pairs, packed)
 	}
 	updated.expiresAt = expiresAt
 	if err := s.publish(sh, key, updated); err != nil {

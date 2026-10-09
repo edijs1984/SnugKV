@@ -11,6 +11,11 @@ var indexedHashHeader = [...]byte{'S','H',4}
 const indexedHashFixed = 15
 const indexedHashPromoteFields = 32
 
+// indexedHashWriteFields is the size from which a hash being written is kept in
+// the indexed layout, where HSET edits the record in place instead of decoding
+// and re-encoding every field. Idle compaction packs such hashes back down.
+const indexedHashWriteFields = 32
+
 func isIndexedHash(data []byte) bool {
 	return len(data) >= indexedHashFixed && bytes.Equal(data[:3], indexedHashHeader[:])
 }
