@@ -106,6 +106,13 @@ func (o *Optimizer) NoteForegroundWrite() {
 	atomic.StoreInt64(&o.lastForegroundWrite, time.Now().UnixNano())
 }
 
+// foregroundActiveWindow is how recently a client write must have arrived for
+// the workers to consider the foreground busy.
+const foregroundActiveWindow = 20 * time.Millisecond
+
+// foregroundDutyPercent caps worker CPU share while the foreground is busy.
+var foregroundDutyPercent = 20
+
 func (o *Optimizer) foregroundQuietFor(d time.Duration) bool {
 	last := atomic.LoadInt64(&o.lastForegroundWrite)
 	if last == 0 {
@@ -579,6 +586,14 @@ func (o *Optimizer) worker() {
 			// to that budget as the queue drains. This defers work rather than
 			// guessing that queued values are incompressible.
 			cpuPercent := o.cpuPercentForBacklog(len(o.queue))
+			// While client writes are still arriving, workers that got past the
+			// quiet wait (deferral bound or a half-full queue) run on a small
+			// duty cycle so they trail the write stream instead of sharing
+			// cores with connection handlers. Full speed returns the moment
+			// writes pause.
+			if !o.foregroundQuietFor(foregroundActiveWindow) && cpuPercent > foregroundDutyPercent {
+				cpuPercent = foregroundDutyPercent
+			}
 
 			pause := time.Since(start) * time.Duration(100-cpuPercent) / time.Duration(cpuPercent)
 			if pause <= 0 {
