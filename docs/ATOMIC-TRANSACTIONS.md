@@ -21,6 +21,36 @@ in the transaction is undone and `EXEC` returns one error:
 -EXECABORT Atomic transaction rolled back: command 2 (DECRBY) failed: ERR value is not an integer or out of range
 ```
 
+## Making everything atomic
+
+Start the server with `-atomic-transactions` (or `SNUGKV_ATOMIC_TRANSACTIONS=true`,
+or `"atomic_transactions": true` in the config file) and every plain `MULTI`/`EXEC`
+is atomic, so existing clients and libraries (for example Redis client pipelines
+that use transactions) get all-or-nothing behaviour without code changes. Every
+writable `EVAL` and `FCALL` is atomic as well. Commands listed under "Not allowed"
+are then rejected inside every `MULTI`.
+
+## Atomic scripts and functions
+
+A script or function that fails (a Lua error, or a failing `redis.call`) normally
+keeps the writes it made before the failure, as in Redis. To roll them back:
+
+```
+EVAL "#!lua flags=atomic
+redis.call('SET', KEYS[1], 'x')
+redis.call('LPUSH', KEYS[1], 'y')" 1 mykey
+```
+
+or register the function with the flag:
+
+```lua
+redis.register_function{function_name='transfer', callback=transfer, flags={'atomic'}}
+```
+
+A failed atomic script or function leaves the keyspace as it was and nothing reaches
+the append-only file. The snapshot covers the whole keyspace, so use it for scripts
+that matter more than raw speed on a very large database.
+
 ## ACID properties
 
 | | |
@@ -46,6 +76,9 @@ retracted; they only cause an extra refetch.
 
 ## Cost
 
-Atomic transactions export the prior value of the touched keys once and, when an
-append-only file or replicas are in use, the new value once. Transactions with
-scripts or `FLUSH*` copy the whole keyspace, which is slow on large databases.
+Transactions export the prior value of the touched keys once and, when an
+append-only file or replicas are in use, the new value once. This applies when
+every write command in the transaction is on the verified list in
+`atomicScopedWriteCommands` (about 75 data commands). A transaction containing a
+script, `FLUSHALL`/`FLUSHDB`, `SORT` or any other write command copies the whole
+keyspace, which is slow on large databases.

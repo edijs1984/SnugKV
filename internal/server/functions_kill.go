@@ -158,12 +158,12 @@ func (s *Server) executeKillableFunctionCall(args [][]byte) ([]byte, error) {
 	return s.withFunctionOOMBypass(
 		fn,
 		func() ([]byte, error) {
-			return s.runKillableRegisteredFunction(
-				fn,
-				keys,
-				argv,
-				readOnly || fn.noWrites,
-			)
+			if readOnly || fn.noWrites {
+				return s.runKillableRegisteredFunction(fn, keys, argv, true)
+			}
+			return s.runAtomicScript(fn.hasFlag("atomic"), func() ([]byte, error) {
+				return s.runKillableRegisteredFunction(fn, keys, argv, false)
+			})
 		},
 	)
 }

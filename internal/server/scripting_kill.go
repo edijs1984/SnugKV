@@ -156,16 +156,22 @@ func (s *Server) executeKillableScripting(args [][]byte) ([]byte, error) {
 	return s.withFlaggedScriptMemoryAdmission(
 		meta,
 		func() ([]byte, error) {
-			return s.runKillableLuaScript(
-				meta.body,
-				sha,
-				keys,
-				argv,
-				readOnly || meta.noWrites,
-				!meta.flagged,
-				meta.allowOom,
-				!meta.flagged || meta.allowCrossSlotKeys,
-			)
+			run := func() ([]byte, error) {
+				return s.runKillableLuaScript(
+					meta.body,
+					sha,
+					keys,
+					argv,
+					readOnly || meta.noWrites,
+					!meta.flagged,
+					meta.allowOom,
+					!meta.flagged || meta.allowCrossSlotKeys,
+				)
+			}
+			if readOnly || meta.noWrites {
+				return run()
+			}
+			return s.runAtomicScript(meta.atomic, run)
 		},
 	)
 }

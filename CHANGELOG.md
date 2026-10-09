@@ -7,6 +7,19 @@
 - `JSON.ARRINDEX` with a `$` path takes `stop` as exclusive and treats 0 as the end of the array, as RedisJSON does.
 - **Changed reply:** `JSON.NUMINCRBY`/`NUMMULTBY` with a `$` path used to return a bare number (`6`); they now return `[6]`.
 
+### Feature — built-in `snug_*` function library
+
+- SnugKV now loads a `snug` function library at startup (`-builtin-functions=false` to disable): token-bucket rate limiter, distributed lock with fencing token, idempotency keys, bounded counter, reliable queue with acknowledgement and redelivery, and a leaderboard with a window around a member. Each is one atomic `FCALL`. Details: `docs/BUILTIN-FUNCTIONS.md`.
+
+### Performance — EXEC no longer copies the whole database (pending live benchmark)
+
+- With an append-only file or replicas, every write `EXEC` exported the entire keyspace before and after the transaction to work out what changed. It now exports only the keys named by the transaction's commands, as long as every write command in it is on a verified list (about 75 data commands); a transaction containing a script, `FLUSHALL` or any other command snapshots everything as before. A transaction of `SET` plus `INCR` against a 300,000-key database with the log enabled: 2,889 ms before, 0.87 ms after. Tests run each listed command inside a transaction and compare the log replay with the live store, and compare the database before and after a rollback, so a command whose key positions drift fails the build.
+
+### Feature — atomic transactions on by configuration, atomic scripts and functions
+
+- `-atomic-transactions` (env `SNUGKV_ATOMIC_TRANSACTIONS`, config `atomic_transactions`) makes every `MULTI`/`EXEC` and every writable `EVAL`/`FCALL` all-or-nothing, so existing clients get rollback without sending `MULTI ATOMIC`.
+- `#!lua flags=atomic` on a script, or the `atomic` flag on a registered function, rolls back the writes of a script that fails (a Lua error or an error reply). Without the flag the Redis behaviour is unchanged: earlier writes stay.
+
 ### Feature — `MULTI ATOMIC`: all-or-nothing transactions
 
 - `MULTI ATOMIC` starts a transaction that is rolled back as a whole if any queued command fails at run time. The keys it can change are snapshotted first and restored exactly (value, type, expiry); transactions with scripts, `FLUSHALL`/`FLUSHDB` or `SORT` snapshot the whole keyspace. Only a committed transaction reaches the append-only file and replicas, and blocked clients are woken after the commit. Commands whose effect cannot be undone (`PUBLISH`, `CONFIG`, `FUNCTION`, ...) are rejected when queued. Plain `MULTI` is unchanged. Tests roll back 45 write commands across every data type and compare the whole database before and after, check the log after a restart, and check that other clients never see rolled-back state. Details: `docs/ATOMIC-TRANSACTIONS.md`.

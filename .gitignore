@@ -59,3 +59,7 @@ benchmark-results/*/
 !benchmark-results/* .json
 edijs.md
 
+
+# TypeScript client build output and dependencies
+/clients/typescript/dist/
+/clients/typescript/node_modules/

@@ -223,6 +223,8 @@ func parseRegisteredFunction(L *lua.LState) (
 					allowCrossSlotKeys = true
 				case "allow-oom":
 					allowOom = true
+				case "atomic":
+					// Recorded in the flag list; executeFCall rolls back on failure.
 				default:
 					return "", nil, "", false, nil, false, false, false, false, false,
 						fmt.Errorf("unsupported function flag: %s", flag)
@@ -551,6 +553,15 @@ func (s *Server) executeFCall(args [][]byte, readOnly bool) ([]byte, error) {
 			)
 		},
 	)
+}
+
+func (fn *registeredFunction) hasFlag(flag string) bool {
+	for _, existing := range fn.flags {
+		if existing == flag {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) runRegisteredFunction(fn *registeredFunction, keys, argv [][]byte, readOnly bool) ([]byte, error) {
