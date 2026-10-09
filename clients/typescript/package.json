@@ -12,16 +12,18 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test dist/test/*.test.js",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "tsc -p tsconfig.json && node --test dist/test/*.test.js",
     "bench:autopipeline": "npm run build && node benchmarks/autopipeline.mjs",
     "bench:latency": "npm run build && node benchmarks/latency.mjs",
     "bench:clients": "npm run build && node benchmarks/clients.mjs",
     "bench:client-matrix": "npm run build && node benchmarks/client-matrix.mjs",
-    "bench:stack-matrix": "npm run build && node benchmarks/stack-matrix.mjs"
+    "bench:stack-matrix": "npm run build && node benchmarks/stack-matrix.mjs",
+    "prepublishOnly": "rm -rf dist && tsc -p tsconfig.build.json"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
@@ -32,5 +34,21 @@
   "engines": {
     "node": ">=20"
   },
-  "license": "AGPL-3.0-or-later"
+  "license": "AGPL-3.0-or-later",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/edijs1984/SnugKV.git",
+    "directory": "clients/typescript"
+  },
+  "homepage": "https://github.com/edijs1984/SnugKV/tree/main/clients/typescript",
+  "keywords": [
+    "snugkv",
+    "redis",
+    "client",
+    "resp",
+    "json"
+  ]
 }
