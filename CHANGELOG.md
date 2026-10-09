@@ -1,5 +1,10 @@
 # Changelog
 
+### Throughput — HSET no longer rebuilds the whole hash (pending live benchmark)
+
+- Writing a field to a hash of fewer than 128 fields decoded every field, inserted one and re-encoded the lot, with several allocations per field, all under the shard lock. A profile of 100 connections writing 100-field hashes showed most of the CPU in that rebuild. Hashes of 32 or more fields are now kept in the indexed layout while they are written, so HSET edits the record in place; idle compaction already packs them back down, so settled memory is unchanged (hash with 100 fields: 66 bytes/item settled before and after). The remaining small-hash rebuild no longer copies fields and values it only reads and encodes without sorting a second time.
+- Local, 100 connections at pipeline 1, 100 fields per hash, 64-byte values: about 17k -> 32k HSET/s (Redis locally: 45-55k); write p99 21 ms -> 12 ms. At pipeline 256 with 8 workers: 345k -> 416k/s. Memory right after load for 100-field hashes is higher until compaction runs (76 -> 117 bytes/item locally).
+
 ### Throughput — index tables grow by half instead of a quarter (pending live benchmark)
 
 - Each time a shard's index outgrew its slots it was rebuilt with room for 25% more keys, and every rebuild rehashes every key. A profile of small JSON values (session-json, 384 B) showed about 27% of load CPU in those rebuilds. Tables now grow with room for 50% more keys, which cuts the total rehash work from about 5x to 3x the key count; Compact still tightens the table to its minimal size once writes stop, so settled memory is unchanged. Local SET load of 1M session-json keys: about 208k -> 238k ops/s (Redis locally: 250-275k). Memory right after load is about 5 bytes/key higher on tiny values (uuid 93 -> 98.5).
