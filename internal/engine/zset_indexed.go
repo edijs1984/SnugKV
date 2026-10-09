@@ -263,9 +263,10 @@ func buildIndexedZSetUnique(items []ZSetItem, aggressive, exact bool) ([]byte,er
 	if aggressive && len(items) >= 64 {
 		// Medium and large ZSETs are commonly built incrementally. A 25% payload
 		// reserve causes repeated rebuilds while the set grows. Give indexed
-		// ZSETs one full payload of append headroom once they reach 64 members;
-		// maintenance trims the completed value after writes go quiet.
-		dataCap = used * 2
+		// ZSETs half a payload of append headroom once they reach 64 members;
+		// maintenance trims the completed value after writes go quiet. (A full
+		// payload left 100-member sets about 20% larger right after a load.)
+		dataCap = used + used/2
 	}
 	if exact {
 		dataCap = used
