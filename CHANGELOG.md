@@ -1,5 +1,9 @@
 # Changelog
 
+### Feature — built-in `snug_*` function library
+
+- SnugKV now loads a `snug` function library at startup (`-builtin-functions=false` to disable): token-bucket rate limiter, distributed lock with fencing token, idempotency keys, bounded counter, reliable queue with acknowledgement and redelivery, and a leaderboard with a window around a member. Each is one atomic `FCALL`. Details: `docs/BUILTIN-FUNCTIONS.md`.
+
 ### Performance — EXEC no longer copies the whole database (pending live benchmark)
 
 - With an append-only file or replicas, every write `EXEC` exported the entire keyspace before and after the transaction to work out what changed. It now exports only the keys named by the transaction's commands, as long as every write command in it is on a verified list (about 75 data commands); a transaction containing a script, `FLUSHALL` or any other command snapshots everything as before. A transaction of `SET` plus `INCR` against a 300,000-key database with the log enabled: 2,889 ms before, 0.87 ms after. Tests run each listed command inside a transaction and compare the log replay with the live store, and compare the database before and after a rollback, so a command whose key positions drift fails the build.
