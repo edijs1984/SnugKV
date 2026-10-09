@@ -110,6 +110,7 @@ type Server struct {
 	executionClient      *clientSession // Protected by durableMu, like the ACL context.
 
 	configAppendFsync    string
+	atomicTransactions   bool
 	configACLFile        string
 	configAppendOnly     bool
 	configGetMaxClients  func() int

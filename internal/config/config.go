@@ -27,6 +27,7 @@ type Config struct {
 	EvictionPolicy      string `json:"eviction_policy"`
 	MetricsAddr         string `json:"metrics_listen"`
 	Compression         bool   `json:"compression"`
+	AtomicTransactions  bool   `json:"atomic_transactions"`
 	JSONShape           bool   `json:"json_shape"`
 	OptimizerMode       string `json:"optimizer_mode"`
 	AOFPath             string `json:"aof_path"`
@@ -385,6 +386,13 @@ func (c *Config) ApplyEnv() error {
 			return errors.New("invalid SNUGKV_MASTERTLS")
 		}
 		c.MasterTLS = b
+	}
+	if v, ok := os.LookupEnv("SNUGKV_ATOMIC_TRANSACTIONS"); ok {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return errors.New("invalid SNUGKV_ATOMIC_TRANSACTIONS")
+		}
+		c.AtomicTransactions = b
 	}
 	if v, ok := os.LookupEnv("SNUGKV_COMPRESSION"); ok {
 		b, err := strconv.ParseBool(v)

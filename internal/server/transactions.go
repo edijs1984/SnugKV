@@ -588,7 +588,7 @@ func (session *transactionSession) handleCommand(args [][]byte) (bool, []byte, e
 	cmd := strings.ToUpper(string(args[0]))
 	switch cmd {
 	case "MULTI":
-		atomicTx := false
+		atomicTx := session.server.atomicTransactions
 		switch {
 		case len(args) == 1:
 		case len(args) == 2 && strings.EqualFold(string(args[1]), "ATOMIC"):
