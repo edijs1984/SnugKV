@@ -207,6 +207,8 @@ Transactions implement `MULTI`, `EXEC`, `DISCARD`, `WATCH`, and `UNWATCH`,
 including cross-client WATCH invalidation and change-then-restore detection.
 Current RESP2 limitation: Pub/Sub subscription-state commands are not supported as
 queued MULTI commands; `PUBLISH` and `SPUBLISH` remain ordinary queueable commands.
+As in Redis, a plain `MULTI` does not roll back earlier commands when a later one fails;
+use `MULTI ATOMIC` (see `docs/ATOMIC-TRANSACTIONS.md`) for all-or-nothing execution.
 
 ## Compatibility hardening still in progress
 

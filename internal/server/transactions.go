@@ -30,6 +30,7 @@ type transactionSession struct {
 	server                *Server
 	auth                  *authSession
 	multi                 bool
+	atomic                bool
 	queueDirty            bool
 	queue                 [][][]byte
 	watched               map[string]persistence.Record
@@ -172,6 +173,7 @@ func (session *transactionSession) clearWatchLocked() {
 
 func (session *transactionSession) clearMultiLocked() {
 	session.multi = false
+	session.atomic = false
 	session.queueDirty = false
 	session.queue = nil
 	session.clusterSlot = 0
@@ -260,6 +262,12 @@ func (session *transactionSession) queueCommand(args [][]byte) ([]byte, error) {
 	if err := queuedCommandValidation(args); err != nil {
 		session.queueDirty = true
 		return nil, err
+	}
+	if session.atomic {
+		if err := atomicQueueValidation(args); err != nil {
+			session.queueDirty = true
+			return nil, err
+		}
 	}
 
 	if session.server.clusterEnabled {
@@ -453,6 +461,7 @@ func (session *transactionSession) exec() ([]byte, error) {
 	}
 
 	commands := session.queue
+	atomicTx := session.atomic
 	session.clearMultiLocked()
 	// EXEC always unwatches before running the queued commands, so writes in the
 	// transaction itself do not make its own WATCH condition fail.
@@ -461,12 +470,36 @@ func (session *transactionSession) exec() ([]byte, error) {
 	writes := transactionHasWrites(commands)
 	replicate := writes && s.replication.primaryHasReplicas()
 	var before []persistence.Record
-	if (s.journal != nil || replicate) && writes {
+	var snapshotKeys []string
+	snapshotScoped := false
+	if atomicTx && writes {
+		// MULTI ATOMIC: remember the prior state of every key the transaction can
+		// change so a failing command can undo the earlier ones. A transaction
+		// whose key set cannot be known up front is snapshotted whole.
+		snapshotKeys, snapshotScoped = atomicSnapshotKeys(commands)
+		if snapshotScoped {
+			before = s.store.Export(snapshotKeys)
+		} else {
+			before = s.store.Export(nil)
+		}
+	} else if (s.journal != nil || replicate) && writes {
 		before = s.store.Export(nil)
+	}
+	exportAfter := func() []persistence.Record {
+		if atomicTx && snapshotScoped {
+			return s.store.Export(snapshotKeys)
+		}
+		return s.store.Export(nil)
+	}
+	restoreBefore := func() error {
+		if atomicTx && snapshotScoped {
+			return s.store.Restore(before, true)
+		}
+		return s.store.Restore(append([]persistence.Record{{Reset: true}}, before...), true)
 	}
 
 	results := make([][]byte, 0, len(commands))
-	for _, command := range commands {
+	for index, command := range commands {
 		commandStarted := time.Now()
 		cmd := strings.ToUpper(string(command[0]))
 		info := commandTable[cmd]
@@ -486,9 +519,17 @@ func (session *transactionSession) exec() ([]byte, error) {
 				},
 			)
 		}
+		if err != nil && atomicTx && writes {
+			if rollbackErr := restoreBefore(); rollbackErr != nil {
+				s.durabilityFailed = true
+				return nil, errors.New("ERR atomic transaction failed and rollback failed; restart to recover from the log")
+			}
+			s.refreshWatchesLocked()
+			return nil, atomicAbortError(index, command[0], err)
+		}
 		if err != nil {
 			result = errorResponse(err)
-		} else {
+		} else if !atomicTx {
 			s.signalListAvailability(command, result)
 			s.signalZSetAvailability(command, result)
 			s.signalStreamAvailability(command, result)
@@ -505,15 +546,23 @@ func (session *transactionSession) exec() ([]byte, error) {
 		s.refreshWatchesLocked()
 	}
 
+	if atomicTx {
+		// Wake blocked clients only once the transaction is known to commit.
+		for index, command := range commands {
+			s.signalListAvailability(command, results[index])
+			s.signalZSetAvailability(command, results[index])
+			s.signalStreamAvailability(command, results[index])
+		}
+	}
+
 	if writes && (s.journal != nil || replicate) && !s.durabilityFailed {
-		after := s.store.Export(nil)
+		after := exportAfter()
 		changes := persistenceDiff(before, after)
 		if len(changes) > 0 {
 			if s.journal != nil {
 				if err := s.journal.Append(changes); err != nil {
 					s.durabilityFailed = true
-					rollback := append([]persistence.Record{{Reset: true}}, before...)
-					if rollbackErr := s.store.Restore(rollback, true); rollbackErr != nil {
+					if rollbackErr := restoreBefore(); rollbackErr != nil {
 						return nil, errors.New("ERR persistence and rollback failed")
 					}
 					return nil, errors.New("ERR persistence append failed")
@@ -539,13 +588,19 @@ func (session *transactionSession) handleCommand(args [][]byte) (bool, []byte, e
 	cmd := strings.ToUpper(string(args[0]))
 	switch cmd {
 	case "MULTI":
-		if len(args) != 1 {
+		atomicTx := false
+		switch {
+		case len(args) == 1:
+		case len(args) == 2 && strings.EqualFold(string(args[1]), "ATOMIC"):
+			atomicTx = true
+		default:
 			return true, nil, errors.New("ERR wrong number of arguments for 'multi' command")
 		}
 		if session.multi {
 			return true, nil, errors.New("ERR MULTI calls can not be nested")
 		}
 		session.multi = true
+		session.atomic = atomicTx
 		session.queueDirty = false
 		session.queue = nil
 		return true, []byte("+OK\r\n"), nil
