@@ -135,6 +135,7 @@ func ListenWithJournal(c config.Config, store *engine.Store, journal Journal) (*
 	s := &TCPServer{ownsOptimizer: true, listener: ln, server: New(store), config: c, connections: make(map[net.Conn]struct{}), clients: make(map[uint64]*clientSession), done: make(chan struct{})}
 
 	s.server.configAppendFsync = c.Fsync
+	s.server.atomicTransactions = c.AtomicTransactions
 	s.server.configACLFile = c.ACLFile
 	s.server.clusterControlAuth = c.ClusterControlAuth
 	s.server.replicationMasterUser = c.MasterUser

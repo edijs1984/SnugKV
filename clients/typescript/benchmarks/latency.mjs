@@ -1,6 +1,6 @@
 import net from "node:net";
 import { performance } from "node:perf_hooks";
-import { SnugKV } from "../dist/src/index.js";
+import { SnugKV } from "../dist/index.js";
 
 const TARGET_HOST = process.env.SNUG_HOST ?? "127.0.0.1";
 const TARGET_PORT = Number(process.env.SNUG_PORT ?? 6383);

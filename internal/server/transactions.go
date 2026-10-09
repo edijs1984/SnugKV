@@ -472,27 +472,27 @@ func (session *transactionSession) exec() ([]byte, error) {
 	var before []persistence.Record
 	var snapshotKeys []string
 	snapshotScoped := false
-	if atomicTx && writes {
-		// MULTI ATOMIC: remember the prior state of every key the transaction can
-		// change so a failing command can undo the earlier ones. A transaction
-		// whose key set cannot be known up front is snapshotted whole.
+	if writes && (atomicTx || s.journal != nil || replicate) {
+		// Snapshot only the keys the transaction can change when every write
+		// command in it is known to name all of its keys; otherwise (scripts,
+		// FLUSHALL, commands not on the verified list) snapshot everything.
+		// MULTI ATOMIC needs the snapshot to undo a failed transaction; the log
+		// and the replicas need it to compute what changed.
 		snapshotKeys, snapshotScoped = atomicSnapshotKeys(commands)
 		if snapshotScoped {
 			before = s.store.Export(snapshotKeys)
 		} else {
 			before = s.store.Export(nil)
 		}
-	} else if (s.journal != nil || replicate) && writes {
-		before = s.store.Export(nil)
 	}
 	exportAfter := func() []persistence.Record {
-		if atomicTx && snapshotScoped {
+		if snapshotScoped {
 			return s.store.Export(snapshotKeys)
 		}
 		return s.store.Export(nil)
 	}
 	restoreBefore := func() error {
-		if atomicTx && snapshotScoped {
+		if snapshotScoped {
 			return s.store.Restore(before, true)
 		}
 		return s.store.Restore(append([]persistence.Record{{Reset: true}}, before...), true)
@@ -588,7 +588,7 @@ func (session *transactionSession) handleCommand(args [][]byte) (bool, []byte, e
 	cmd := strings.ToUpper(string(args[0]))
 	switch cmd {
 	case "MULTI":
-		atomicTx := false
+		atomicTx := session.server.atomicTransactions
 		switch {
 		case len(args) == 1:
 		case len(args) == 2 && strings.EqualFold(string(args[1]), "ATOMIC"):
