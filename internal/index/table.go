@@ -192,9 +192,10 @@ func (t *Table[V]) capacityFor(n int) int {
 		// Doubling leaves a table anywhere from 40% to 80% full, so a shard
 		// that happens to stop growing just after a doubling carries almost
 		// 2x its slots for the whole load. Larger tables instead grow to hold
-		// a quarter more keys than they need now, which keeps the slack near
-		// 25-55% at the cost of more (cheap, shard-local) rebuilds.
-		capacity = tightCapacity(n + n/4)
+		// half as many keys again as they need now. Every rebuild rehashes each key
+		// (a cache miss per key), so a gentler step costs more write CPU than the
+		// extra slots cost memory; Compact tightens the table once writes stop.
+		capacity = tightCapacity(n + n/2)
 	}
 	return capacity
 }

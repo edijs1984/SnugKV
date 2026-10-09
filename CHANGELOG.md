@@ -1,5 +1,9 @@
 # Changelog
 
+### Throughput — index tables grow by half instead of a quarter (pending live benchmark)
+
+- Each time a shard's index outgrew its slots it was rebuilt with room for 25% more keys, and every rebuild rehashes every key. A profile of small JSON values (session-json, 384 B) showed about 27% of load CPU in those rebuilds. Tables now grow with room for 50% more keys, which cuts the total rehash work from about 5x to 3x the key count; Compact still tightens the table to its minimal size once writes stop, so settled memory is unchanged. Local SET load of 1M session-json keys: about 208k -> 238k ops/s (Redis locally: 250-275k). Memory right after load is about 5 bytes/key higher on tiny values (uuid 93 -> 98.5).
+
 ### Throughput — optimizer workers trail client writes on a duty cycle (pending live benchmark)
 
 - Workers that got past the foreground-quiet wait (2 s deferral bound or a half-full queue) used to run at the full configured CPU share, 90% on each of the host's cores in dedicated mode, competing with connection handlers during a write burst. While a client write has arrived in the last 20 ms they now run at a 20% duty cycle and return to full speed as soon as writes pause. Local SET load of 1M cache-json / session-json values (1 KiB, 8 workers, pipeline 256): about 105k -> 127k and 107k -> 121k ops/s (Redis locally: 160k and 148k). Settled and post-load memory are identical to before (cache-json 737 MB vs 740 MB total, same convergence time).
