@@ -1,5 +1,9 @@
 # Changelog
 
+### Feature — `MULTI ATOMIC`: all-or-nothing transactions
+
+- `MULTI ATOMIC` starts a transaction that is rolled back as a whole if any queued command fails at run time. The keys it can change are snapshotted first and restored exactly (value, type, expiry); transactions with scripts, `FLUSHALL`/`FLUSHDB` or `SORT` snapshot the whole keyspace. Only a committed transaction reaches the append-only file and replicas, and blocked clients are woken after the commit. Commands whose effect cannot be undone (`PUBLISH`, `CONFIG`, `FUNCTION`, ...) are rejected when queued. Plain `MULTI` is unchanged. Tests roll back 45 write commands across every data type and compare the whole database before and after, check the log after a restart, and check that other clients never see rolled-back state. Details: `docs/ATOMIC-TRANSACTIONS.md`.
+
 ### Memory — less append headroom on growing sorted sets (pending live benchmark)
 
 - Indexed sorted sets of 64 or more members reserved a full payload of append headroom while they were written; they now reserve half. Right after loading 100,000 members into 100-member sets through the server, memory drops from 122 to 102 bytes/item (1000-member sets: 80 to 64); settled memory is unchanged (38 and 41 bytes/item) and write throughput is within noise. Most of the remaining right-after-load difference is freed blocks of earlier sizes that the maintenance pass reclaims once writes go quiet.
