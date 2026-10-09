@@ -8,6 +8,9 @@ import {
   type RespCommandArg,
   type RespValue,
 } from "./resp.js";
+import { Snug } from "./snug.js";
+import { Transaction, type RawExecutor, type TransactionOptions } from "./transaction.js";
+import { asOk, asText, type Bytes } from "./parse.js";
 
 export interface SnugKVOptions {
   host?: string;
@@ -16,6 +19,12 @@ export interface SnugKVOptions {
   autoPipelineMaxCommands?: number;
   autoPipelineMaxBytes?: number;
   connectTimeoutMs?: number;
+  /** Sent as AUTH right after connecting. */
+  password?: string;
+  /** With `password`: ACL user name. */
+  username?: string;
+  /** Sent as SELECT right after connecting. */
+  database?: number;
 }
 
 export interface SnugKVClientStats {
@@ -43,18 +52,24 @@ type CommandArg = RespCommandArg;
 
 interface PendingCommand {
   args: readonly CommandArg[];
+  /** Resolve error replies as values instead of rejecting. */
+  raw?: boolean;
   encodedLength: number;
   resolve: (value: RespValue) => void;
   reject: (error: Error) => void;
 }
 
-export class SnugKV {
+export class SnugKV implements RawExecutor {
   private readonly host: string;
   private readonly port: number;
   private readonly autoPipeline: boolean;
   private readonly maxCommands: number;
   private readonly maxBytes: number;
   private readonly connectTimeoutMs: number;
+  private readonly username: string | undefined;
+  private readonly password: string | undefined;
+  private readonly database: number | undefined;
+  private snugFunctions: Snug | undefined;
 
   private socket: net.Socket | null = null;
   private decoder = new RespDecoder();
@@ -76,6 +91,14 @@ export class SnugKV {
     this.maxCommands = options.autoPipelineMaxCommands ?? 128;
     this.maxBytes = options.autoPipelineMaxBytes ?? 1024 * 1024;
     this.connectTimeoutMs = options.connectTimeoutMs ?? 5000;
+    this.username = options.username;
+    this.password = options.password;
+    this.database = options.database;
+  }
+
+  /** Typed access to the built-in `snug_*` functions: rate limit, locks, idempotency, counters, queues, leaderboards. */
+  get snug(): Snug {
+    return (this.snugFunctions ??= new Snug(this));
   }
 
   async connect(): Promise<void> {
@@ -114,6 +137,19 @@ export class SnugKV {
       if (!this.closing) this.failAll(new Error("SnugKV connection closed"));
       this.socket = null;
     });
+
+    try {
+      if (this.password !== undefined) {
+        const auth = this.username !== undefined ? ["AUTH", this.username, this.password] : ["AUTH", this.password];
+        asOk(await this.command(auth), "AUTH");
+      }
+      if (this.database !== undefined) asOk(await this.command(["SELECT", this.database]), "SELECT");
+    } catch (error) {
+      socket.destroy();
+      this.connected = false;
+      this.socket = null;
+      throw error;
+    }
   }
 
   async close(): Promise<void> {
@@ -174,6 +210,52 @@ export class SnugKV {
         });
       }
     });
+  }
+
+  /**
+   * Starts a typed transaction. With `{ atomic: true }` the server uses
+   * `MULTI ATOMIC` and undoes every write if one command fails.
+   */
+  multi(options: TransactionOptions = {}): Transaction {
+    return new Transaction(this, options);
+  }
+
+  /** Calls a function: `FCALL name numkeys key... arg...`. */
+  fcall(name: string, keys: readonly Bytes[], args: readonly CommandArg[] = []): Promise<RespValue> {
+    return this.command(["FCALL", name, keys.length, ...keys, ...args]);
+  }
+
+  /** Like `fcall`, for functions that do not write; works on replicas. */
+  fcallRo(name: string, keys: readonly Bytes[], args: readonly CommandArg[] = []): Promise<RespValue> {
+    return this.command(["FCALL_RO", name, keys.length, ...keys, ...args]);
+  }
+
+  /** Loads a function library and returns its name. */
+  async functionLoad(code: string, options: { replace?: boolean } = {}): Promise<string> {
+    const args: CommandArg[] = options.replace ? ["FUNCTION", "LOAD", "REPLACE", code] : ["FUNCTION", "LOAD", code];
+    return asText(await this.command(args), "FUNCTION LOAD");
+  }
+
+  /**
+   * Sends the commands back to back, in one socket write, and resolves every
+   * reply. Error replies are returned as RespError values instead of rejecting.
+   */
+  pipelineRaw(commands: readonly (readonly CommandArg[])[]): Promise<RespValue[]> {
+    if (!this.connected || !this.socket) {
+      return Promise.reject(new Error("SnugKV client is not connected"));
+    }
+    if (commands.length === 0) return Promise.resolve([]);
+    this.commandCount += commands.length;
+    const promises = commands.map(
+      (args) =>
+        new Promise<RespValue>((resolve, reject) => {
+          const encodedLength = encodedCommandLength(args);
+          this.queue.push({ args, encodedLength, raw: true, resolve, reject });
+          this.queueBytes += encodedLength;
+        }),
+    );
+    this.flush(false);
+    return Promise.all(promises);
   }
 
   async ping(): Promise<string> {
@@ -446,7 +528,7 @@ export class SnugKV {
         this.socket?.destroy();
         return;
       }
-      if (value instanceof RespError) pending.reject(value);
+      if (value instanceof RespError && !pending.raw) pending.reject(value);
       else pending.resolve(value);
     }
   }
