@@ -333,3 +333,89 @@ func TestAtomicRolledBackWritesAreNeverVisibleToOtherClients(t *testing.T) {
 		}
 	}
 }
+
+func luaArgs(script string) []string { return []string{"EVAL", script, "0"} }
+
+func TestAtomicScriptRollsBackOnlyWhenFlagged(t *testing.T) {
+	tcp := startAtomicTestServer(t)
+	c := newAtomicTestClient(t, tcp)
+
+	body := "redis.call('SET','a','1'); redis.call('LPUSH','a','x'); return 1"
+	if got := c.do(luaArgs(body)...); !strings.HasPrefix(got, "-") {
+		t.Fatalf("plain script = %q", got)
+	}
+	// Redis semantics: the write before the failure stays.
+	if got := c.do("GET", "a"); got != "$1\r\n1\r\n" {
+		t.Fatalf("plain script kept write = %q", got)
+	}
+
+	c.do("DEL", "a")
+	if got := c.do(luaArgs("#!lua flags=atomic\n" + body)...); !strings.HasPrefix(got, "-") {
+		t.Fatalf("atomic script = %q", got)
+	}
+	if got := c.do("EXISTS", "a"); got != ":0\r\n" {
+		t.Fatalf("atomic script left a = %q", got)
+	}
+
+	ok := "#!lua flags=atomic\nredis.call('SET','b','2'); return redis.call('INCR','b')"
+	if got := c.do(luaArgs(ok)...); got != ":3\r\n" {
+		t.Fatalf("committing atomic script = %q", got)
+	}
+	if got := c.do("GET", "b"); got != "$1\r\n3\r\n" {
+		t.Fatalf("b = %q", got)
+	}
+}
+
+func TestAtomicFunctionRollsBackOnlyWhenFlagged(t *testing.T) {
+	tcp := startAtomicTestServer(t)
+	c := newAtomicTestClient(t, tcp)
+
+	lib := "#!lua name=acid\n" +
+		"local function body(keys, args) redis.call('SET', args[1], '1'); redis.call('LPUSH', args[1], 'x'); return 1 end\n" +
+		"redis.register_function{function_name='plain', callback=body}\n" +
+		"redis.register_function{function_name='safe', callback=body, flags={'atomic'}}\n"
+	if got := c.do("FUNCTION", "LOAD", lib); strings.HasPrefix(got, "-") {
+		t.Fatalf("FUNCTION LOAD = %q", got)
+	}
+	if got := c.do("FCALL", "plain", "0", "p"); !strings.HasPrefix(got, "-") {
+		t.Fatalf("plain FCALL = %q", got)
+	}
+	if got := c.do("GET", "p"); got != "$1\r\n1\r\n" {
+		t.Fatalf("plain function kept write = %q", got)
+	}
+	if got := c.do("FCALL", "safe", "0", "s"); !strings.HasPrefix(got, "-") {
+		t.Fatalf("atomic FCALL = %q", got)
+	}
+	if got := c.do("EXISTS", "s"); got != ":0\r\n" {
+		t.Fatalf("atomic function left s = %q", got)
+	}
+}
+
+func TestAtomicTransactionsFlagMakesPlainMultiAndScriptsAtomic(t *testing.T) {
+	cfg := config.Default()
+	cfg.ListenAddr = "127.0.0.1:0"
+	cfg.AtomicTransactions = true
+	tcp, err := ListenWithConfig(cfg, engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { tcp.Close() })
+	c := newAtomicTestClient(t, tcp)
+
+	c.do("MULTI")
+	c.do("SET", "x", "1")
+	c.do("LPUSH", "x", "y")
+	if got := c.do("EXEC"); !strings.HasPrefix(got, "-EXECABORT Atomic transaction rolled back") {
+		t.Fatalf("plain MULTI under the flag = %q", got)
+	}
+	if got := c.do("EXISTS", "x"); got != ":0\r\n" {
+		t.Fatalf("x = %q", got)
+	}
+
+	if got := c.do(luaArgs("redis.call('SET','z','1'); redis.call('LPUSH','z','x'); return 1")...); !strings.HasPrefix(got, "-") {
+		t.Fatalf("script = %q", got)
+	}
+	if got := c.do("EXISTS", "z"); got != ":0\r\n" {
+		t.Fatalf("script under the flag left z = %q", got)
+	}
+}

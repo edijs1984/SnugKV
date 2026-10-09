@@ -17,6 +17,7 @@ type evalScriptMetadata struct {
 	allowStale         bool
 	noCluster          bool
 	allowCrossSlotKeys bool
+	atomic             bool
 }
 
 func parseEvalScriptMetadata(source string) (evalScriptMetadata, error) {
@@ -73,6 +74,8 @@ func parseEvalScriptMetadata(source string) (evalScriptMetadata, error) {
 				meta.noCluster = true
 			case "allow-cross-slot-keys":
 				meta.allowCrossSlotKeys = true
+			case "atomic":
+				meta.atomic = true
 			default:
 				return evalScriptMetadata{}, fmt.Errorf(
 					"ERR Unexpected flag in script shebang: %s",
