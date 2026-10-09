@@ -8,6 +8,7 @@ import {
   type RespCommandArg,
   type RespValue,
 } from "./resp.js";
+import { SnugJson } from "./json.js";
 import { Snug } from "./snug.js";
 import { Transaction, type RawExecutor, type TransactionOptions } from "./transaction.js";
 import { asOk, asText, type Bytes } from "./parse.js";
@@ -70,6 +71,7 @@ export class SnugKV implements RawExecutor {
   private readonly password: string | undefined;
   private readonly database: number | undefined;
   private snugFunctions: Snug | undefined;
+  private jsonCommands: SnugJson | undefined;
 
   private socket: net.Socket | null = null;
   private decoder = new RespDecoder();
@@ -94,6 +96,11 @@ export class SnugKV implements RawExecutor {
     this.username = options.username;
     this.password = options.password;
     this.database = options.database;
+  }
+
+  /** Typed JSON commands: `client.json.set("doc", "$", {a: 1})`, `client.json.get<Doc>("doc")`. */
+  get json(): SnugJson {
+    return (this.jsonCommands ??= new SnugJson(this));
   }
 
   /** Typed access to the built-in `snug_*` functions: rate limit, locks, idempotency, counters, queues, leaderboards. */

@@ -121,6 +121,25 @@ const near = await board.around("ann", 2);
 
 `client.fcall(name, keys, args)`, `client.fcallRo(...)` and `client.functionLoad(code, { replace })` are available for your own functions. Queue keys share one hash tag (`{name}:ready`, ...), so queues work in a cluster; for locks in a cluster put the lock and its fence counter in one tag, e.g. `{job}:lock` with the default `{job}:lock:fence`.
 
+## JSON
+
+`client.json` wraps the JSON commands with typed documents. Paths are JSONPath (`$`, `$.a.b`, `$.items[*]`); values are encoded and decoded for you.
+
+```ts
+interface Profile { name: string; tags: string[]; stats: { hits: number } }
+
+await client.json.set("user:1", "$", { name: "ann", tags: [], stats: { hits: 0 } });
+const profile = await client.json.get<Profile>("user:1");          // Profile | null
+const hits = await client.json.getPath<number>("user:1", "$.stats.hits"); // number[] | null
+
+await client.json.numIncrBy("user:1", "$.stats.hits", 1);          // [1]
+await client.json.arrAppend("user:1", "$.tags", "vip");            // [1]
+await client.json.merge("user:1", "$", { stats: { last: 1700000000 } });
+await client.json.mSet([{ key: "a", path: "$", value: {} }, { key: "b", path: "$", value: {} }]);
+```
+
+Covered: `set` (`nx`/`xx`), `mSet`, `merge`, `get`, `getPath`, `mGet`, `del`, `type`, `clear`, `numIncrBy`, `numMultBy`, `toggle`, `strAppend`, `strLen`, `arrAppend`, `arrInsert`, `arrIndex`, `arrLen`, `arrPop`, `arrTrim`, `objKeys`, `objLen`. Per-path results are arrays (one entry per match), and `null` marks a match of the wrong type. Replies from the server are accepted either as a single value or as RedisJSON-style arrays. `JSON.RESP` and `JSON.DEBUG` are available through `client.command`.
+
 ## Connecting with a password
 
 ```ts

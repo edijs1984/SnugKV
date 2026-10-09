@@ -201,3 +201,50 @@ test("leaderboard", { skip }, async () => {
 test("snug functions version", { skip }, async () => {
   assert.equal(await client.snug.version(), "1");
 });
+
+test("json: set, get, paths and typed documents", { skip }, async () => {
+  interface Doc { name: string; tags: string[]; stats: { hits: number }; on: boolean }
+  const j = client.json;
+  assert.equal(await j.set("j:1", "$", { name: "ann", tags: ["a", "b"], stats: { hits: 1 }, on: true }), "OK");
+  assert.equal(await j.set("j:1", "$.name", "zed", { nx: true }), null);
+  const doc = await j.get<Doc>("j:1");
+  assert.deepEqual(doc, { name: "ann", tags: ["a", "b"], stats: { hits: 1 }, on: true });
+  assert.deepEqual(await j.getPath<number>("j:1", "$.stats.hits"), [1]);
+  assert.deepEqual(await j.getPath("j:1", "$.nope"), []);
+  assert.equal(await j.get("j:missing"), null);
+  assert.deepEqual(await j.mGet<string>(["j:1", "j:missing"], "$.name"), [["ann"], null]);
+  assert.deepEqual(await j.type("j:1", "$.tags"), ["array"]);
+  assert.deepEqual(await j.objKeys("j:1", "$.stats"), ["hits"]);
+  assert.deepEqual(await j.objLen("j:1", "$.stats"), [1]);
+});
+
+test("json: numbers, strings, booleans, arrays", { skip }, async () => {
+  const j = client.json;
+  await j.set("j:2", "$", { n: 1, s: "hi", on: true, arr: [1, 2, 3] });
+  assert.deepEqual(await j.numIncrBy("j:2", "$.n", 2), [3]);
+  assert.deepEqual(await j.numMultBy("j:2", "$.n", 3), [9]);
+  assert.deepEqual(await j.strAppend("j:2", "$.s", "!"), [3]);
+  assert.deepEqual(await j.strLen("j:2", "$.s"), [3]);
+  assert.deepEqual(await j.toggle("j:2", "$.on"), [false]);
+  assert.deepEqual(await j.arrAppend("j:2", "$.arr", 4, { x: 1 }), [5]);
+  assert.deepEqual(await j.arrPop("j:2", "$.arr"), [{ x: 1 }]);
+  assert.deepEqual(await j.arrInsert("j:2", "$.arr", 0, 0), [5]);
+  assert.deepEqual(await j.arrIndex("j:2", "$.arr", 3), [3]);
+  assert.deepEqual(await j.arrLen("j:2", "$.arr"), [5]);
+  assert.deepEqual(await j.arrTrim("j:2", "$.arr", 0, 1), [2]);
+  assert.deepEqual(await j.arrPop("j:2", "$.arr", 0), [0]);
+});
+
+test("json: merge, mSet, clear, del", { skip }, async () => {
+  const j = client.json;
+  await j.set("j:3", "$", { a: { b: 1 } });
+  await j.merge("j:3", "$", { a: { c: 2 }, d: 3 });
+  assert.deepEqual(await j.get("j:3"), { a: { b: 1, c: 2 }, d: 3 });
+  await j.mSet([{ key: "j:3", path: "$.e", value: [1] }, { key: "j:4", path: "$", value: { z: 1 } }]);
+  assert.deepEqual(await j.get("j:4"), { z: 1 });
+  assert.equal(await j.clear("j:3", "$.e"), 1);
+  assert.equal(await j.del("j:3", "$.a"), 1);
+  assert.equal(await j.del("j:3"), 1);
+  assert.equal(await j.get("j:3"), null);
+  await assert.rejects(j.set("j:new", "$.a", 1)); // new documents start at the root
+});

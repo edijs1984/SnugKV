@@ -35,3 +35,4 @@ export {
   type LeaderboardPosition,
   type LeaderboardWindow,
 } from "./snug.js";
+export { SnugJson, type JsonValue, type JsonSetOptions, type JsonMSetEntry } from "./json.js";
