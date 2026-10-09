@@ -1,0 +1,428 @@
+import net from "node:net";
+import { encodeCommand, encodeCommands, encodedCommandLength, RespDecoder, RespError, } from "./resp.js";
+import { SnugJson } from "./json.js";
+import { Snug } from "./snug.js";
+import { Transaction } from "./transaction.js";
+import { asOk, asText } from "./parse.js";
+export class SnugKV {
+    host;
+    port;
+    autoPipeline;
+    maxCommands;
+    maxBytes;
+    connectTimeoutMs;
+    username;
+    password;
+    database;
+    snugFunctions;
+    jsonCommands;
+    socket = null;
+    decoder = new RespDecoder();
+    pendingReplies = [];
+    queue = [];
+    queueBytes = 0;
+    flushScheduled = false;
+    connected = false;
+    closing = false;
+    commandCount = 0;
+    socketWriteCount = 0;
+    autoPipelineBatchCount = 0;
+    batchedCommandCount = 0;
+    constructor(options = {}) {
+        this.host = options.host ?? "127.0.0.1";
+        this.port = options.port ?? 6383;
+        this.autoPipeline = options.autoPipeline ?? true;
+        this.maxCommands = options.autoPipelineMaxCommands ?? 128;
+        this.maxBytes = options.autoPipelineMaxBytes ?? 1024 * 1024;
+        this.connectTimeoutMs = options.connectTimeoutMs ?? 5000;
+        this.username = options.username;
+        this.password = options.password;
+        this.database = options.database;
+    }
+    /** Typed JSON commands: `client.json.set("doc", "$", {a: 1})`, `client.json.get<Doc>("doc")`. */
+    get json() {
+        return (this.jsonCommands ??= new SnugJson(this));
+    }
+    /** Typed access to the built-in `snug_*` functions: rate limit, locks, idempotency, counters, queues, leaderboards. */
+    get snug() {
+        return (this.snugFunctions ??= new Snug(this));
+    }
+    async connect() {
+        if (this.connected)
+            return;
+        if (this.socket)
+            throw new Error("connection already in progress");
+        const socket = net.createConnection({ host: this.host, port: this.port });
+        this.socket = socket;
+        await new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+                socket.destroy();
+                reject(new Error("SnugKV connection timeout"));
+            }, this.connectTimeoutMs);
+            const onError = (error) => {
+                clearTimeout(timer);
+                socket.off("connect", onConnect);
+                reject(error);
+            };
+            const onConnect = () => {
+                clearTimeout(timer);
+                socket.off("error", onError);
+                this.connected = true;
+                resolve();
+            };
+            socket.once("error", onError);
+            socket.once("connect", onConnect);
+        });
+        socket.on("data", (chunk) => this.onData(chunk));
+        socket.on("error", (error) => this.failAll(error));
+        socket.on("close", () => {
+            this.connected = false;
+            if (!this.closing)
+                this.failAll(new Error("SnugKV connection closed"));
+            this.socket = null;
+        });
+        try {
+            if (this.password !== undefined) {
+                const auth = this.username !== undefined ? ["AUTH", this.username, this.password] : ["AUTH", this.password];
+                asOk(await this.command(auth), "AUTH");
+            }
+            if (this.database !== undefined)
+                asOk(await this.command(["SELECT", this.database]), "SELECT");
+        }
+        catch (error) {
+            socket.destroy();
+            this.connected = false;
+            this.socket = null;
+            throw error;
+        }
+    }
+    async close() {
+        this.closing = true;
+        try {
+            this.flush(true);
+            if (!this.socket)
+                return;
+            const socket = this.socket;
+            await new Promise((resolve) => {
+                socket.once("close", resolve);
+                socket.end();
+            });
+        }
+        finally {
+            this.connected = false;
+            this.socket = null;
+            this.closing = false;
+        }
+    }
+    stats() {
+        return {
+            commands: this.commandCount,
+            socketWrites: this.socketWriteCount,
+            autoPipelineBatches: this.autoPipelineBatchCount,
+            batchedCommands: this.batchedCommandCount,
+        };
+    }
+    command(args) {
+        if (!this.connected || !this.socket) {
+            return Promise.reject(new Error("SnugKV client is not connected"));
+        }
+        const encodedLength = encodedCommandLength(args);
+        this.commandCount++;
+        return new Promise((resolve, reject) => {
+            const pending = { args, encodedLength, resolve, reject };
+            if (!this.autoPipeline) {
+                this.pendingReplies.push(pending);
+                this.socketWriteCount++;
+                this.socket.write(encodeCommand(args));
+                return;
+            }
+            this.queue.push(pending);
+            this.queueBytes += encodedLength;
+            if (this.queue.length >= this.maxCommands || this.queueBytes >= this.maxBytes) {
+                this.flush(true);
+                return;
+            }
+            if (!this.flushScheduled) {
+                this.flushScheduled = true;
+                queueMicrotask(() => {
+                    this.flushScheduled = false;
+                    this.flush(true);
+                });
+            }
+        });
+    }
+    /**
+     * Starts a typed transaction. With `{ atomic: true }` the server uses
+     * `MULTI ATOMIC` and undoes every write if one command fails.
+     */
+    multi(options = {}) {
+        return new Transaction(this, options);
+    }
+    /** Calls a function: `FCALL name numkeys key... arg...`. */
+    fcall(name, keys, args = []) {
+        return this.command(["FCALL", name, keys.length, ...keys, ...args]);
+    }
+    /** Like `fcall`, for functions that do not write; works on replicas. */
+    fcallRo(name, keys, args = []) {
+        return this.command(["FCALL_RO", name, keys.length, ...keys, ...args]);
+    }
+    /** Loads a function library and returns its name. */
+    async functionLoad(code, options = {}) {
+        const args = options.replace ? ["FUNCTION", "LOAD", "REPLACE", code] : ["FUNCTION", "LOAD", code];
+        return asText(await this.command(args), "FUNCTION LOAD");
+    }
+    /**
+     * Sends the commands back to back, in one socket write, and resolves every
+     * reply. Error replies are returned as RespError values instead of rejecting.
+     */
+    pipelineRaw(commands) {
+        if (!this.connected || !this.socket) {
+            return Promise.reject(new Error("SnugKV client is not connected"));
+        }
+        if (commands.length === 0)
+            return Promise.resolve([]);
+        this.commandCount += commands.length;
+        const promises = commands.map((args) => new Promise((resolve, reject) => {
+            const encodedLength = encodedCommandLength(args);
+            this.queue.push({ args, encodedLength, raw: true, resolve, reject });
+            this.queueBytes += encodedLength;
+        }));
+        this.flush(false);
+        return Promise.all(promises);
+    }
+    async ping() {
+        const result = await this.command(["PING"]);
+        if (typeof result !== "string")
+            throw new Error("unexpected PING reply");
+        return result;
+    }
+    async set(key, value, options = {}) {
+        const args = ["SET", key, value];
+        if (options.ex !== undefined && options.px !== undefined) {
+            throw new Error("SET accepts only one of ex or px");
+        }
+        if (options.ex !== undefined)
+            args.push("EX", options.ex);
+        if (options.px !== undefined)
+            args.push("PX", options.px);
+        const result = await this.command(args);
+        if (result !== "OK")
+            throw new Error(`unexpected SET reply: ${String(result)}`);
+        return "OK";
+    }
+    async setEx(key, seconds, value) {
+        const result = await this.command(["SETEX", key, seconds, value]);
+        if (result !== "OK")
+            throw new Error(`unexpected SETEX reply: ${String(result)}`);
+        return "OK";
+    }
+    async get(key) {
+        const result = await this.command(["GET", key]);
+        if (result === null || Buffer.isBuffer(result))
+            return result;
+        throw new Error("unexpected GET reply");
+    }
+    async del(...keys) {
+        const result = await this.command(["DEL", ...keys]);
+        return this.expectInteger(result, "DEL");
+    }
+    async exists(...keys) {
+        const result = await this.command(["EXISTS", ...keys]);
+        return this.expectInteger(result, "EXISTS");
+    }
+    async expire(key, seconds) {
+        const result = await this.command(["EXPIRE", key, seconds]);
+        return this.expectInteger(result, "EXPIRE");
+    }
+    async incr(key) {
+        const result = await this.command(["INCR", key]);
+        return this.expectInteger(result, "INCR");
+    }
+    async incrBy(key, delta) {
+        const result = await this.command(["INCRBY", key, delta]);
+        return this.expectInteger(result, "INCRBY");
+    }
+    async hSet(key, field, value) {
+        const result = await this.command(["HSET", key, field, value]);
+        return this.expectInteger(result, "HSET");
+    }
+    async hGetAll(key) {
+        const result = await this.command(["HGETALL", key]);
+        if (!Array.isArray(result) || result.length % 2 !== 0) {
+            throw new Error("unexpected HGETALL reply");
+        }
+        const out = {};
+        for (let i = 0; i < result.length; i += 2) {
+            const field = result[i];
+            const value = result[i + 1];
+            if (!Buffer.isBuffer(field) || !Buffer.isBuffer(value)) {
+                throw new Error("unexpected HGETALL reply");
+            }
+            out[field.toString()] = value;
+        }
+        return out;
+    }
+    async lPush(key, ...values) {
+        const result = await this.command(["LPUSH", key, ...values]);
+        return this.expectInteger(result, "LPUSH");
+    }
+    async lTrim(key, start, stop) {
+        const result = await this.command(["LTRIM", key, start, stop]);
+        if (result !== "OK")
+            throw new Error(`unexpected LTRIM reply: ${String(result)}`);
+        return "OK";
+    }
+    async lRange(key, start, stop) {
+        const result = await this.command(["LRANGE", key, start, stop]);
+        return this.expectBufferArray(result, "LRANGE");
+    }
+    async sAdd(key, ...members) {
+        const result = await this.command(["SADD", key, ...members]);
+        return this.expectInteger(result, "SADD");
+    }
+    async sMembers(key) {
+        const result = await this.command(["SMEMBERS", key]);
+        return this.expectBufferArray(result, "SMEMBERS");
+    }
+    async zIncrBy(key, increment, member) {
+        const result = await this.command(["ZINCRBY", key, increment, member]);
+        return this.expectNumericBulk(result, "ZINCRBY");
+    }
+    async zRevRank(key, member) {
+        const result = await this.command(["ZREVRANK", key, member]);
+        if (result === null)
+            return null;
+        return this.expectInteger(result, "ZREVRANK");
+    }
+    async zRevRange(key, start, stop, options = {}) {
+        const args = ["ZREVRANGE", key, start, stop];
+        if (options.withScores)
+            args.push("WITHSCORES");
+        const result = await this.command(args);
+        const values = this.expectBufferArray(result, "ZREVRANGE");
+        if (!options.withScores)
+            return values;
+        if (values.length % 2 !== 0)
+            throw new Error("unexpected ZREVRANGE WITHSCORES reply");
+        const out = [];
+        for (let i = 0; i < values.length; i += 2) {
+            const score = Number(values[i + 1].toString());
+            if (!Number.isFinite(score))
+                throw new Error("unexpected ZREVRANGE score");
+            out.push({ member: values[i], score });
+        }
+        return out;
+    }
+    async flushDb() {
+        const result = await this.command(["FLUSHDB"]);
+        if (result !== "OK")
+            throw new Error(`unexpected FLUSHDB reply: ${String(result)}`);
+        return "OK";
+    }
+    async dbSize() {
+        const result = await this.command(["DBSIZE"]);
+        return this.expectInteger(result, "DBSIZE");
+    }
+    async info(section) {
+        const result = await this.command(section ? ["INFO", section] : ["INFO"]);
+        if (!Buffer.isBuffer(result))
+            throw new Error("unexpected INFO reply");
+        return result.toString();
+    }
+    async snugStats() {
+        const result = await this.command(["SNUG.STATS"]);
+        if (!Buffer.isBuffer(result))
+            throw new Error("unexpected SNUG.STATS reply");
+        return result.toString();
+    }
+    async pipeline(commands) {
+        if (!this.connected || !this.socket) {
+            throw new Error("SnugKV client is not connected");
+        }
+        if (commands.length === 0)
+            return [];
+        this.commandCount += commands.length;
+        const promises = commands.map((args) => {
+            const encodedLength = encodedCommandLength(args);
+            return new Promise((resolve, reject) => {
+                this.queue.push({ args, encodedLength, resolve, reject });
+                this.queueBytes += encodedLength;
+            });
+        });
+        this.flush(false);
+        return Promise.all(promises);
+    }
+    flush(auto = true) {
+        if (this.queue.length === 0)
+            return;
+        if (!this.socket || !this.connected) {
+            const error = new Error("SnugKV client is not connected");
+            const queued = this.queue.splice(0);
+            this.queueBytes = 0;
+            for (const pending of queued)
+                pending.reject(error);
+            return;
+        }
+        const batch = this.queue.splice(0);
+        this.queueBytes = 0;
+        this.pendingReplies.push(...batch);
+        this.socketWriteCount++;
+        if (auto && batch.length > 1) {
+            this.autoPipelineBatchCount++;
+            this.batchedCommandCount += batch.length;
+        }
+        this.socket.write(encodeCommands(batch.map((pending) => pending.args)));
+    }
+    expectInteger(result, command) {
+        if (typeof result !== "number") {
+            throw new Error(`unexpected ${command} reply`);
+        }
+        return result;
+    }
+    expectBufferArray(result, command) {
+        if (!Array.isArray(result) || result.some((item) => !Buffer.isBuffer(item))) {
+            throw new Error(`unexpected ${command} reply`);
+        }
+        return result;
+    }
+    expectNumericBulk(result, command) {
+        if (!Buffer.isBuffer(result) && typeof result !== "string") {
+            throw new Error(`unexpected ${command} reply`);
+        }
+        const value = Number(Buffer.isBuffer(result) ? result.toString() : result);
+        if (!Number.isFinite(value))
+            throw new Error(`unexpected ${command} numeric reply`);
+        return value;
+    }
+    onData(chunk) {
+        let values;
+        try {
+            values = this.decoder.push(chunk);
+        }
+        catch (error) {
+            this.failAll(error instanceof Error ? error : new Error(String(error)));
+            this.socket?.destroy();
+            return;
+        }
+        for (const value of values) {
+            const pending = this.pendingReplies.shift();
+            if (!pending) {
+                this.failAll(new Error("received RESP reply with no pending command"));
+                this.socket?.destroy();
+                return;
+            }
+            if (value instanceof RespError && !pending.raw)
+                pending.reject(value);
+            else
+                pending.resolve(value);
+        }
+    }
+    failAll(error) {
+        const all = [...this.pendingReplies, ...this.queue];
+        this.pendingReplies = [];
+        this.queue = [];
+        this.queueBytes = 0;
+        for (const pending of all)
+            pending.reject(error);
+    }
+}
