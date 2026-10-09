@@ -14,14 +14,14 @@ func TestJSONNumMultByBasic(t *testing.T) {
 		t.Fatalf("JSON.SET=%q", got)
 	}
 
-	if got := execute(t, s, "JSON.NUMMULTBY", "doc", "$.price", "2"); got != "$2\r\n25\r\n" {
+	if got := execute(t, s, "JSON.NUMMULTBY", "doc", "$.price", "2"); got != "$4\r\n[25]\r\n" {
 		t.Fatalf("JSON.NUMMULTBY price=%q", got)
 	}
 	if got := execute(t, s, "JSON.GET", "doc", "$.price"); got != "$4\r\n[25]\r\n" {
 		t.Fatalf("JSON.GET price=%q", got)
 	}
 
-	if got := execute(t, s, "JSON.NUMMULTBY", "doc", "$.qty", "0.5"); got != "$1\r\n2\r\n" {
+	if got := execute(t, s, "JSON.NUMMULTBY", "doc", "$.qty", "0.5"); got != "$3\r\n[2]\r\n" {
 		t.Fatalf("JSON.NUMMULTBY qty=%q", got)
 	}
 }
@@ -33,10 +33,10 @@ func TestJSONNumMultByMissingAndNonNumeric(t *testing.T) {
 	if got := execute(t, s, "JSON.NUMMULTBY", "missing", "$.n", "2"); got != "$-1\r\n" {
 		t.Fatalf("missing key=%q", got)
 	}
-	if got := execute(t, s, "JSON.NUMMULTBY", "doc", "$.missing", "2"); got != "$-1\r\n" {
+	if got := execute(t, s, "JSON.NUMMULTBY", "doc", "$.missing", "2"); got != "$2\r\n[]\r\n" {
 		t.Fatalf("missing path=%q", got)
 	}
-	if got := execute(t, s, "JSON.NUMMULTBY", "doc", "$.name", "2"); got != "$-1\r\n" {
+	if got := execute(t, s, "JSON.NUMMULTBY", "doc", "$.name", "2"); got != "$6\r\n[null]\r\n" {
 		t.Fatalf("non numeric=%q", got)
 	}
 }
@@ -51,7 +51,7 @@ func TestJSONNumMultByErrorsAndTTL(t *testing.T) {
 		t.Fatalf("missing TTL before JSON.NUMMULTBY: %q", before)
 	}
 
-	if got := execute(t, s, "JSON.NUMMULTBY", "doc", "$.n", "3"); got != "$1\r\n6\r\n" {
+	if got := execute(t, s, "JSON.NUMMULTBY", "doc", "$.n", "3"); got != "$3\r\n[6]\r\n" {
 		t.Fatalf("multiply=%q", got)
 	}
 	if got := execute(t, s, "PTTL", "doc"); got == ":-1\r\n" || got == ":-2\r\n" {

@@ -1,5 +1,12 @@
 # Changelog
 
+### Compatibility — JSON commands answer JSONPath queries the way RedisJSON does
+
+- With a `$` path, `JSON.ARRLEN`, `STRLEN`, `OBJLEN`, `OBJKEYS`, `ARRAPPEND`, `ARRINSERT`, `ARRPOP`, `ARRTRIM`, `ARRINDEX`, `STRAPPEND` and `TOGGLE` now reply with one entry per matched value (an array, `null` for a value of the wrong type, an empty array for no match); `NUMINCRBY` and `NUMMULTBY` reply with a JSON array such as `[3,null]`. Queries that match several values (`$..arr`, `$.items[*].price`) now update and report every match; the document is written once, and not at all if any match fails. Legacy paths (`.a.b`) keep their single-value replies.
+- `JSON.GET key path path...` returns one object mapping each path to its result.
+- `JSON.ARRINDEX` with a `$` path takes `stop` as exclusive and treats 0 as the end of the array, as RedisJSON does.
+- **Changed reply:** `JSON.NUMINCRBY`/`NUMMULTBY` with a `$` path used to return a bare number (`6`); they now return `[6]`.
+
 ### Feature — `MULTI ATOMIC`: all-or-nothing transactions
 
 - `MULTI ATOMIC` starts a transaction that is rolled back as a whole if any queued command fails at run time. The keys it can change are snapshotted first and restored exactly (value, type, expiry); transactions with scripts, `FLUSHALL`/`FLUSHDB` or `SORT` snapshot the whole keyspace. Only a committed transaction reaches the append-only file and replicas, and blocked clients are woken after the commit. Commands whose effect cannot be undone (`PUBLISH`, `CONFIG`, `FUNCTION`, ...) are rejected when queued. Plain `MULTI` is unchanged. Tests roll back 45 write commands across every data type and compare the whole database before and after, check the log after a restart, and check that other clients never see rolled-back state. Details: `docs/ATOMIC-TRANSACTIONS.md`.

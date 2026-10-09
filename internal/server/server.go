@@ -249,7 +249,7 @@ var commandTable = map[string]commandInfo{
 	"BITPOS":         {3, 6, 1, 1, 1, false},
 	"BITOP":          {4, 0, 2, -1, 1, true},
 	"JSON.SET":       {4, 5, 1, 1, 1, true},
-	"JSON.GET":       {2, 3, 1, 1, 1, false},
+	"JSON.GET":       {2, 0, 1, 1, 1, false},
 	"JSON.RESP":      {2, 3, 1, 1, 1, false},
 	"JSON.DEBUG":     {2, 4, 0, 0, 0, false},
 	"JSON.TYPE":      {2, 3, 1, 1, 1, false},
@@ -537,6 +537,17 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			return nil, errors.New("ERR value is not a valid number")
 		}
 
+		if isJSONPathArg(string(args[2])) {
+			results, found, err := s.store.JSONNumIncrByMatches(key, string(args[2]), increment)
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				return nullBulk(), nil
+			}
+			return jsonNumberMatches(results), nil
+		}
+
 		value, found, err := s.store.JSONNumIncrBy(key, string(args[2]), increment)
 		if err != nil {
 			return nil, err
@@ -549,6 +560,17 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			return nil, errors.New("ERR value is not a valid number")
 		}
 
+		if isJSONPathArg(string(args[2])) {
+			results, found, err := s.store.JSONNumMultByMatches(key, string(args[2]), multiplier)
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				return nullBulk(), nil
+			}
+			return jsonNumberMatches(results), nil
+		}
+
 		value, found, err := s.store.JSONNumMultBy(key, string(args[2]), multiplier)
 		if err != nil {
 			return nil, err
@@ -559,6 +581,24 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		path := "$"
 		if len(args) == 3 {
 			path = string(args[2])
+		}
+
+		if isJSONPathArg(path) {
+			kind := "object"
+			switch cmd {
+			case "JSON.STRLEN":
+				kind = "string"
+			case "JSON.ARRLEN":
+				kind = "array"
+			}
+			results, found, err := s.store.JSONLenMatches(key, path, kind)
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				return nullBulk(), nil
+			}
+			return jsonIntegerMatches(results), nil
 		}
 
 		var (
@@ -617,6 +657,17 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		return formatBulkString([]byte(jsonType)), nil
 
 	case "JSON.ARRAPPEND":
+		if isJSONPathArg(string(args[2])) {
+			results, found, err := s.store.JSONArrAppendMatches(key, string(args[2]), args[3:])
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				return nullBulk(), nil
+			}
+			return jsonIntegerMatches(results), nil
+		}
+
 		length, found, err := s.store.JSONArrAppend(key, string(args[2]), args[3:])
 		if err != nil {
 			return nil, err
@@ -634,6 +685,17 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			valueIndex = 3
 		}
 
+		if isJSONPathArg(path) {
+			results, found, err := s.store.JSONStrAppendMatches(key, path, args[valueIndex])
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				return nullBulk(), nil
+			}
+			return jsonIntegerMatches(results), nil
+		}
+
 		length, found, err := s.store.JSONStrAppend(key, path, args[valueIndex])
 		if err != nil {
 			return nil, err
@@ -647,6 +709,17 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		path := "$"
 		if len(args) == 3 {
 			path = string(args[2])
+		}
+
+		if isJSONPathArg(path) {
+			results, found, err := s.store.JSONObjKeysMatches(key, path)
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				return nullBulk(), nil
+			}
+			return jsonKeyListMatches(results), nil
 		}
 
 		keys, found, err := s.store.JSONObjKeys(key, path)
@@ -664,6 +737,17 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		return array(items...), nil
 
 	case "JSON.TOGGLE":
+		if isJSONPathArg(string(args[2])) {
+			results, found, err := s.store.JSONToggleMatches(key, string(args[2]))
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				return nullBulk(), nil
+			}
+			return jsonIntegerMatches(results), nil
+		}
+
 		value, found, err := s.store.JSONToggle(key, string(args[2]))
 		if err != nil {
 			return nil, err
@@ -688,6 +772,17 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			index = parsed
 		}
 
+		if isJSONPathArg(path) {
+			results, found, err := s.store.JSONArrPopMatches(key, path, index)
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				return nullBulk(), nil
+			}
+			return jsonEncodedMatches(results), nil
+		}
+
 		value, found, err := s.store.JSONArrPop(key, path, index)
 		if err != nil {
 			return nil, err
@@ -701,6 +796,17 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		index, err := strconv.Atoi(string(args[3]))
 		if err != nil {
 			return nil, errors.New("ERR value is not an integer or out of range")
+		}
+
+		if isJSONPathArg(string(args[2])) {
+			results, found, err := s.store.JSONArrInsertMatches(key, string(args[2]), index, args[4:])
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				return nullBulk(), nil
+			}
+			return jsonIntegerMatches(results), nil
 		}
 
 		length, found, err := s.store.JSONArrInsert(
@@ -736,6 +842,17 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			stop = &v
 		}
 
+		if isJSONPathArg(string(args[2])) {
+			results, found, err := s.store.JSONArrIndexMatches(key, string(args[2]), args[3], start, stop)
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				return nullBulk(), nil
+			}
+			return jsonIntegerMatches(results), nil
+		}
+
 		index, found, err := s.store.JSONArrIndex(
 			key,
 			string(args[2]),
@@ -757,6 +874,14 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			path = string(args[2])
 		}
 
+		if isJSONPathArg(path) {
+			cleared, err := s.store.JSONClearMatches(key, path)
+			if err != nil {
+				return nil, err
+			}
+			return integer(cleared), nil
+		}
+
 		cleared, err := s.store.JSONClear(key, path)
 		if err != nil {
 			return nil, err
@@ -771,6 +896,17 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		stop, err := strconv.Atoi(string(args[4]))
 		if err != nil {
 			return nil, errors.New("ERR value is not an integer or out of range")
+		}
+
+		if isJSONPathArg(string(args[2])) {
+			results, found, err := s.store.JSONArrTrimMatches(key, string(args[2]), start, stop)
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				return nullBulk(), nil
+			}
+			return jsonIntegerMatches(results), nil
 		}
 
 		length, found, err := s.store.JSONArrTrim(
@@ -878,6 +1014,9 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 		return []byte("+OK\r\n"), nil
 
 	case "JSON.GET":
+		if len(args) > 3 {
+			return s.jsonGetMultiplePaths(key, args[2:])
+		}
 		path := "."
 
 		if len(args) == 3 {
