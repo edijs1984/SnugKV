@@ -1,5 +1,9 @@
 # Changelog
 
+### Throughput — optimizer workers trail client writes on a duty cycle (pending live benchmark)
+
+- Workers that got past the foreground-quiet wait (2 s deferral bound or a half-full queue) used to run at the full configured CPU share, 90% on each of the host's cores in dedicated mode, competing with connection handlers during a write burst. While a client write has arrived in the last 20 ms they now run at a 20% duty cycle and return to full speed as soon as writes pause. Local SET load of 1M cache-json / session-json values (1 KiB, 8 workers, pipeline 256): about 105k -> 127k and 107k -> 121k ops/s (Redis locally: 160k and 148k). Settled and post-load memory are identical to before (cache-json 737 MB vs 740 MB total, same convergence time).
+
 ### Throughput — incompressible values no longer flood the optimizer (pending live benchmark)
 
 - After 512 consecutive optimizer attempts that produced no rewrite, write-time enqueues are thinned to one in eight until any attempt succeeds, which resets it at once. Recovery sampling and explicit SNUG.COMPACT requests are never thinned. Random 256-byte values spent about a third of load CPU on candidate copies and LZ4 attempts that all ended as raw; local SET load of 1M random keys goes from about 260k to about 340k ops/s (Redis locally: 355-415k). Text, repetitive, counter and uuid are unchanged in throughput and settled memory.

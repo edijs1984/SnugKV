@@ -557,3 +557,9 @@ func TestFutileAttemptsThinWriteTimeEnqueues(t *testing.T) {
 		t.Fatalf("QueueNow queued %d keys, want 64", got)
 	}
 }
+
+func TestForegroundDutyCapConstants(t *testing.T) {
+	if foregroundDutyPercent < 1 || foregroundDutyPercent >= 50 {
+		t.Fatalf("foreground duty %d%% outside sane range", foregroundDutyPercent)
+	}
+}
