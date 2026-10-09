@@ -29,13 +29,32 @@ var atomicRejectedCommands = map[string]bool{
 	"FT.SUGADD": true, "FT.SUGDEL": true,
 }
 
-// atomicFullSnapshotCommands may write keys that their arguments do not name
-// (scripts touch any key, FLUSH* touches all of them), so a transaction that
-// contains one is snapshotted as a whole instead of per key.
-var atomicFullSnapshotCommands = map[string]bool{
-	"EVAL": true, "EVALSHA": true, "FCALL": true,
-	"FLUSHALL": true, "FLUSHDB": true,
-	"SORT": true,
+// atomicScopedWriteCommands are the write commands whose key arguments are
+// known to name every key they change. A transaction made only of these (and of
+// reads) snapshots just those keys. Any other write command, including scripts,
+// FLUSHALL and SORT STORE, makes the transaction snapshot the whole keyspace.
+// Every name here is exercised by atomicTestCorpus in the tests, which compare
+// the database before and after a rollback and the append-only file with the
+// live store, so a command's key positions cannot drift unnoticed.
+var atomicScopedWriteCommands = map[string]bool{
+	"SET": true, "SETEX": true, "PSETEX": true, "SETNX": true, "GETSET": true,
+	"GETDEL": true, "GETEX": true, "APPEND": true, "SETRANGE": true,
+	"INCR": true, "DECR": true, "INCRBY": true, "DECRBY": true, "INCRBYFLOAT": true,
+	"MSET": true, "MSETNX": true,
+	"DEL": true, "UNLINK": true,
+	"EXPIRE": true, "PEXPIRE": true, "EXPIREAT": true, "PEXPIREAT": true, "PERSIST": true,
+	"RENAME": true, "RENAMENX": true, "COPY": true,
+	"HSET": true, "HMSET": true, "HSETNX": true, "HDEL": true, "HINCRBY": true, "HINCRBYFLOAT": true,
+	"LPUSH": true, "RPUSH": true, "LPUSHX": true, "RPUSHX": true, "LPOP": true, "RPOP": true,
+	"LTRIM": true, "LSET": true, "LINSERT": true, "LREM": true, "LMOVE": true, "RPOPLPUSH": true,
+	"SADD": true, "SREM": true, "SPOP": true, "SMOVE": true,
+	"SINTERSTORE": true, "SUNIONSTORE": true, "SDIFFSTORE": true,
+	"ZADD": true, "ZREM": true, "ZINCRBY": true, "ZPOPMIN": true, "ZPOPMAX": true,
+	"ZREMRANGEBYSCORE": true, "ZREMRANGEBYRANK": true,
+	"ZUNIONSTORE": true, "ZINTERSTORE": true, "ZDIFFSTORE": true,
+	"XADD": true, "XDEL": true, "XTRIM": true, "XGROUP": true, "XREADGROUP": true,
+	"SETBIT": true, "BITOP": true, "PFADD": true, "PFMERGE": true, "GEOADD": true,
+	"JSON.SET": true, "JSON.DEL": true,
 }
 
 func atomicQueueValidation(args [][]byte) error {
@@ -62,11 +81,11 @@ func atomicSnapshotKeys(commands [][][]byte) (keys []string, scoped bool) {
 		if !known {
 			return nil, false
 		}
-		if atomicFullSnapshotCommands[name] {
-			return nil, false
-		}
 		if !info.write {
 			continue
+		}
+		if !atomicScopedWriteCommands[name] {
+			return nil, false
 		}
 		refs, err := commandKeys(command)
 		if err != nil || len(refs) == 0 {

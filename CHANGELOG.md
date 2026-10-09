@@ -1,5 +1,9 @@
 # Changelog
 
+### Performance — EXEC no longer copies the whole database (pending live benchmark)
+
+- With an append-only file or replicas, every write `EXEC` exported the entire keyspace before and after the transaction to work out what changed. It now exports only the keys named by the transaction's commands, as long as every write command in it is on a verified list (about 75 data commands); a transaction containing a script, `FLUSHALL` or any other command snapshots everything as before. A transaction of `SET` plus `INCR` against a 300,000-key database with the log enabled: 2,889 ms before, 0.87 ms after. Tests run each listed command inside a transaction and compare the log replay with the live store, and compare the database before and after a rollback, so a command whose key positions drift fails the build.
+
 ### Feature — atomic transactions on by configuration, atomic scripts and functions
 
 - `-atomic-transactions` (env `SNUGKV_ATOMIC_TRANSACTIONS`, config `atomic_transactions`) makes every `MULTI`/`EXEC` and every writable `EVAL`/`FCALL` all-or-nothing, so existing clients get rollback without sending `MULTI ATOMIC`.
