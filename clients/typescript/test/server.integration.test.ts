@@ -248,3 +248,16 @@ test("json: merge, mSet, clear, del", { skip }, async () => {
   assert.equal(await j.get("j:3"), null);
   await assert.rejects(j.set("j:new", "$.a", 1)); // new documents start at the root
 });
+
+test("json: queries that match several values", { skip }, async () => {
+  const j = client.json;
+  await j.set("j:5", "$", { a: { arr: [1, 2] }, b: { arr: [3] }, items: [{ p: 1 }, { p: 2 }, { p: "x" }] });
+  assert.deepEqual(await j.arrLen("j:5", "$..arr"), [2, 1]);
+  assert.deepEqual(await j.arrAppend("j:5", "$..arr", 9), [3, 2]);
+  assert.deepEqual(await j.numIncrBy("j:5", "$.items[*].p", 10), [11, 12, null]);
+  assert.deepEqual(await j.getPath("j:5", "$..arr"), [[1, 2, 9], [3, 9]]);
+  assert.deepEqual(await j.arrPop("j:5", "$..arr"), [9, 9]);
+  assert.deepEqual(await j.arrIndex("j:5", "$..arr", 2), [1, -1]);
+  assert.deepEqual(await j.arrLen("j:5", "$.nope"), []);
+  assert.deepEqual(await j.numIncrBy("j:5", "$.nope", 1), []);
+});
