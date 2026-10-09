@@ -77,6 +77,67 @@ Adaptive encoding, compression, JSON-shape optimization, native container storag
 and indexed ZSET optimizations are server-side and require no client opt-in. The
 same client commands continue to work as SnugKV changes physical representation.
 
+## Transactions
+
+`client.multi()` builds a typed `MULTI`/`EXEC`. Each call widens the result tuple, so `exec()` resolves to exactly the types you queued. The whole transaction is written to the socket in one piece, so other callers on the same client can never land between `MULTI` and `EXEC`.
+
+```ts
+const [ok, hits, balance] = await client
+  .multi({ atomic: true })       // MULTI ATOMIC: all-or-nothing
+  .set("order:1", "paid")
+  .incr("stats:orders")
+  .incrBy("balance:7", -25)
+  .exec();                       // [ "OK", number, number ]
+```
+
+With `atomic: true` a failing command rolls back every write and `exec()` throws `TransactionAbortedError` (`rolledBack`, `commandIndex`, `command`, `cause`). Without it Redis rules apply: earlier commands stay applied, and a run-time failure throws `TransactionError` with `rolledBack: false` and every reply in `replies`. A command the server refuses to queue throws `TransactionError` with the offending `command`. Use `client.multi().command([...])` for anything without a typed method.
+
+`WATCH` needs a connection of its own and is not part of this builder yet.
+
+## Built-in functions
+
+`client.snug` wraps the server's `snug_*` function library (see `docs/BUILTIN-FUNCTIONS.md`):
+
+```ts
+const { allowed, retryAfterMs } = await client.snug.rateLimit(`rl:${userId}`, { capacity: 10, refillPerSecond: 5 });
+
+await client.snug.withLock("job:nightly", { ttlMs: 30_000, waitMs: 5_000 }, async (lock) => {
+  await doWork(lock.fence);            // reject writes carrying a smaller fence
+});
+
+const { replayed, result } = await client.snug.idempotent(`pay:${requestId}`, { pendingTtlMs: 30_000, resultTtlMs: 86_400_000 }, async () => charge());
+
+const { applied, value } = await client.snug.counterAdd("stock:sku1", -1, { min: 0, max: 100 });
+
+const q = client.snug.queue("emails");
+const id = await q.push(JSON.stringify(job));
+const msg = await q.pop(30_000);       // redelivered after 30 s unless acked
+if (msg) { await handle(msg.payload); await q.ack(msg.id); }
+
+const board = client.snug.leaderboard("scores");
+await board.submit("ann", 120);        // { rank, score }, rank 0 is first
+const near = await board.around("ann", 2);
+```
+
+`client.fcall(name, keys, args)`, `client.fcallRo(...)` and `client.functionLoad(code, { replace })` are available for your own functions. Queue keys share one hash tag (`{name}:ready`, ...), so queues work in a cluster; for locks in a cluster put the lock and its fence counter in one tag, e.g. `{job}:lock` with the default `{job}:lock:fence`.
+
+## Connecting with a password
+
+```ts
+new SnugKV({ host, port, username: "app", password: process.env.SNUGKV_PASSWORD, database: 0 });
+```
+
+`AUTH` and `SELECT` are sent as part of `connect()`; a rejected password makes `connect()` throw.
+
+## Tests against a real server
+
+```bash
+(cd ../.. && go build -o snugkv ./cmd/snugkv)
+SNUGKV_BIN=../../snugkv npm test
+```
+
+Without `SNUGKV_BIN` the integration tests are skipped.
+
 ## Auto-pipeline observability
 
 `client.stats()` exposes client-side transport counters:

@@ -1,7 +1,12 @@
 export class RespError extends Error {
+  /** First word of the error reply, e.g. "ERR", "WRONGTYPE", "EXECABORT". */
+  readonly code: string;
+
   constructor(message: string) {
     super(message);
     this.name = "RespError";
+    const space = message.indexOf(" ");
+    this.code = space === -1 ? message : message.slice(0, space);
   }
 }
 
