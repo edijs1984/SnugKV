@@ -1,5 +1,9 @@
 # Changelog
 
+### Tooling — `rpcbench wallets`, a wallet-style load and staleness test
+
+- `rpcbench wallets` simulates users who each watch a set of accounts and refresh it periodically (chain head, `getMultipleAccounts`, owner balance, reads of popular accounts shared between users). It reports calls answered without the node, a per-method breakdown, node calls saved, how stale cached answers were against the node (share that differed and slots behind), and, with API keys, whether each key's stored usage equals what the client sent. The fake node gains `-advance` (the slot moves, some accounts change) and answers `getSlot`, `getBalance`, `getLatestBlockhash` and `getMultipleAccounts`; without `-advance` its replies are unchanged. First run on the fake node: 48.9% of calls answered without the node, 1.5% of checked answers stale by 2 to 3 slots, key counts exact. Per-user calls (`getMultipleAccounts`, `getBalance`) never hit. See `docs/RPC-CACHE.md`.
+
 ### Feature — `rpccache -auth`: API keys, plans, rate limits and metering
 
 - `rpccache -auth` requires an API key (`Authorization: Bearer`, `X-API-Key` or `?api-key=`). Keys, plans, token buckets and daily usage live in SnugKV; only a hash of each key is stored. A plan sets calls per second, burst (also the largest batch) and a daily quota; a batch of n calls costs n. Refusals are 401 (no, unknown or revoked key), 403 (no valid plan) and 429 with `Retry-After`. Usage is counted per key per UTC day and split by cache class (`immutable`, `static`, `recent`, `state`, `tip`, `bypass`) plus `denied`.

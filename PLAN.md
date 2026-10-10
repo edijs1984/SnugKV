@@ -136,7 +136,7 @@ Ideas discussed but not started. None is committed work.
 - Chain-aware server functions (signature or address checks inside the server).
 - NVMe cold tier for infrequently read keys.
 - Arena block-header shrink.
-- `rpccache`: WebSocket subscriptions; billing, per-method weights and a customer portal on top of the new keys and metering.
+- `rpccache`: cache `getMultipleAccounts` per account so overlapping sets share entries (the wallet simulation shows 0% hits today); WebSocket subscriptions; billing, per-method weights and a customer portal on top of the new keys and metering.
 - Secondary indexes beyond the JSON-backed search; built-in rate limiting beyond `snug_*`. Deferred by the owner on 2026-10-10.
 
 ## Completed milestones

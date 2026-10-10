@@ -6,6 +6,10 @@
 //	rpcbench load -url http://127.0.0.1:8899 -accounts 100000 -requests 1000000
 //	    a Zipf-distributed read workload against the proxy; with -cache it
 //	    also reports the memory the cache server used
+//	rpcbench wallets -url http://127.0.0.1:8899 -users 200 -duration 30s
+//	    simulated wallet users refreshing their balances; reports savings,
+//	    how stale cached answers are, and (with keys) whether limits and
+//	    metering match what was sent
 package main
 
 import (
@@ -33,7 +37,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: rpcbench upstream|load [flags]")
+		fmt.Fprintln(os.Stderr, "usage: rpcbench upstream|load|wallets [flags]")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -41,8 +45,10 @@ func main() {
 		runUpstream(os.Args[2:])
 	case "load":
 		runLoad(os.Args[2:])
+	case "wallets":
+		runWallets(os.Args[2:])
 	default:
-		fmt.Fprintln(os.Stderr, "usage: rpcbench upstream|load [flags]")
+		fmt.Fprintln(os.Stderr, "usage: rpcbench upstream|load|wallets [flags]")
 		os.Exit(2)
 	}
 }
@@ -54,7 +60,15 @@ func runUpstream(args []string) {
 	listen := fs.String("listen", "127.0.0.1:9100", "listen address")
 	delay := fs.Duration("delay", 20*time.Millisecond, "simulated node latency")
 	slot := fs.Uint64("slot", 300_000_000, "slot reported in every response")
+	advance := fs.Bool("advance", false, "let the slot advance with the clock (400 ms per slot) and let some accounts change as it does")
 	fs.Parse(args)
+	started := time.Now()
+	curSlot := func() uint64 {
+		if !*advance {
+			return *slot
+		}
+		return *slot + uint64(time.Since(started)/(400*time.Millisecond))
+	}
 
 	var calls atomic.Uint64
 	http.HandleFunc("/calls", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprintln(w, calls.Load()) })
@@ -68,12 +82,44 @@ func runUpstream(args []string) {
 			ID     json.RawMessage   `json:"id"`
 		}
 		json.Unmarshal(body, &req)
-		var addr string
-		if len(req.Params) > 0 {
-			json.Unmarshal(req.Params[0], &addr)
+		sl := curSlot()
+		first := func() string {
+			var addr string
+			if len(req.Params) > 0 {
+				json.Unmarshal(req.Params[0], &addr)
+			}
+			return addr
+		}
+		var result string
+		switch req.Method {
+		case "getSlot", "getBlockHeight":
+			result = strconv.FormatUint(sl, 10)
+		case "getLatestBlockhash":
+			h := sha256.Sum256([]byte("blockhash-" + strconv.FormatUint(sl/150, 10)))
+			result = fmt.Sprintf(`{"context":{"slot":%d},"value":{"blockhash":"%s","lastValidBlockHeight":%d}}`, sl, base58(h[:]), sl+150)
+		case "getBalance":
+			h := sha256.Sum256([]byte(first()))
+			result = fmt.Sprintf(`{"context":{"slot":%d},"value":%d}`, sl, 1_000_000+binary.LittleEndian.Uint64(h[:])%5_000_000_000+accountVersion(first(), sl, *advance))
+		case "getMultipleAccounts":
+			var addrs []string
+			if len(req.Params) > 0 {
+				json.Unmarshal(req.Params[0], &addrs)
+			}
+			var b strings.Builder
+			fmt.Fprintf(&b, `{"context":{"slot":%d},"value":[`, sl)
+			for i, a := range addrs {
+				if i > 0 {
+					b.WriteByte(',')
+				}
+				b.WriteString(accountValue(a, sl, *advance))
+			}
+			b.WriteString(`]}`)
+			result = b.String()
+		default:
+			result = fmt.Sprintf(`{"context":{"apiVersion":"2.1.0","slot":%d},"value":%s}`, sl, accountValue(first(), sl, *advance))
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"jsonrpc":"2.0","result":%s,"id":%s}`, accountInfo(addr, *slot), req.ID)
+		fmt.Fprintf(w, `{"jsonrpc":"2.0","result":%s,"id":%s}`, result, req.ID)
 	})
 	fmt.Fprintln(os.Stderr, "rpcbench: fake node on", *listen)
 	if err := http.ListenAndServe(*listen, nil); err != nil {
@@ -82,19 +128,41 @@ func runUpstream(args []string) {
 	}
 }
 
-// accountInfo builds a getAccountInfo result for a token account whose
-// contents are derived from the address: one of 64 mints, an address-specific
-// owner and amount.
-func accountInfo(addr string, slot uint64) string {
+// accountVersion says how many times an account has changed by a slot. About
+// a tenth of accounts change every 2 slots, a fifth every 150, the rest never.
+// With advance off nothing changes, so earlier runs reproduce exactly.
+func accountVersion(addr string, slot uint64, advance bool) uint64 {
+	if !advance {
+		return 0
+	}
+	h := sha256.Sum256([]byte(addr))
+	switch {
+	case h[1]%10 == 0:
+		return slot / 2
+	case h[1]%10 < 3:
+		return slot / 150
+	}
+	return 0
+}
+
+// accountValue is the "value" object of a getAccountInfo reply for a token
+// account whose contents are derived from the address: one of 64 mints, an
+// address-specific owner and amount.
+func accountValue(addr string, slot uint64, advance bool) string {
 	h := sha256.Sum256([]byte(addr))
 	acct := make([]byte, 165)
 	mint := sha256.Sum256([]byte{h[0] % 64})
 	copy(acct[0:32], mint[:])
 	copy(acct[32:64], h[:])
-	binary.LittleEndian.PutUint64(acct[64:], binary.LittleEndian.Uint64(h[8:])>>(h[16]%50))
+	binary.LittleEndian.PutUint64(acct[64:], (binary.LittleEndian.Uint64(h[8:])>>(h[16]%50))+accountVersion(addr, slot, advance))
 	acct[108] = 1
 	data := base64.StdEncoding.EncodeToString(acct)
-	return fmt.Sprintf(`{"context":{"apiVersion":"2.1.0","slot":%d},"value":{"data":["%s","base64"],"executable":false,"lamports":2039280,"owner":"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA","rentEpoch":18446744073709551615,"space":165}}`, slot, data)
+	return fmt.Sprintf(`{"data":["%s","base64"],"executable":false,"lamports":2039280,"owner":"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA","rentEpoch":18446744073709551615,"space":165}`, data)
+}
+
+// accountInfo builds a getAccountInfo result.
+func accountInfo(addr string, slot uint64) string {
+	return fmt.Sprintf(`{"context":{"apiVersion":"2.1.0","slot":%d},"value":%s}`, slot, accountValue(addr, slot, false))
 }
 
 // ---- load ----
