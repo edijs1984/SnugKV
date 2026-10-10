@@ -1,5 +1,11 @@
 # Changelog
 
+### Feature — `rpccache -auth`: API keys, plans, rate limits and metering
+
+- `rpccache -auth` requires an API key (`Authorization: Bearer`, `X-API-Key` or `?api-key=`). Keys, plans, token buckets and daily usage live in SnugKV; only a hash of each key is stored. A plan sets calls per second, burst (also the largest batch) and a daily quota; a batch of n calls costs n. Refusals are 401 (no, unknown or revoked key), 403 (no valid plan) and 429 with `Retry-After`. Usage is counted per key per UTC day and split by cache class (`immutable`, `static`, `recent`, `state`, `tip`, `bypass`) plus `denied`.
+- New `cmd/rpckeys` manages plans and keys and prints usage. New `Client` (pooled, with arrays and pipelining) and `Admin` in `internal/rpccache`.
+- A store outage keeps known keys working on their last record, refuses unknown keys with 503, and lets rate limiting and metering fail open. Revocation and plan changes apply within `-auth-record-ttl` (5 s). Overhead measured at about 36 µs per cached request in the sandbox (5.8 µs without auth, store on the same two cores). Not included: billing, WebSocket authentication, IP allow-lists. Details: `docs/RPC-CACHE.md`.
+
 ### Memory — hex keys stored in binary in the key log
 
 - A key whose tail is 16 to 128 hex digits (a transaction or block hash, an address, optionally behind a prefix such as `tx:` or a `0x`) is now stored as raw bytes in the per-shard key log, with its letter case kept exactly (all lower, all upper, or a bit mask for mixed case such as checksummed addresses). Any key that does not re-encode to exactly the same bytes, and any key that would not get smaller, stays as it was, so other workloads are unchanged. The record is a zero byte followed by a flag byte; a raw record can never start with zero except for the empty key, which now writes `00 FF`.

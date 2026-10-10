@@ -70,7 +70,7 @@ further scope decision here. Details and measurements are in `CHANGELOG.md`.
   uint256 convert in the background optimizer; signatures stay raw.
 - **`rpccache`:** a caching JSON-RPC proxy for Solana and EVM nodes with a
   Redis-protocol backend (`cmd/rpccache`, `cmd/rpcbench`). See
-  `docs/RPC-CACHE.md`. It is a separate program; the server itself is unchanged.
+  `docs/RPC-CACHE.md`. It is a separate program; the server itself is unchanged. `-auth` adds API keys, plans, rate limits, daily quotas and per-class usage counts kept in SnugKV, managed with `cmd/rpckeys`.
 - **Benchmark profiles:** `eth-hash`, `eth-address`, `sol-pubkey`,
   `sol-signature`, `uint256`, `sol-token-account`, `sol-token-account-b64`,
   `hex-key` and `address-key`, in the wire bench, the bench scripts and the

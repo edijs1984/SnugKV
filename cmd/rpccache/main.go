@@ -38,6 +38,9 @@ func main() {
 	ttlRecent := flag.Duration("ttl-recent", d.Recent, "results at a past but reorgable height")
 	ttlState := flag.Duration("ttl-state", d.State, "account and state reads")
 	ttlTip := flag.Duration("ttl-tip", d.Tip, "chain head reads")
+	auth := flag.Bool("auth", false, "require an API key (create keys with rpckeys)")
+	authStore := flag.String("auth-store", os.Getenv("RPC_AUTH_STORE"), "SnugKV address holding keys, plans and usage (default: the -cache address)")
+	authTTL := flag.Duration("auth-record-ttl", 5*time.Second, "how long key and plan records are trusted; bounds how fast a revocation applies")
 	var headers headerFlags
 	flag.Var(&headers, "upstream-header", `extra upstream header "Name: value" (repeatable)`)
 	flag.Parse()
@@ -71,9 +74,29 @@ func main() {
 		log.Fatalf("rpccache: %v", err)
 	}
 
+	var handler http.Handler = proxy
+	if *auth {
+		addr := *authStore
+		if addr == "" {
+			addr = *cacheAddr
+		}
+		store := rpccache.NewClient(addr, 16, 250*time.Millisecond)
+		defer store.Close()
+		a, err := rpccache.NewAuth(rpccache.AuthConfig{
+			Store: store, RecordTTL: *authTTL, Chain: rpccache.Chain(*chain),
+			MaxRequestBytes: 1 << 20,
+		}, proxy)
+		if err != nil {
+			log.Fatalf("rpccache: %v", err)
+		}
+		defer a.Close()
+		handler = a
+		fmt.Fprintf(os.Stderr, "rpccache: API keys required, key store %s\n", addr)
+	}
+
 	srv := &http.Server{
 		Addr:              *listen,
-		Handler:           proxy,
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() {

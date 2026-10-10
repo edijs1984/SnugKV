@@ -122,6 +122,7 @@ in a development sandbox, not in CI.
 - [x] Exact codecs for hex, base58, uint256 decimal and Solana SPL token accounts (IDs 13 to 16); base58 and uint256 convert in the background optimizer.
 - [x] Hex keys stored in binary in the key log (`hex-key`: 94.3 to 65.3 B/key in the sandbox; Benchmark Lab: SnugKV 61.0 vs Redis 110.1).
 - [x] `rpccache`: caching JSON-RPC proxy for Solana and EVM nodes (`docs/RPC-CACHE.md`).
+- [x] `rpccache -auth` and `rpckeys`: API keys, plans, rate limits, daily quotas and per-class usage metering stored in SnugKV.
 - [x] Benchmark profiles for the new data shapes in the wire bench, scripts and Benchmark Lab.
 - [ ] Rerun the sparse 1,000-key benchmark and the 1M-key counter baseline with the new layout, and replace the older figures quoted in `README.md` and `benchmarks/README.md`.
 - [ ] Lab run of `rpccache` against real traffic (the numbers so far use a generated node and generated responses).
@@ -135,7 +136,7 @@ Ideas discussed but not started. None is committed work.
 - Chain-aware server functions (signature or address checks inside the server).
 - NVMe cold tier for infrequently read keys.
 - Arena block-header shrink.
-- `rpccache`: API keys, per-customer rate limits and metering, WebSocket subscriptions.
+- `rpccache`: WebSocket subscriptions; billing, per-method weights and a customer portal on top of the new keys and metering.
 - Secondary indexes beyond the JSON-backed search; built-in rate limiting beyond `snug_*`. Deferred by the owner on 2026-10-10.
 
 ## Completed milestones

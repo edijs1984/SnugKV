@@ -286,7 +286,10 @@ For alpha use:
 - Numbers for these features come from a generated data set in a development
   sandbox and from the Benchmark Lab; none comes from production chain traffic.
 - `rpccache` is a separate program. It does not proxy WebSocket subscriptions,
-  does not authenticate clients, and does not run node functions. Cached state
+  does not run node functions, and authenticates clients only when started with
+  `-auth` (API keys with per-key limits and usage counts; no billing, no
+  WebSocket, no IP allow-lists; a revocation takes up to 5 seconds and the daily
+  quota can overshoot slightly across several proxy processes). Cached state
   can be as old as its TTL (1 second for account and state reads, 200 ms for the
   chain tip). See `docs/RPC-CACHE.md`.
 

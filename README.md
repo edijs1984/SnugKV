@@ -309,7 +309,9 @@ not round-trip stays as it was. Codec details are in `docs/memory-format.md`,
 measurements in `benchmarks/README.md`, and limits in `KNOWN-LIMITATIONS.md`.
 
 `cmd/rpccache` is a separate caching JSON-RPC proxy for Solana and EVM nodes that
-stores replies in SnugKV (or Redis) and forwards the rest. See `docs/RPC-CACHE.md`.
+stores replies in SnugKV (or Redis) and forwards the rest. With `-auth` it also
+issues API keys with per-key rate limits and usage metering (`cmd/rpckeys`). See
+`docs/RPC-CACHE.md`.
 
 ## TypeScript client
 
