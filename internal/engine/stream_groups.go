@@ -9,7 +9,7 @@ import (
 )
 
 func inferStreamGroupEntriesRead(
-	state packedStream,
+	state streamState,
 	id StreamID,
 ) int64 {
 	if id.equal(StreamID{}) {
@@ -29,10 +29,10 @@ func inferStreamGroupEntriesRead(
 	// The current first entry is also a non-arbitrary position when
 	// there have been no deletions/trims that would make its logical
 	// position ambiguous.
-	if len(state.Entries) > 0 &&
-		id.equal(state.Entries[0].ID) &&
+	if first, ok := state.log.FirstID(); ok &&
+		id.equal(first) &&
 		state.MaxDeletedID.equal(StreamID{}) &&
-		state.EntriesAdded == uint64(len(state.Entries)) {
+		state.EntriesAdded == uint64(state.log.Len()) {
 		return 1
 	}
 
@@ -75,16 +75,6 @@ func parseStreamGroupID(spec string, last StreamID) (StreamID, error) {
 	return StreamID{Millis: ms}, nil
 }
 
-func (s *Store) publishStreamStateLocked(sh *shard, key string, old entry, state packedStream) error {
-	packed, err := encodePackedStream(state)
-	if err != nil {
-		return err
-	}
-	updated := streamPreparedEntry(packed)
-	updated.expiresAt = sh.expirationAt(key, old)
-	return s.publish(sh, key, updated)
-}
-
 func (s *Store) StreamGroupCreate(key, group, idSpec string, mkstream bool, entriesRead int64) error {
 	if entriesRead < -1 {
 		return errors.New("ERR entries-read must be valid")
@@ -104,13 +94,13 @@ func (s *Store) StreamGroupCreate(key, group, idSpec string, mkstream bool, entr
 		return errors.New("ERR The XGROUP subcommand requires the key to exist. Note that for CREATE you may want to use the MKSTREAM option to create an empty stream automatically.")
 	}
 
-	state := packedStream{}
+	state := streamState{log: newStreamBody()}
 	if exists {
 		if old.valueType != TypeStream {
 			return streamWrongType()
 		}
 		var err error
-		state, err = s.streamStateFromEntry(sh, old)
+		state, err = s.streamStateFromEntry(sh, key, old)
 		if err != nil {
 			return err
 		}
@@ -133,11 +123,7 @@ func (s *Store) StreamGroupCreate(key, group, idSpec string, mkstream bool, entr
 	)
 
 	if !exists {
-		packed, err := encodePackedStream(state)
-		if err != nil {
-			return err
-		}
-		return s.publish(sh, key, streamPreparedEntry(packed))
+		return s.createStreamLocked(sh, key, state, 0)
 	}
 	return s.publishStreamStateLocked(sh, key, old, state)
 }
@@ -157,7 +143,7 @@ func (s *Store) StreamGroupDestroy(key, group string) (int64, error) {
 	if e.valueType != TypeStream {
 		return 0, streamWrongType()
 	}
-	state, err := s.streamStateFromEntry(sh, e)
+	state, err := s.streamStateFromEntry(sh, key, e)
 	if err != nil {
 		return 0, err
 	}
@@ -191,7 +177,7 @@ func (s *Store) StreamGroupSetID(key, group, idSpec string, entriesRead *int64) 
 	if e.valueType != TypeStream {
 		return streamWrongType()
 	}
-	state, err := s.streamStateFromEntry(sh, e)
+	state, err := s.streamStateFromEntry(sh, key, e)
 	if err != nil {
 		return err
 	}
@@ -234,7 +220,7 @@ func (s *Store) StreamGroupCreateConsumer(key, group, consumer string) (int64, e
 	if e.valueType != TypeStream {
 		return 0, streamWrongType()
 	}
-	state, err := s.streamStateFromEntry(sh, e)
+	state, err := s.streamStateFromEntry(sh, key, e)
 	if err != nil {
 		return 0, err
 	}
@@ -271,7 +257,7 @@ func (s *Store) StreamGroupDeleteConsumer(key, group, consumer string) (int64, e
 	if e.valueType != TypeStream {
 		return 0, streamWrongType()
 	}
-	state, err := s.streamStateFromEntry(sh, e)
+	state, err := s.streamStateFromEntry(sh, key, e)
 	if err != nil {
 		return 0, err
 	}

@@ -61,11 +61,11 @@ func (s *Store) ResolveStreamReadCursors(keys []string, cursors []StreamReadCurs
 		if e.valueType != TypeStream {
 			return nil, streamWrongType()
 		}
-		state, err := s.streamStateFromEntry(sh, e)
-		if err != nil {
-			return nil, err
+		body := s.streamLogs.get(keys[i])
+		if body == nil {
+			return nil, errStreamLogMissing
 		}
-		resolved[i] = state.LastID
+		resolved[i] = body.LastID
 	}
 	return resolved, nil
 }
@@ -97,24 +97,19 @@ func (s *Store) StreamReadAfter(keys []string, ids []StreamID, count int) ([]Str
 		if e.valueType != TypeStream {
 			return nil, streamWrongType()
 		}
-		state, err := s.streamStateFromEntry(sh, e)
-		if err != nil {
-			return nil, err
+		body := s.streamLogs.get(key)
+		if body == nil {
+			return nil, errStreamLogMissing
 		}
 		capacity := count
-		if capacity > len(state.Entries) {
-			capacity = len(state.Entries)
+		if capacity > body.Len() {
+			capacity = body.Len()
 		}
 		entries := make([]StreamEntry, 0, capacity)
-		for _, item := range state.Entries {
-			if !ids[i].less(item.ID) {
-				continue
-			}
-			entries = append(entries, cloneStreamEntry(item))
-			if len(entries) == count {
-				break
-			}
-		}
+		body.ForEachFrom(ids[i], false, func(item StreamEntry) bool {
+			entries = append(entries, item)
+			return len(entries) != count
+		})
 		if len(entries) > 0 {
 			results = append(results, StreamReadResult{Key: key, Entries: entries})
 		}

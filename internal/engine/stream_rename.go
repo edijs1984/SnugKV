@@ -21,6 +21,11 @@ func (s *Store) RenameStream(source, destination string, nx bool) (handled bool,
 
 	unlock := s.lockAll()
 	defer unlock()
+	return s.renameStreamLocked(source, destination, nx)
+}
+
+// renameStreamLocked is RenameStream for callers that hold every shard lock.
+func (s *Store) renameStreamLocked(source, destination string, nx bool) (handled bool, renamed bool, err error) {
 	now := s.now()
 	sourceShard := s.shardFor(source)
 	destinationShard := s.shardFor(destination)
@@ -45,15 +50,24 @@ func (s *Store) RenameStream(source, destination string, nx bool) (handled bool,
 		return true, false, nil
 	}
 
-	packed, decodeErr := s.streamLogicalValue(sourceShard, sourceEntry)
-	if decodeErr != nil {
-		return true, false, decodeErr
+	state, loadErr := s.streamStateFromEntry(sourceShard, source, sourceEntry)
+	if loadErr != nil {
+		return true, false, loadErr
 	}
-	replacement := streamPreparedEntry(packed)
+	stub, encodeErr := encodeStreamStub(state)
+	if encodeErr != nil {
+		return true, false, encodeErr
+	}
+	replacement := streamPreparedEntry(stub)
+	replacement.keepStream = true
 	replacement.expiresAt = sourceShard.expirationAt(source, sourceEntry)
 	if publishErr := s.publish(destinationShard, destination, replacement); publishErr != nil {
 		return true, false, publishErr
 	}
+	// The entry log moves with the key; its memory charge stays as it was.
+	s.dropStreamBody(destinationShard, destination)
+	s.streamLogs.del(source)
+	s.streamLogs.set(destination, state.log)
 	s.remove(sourceShard, source)
 	return true, true, nil
 }
