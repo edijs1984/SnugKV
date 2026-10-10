@@ -2304,7 +2304,7 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			)
 		}
 		if section == "" || section == "all" || section == "default" || section == "stats" {
-			out += fmt.Sprintf("# Stats\r\ntotal_commands_processed:%d\r\n", atomic.LoadUint64(&s.commands))
+			out += fmt.Sprintf("# Stats\r\ntotal_commands_processed:%d\r\npubsub_subscribers_dropped:%d\r\n", atomic.LoadUint64(&s.commands), pubSubHubForServer(s).dropped.Load())
 		}
 		if section == "" || section == "all" || section == "default" || section == "keyspace" {
 			out += fmt.Sprintf("# Keyspace\r\ndb0:keys=%d\r\n", st.Keys)

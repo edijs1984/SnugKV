@@ -311,6 +311,7 @@ Details: `docs/ACL-COMPATIBILITY.md`.
 - [x] Classic `SUBSCRIBE` / `UNSUBSCRIBE` / `PSUBSCRIBE` / `PUNSUBSCRIBE` / `PUBLISH`.
 - [x] Sharded `SSUBSCRIBE` / `SUNSUBSCRIBE` / `SPUBLISH`.
 - [x] `PUBSUB` classic/sharded introspection.
+- [x] Per-subscriber bounded queue; a subscriber that fills it or fails `-pubsub-send-attempts` deliveries in a row (each bounded by `-pubsub-send-timeout-ms`) is disconnected.
 - [x] RESP2 subscribed-mode restrictions, subscribed `PING`, `RESET`, asynchronous push delivery, disconnect cleanup, and serialized socket writes.
 
 ### Transactions / optimistic locking

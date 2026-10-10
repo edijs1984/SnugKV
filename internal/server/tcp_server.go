@@ -450,6 +450,16 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 		},
 	)
 	defer func() { pubSession.close() }()
+	setupPush := func(session *pubSubSession) {
+		session.hub.configure(s.config.PubSubSendAttempts, time.Duration(s.config.PubSubSendTimeoutMS)*time.Millisecond, s.config.PubSubQueueSize)
+		session.setPush(func(frame []byte, attempts int, timeout time.Duration) error {
+			if clientSession.protocolVersion() == 3 {
+				frame = resp3PubSubPush(frame)
+			}
+			return writer.writePush(frame, attempts, timeout)
+		}, func() { _ = peer.Close() })
+	}
+	setupPush(pubSession)
 
 	authSession := newAuthSession(
 		s.server.acl,
@@ -703,6 +713,7 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				if err != nil { _ = peer.Close() }
 				return err
 			})
+			setupPush(pubSession)
 			clientSession.closeScriptDebugRuntime()
 			if clientSession.trackingIsEnabled() {
 				atomic.AddUint64(&s.trackingClients, ^uint64(0))
