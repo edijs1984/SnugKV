@@ -2,38 +2,58 @@
 package index
 
 import (
+	"encoding/binary"
 	"hash/maphash"
 	"unsafe"
 )
 
+// Slot layout (one uint64 per slot, no pointers):
+//
+//	bit  63      live
+//	bits 57..62  hash fingerprint (6 bits)
+//	bits 30..56  value, e.g. the shard entry ID (27 bits)
+//	bits  0..29  byte offset of the key record in the table's key log (30 bits)
+//
+// The zero word is an empty slot and the word 1 is a tombstone; neither has the
+// live bit set. A slot is half the size of the earlier pointer-and-metadata
+// layout, and because it holds no pointer the garbage collector never scans it.
+//
+// Keys are not referenced from the slots by pointer. They are appended to a
+// per-table key log as a uvarint length followed by the key bytes, so a key
+// costs its own length plus one byte instead of a separate heap object.
+//
+// The log is append-only. A record is never overwritten or moved in place:
+// growth and compaction copy into a new array. Strings handed out by All and
+// Sample therefore keep pointing at bytes that never change, even after the
+// table has moved on to a newer log.
 const (
-	stateEmpty      = uint64(0)
-	stateLive       = uint64(1)
-	stateDeleted    = uint64(2)
-	stateShift       = 62
-	fingerprintShift = 58
-	fingerprintMask  = uint64(0x0f)
-	keyLengthMask    = uint64(1<<26) - 1
-	initialCapacity  = 4
+	liveBit       = uint64(1) << 63
+	slotTombstone = uint64(1)
+
+	fingerprintShift = 57
+	fingerprintMask  = uint64(0x3f)
+
+	valueShift = 30
+	valueMask  = uint64(1)<<27 - 1
+	offsetMask = uint64(1)<<30 - 1
+
+	// MaxValue is the largest value a Table can store.
+	MaxValue = uint32(valueMask)
+	// maxLogBytes is the largest key log a single Table can address.
+	maxLogBytes = int(offsetMask) + 1
+
+	initialCapacity = 4
+	slotSize        = 8
+
+	// A key log below this size is not worth compacting for dead bytes alone.
+	minCompactLogBytes = 4096
 )
 
-// slot is intentionally 16 bytes on 64-bit targets:
-//
-//   - keyData keeps the immutable Go string bytes alive and gives exact-key
-//     comparison without retaining a full 16-byte string header in every slot;
-//   - meta packs 2 bits of state, a 4-bit hash fingerprint, 26 bits of key
-//     length, and the full uint32 value.
-//
-// SnugKV's RESP bulk/key limit is 32 MiB, comfortably below the ~64 MiB
-// 26-bit key-length ceiling. The fingerprint rejects most probe candidates
-// before touching key bytes; exact comparison still makes hash collisions safe.
-type slot[V ~uint32] struct {
-	keyData *byte
-	meta    uint64
-}
-
+// Table maps string keys to ~uint32 values. It is not safe for concurrent use.
 type Table[V ~uint32] struct {
-	slots      []slot[V]
+	slots      []uint64
+	log        []byte
+	deadBytes  uint32
 	count      uint32
 	tinyFilter uint32
 }
@@ -56,67 +76,69 @@ func tinyFilterBits(hash uint64) uint32 {
 }
 
 func hashFingerprint(hash uint64) uint64 {
-	return (hash >> fingerprintShift) & fingerprintMask
+	return (hash >> 58) & fingerprintMask
 }
 
 func New[V ~uint32]() *Table[V] { return &Table[V]{} }
 func (t *Table[V]) Len() int     { return int(t.count) }
 
-func slotBytes[V ~uint32]() uint64 {
-	return uint64(unsafe.Sizeof(slot[V]{}))
+func slotWord(fingerprint uint64, value uint32, offset uint32) uint64 {
+	return liveBit | fingerprint<<fingerprintShift | uint64(value)<<valueShift | uint64(offset)
 }
 
-func (s *slot[V]) state() uint64 {
-	return s.meta >> stateShift
+func slotFingerprint(w uint64) uint64 { return (w >> fingerprintShift) & fingerprintMask }
+func slotValue(w uint64) uint32        { return uint32((w >> valueShift) & valueMask) }
+func slotOffset(w uint64) uint32       { return uint32(w & offsetMask) }
+
+// keyRecord decodes the key stored at offset and returns its bytes' position.
+func (t *Table[V]) keyRecord(offset uint32) (start, n int) {
+	b := t.log[offset:]
+	if b[0] < 0x80 {
+		return int(offset) + 1, int(b[0])
+	}
+	v, w := binary.Uvarint(b)
+	return int(offset) + w, int(v)
 }
 
-func (s *slot[V]) value() V {
-	return V(uint32(s.meta))
-}
-
-func (s *slot[V]) keyLen() int {
-	return int((s.meta >> 32) & keyLengthMask)
-}
-
-func (s *slot[V]) key() string {
-	n := s.keyLen()
+func (t *Table[V]) keyAt(offset uint32) string {
+	start, n := t.keyRecord(offset)
 	if n == 0 {
 		return ""
 	}
-	return unsafe.String(s.keyData, n)
+	return unsafe.String(&t.log[start], n)
 }
 
-func (s *slot[V]) setLive(key string, value V, hash uint64) {
-	if uint64(len(key)) > keyLengthMask {
-		panic("index key too large")
+func uvarintLen(n int) int {
+	l := 1
+	for n >= 0x80 {
+		n >>= 7
+		l++
 	}
-	if len(key) == 0 {
-		s.keyData = nil
-	} else {
-		s.keyData = unsafe.StringData(key)
-	}
-	s.meta = stateLive<<stateShift |
-		hashFingerprint(hash)<<fingerprintShift |
-		uint64(len(key))<<32 |
-		uint64(uint32(value))
+	return l
 }
 
-func (s *slot[V]) setDeleted() {
-	s.keyData = nil
-	s.meta = stateDeleted << stateShift
-}
+func recordBytes(keyLen int) int { return uvarintLen(keyLen) + keyLen }
+
+// KeyRecordBytes is the key-log space one key of the given length occupies.
+func KeyRecordBytes(keyLen int) int { return recordBytes(keyLen) }
 
 // probeStart maps the low 32 hash bits onto [0, len(slots)) with a multiply
 // and shift, so table capacities need not be powers of two. The shard selector
-// uses hash bits 32-39 and the fingerprint bits 58-61, so the probe start stays
+// uses hash bits 32-39 and the fingerprint bits 58-63, so the probe start stays
 // independent of both.
 func (t *Table[V]) probeStart(hash uint64) int {
 	return int((uint64(uint32(hash)) * uint64(len(t.slots))) >> 32)
 }
 
+// CapacityBytes is the reserved size of the slot array. Key bytes are reported
+// separately by KeyLogBytes and charged by callers per live key.
 func (t *Table[V]) CapacityBytes() uint64 {
-	return uint64(cap(t.slots)) * slotBytes[V]()
+	return uint64(cap(t.slots)) * slotSize
 }
+
+// KeyLogBytes is the reserved size of the key log, including dead records that
+// a later rebuild will reclaim.
+func (t *Table[V]) KeyLogBytes() uint64 { return uint64(cap(t.log)) }
 
 func capacityAccepts(n, capacity int) bool {
 	// Tiny shard indexes are bounded enough that filling all four slots is a
@@ -146,34 +168,104 @@ func tightCapacity(n int) int {
 }
 
 // Reserve rebuilds the table at the tightest capacity that holds max(n, Len())
-// keys. It also drops tombstones. Callers provide synchronization.
+// keys. It also drops tombstones and dead key records, and trims spare key-log
+// capacity. Callers provide synchronization.
 func (t *Table[V]) Reserve(n int) {
+	t.ReserveKeys(n, 0)
+}
+
+// ReserveKeys is Reserve for a caller that is about to insert n keys with a
+// known total key-log size, so the log can be allocated once at its final size.
+func (t *Table[V]) ReserveKeys(n int, keyLogBytes int) {
 	if n < int(t.count) {
 		n = int(t.count)
 	}
 	if n == 0 {
 		t.slots = nil
+		t.log = nil
+		t.deadBytes = 0
 		t.tinyFilter = 0
 		return
 	}
 	capacity := tightCapacity(n)
-	if capacity == len(t.slots) {
+	if capacity != len(t.slots) || t.deadBytes > 0 {
+		t.rebuildPacked(capacity, keyLogBytes)
 		return
 	}
-	t.rebuild(capacity)
+	t.trimLog(keyLogBytes)
+}
+
+// trimLog shrinks spare key-log capacity, keeping room for extra more bytes.
+func (t *Table[V]) trimLog(extra int) {
+	want := len(t.log) + extra
+	if cap(t.log) <= want {
+		return
+	}
+	next := make([]byte, len(t.log), want)
+	copy(next, t.log)
+	t.log = next
 }
 
 func (t *Table[V]) rebuild(capacity int) {
+	// Reuse the key log unless enough of it is dead to be worth packing.
+	if t.deadBytes > minCompactLogBytes && int(t.deadBytes)*4 > len(t.log) {
+		t.rebuildPacked(capacity, 0)
+		return
+	}
+	t.rebuildSlots(capacity)
+}
+
+// rebuildSlots re-places every live key in a new slot array. Key offsets stay
+// valid because the log is untouched.
+func (t *Table[V]) rebuildSlots(capacity int) {
 	old := t.slots
-	t.slots = make([]slot[V], capacity)
+	t.slots = make([]uint64, capacity)
 	t.count = 0
 	t.tinyFilter = 0
-	for i := range old {
-		s := &old[i]
-		if s.state() == stateLive {
-			t.insert(s.key(), s.value())
+	for _, w := range old {
+		if w&liveBit == 0 {
+			continue
 		}
+		key := t.keyAt(slotOffset(w))
+		t.placeKnownAbsent(Hash(key), slotValue(w), slotOffset(w))
 	}
+}
+
+// rebuildPacked rebuilds the slots and copies the live key records into a fresh
+// exactly-sized log, dropping dead records. extra reserves additional log room.
+func (t *Table[V]) rebuildPacked(capacity int, extra int) {
+	old := t.slots
+	live := len(t.log) - int(t.deadBytes)
+	oldLog := t.log
+	t.log = make([]byte, 0, live+extra)
+	t.deadBytes = 0
+	t.slots = make([]uint64, capacity)
+	t.count = 0
+	t.tinyFilter = 0
+	for _, w := range old {
+		if w&liveBit == 0 {
+			continue
+		}
+		start, n := recordSpan(oldLog, slotOffset(w))
+		offset := uint32(len(t.log))
+		t.log = append(t.log, oldLog[slotOffset(w):start+n]...)
+		key := ""
+		if n > 0 {
+			key = unsafe.String(&t.log[len(t.log)-n], n)
+		}
+		t.placeKnownAbsent(Hash(key), slotValue(w), offset)
+	}
+}
+
+// recordSpan returns where the key bytes of the record at offset begin and how
+// many there are, for a log that is not the table's current one.
+func recordSpan(log []byte, offset uint32) (start, n int) {
+	b := log[offset:]
+	if b[0] < 0x80 {
+		return int(offset) + 1, int(b[0])
+	}
+	v, w := binary.Uvarint(b)
+	return int(offset) + w, int(v)
 }
 
 func (t *Table[V]) capacityFor(n int) int {
@@ -205,8 +297,10 @@ func (t *Table[V]) capacityFor(n int) int {
 // memory it wastes.
 const gradualGrowthMin = 256
 
+// GrowthBytes is the slot-array growth that inserting additional more keys
+// would cause. Key-log bytes are charged by the caller per live key.
 func (t *Table[V]) GrowthBytes(additional int) uint64 {
-	return uint64(t.capacityFor(int(t.count)+additional)-len(t.slots)) * slotBytes[V]()
+	return uint64(t.capacityFor(int(t.count)+additional)-len(t.slots)) * slotSize
 }
 
 func (t *Table[V]) Get(key string) (V, bool) {
@@ -225,72 +319,46 @@ func (t *Table[V]) GetHashed(key string, hash uint64) (V, bool) {
 		}
 	}
 	size := len(t.slots)
-	keyLen := uint64(len(key))
 	fingerprint := hashFingerprint(hash)
 	for n, i := 0, t.probeStart(hash); n < size; n, i = n+1, i+1 {
 		if i == size {
 			i = 0
 		}
-		s := &t.slots[i]
-		meta := s.meta
-		switch meta >> stateShift {
-		case stateEmpty:
+		w := t.slots[i]
+		if w == 0 {
 			return zero, false
-		case stateLive:
-			if (meta>>32)&keyLengthMask != keyLen ||
-				(meta>>fingerprintShift)&fingerprintMask != fingerprint {
-				continue
-			}
-			if len(key) == 0 || unsafe.String(s.keyData, len(key)) == key {
-				return V(uint32(meta)), true
-			}
+		}
+		if w&liveBit == 0 || slotFingerprint(w) != fingerprint {
+			continue
+		}
+		if t.keyEquals(slotOffset(w), key) {
+			return V(slotValue(w)), true
 		}
 	}
 	return zero, false
 }
 
-func (t *Table[V]) GetHashedBytes(key []byte, hash uint64) (V, bool) {
-	var zero V
-	if len(t.slots) == 0 {
-		return zero, false
+func (t *Table[V]) keyEquals(offset uint32, key string) bool {
+	b := t.log[offset:]
+	n, w := int(b[0]), 1
+	if n >= 0x80 {
+		v, width := binary.Uvarint(b)
+		n, w = int(v), width
 	}
-	if len(t.slots) == initialCapacity && t.count == initialCapacity {
-		bits := tinyFilterBits(hash)
-		if t.tinyFilter&bits != bits {
-			return zero, false
-		}
+	if n != len(key) {
+		return false
 	}
+	return string(b[w:w+n]) == key
+}
 
-	// The transient string aliases only the caller's lookup bytes for the
-	// duration of this method. It is never stored in the table.
+func (t *Table[V]) GetHashedBytes(key []byte, hash uint64) (V, bool) {
 	var lookup string
 	if len(key) > 0 {
+		// The transient string aliases only the caller's lookup bytes for the
+		// duration of this method. It is never stored in the table.
 		lookup = unsafe.String(unsafe.SliceData(key), len(key))
 	}
-
-	size := len(t.slots)
-	keyLen := uint64(len(key))
-	fingerprint := hashFingerprint(hash)
-	for n, i := 0, t.probeStart(hash); n < size; n, i = n+1, i+1 {
-		if i == size {
-			i = 0
-		}
-		s := &t.slots[i]
-		meta := s.meta
-		switch meta >> stateShift {
-		case stateEmpty:
-			return zero, false
-		case stateLive:
-			if (meta>>32)&keyLengthMask != keyLen ||
-				(meta>>fingerprintShift)&fingerprintMask != fingerprint {
-				continue
-			}
-			if len(key) == 0 || unsafe.String(s.keyData, len(key)) == lookup {
-				return V(uint32(meta)), true
-			}
-		}
-	}
-	return zero, false
+	return t.GetHashed(lookup, hash)
 }
 
 func (t *Table[V]) Set(key string, value V) {
@@ -315,43 +383,75 @@ func (t *Table[V]) SetKnownHashed(key string, value V, hash uint64, exists bool)
 	t.insertKnownAbsentHashed(key, value, hash)
 }
 
-// insertKnownAbsentHashed inserts a key after the caller has already proved,
-// under the owning shard lock, that the exact key is absent. Probe traversal
-// still follows the normal collision chain, but live slots do not need an
-// exact-key comparison a second time.
-func (t *Table[V]) insertKnownAbsentHashed(key string, value V, hash uint64) {
+func checkValue(value uint32) {
+	if value > uint32(valueMask) {
+		panic("index value exceeds the 27-bit slot capacity")
+	}
+}
+
+// appendKey adds a key record to the log and returns its offset.
+func (t *Table[V]) appendKey(key string) uint32 {
+	need := recordBytes(len(key))
+	if len(t.log)+need > maxLogBytes {
+		panic("index key log exceeds its 1 GiB capacity")
+	}
+	if cap(t.log)-len(t.log) < need {
+		grow := len(t.log) / 4
+		if grow < 256 {
+			grow = 256
+		}
+		next := make([]byte, len(t.log), len(t.log)+need+grow)
+		copy(next, t.log)
+		t.log = next
+	}
+	offset := uint32(len(t.log))
+	t.log = binary.AppendUvarint(t.log, uint64(len(key)))
+	t.log = append(t.log, key...)
+	return offset
+}
+
+// placeKnownAbsent stores an already-logged key at its probe position. The
+// caller has established that the key is not in the table.
+func (t *Table[V]) placeKnownAbsent(hash uint64, value uint32, offset uint32) {
 	if len(t.slots) == initialCapacity {
 		t.tinyFilter |= tinyFilterBits(hash)
 	}
+	word := slotWord(hashFingerprint(hash), value, offset)
 	size := len(t.slots)
 	deleted := -1
 	for n, i := 0, t.probeStart(hash); n < size; n, i = n+1, i+1 {
 		if i == size {
 			i = 0
 		}
-		s := &t.slots[i]
-		switch s.state() {
-		case stateLive:
+		switch w := t.slots[i]; {
+		case w == 0:
+			if deleted >= 0 {
+				i = deleted
+			}
+			t.slots[i] = word
+			t.count++
+			return
+		case w&liveBit != 0:
 			continue
-		case stateDeleted:
+		default:
 			if deleted < 0 {
 				deleted = i
 			}
-		case stateEmpty:
-			if deleted >= 0 {
-				s = &t.slots[deleted]
-			}
-			s.setLive(key, value, hash)
-			t.count++
-			return
 		}
 	}
 	if deleted >= 0 {
-		t.slots[deleted].setLive(key, value, hash)
+		t.slots[deleted] = word
 		t.count++
 		return
 	}
 	panic("index capacity invariant")
+}
+
+// insertKnownAbsentHashed inserts a key after the caller has already proved,
+// under the owning shard lock, that the exact key is absent.
+func (t *Table[V]) insertKnownAbsentHashed(key string, value V, hash uint64) {
+	checkValue(uint32(value))
+	t.placeKnownAbsent(hash, uint32(value), t.appendKey(key))
 }
 
 func (t *Table[V]) growForInsert() {
@@ -362,42 +462,40 @@ func (t *Table[V]) growForInsert() {
 	t.rebuild(capacity)
 }
 
-func (t *Table[V]) insert(key string, value V) {
-	t.insertHashed(key, value, Hash(key))
-}
-
 func (t *Table[V]) insertHashed(key string, value V, hash uint64) {
+	checkValue(uint32(value))
 	if len(t.slots) == initialCapacity {
 		t.tinyFilter |= tinyFilterBits(hash)
 	}
+	fingerprint := hashFingerprint(hash)
 	size := len(t.slots)
 	deleted := -1
 	for n, i := 0, t.probeStart(hash); n < size; n, i = n+1, i+1 {
 		if i == size {
 			i = 0
 		}
-		s := &t.slots[i]
-		switch s.state() {
-		case stateLive:
-			if s.keyLen() == len(key) && s.key() == key {
-				s.setLive(key, value, hash)
+		w := t.slots[i]
+		switch {
+		case w == 0:
+			if deleted >= 0 {
+				i = deleted
+			}
+			t.slots[i] = slotWord(fingerprint, uint32(value), t.appendKey(key))
+			t.count++
+			return
+		case w&liveBit != 0:
+			if slotFingerprint(w) == fingerprint && t.keyEquals(slotOffset(w), key) {
+				t.slots[i] = slotWord(fingerprint, uint32(value), slotOffset(w))
 				return
 			}
-		case stateDeleted:
+		default:
 			if deleted < 0 {
 				deleted = i
 			}
-		case stateEmpty:
-			if deleted >= 0 {
-				s = &t.slots[deleted]
-			}
-			s.setLive(key, value, hash)
-			t.count++
-			return
 		}
 	}
 	if deleted >= 0 {
-		t.slots[deleted].setLive(key, value, hash)
+		t.slots[deleted] = slotWord(fingerprint, uint32(value), t.appendKey(key))
 		t.count++
 		return
 	}
@@ -405,10 +503,13 @@ func (t *Table[V]) insertHashed(key string, value V, hash uint64) {
 }
 
 func (t *Table[V]) Delete(key string) {
+	t.deleteHashed(key, Hash(key))
+}
+
+func (t *Table[V]) deleteHashed(key string, hash uint64) {
 	if len(t.slots) == 0 {
 		return
 	}
-	hash := Hash(key)
 	if len(t.slots) == initialCapacity && t.count == initialCapacity {
 		bits := tinyFilterBits(hash)
 		if t.tinyFilter&bits != bits {
@@ -416,40 +517,43 @@ func (t *Table[V]) Delete(key string) {
 		}
 	}
 	size := len(t.slots)
-	keyLen := uint64(len(key))
 	fingerprint := hashFingerprint(hash)
 	for n, i := 0, t.probeStart(hash); n < size; n, i = n+1, i+1 {
 		if i == size {
 			i = 0
 		}
-		s := &t.slots[i]
-		meta := s.meta
-		switch meta >> stateShift {
-		case stateEmpty:
+		w := t.slots[i]
+		if w == 0 {
 			return
-		case stateLive:
-			if (meta>>32)&keyLengthMask != keyLen ||
-				(meta>>fingerprintShift)&fingerprintMask != fingerprint {
-				continue
-			}
-			if len(key) == 0 || unsafe.String(s.keyData, len(key)) == key {
-				s.setDeleted()
-				t.count--
-				if t.count == 0 {
-					t.tinyFilter = 0
-				}
-				return
-			}
 		}
+		if w&liveBit == 0 || slotFingerprint(w) != fingerprint || !t.keyEquals(slotOffset(w), key) {
+			continue
+		}
+		t.slots[i] = slotTombstone
+		t.count--
+		t.deadBytes += uint32(recordBytes(len(key)))
+		if t.count == 0 {
+			t.tinyFilter = 0
+			t.log = nil
+			t.deadBytes = 0
+			return
+		}
+		// Deleted keys leave dead records in the append-only log. Pack the
+		// table once they outweigh a third of it, so a churning workload
+		// cannot grow the log without bound.
+		if t.deadBytes > minCompactLogBytes && int(t.deadBytes)*3 > len(t.log) {
+			t.rebuildPacked(len(t.slots), 0)
+		}
+		return
 	}
 }
 
 // All iterates live slots without allocating; callers provide synchronization.
+// The yielded keys stay valid after the table changes.
 func (t *Table[V]) All() func(func(string, V) bool) {
 	return func(yield func(string, V) bool) {
-		for i := range t.slots {
-			s := &t.slots[i]
-			if s.state() == stateLive && !yield(s.key(), s.value()) {
+		for _, w := range t.slots {
+			if w&liveBit != 0 && !yield(t.keyAt(slotOffset(w)), V(slotValue(w))) {
 				return
 			}
 		}
@@ -468,10 +572,10 @@ func (t *Table[V]) Sample(cursor, budget, limit int) ([]string, int) {
 	out := make([]string, 0, limit)
 	cursor %= len(t.slots)
 	for n := 0; n < budget && n < len(t.slots); n++ {
-		s := &t.slots[cursor]
+		w := t.slots[cursor]
 		cursor = (cursor + 1) % len(t.slots)
-		if s.state() == stateLive {
-			out = append(out, s.key())
+		if w&liveBit != 0 {
+			out = append(out, t.keyAt(slotOffset(w)))
 			if len(out) == limit {
 				break
 			}
@@ -481,5 +585,5 @@ func (t *Table[V]) Sample(cursor, budget, limit int) ([]string, int) {
 }
 
 func (t *Table[V]) EntryBytes() uint64 {
-	return slotBytes[V]()
+	return slotSize
 }

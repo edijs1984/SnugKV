@@ -1,5 +1,12 @@
 # Changelog
 
+### Memory — smaller key index: 8-byte slots and a per-shard key log (pending live benchmark)
+
+- The key index stored each key as a 16-byte slot holding a pointer to a separately allocated key string. A slot is now one 8-byte word (key offset, entry ID, 6-bit hash fingerprint) and keys are appended to a per-shard key log as a length byte plus the key. About 8 bytes per key less on small values: a 1M-key counter load drops from 66.5 to 54.2 bytes/key through the server (Redis: about 55), UUID values from 101 to 88. Slots no longer contain pointers, so the garbage collector does not scan the index. Large-value profiles are unchanged because their memory is in the values.
+- Lookups, inserts and deletes keep the same cost class: an A/B of 500,000 counters through the server shows equal or higher SET and GET throughput; a hit on a table that fits in cache takes about 7 ns longer.
+- Keys deleted from a shard stay in the log until it is repacked; the index repacks itself when dead records exceed a third of the log, on growth, and on `Compact`.
+- **Limits:** one shard holds at most 134,217,727 keys (27-bit entry IDs) and 1 GiB of key data. With the default 256 shards that is over 34 billion keys; with `-shards 1` it is the shard cap. The fixed per-shard structure grows by 32 bytes (8 KiB for 256 shards), so the saving starts at about 1,000 keys.
+
 ### Compatibility — JSON commands answer JSONPath queries the way RedisJSON does
 
 - With a `$` path, `JSON.ARRLEN`, `STRLEN`, `OBJLEN`, `OBJKEYS`, `ARRAPPEND`, `ARRINSERT`, `ARRPOP`, `ARRTRIM`, `ARRINDEX`, `STRAPPEND` and `TOGGLE` now reply with one entry per matched value (an array, `null` for a value of the wrong type, an empty array for no match); `NUMINCRBY` and `NUMMULTBY` reply with a JSON array such as `[3,null]`. Queries that match several values (`$..arr`, `$.items[*].price`) now update and report every match; the document is written once, and not at all if any match fails. Legacy paths (`.a.b`) keep their single-value replies.

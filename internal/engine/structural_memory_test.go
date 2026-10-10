@@ -48,9 +48,13 @@ func TestEmbeddedIndexShrinksFixedLayout(t *testing.T) {
 
 	m := s.StructuralMemory()
 	// Before embedding, the measured fixed layout was 208 bytes per shard:
-	// a 168-byte shard plus a separately allocated 40-byte index.Table.
-	if m.PerShardBytes >= 208 {
-		t.Fatalf("embedded layout = %d bytes/shard, want < 208", m.PerShardBytes)
+	// a 168-byte shard plus a separately allocated 40-byte index.Table. The
+	// packed-slot index keeps its key log in the table (a slice header and a
+	// dead-byte counter), which costs 32 bytes per shard, 8 KiB for a 256-shard
+	// store, and saves 8 bytes or more per stored key. Break-even is about 1000
+	// keys. This bound stops the fixed layout from growing further.
+	if m.PerShardBytes >= 240 {
+		t.Fatalf("embedded layout = %d bytes/shard, want < 240", m.PerShardBytes)
 	}
 }
 

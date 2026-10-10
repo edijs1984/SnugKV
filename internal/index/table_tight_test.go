@@ -94,7 +94,7 @@ func TestTightTableGrowsAndMatchesModel(t *testing.T) {
 
 func TestProbeWrapsAroundOddCapacity(t *testing.T) {
 	table := New[uint32]()
-	table.slots = make([]slot[uint32], 13)
+	table.slots = make([]uint64, 13)
 	// All keys share one hash whose probe start is the last slot, so inserts
 	// must wrap to slot 0 and keep going.
 	hash := uint64(0xFFFFFFFF)

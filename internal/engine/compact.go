@@ -227,7 +227,11 @@ func (s *Store) Compact(scratch uint64) int {
 		freshIndex := index.New[uint32]()
 		// Size the rebuilt index to the live key count instead of letting
 		// power-of-two growth leave it up to half empty.
-		freshIndex.Reserve(len(items))
+		keyLogBytes := 0
+		for _, item := range items {
+			keyLogBytes += index.KeyRecordBytes(len(item.key))
+		}
+		freshIndex.ReserveKeys(len(items), keyLogBytes)
 		freshEntries := make([]entryData, len(items))
 		var freshMetas *entryMetaSidecar
 		if sh.metas != nil {

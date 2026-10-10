@@ -14,10 +14,18 @@ each shard allocates a metadata sidecar lazily only when a stored value actually
 needs one. Metadata-free workloads therefore pay no per-entry nil metadata
 pointer.
 
-The open-addressed key index uses 16-byte `slot[uint32]` records. Each slot keeps
-an 8-byte key-data pointer plus packed state, fingerprint, key length, and uint32
-entry ID. Index capacity remains power-of-two and uses the existing bounded
-load-factor policy.
+The open-addressed key index uses one 8-byte word per slot and holds no
+pointers. A live slot packs a 30-bit offset into the shard's key log, a 27-bit
+entry ID and a 6-bit hash fingerprint; the fingerprint rejects most probe
+candidates before any key bytes are read, and exact key comparison still makes
+hash collisions safe. Keys are stored once, in an append-only per-shard key log,
+as a varint length followed by the key bytes, so a key costs its length plus one
+byte and no separate heap object. Log records are never overwritten: growth and
+repacking copy into a new array, which keeps key strings already handed to
+callers valid. Deleted keys leave dead records that repacking reclaims, and the
+index repacks when they exceed a third of the log. A shard holds at most
+2^27 - 1 entries and 1 GiB of key data. Index capacity grows gradually and uses
+the existing bounded load-factor policy.
 
 Values are normally stored in generation-checked segmented byte arenas. Arena
 allocation uses small exact/tight size classes plus geometric classes for larger
