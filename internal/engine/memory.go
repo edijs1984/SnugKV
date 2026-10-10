@@ -168,7 +168,7 @@ func (s *Store) makeEntry(value []byte) preparedEntry {
 	// the input here avoids cloning the raw payload only to copy it again into
 	// the arena. The same borrowing is safe when encoding is disabled.
 	if s.encoding && len(value) > 36 {
-		if rec, ok := s.codecs.EncodeIdentifier(value); ok {
+		if rec, ok := s.codecs.EncodeHexForeground(value); ok {
 			return preparedEntry{
 				entry: entry{entryData: entryData{
 					codecID:   rec.ID,

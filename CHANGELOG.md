@@ -1,5 +1,12 @@
 # Changelog
 
+### Memory — base58 and uint256 conversion moves to the background optimizer; signatures are no longer converted
+
+- Hex (`0x` hashes and addresses) is still converted on the write path because it is a table lookup. Base58 public keys and large decimal integers (uint256 balances) are now converted by the background optimizer instead: a SET no longer pays for the conversion and the verifying decode, and the optimizer queues any 20 to 78 byte value that looks like one. The converted value, the final memory and the read cost are unchanged. A 300,000-key load through the server, final bytes per key after convergence: public key 92.2 to 93.4, uint256 92.1 to 92.4; SET throughput 32% and 38% higher than converting on the write path (255k to 336k and 345k to 474k per second on a small shared machine). Until the optimizer finishes, which took about 26 seconds for 300,000 keys, those values use their original size (about 141 bytes per key for uint256).
+- 64-byte Solana signatures (87 to 88 base58 characters) are no longer converted. Converting saved about 13% of a signature row but made GET about 34% slower, because every read rebuilt an 88-character string. Signature rows are back to their original size.
+- The optimizer accepts an identifier conversion that saves 8 bytes (other rewrites need 16 plus metadata), treats converted identifiers as final so they are not retried, and marks values that are not identifiers as final raw strings.
+- Note on lab figures: in `bytes_per_key_*` fields of a converged SnugKV run, `bytes_per_key_delta` is the memory after convergence and `bytes_per_key_post_workload` is the memory right after the load, before the optimizer ran.
+
 ### Memory — blockchain identifier codecs: hex, base58, uint256 (pending live benchmark)
 
 - Three exact codecs store blockchain text in binary and rebuild the original bytes on read: **hex** (32 to 4096 digits, with or without `0x`, lower, upper or mixed case such as EIP-55 addresses; mixed case adds one bit per digit), **base58** (Bitcoin alphabet, decoding to 32 bytes or 64 bytes: Solana public keys, program ids, signatures, 32-byte hashes), and **big decimal** (canonical decimal text of a value between 2^64 and 2^256, such as uint256 token balances). Text that is not exactly one of these forms stays as it was (non-canonical decimals, `0X` prefixes, base58 that decodes to another width). Every record is decoded and compared with the input before it is stored.

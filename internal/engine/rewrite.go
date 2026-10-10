@@ -57,7 +57,8 @@ func (s *Store) OptimizationEligible(
 	// per compressed key. A subsequent foreground write publishes a fresh
 	// representation and may enqueue the key again.
 	if (e.codecID == codec.RepeatByte || e.codecID == codec.Periodic ||
-		e.codecID == codec.LZ4 || e.codecID == codec.Zstandard) && e.entryMeta == nil {
+		e.codecID == codec.LZ4 || e.codecID == codec.Zstandard ||
+		codec.IsIdentifierCodec(e.codecID)) && e.entryMeta == nil {
 		return 0, false
 	}
 
@@ -146,7 +147,8 @@ func (s *Store) MarkOptimizationAttempt(
 	}
 
 	if (e.codecID == codec.RepeatByte || e.codecID == codec.Periodic ||
-		e.codecID == codec.LZ4 || e.codecID == codec.Zstandard) && e.entryMeta == nil {
+		e.codecID == codec.LZ4 || e.codecID == codec.Zstandard ||
+		codec.IsIdentifierCodec(e.codecID)) && e.entryMeta == nil {
 		return false
 	}
 
@@ -284,6 +286,9 @@ const (
 	OptimizationNone OptimizationClass = iota
 	OptimizationJSON
 	OptimizationCompress
+	// OptimizationIdentifier marks a short value that may be a base58 key or a
+	// large decimal integer, which the background optimizer converts to binary.
+	OptimizationIdentifier
 )
 
 // OptimizationClassForValue performs the cheapest possible write-time
@@ -297,6 +302,10 @@ func (s *Store) OptimizationClassForValue(value []byte) OptimizationClass {
 
 	if s.shapeEncoding && structuredJSONCandidate(value) {
 		return OptimizationJSON
+	}
+
+	if codec.LooksLikeIdentifier(value) {
+		return OptimizationIdentifier
 	}
 
 	if s.compression && len(value) >= 256 && !codec.AlreadyCompressed(value) {
@@ -388,7 +397,8 @@ func (s *Store) EncodeCandidate(candidate Candidate) codec.Record {
 	best := codec.Record{ID: codec.Raw, RawLength: len(candidate.Value), Data: candidate.Value}
 	if len(candidate.Value) <= 36 {
 		best = s.codecs.Encode(candidate.Value)
-	} else if rec, ok := s.codecs.EncodeIdentifier(candidate.Value); ok {
+	}
+	if rec, ok := s.codecs.EncodeIdentifier(candidate.Value); ok && len(rec.Data) < len(best.Data) {
 		best = rec
 	}
 	sh := s.shardFor(candidate.Key)

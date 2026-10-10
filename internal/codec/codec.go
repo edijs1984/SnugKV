@@ -117,10 +117,9 @@ func (r *Registry) Encode(src []byte) Record {
 		}
 	}
 
-	// Blockchain identifiers (hex hashes and addresses, base58 keys and
-	// signatures, uint256 decimals) are exact fixed-width binary values written
-	// in text. The prefilter rejects other values after a few bytes.
-	if rec, ok := r.EncodeIdentifier(src); ok {
+	// Hex hashes and addresses are exact binary values written in text and
+	// convert cheaply. Base58 and big decimal are left to the optimizer.
+	if rec, ok := r.EncodeHexForeground(src); ok {
 		return rec
 	}
 

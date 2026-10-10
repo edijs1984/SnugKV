@@ -10,7 +10,7 @@ import (
 
 func mustRoundTrip(t *testing.T, r *Registry, in string, want ID) Record {
 	t.Helper()
-	rec := r.Encode([]byte(in))
+	rec := enc(r, in)
 	if rec.ID != want {
 		t.Fatalf("%q: codec = %v, want %v", in, rec.ID, want)
 	}
@@ -81,7 +81,7 @@ func TestHexRejects(t *testing.T) {
 		strings.Repeat("ab", 2100), // over max
 		strings.Repeat("0123456789abcdef", 2) + " ", // trailing space
 	} {
-		if rec := r.Encode([]byte(in)); rec.ID == Hex {
+		if rec := enc(r, in); rec.ID == Hex {
 			t.Errorf("%q encoded as hex", in)
 		}
 	}
@@ -89,7 +89,7 @@ func TestHexRejects(t *testing.T) {
 
 func TestBase58SolanaShapes(t *testing.T) {
 	r := NewRegistry()
-	for _, n := range []int{32, 64} {
+	for _, n := range []int{32} {
 		for i := 0; i < 200; i++ {
 			raw := make([]byte, n)
 			rand.Read(raw)
@@ -97,7 +97,7 @@ func TestBase58SolanaShapes(t *testing.T) {
 				raw[0], raw[1] = 0, 0 // leading zeros -> leading '1'
 			}
 			text := string(base58Encode(raw))
-			rec := r.Encode([]byte(text))
+			rec := enc(r, text)
 			if rec.ID != Base58 || len(rec.Data) != n {
 				t.Fatalf("n=%d %q: id=%v len=%d", n, text, rec.ID, len(rec.Data))
 			}
@@ -117,11 +117,12 @@ func TestBase58SolanaShapes(t *testing.T) {
 func TestBase58Rejects(t *testing.T) {
 	r := NewRegistry()
 	for _, in := range []string{
-		"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5D0",  // '0' not in alphabet
-		"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DAA", // decodes to 33 bytes
-		"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5Dl",  // 'l' not in alphabet
+		"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5D0",                                              // '0' not in alphabet
+		"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DAA",                                             // decodes to 33 bytes
+		"5VERv8NMvzbJMEkV8xnrLkEaWRtSz9CosKDYjCJjBRnbJLgp8uirBgmQpjKhoR4tjF3ZpRzrFmBV6UjKdiSZkQUW", // 64-byte signature: not encoded
+		"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5Dl",                                              // 'l' not in alphabet
 	} {
-		if rec := r.Encode([]byte(in)); rec.ID == Base58 {
+		if rec := enc(r, in); rec.ID == Base58 {
 			t.Errorf("%q encoded as base58", in)
 		}
 	}
@@ -149,7 +150,7 @@ func TestBigDecimal(t *testing.T) {
 		"-1000000000000000000000",
 		"+1000000000000000000000",
 	} {
-		if rec := r.Encode([]byte(in)); rec.ID == BigDecimal {
+		if rec := enc(r, in); rec.ID == BigDecimal {
 			t.Errorf("%q encoded as bigdecimal", in)
 		}
 	}
@@ -168,6 +169,7 @@ func TestIdentifierCorruptPayloads(t *testing.T) {
 		{Hex, 10, bytes.Repeat([]byte{1}, 6)},
 		{Hex, 66, append([]byte{0x06}, make([]byte, 32)...)}, // case mode 3
 		{Base58, 44, make([]byte, 31)},
+		{Base58, 88, make([]byte, 64)},
 		{Base58, 10, make([]byte, 32)},
 		{BigDecimal, 30, nil},
 		{BigDecimal, 30, []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}},
@@ -250,12 +252,11 @@ func TestLimbConversionMatchesBigInt(t *testing.T) {
 func BenchmarkIdentifierDecode(b *testing.B) {
 	r := NewRegistry()
 	for name, in := range map[string]string{
-		"sol-signature": "5VERv8NMvzbJMEkV8xnrLkEaWRtSz9CosKDYjCJjBRnbJLgp8uirBgmQpjKhoR4tjF3ZpRzrFmBV6UjKdiSZkQUW",
-		"sol-pubkey":    "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
-		"eth-hash":      "0x" + strings.Repeat("ab12", 16),
-		"uint256":       "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+		"sol-pubkey": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+		"eth-hash":   "0x" + strings.Repeat("ab12", 16),
+		"uint256":    "115792089237316195423570985008687907853269984665640564039457584007913129639935",
 	} {
-		rec := r.Encode([]byte(in))
+		rec := enc(r, in)
 		b.Run(name+"/decode", func(b *testing.B) {
 			dst := make([]byte, 0, 128)
 			for i := 0; i < b.N; i++ {
@@ -274,4 +275,44 @@ func BenchmarkIdentifierDecode(b *testing.B) {
 			}
 		})
 	}
+}
+
+func TestForegroundEncodesOnlyHex(t *testing.T) {
+	r := NewRegistry()
+	for _, in := range []string{
+		"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+		"1000000000000000000000000",
+		"115792089237316195423570985008687907853269984665640564039457584007913129639935",
+	} {
+		if rec := r.Encode([]byte(in)); rec.ID == Base58 || rec.ID == BigDecimal {
+			t.Errorf("%q encoded on the foreground path as %v", in, rec.ID)
+		}
+	}
+	if rec := r.Encode([]byte("0x" + strings.Repeat("ab", 32))); rec.ID != Hex {
+		t.Errorf("hex hash not encoded on the foreground path: %v", rec.ID)
+	}
+}
+
+func TestLooksLikeIdentifier(t *testing.T) {
+	for in, want := range map[string]bool{
+		"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA": true,
+		"1000000000000000000000000":                   true,
+		"short":                                       false,
+		"the quick brown fox jumps over the lazy dog, again": false,
+		"user:12345678901234567890:":                         false,
+		strings.Repeat("a", 79):                              false,
+	} {
+		if got := LooksLikeIdentifier([]byte(in)); got != want {
+			t.Errorf("%q: %v, want %v", in, got, want)
+		}
+	}
+}
+
+// enc applies the full identifier encoder, as the background optimizer does,
+// and falls back to the foreground encoder.
+func enc(r *Registry, in string) Record {
+	if rec, ok := r.EncodeIdentifier([]byte(in)); ok {
+		return rec
+	}
+	return r.Encode([]byte(in))
 }
