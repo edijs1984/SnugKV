@@ -167,6 +167,18 @@ func (s *Store) makeEntry(value []byte) preparedEntry {
 	// longer than 36 bytes no synchronous scalar codec can apply, so borrowing
 	// the input here avoids cloning the raw payload only to copy it again into
 	// the arena. The same borrowing is safe when encoding is disabled.
+	if s.encoding && len(value) > 36 {
+		if rec, ok := s.codecs.EncodeIdentifier(value); ok {
+			return preparedEntry{
+				entry: entry{entryData: entryData{
+					codecID:   rec.ID,
+					valueType: classifyValue(value),
+					rawLength: uint32(rec.RawLength),
+				}},
+				data: rec.Data,
+			}
+		}
+	}
 	if !s.encoding || len(value) > 36 {
 		return preparedEntry{
 			entry: entry{entryData: entryData{
