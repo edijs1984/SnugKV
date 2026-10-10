@@ -3,6 +3,7 @@ package engine
 import (
 	"bytes"
 	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"strings"
 	"testing"
@@ -110,4 +111,31 @@ func newEncodingStore(t *testing.T) *Store {
 		t.Fatal(err)
 	}
 	return s
+}
+
+func TestSolanaTokenAccountEncodesOnWrite(t *testing.T) {
+	s := newEncodingStore(t)
+	raw := make([]byte, 165)
+	rand.Read(raw[:64])
+	raw[108] = 1
+	b64 := []byte(base64.StdEncoding.EncodeToString(raw))
+	for key, val := range map[string][]byte{"raw": raw, "b64": b64} {
+		if err := s.Set(key, val, 0); err != nil {
+			t.Fatal(err)
+		}
+		got, ok := s.Get(key)
+		if !ok || !bytes.Equal(got, val) {
+			t.Fatalf("%s: round trip failed", key)
+		}
+		name, rawLen, stored, _ := s.Encoding(key)
+		if name != "solana-token-account" || rawLen != len(val) || stored > 72 {
+			t.Fatalf("%s: encoding=%q raw=%d stored=%d", key, name, rawLen, stored)
+		}
+	}
+	// A 165-byte value that is not a token account stays raw.
+	plain := bytes.Repeat([]byte{0xAB}, 165)
+	s.Set("plain", plain, 0)
+	if name, _, _, _ := s.Encoding("plain"); name == "solana-token-account" {
+		t.Fatal("non-token value encoded")
+	}
 }
