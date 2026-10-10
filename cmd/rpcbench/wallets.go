@@ -60,6 +60,21 @@ func runWallets(args []string) {
 		}
 	}
 
+	// Usage is a per-day total, so note what each key already holds and compare
+	// only the change made by this run.
+	var admin *rpccache.Admin
+	before := map[string]map[string]int64{}
+	if *store != "" && len(tallies) > 0 {
+		c := rpccache.NewClient(*store, 2, 2*time.Second)
+		defer c.Close()
+		admin = rpccache.NewAdmin(c)
+		for _, kt := range tallies {
+			if u, err := admin.Usage(rpccache.KeyID(kt.secret), 1); err == nil {
+				before[kt.secret] = u[0].Counters
+			}
+		}
+	}
+
 	client := &http.Client{Timeout: 20 * time.Second, Transport: &http.Transport{MaxIdleConnsPerHost: *users + 8}}
 	methods := map[string]*methodTally{}
 	var mmu sync.Mutex
@@ -76,6 +91,7 @@ func runWallets(args []string) {
 
 	var httpReqs, calls, failures atomic.Uint64
 	var checked, stale, directCalls atomic.Uint64
+	var failStatus atomic.Int64 // first unexpected HTTP status
 	var lagMu sync.Mutex
 	var lags []int64 // slots the cached answer was behind, for stale answers
 
@@ -112,6 +128,7 @@ func runWallets(args []string) {
 			return reply, "", false
 		case resp.StatusCode != http.StatusOK:
 			failures.Add(1)
+			failStatus.CompareAndSwap(0, int64(resp.StatusCode))
 			return reply, "", false
 		}
 		calls.Add(uint64(n))
@@ -216,6 +233,9 @@ func runWallets(args []string) {
 		"http_requests": httpReqs.Load(), "rpc_calls": calls.Load(), "failures": failures.Load(),
 		"calls_per_sec": float64(calls.Load()) / elapsed.Seconds(),
 	}
+	if st := failStatus.Load(); st != 0 {
+		out["first_failure_status"] = st
+	}
 	perMethod := map[string]any{}
 	var singles, hits uint64
 	names := make([]string, 0, len(methods))
@@ -264,12 +284,6 @@ func runWallets(args []string) {
 	}
 	if len(tallies) > 0 {
 		time.Sleep(2500 * time.Millisecond) // the proxy writes usage once a second
-		var admin *rpccache.Admin
-		if *store != "" {
-			c := rpccache.NewClient(*store, 2, 2*time.Second)
-			defer c.Close()
-			admin = rpccache.NewAdmin(c)
-		}
 		var rows []map[string]any
 		for i, kt := range tallies {
 			row := map[string]any{
@@ -278,9 +292,10 @@ func runWallets(args []string) {
 			}
 			if admin != nil {
 				if u, err := admin.Usage(rpccache.KeyID(kt.secret), 1); err == nil {
-					c := u[0].Counters
-					row["counted_calls"], row["counted_denied"] = c["calls"], c["denied"]
-					row["counts_match"] = uint64(c["calls"]) == kt.sent.Load() && uint64(c["denied"]) == kt.denied.Load()
+					c, b := u[0].Counters, before[kt.secret]
+					calls, denied := c["calls"]-b["calls"], c["denied"]-b["denied"]
+					row["counted_calls"], row["counted_denied"] = calls, denied
+					row["counts_match"] = uint64(calls) == kt.sent.Load() && uint64(denied) == kt.denied.Load()
 				} else {
 					row["usage_error"] = err.Error()
 				}
