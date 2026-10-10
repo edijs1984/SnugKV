@@ -1,5 +1,11 @@
 # Changelog
 
+### Change — Pub/Sub delivery no longer lets one stuck subscriber block `PUBLISH`
+
+- `PUBLISH` used to write to each subscriber's socket while holding a server-wide lock, with up to the 30 s write timeout per write, so one subscriber that stopped reading froze every publisher. Each subscriber now has a bounded queue and its own sender. `PUBLISH` only enqueues.
+- The sender gives each delivery attempt `-pubsub-send-timeout-ms` (default 1000) and resumes after any bytes already written, so a partial write cannot corrupt the stream. A subscriber is disconnected after `-pubsub-send-attempts` (default 5) attempts in a row without progress, or as soon as its queue of `-pubsub-queue-size` (default 1024) messages is full. It sees a closed connection and can resubscribe. Messages still go only to current subscribers, as in Redis.
+- `INFO` reports `pubsub_subscribers_dropped`.
+
 ### Fix — `rpccache` opens at most `-cache-pool` connections to the cache
 
 - The cache client used to dial a new connection whenever its idle pool was empty and close the extra one afterwards. Under thousands of concurrent users that meant a stream of new connections, which cost SnugKV about 2.5 times what they cost Redis (measured with `redis-benchmark -k 0` on two cores: 14.3k against 5.7k connections per second at 50 clients). Cache calls timed out, the proxy skipped the cache, and SnugKV answered 64% of calls without the node against Redis's 93% on the same traffic (2,000 simulated users, 600 s cache time). The client now holds at most `-cache-pool` connections and a caller waits for a free one; if none frees up within `-cache-timeout` the call goes to the node and the cache is not paused (`rpccache_cache_busy_total`). The same run now gives 95.4% on both, with 0.54 ms (SnugKV) and 0.41 ms (Redis) median latency and no cache errors.

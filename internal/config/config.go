@@ -57,6 +57,9 @@ type Config struct {
 	MaxConnections      int    `json:"max_connections"`
 	ReadTimeoutMS       int64  `json:"read_timeout_ms"`
 	WriteTimeoutMS      int64  `json:"write_timeout_ms"`
+	PubSubSendAttempts  int    `json:"pubsub_send_attempts"`
+	PubSubSendTimeoutMS int64  `json:"pubsub_send_timeout_ms"`
+	PubSubQueueSize     int    `json:"pubsub_queue_size"`
 	MaxRequestBytes     int    `json:"max_request_bytes"`
 	MaxBulkBytes        int    `json:"max_bulk_bytes"`
 	MaxArguments        int    `json:"max_arguments"`
@@ -75,6 +78,9 @@ func Default() Config {
 		MaxConnections:                  10000,
 		ReadTimeoutMS:                   30000,
 		WriteTimeoutMS:                  30000,
+		PubSubSendAttempts:              5,
+		PubSubSendTimeoutMS:             1000,
+		PubSubQueueSize:                 1024,
 		MaxRequestBytes:                 64 << 20,
 		MaxBulkBytes:                    32 << 20,
 		MaxArguments:                    1024,
@@ -305,6 +311,15 @@ func (c Config) Validate() error {
 		if n <= 0 || n > int64((24*time.Hour)/time.Millisecond) {
 			return errors.New("timeouts and cleanup interval must be between 1ms and 24h")
 		}
+	}
+	if c.PubSubSendAttempts < 1 || c.PubSubSendAttempts > 100 {
+		return errors.New("pubsub_send_attempts must be between 1 and 100")
+	}
+	if c.PubSubSendTimeoutMS < 1 || c.PubSubSendTimeoutMS > 60000 {
+		return errors.New("pubsub_send_timeout_ms must be between 1 and 60000")
+	}
+	if c.PubSubQueueSize < 1 || c.PubSubQueueSize > 1<<20 {
+		return errors.New("pubsub_queue_size must be between 1 and 1048576")
 	}
 	return c.Limits().Validate()
 }

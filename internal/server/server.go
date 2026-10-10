@@ -1843,6 +1843,7 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 				"optimizer_rewritten:%d\n"+
 				"optimizer_skipped:%d\n"+
 				"optimizer_stale:%d\n"+
+				"pubsub_subscribers_dropped:%d\n"+
 				"optimizer_dropped:%d\n"+
 				"optimizer_queue_depth:%d\n"+
 				"optimizer_queue_capacity:%d\n"+
@@ -1868,6 +1869,7 @@ func (s *Server) execute(args [][]byte) ([]byte, error) {
 			optimizerRewritten,
 			optimizerSkipped,
 			optimizerStale,
+			pubSubHubForServer(s).dropped.Load(),
 			optimizerDropped,
 			optimizerQueueDepth,
 			optimizerQueueCapacity,
