@@ -262,7 +262,10 @@ done
 
 ## Shared overhead observed in datatype runs
 
-At 100,000 keys the repeated measurements show approximately:
+The figures in this section were measured before 2026-10-08. Since then the index
+slot is 8 bytes (keys live in a per-shard key log) and the stored entry is 16
+bytes; the datatype matrices below have not been rerun with that layout. At the
+time, at 100,000 keys the repeated measurements showed approximately:
 
 - index reservation: ~31.5 B/key;
 - common entry/key accounting: ~54–55 B/key;
@@ -296,6 +299,15 @@ matrix:
 | `repetitive` | 256 B | highly compressible control |
 | `compressed` | 256 B | deterministic high-entropy binary with a gzip signature |
 | `random` | 256 B | deterministic incompressible worst-case control |
+| `eth-hash` | 66 B | `0x` plus 64 hex digits (transaction or block hash) |
+| `eth-address` | 42 B | `0x` plus 40 hex digits, checksum casing |
+| `sol-pubkey` | 44 B | base58 Solana public key |
+| `sol-signature` | 88 B | base58 Solana signature (stays raw) |
+| `uint256` | up to 78 B | decimal token balance above 2^64 |
+| `sol-token-account` | 165 B | SPL token account, binary |
+| `sol-token-account-b64` | 220 B | SPL token account, base64 text as returned by RPC |
+| `hex-key` | 10 B | 64 lower-case hex digits as the *key*, counter values |
+| `address-key` | 10 B | `0x` plus 40 hex digits, mixed case, as the *key*, counter values |
 
 The JSON profiles are valid fixed-size JSON documents, the counter and UUID
 profiles use canonical encodings that exercise SnugKV's scalar codecs, and the
@@ -395,6 +407,35 @@ The counter memory progression during this tuning phase was 103.86 B/key before
 inline tiny scalars and compact stored entries, 86.66 B/key after inline scalar
 storage, 77.13 B/key after the 24-byte stored-entry layout, and 72.61 B/key after
 dense entry-capacity compaction.
+
+## Blockchain-shaped data (2026-10)
+
+Benchmark Lab runs, 1M keys unless noted, 4 CPUs, 8 workers, pipeline 256. Bytes
+per key is the converged SnugKV figure and the Redis `used_memory` delta. Single
+runs; repeat before quoting.
+
+| Profile | Redis | SnugKV | SET vs Redis | GET vs Redis |
+|---|---:|---:|---:|---:|
+| `hex-key` | 110.1 | 61.0 | +18% | +33% |
+| `address-key` | 78.1 | 54.0 | -7% | +14% |
+| `sol-token-account` | 246.1 | 127.2 | +34% | +36% |
+| `sol-token-account-b64` | 278.1 | 127.2 | +16% | +6% |
+| `eth-hash` | 134.1 | 90.4 | | |
+| `eth-address` | 102.1 | 90.4 | | |
+| `sol-pubkey` | 102.1 | 90.4 | | |
+| `uint256` | 148.7 | 90.4 | | |
+| `sol-signature` | 150.1 | 138.8 (stays raw) | | |
+
+For the five crypto profiles above the SET and GET differences between runs were
+as large as 25%, so only bytes per key are tabulated. Base58 and uint256 values
+are converted by the background optimizer: convergence took about 55 s for 1M
+keys, against 16 to 18 s for profiles that convert on the write path.
+
+`hex-key` and `address-key` isolate the key log. In a 500,000-key sandbox run
+SnugKV moved from 94.3 to 65.3 B/key (`hex-key`) and from 72.3 to 58.3
+(`address-key`) when hex keys began to be stored in binary; sandbox throughput
+cost was about 7% on SET and 4% on GET for `hex-key` and 16% / 12% for
+`address-key`. The lab has no run from before the change.
 
 ## Benchmark discipline
 

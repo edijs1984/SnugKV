@@ -291,10 +291,30 @@ the exact workloads and caveats; these figures are engineering measurements, not
 universal claims.
 
 Raw storage is the default for ordinary scalar values. `-encoding` enables
-verified canonical integer, UUID, and timestamp storage. `-json-shape` and
+verified canonical integer, UUID, timestamp, ULID, hex, base58, uint256-decimal and
+Solana token-account storage. `-json-shape` and
 `-compression` require `-encoding` and add background shape/dictionary, LZ4, and
 Zstandard candidates. Native container types are excluded from the generic scalar
 optimizer.
+
+## Blockchain-oriented storage
+
+Blockchain data is mostly hashes, addresses and fixed-layout records stored as
+text. SnugKV stores them in binary and rebuilds the exact original on read: hex
+(with or without `0x`, any letter case), base58 public keys and 32-byte hashes,
+uint256 balances written as decimal text, and Solana SPL token accounts (raw or
+base64 as RPC returns them). Keys that end in hex digits are stored in binary in
+the key log. Every conversion is verified before it is kept; anything that does
+not round-trip stays as it was. Codec details are in `docs/memory-format.md`,
+measurements in `benchmarks/README.md`, and limits in `KNOWN-LIMITATIONS.md`.
+
+`cmd/rpccache` is a separate caching JSON-RPC proxy for Solana and EVM nodes that
+stores replies in SnugKV (or Redis) and forwards the rest. See `docs/RPC-CACHE.md`.
+
+## TypeScript client
+
+`clients/typescript` holds `@snugkv/client`, a typed Node.js client. See its
+README.
 
 ## Major remaining compatibility work
 

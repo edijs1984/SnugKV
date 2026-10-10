@@ -301,3 +301,10 @@ release-blocking compatibility defect. Work now moves to full validation,
 durability/failure injection, long-running soak, performance profiling,
 packaging, security review, quickstart verification, and release-candidate
 preparation.
+
+**Update 2026-10-10:** after the freeze was declared, new capabilities were merged
+(atomic transactions, built-in functions, the TypeScript client, a smaller memory
+layout, blockchain codecs and key packing, and the separate `rpccache` program).
+The list is in `docs/PROJECT-STATE.md`. The no-new-features rule above is
+therefore relaxed for those items; validation work (soak, differential sweeps,
+fresh Redis baselines) still applies to the whole tree.

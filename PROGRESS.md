@@ -996,3 +996,19 @@ Focused race-enabled MONITOR tests pass for command/event ordering, binary
 escaping, ACL rejection, RESET resubscription, QUIT EOF, direct and transactional
 Lua ordering, and the scripting/Function command families. See
 `docs/MONITOR-AUDIT.md`.
+
+## 2026-10-08 to 2026-10-10 — post-freeze additions
+
+Merged: atomic transactions and `snug_*` functions, JSON reply shapes, the
+TypeScript client, 8-byte index slots with a key log, 16-byte entries, packed
+hashes and sets up to 128 members/fields, the cold list layout, optimizer duty
+cycle changes, exact blockchain codecs (IDs 13 to 16), hex key packing, the
+`rpccache` proxy, and new benchmark profiles. Descriptions and measurements:
+`CHANGELOG.md`, `benchmarks/README.md`, `docs/memory-format.md`.
+
+Verification recorded for the key packing and `rpccache` changes: `go vet ./...`
+and `go test ./...` clean, `go test -race` clean on `internal/index`,
+`internal/engine` and `internal/rpccache`, and a 20 s fuzz run of the key packer.
+These ran in a development sandbox, not in CI. Benchmark Lab results for the
+blockchain profiles are in `benchmarks/README.md`. The full-suite race gate
+(`go test -race ./...`) was not rerun for this batch.

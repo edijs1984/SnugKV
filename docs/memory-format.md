@@ -23,7 +23,8 @@ entry ID and a 6-bit hash fingerprint; the fingerprint rejects most probe
 candidates before any key bytes are read, and exact key comparison still makes
 hash collisions safe. Keys are stored once, in an append-only per-shard key log,
 as a varint length followed by the key bytes, so a key costs its length plus one
-byte and no separate heap object. Log records are never overwritten: growth and
+byte and no separate heap object. A key that ends in 16 to 128 hex digits is
+instead stored in binary (see "Key records" below). Log records are never overwritten: growth and
 repacking copy into a new array, which keeps key strings already handed to
 callers valid. Deleted keys leave dead records that repacking reclaims, and the
 index repacks when they exceed a third of the log. A shard holds at most
@@ -41,6 +42,27 @@ compaction without changing entry IDs.
 Entry/index/arena reservations, lazy metadata-sidecar storage, and live key bytes
 are explicitly charged to engine memory accounting. Sparse datasets can still pay
 more because active shards reserve initial index/entry capacity.
+
+## Key records
+
+A raw key record is a varint length followed by the key bytes. A key whose tail
+is 16 to 128 hex digits (optionally behind a `0x` and a prefix of up to 255
+bytes such as `tx:`) is stored as an escaped record instead:
+
+    00 flags [prefix length, prefix] byte count [case mask] payload
+
+The first byte is zero, which a raw record never starts with except for the
+empty key, which is written as `00 FF`. `flags` holds the case of the digits
+(lower, upper, or mixed with one mask bit per digit), whether `0x` is present,
+and whether a prefix is present. A key is packed only when it rebuilds to exactly
+the same bytes and the escaped record is smaller than the raw one. A 64-digit
+hash drops from 65 to 35 bytes, a `0x` address in mixed case from 43 to 28.
+
+Lookups compare the request key with the stored bytes without allocating.
+Iteration (`SCAN`, snapshots, optimizer sampling) decodes packed keys into shared
+chunks, and `Stats` counts key bytes without decoding. Growing the table decodes
+each packed key once to rehash it. Persistence stores plain keys, so files remain
+readable by older builds.
 
 ## Scalar codecs
 
@@ -60,7 +82,22 @@ Codec IDs currently include:
 - `8`: repeated-byte encoding;
 - `9`: LZ4;
 - `10`: Zstandard;
-- `11`: periodic/repeating-pattern encoding.
+- `11`: periodic/repeating-pattern encoding;
+- `12`: ULID;
+- `13`: hex text (`0x` prefix optional; lower, upper or mixed case);
+- `14`: base58 text (Bitcoin alphabet) that decodes to exactly 32 bytes;
+- `15`: canonical decimal text of an integer above 2^64 and up to 2^256;
+- `16`: Solana SPL token account (165 raw bytes, or the 220-character standard
+  base64 text of the same record).
+
+The packed entry has six bits for the codec ID, so IDs run to 63.
+
+Hex (13) and the token-account codec (16) convert on the write path because the
+conversion costs well under a microsecond. Base58 (14) and uint256 (15) take
+longer, so the background optimizer converts them after the write. A base58
+value of other than 32 bytes, including 64-byte Solana signatures, stays raw
+because converting it did not pay for its read cost. These codecs add no
+per-entry metadata.
 
 Unknown codec IDs fail decoding. Decoder output is length-bounded and every
 selected candidate is reconstructed and compared before publication.
