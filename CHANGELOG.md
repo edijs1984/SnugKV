@@ -4,7 +4,7 @@
 
 - `PUBLISH` used to write to each subscriber's socket while holding a server-wide lock, with up to the 30 s write timeout per write, so one subscriber that stopped reading froze every publisher. Each subscriber now has a bounded queue and its own sender. `PUBLISH` only enqueues.
 - The sender gives each delivery attempt `-pubsub-send-timeout-ms` (default 1000) and resumes after any bytes already written, so a partial write cannot corrupt the stream. A subscriber is disconnected after `-pubsub-send-attempts` (default 5) attempts in a row without progress, or as soon as its queue of `-pubsub-queue-size` (default 1024) messages is full. It sees a closed connection and can resubscribe. Messages still go only to current subscribers, as in Redis.
-- `INFO` reports `pubsub_subscribers_dropped`.
+- `INFO` (Stats section) reports `pubsub_subscribers_dropped`.
 
 ### Fix — `rpccache` opens at most `-cache-pool` connections to the cache
 
