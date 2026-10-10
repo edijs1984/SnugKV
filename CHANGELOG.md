@@ -1,5 +1,10 @@
 # Changelog
 
+### Feature — `rpccache`, a caching JSON-RPC proxy for Solana and EVM nodes
+
+- New command `cmd/rpccache` (package `internal/rpccache`): an HTTP JSON-RPC proxy that serves repeated reads from a Redis-protocol cache (SnugKV or Redis) and forwards everything else to the upstream provider. A method table decides what may be cached and for how long (finalized transactions and blocks for 24 hours, account and state reads for 1 second, chain-head reads for 200 ms, writes and unknown methods never); identical in-flight misses share one upstream call; batches are answered element by element; a failing cache is skipped, never fatal. Errors, `null` results, non-200 replies and `minContextSlot` requests are not cached. Details and limits: `docs/RPC-CACHE.md`.
+- New `cmd/rpcbench` with a fake token-account node and a Zipf load generator. Measured on a small shared machine: with a 20 ms node, p50 latency 21.3 ms direct against 2.3 ms through the proxy, and the node saw 84% fewer requests; the same proxy holding 90,000 `getAccountInfo` responses used 597 bytes per entry on Redis and 345 on SnugKV.
+
 ### Memory — Solana token accounts stored in compact form (pending live benchmark)
 
 - A new exact codec (`solana-token-account`, ID 16) stores an SPL Token account, the 165-byte record `getAccountInfo` returns for every token holder, as about 70 bytes: mint, owner, amount as a varint, and the optional delegate, native amount and close authority only when present. It accepts the 165 raw bytes and the 220-character standard base64 text of the same record (the RPC `base64` encoding) and rebuilds either exactly. Accounts with a malformed option tag, a non-zero payload behind an absent option, or a state above 2 are left as they are, and every record is decoded and compared before it is stored. The conversion is a few byte moves, so it runs on the write path.
