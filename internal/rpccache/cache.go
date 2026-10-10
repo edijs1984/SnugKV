@@ -18,12 +18,22 @@ type Cache interface {
 	Set(key, value []byte, ttl time.Duration) error
 }
 
-// RESPCache talks to any Redis-protocol server (SnugKV or Redis) over a small
-// connection pool.
+// ErrBusy is returned when every cache connection is in use for longer than the
+// cache timeout. The cache is overloaded or slow, not broken, so callers treat
+// it as a miss and do not mark the cache as down.
+var ErrBusy = errors.New("rpccache: all cache connections busy")
+
+// RESPCache talks to any Redis-protocol server (SnugKV or Redis) over a
+// bounded set of connections: at most size are open at once, and a caller that
+// finds them all busy waits for one instead of opening another. Opening
+// connections per request is expensive for the server (about 2.5 times
+// dearer on SnugKV than on Redis in measurements) and made a 2,000-user load
+// time out and skip the cache.
 type RESPCache struct {
 	addr    string
 	timeout time.Duration
-	pool    chan *respConn
+	pool    chan *respConn // idle connections
+	slots   chan struct{}  // one token per open or in-use connection
 }
 
 type respConn struct {
@@ -41,10 +51,21 @@ func NewRESPCache(addr string, size int, timeout time.Duration) *RESPCache {
 	if timeout <= 0 {
 		timeout = 100 * time.Millisecond
 	}
-	return &RESPCache{addr: addr, timeout: timeout, pool: make(chan *respConn, size)}
+	return &RESPCache{addr: addr, timeout: timeout, pool: make(chan *respConn, size), slots: make(chan struct{}, size)}
 }
 
 func (c *RESPCache) acquire() (*respConn, error) {
+	select {
+	case c.slots <- struct{}{}:
+	default:
+		timer := time.NewTimer(c.timeout)
+		select {
+		case c.slots <- struct{}{}:
+			timer.Stop()
+		case <-timer.C:
+			return nil, ErrBusy
+		}
+	}
 	select {
 	case rc := <-c.pool:
 		return rc, nil
@@ -52,6 +73,7 @@ func (c *RESPCache) acquire() (*respConn, error) {
 	}
 	conn, err := net.DialTimeout("tcp", c.addr, c.timeout)
 	if err != nil {
+		<-c.slots
 		return nil, err
 	}
 	if tc, ok := conn.(*net.TCPConn); ok {
@@ -61,6 +83,7 @@ func (c *RESPCache) acquire() (*respConn, error) {
 }
 
 func (c *RESPCache) release(rc *respConn, healthy bool) {
+	defer func() { <-c.slots }()
 	if !healthy {
 		rc.c.Close()
 		return

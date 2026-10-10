@@ -1,5 +1,10 @@
 # Changelog
 
+### Fix — `rpccache` opens at most `-cache-pool` connections to the cache
+
+- The cache client used to dial a new connection whenever its idle pool was empty and close the extra one afterwards. Under thousands of concurrent users that meant a stream of new connections, which cost SnugKV about 2.5 times what they cost Redis (measured with `redis-benchmark -k 0` on two cores: 14.3k against 5.7k connections per second at 50 clients). Cache calls timed out, the proxy skipped the cache, and SnugKV answered 64% of calls without the node against Redis's 93% on the same traffic (2,000 simulated users, 600 s cache time). The client now holds at most `-cache-pool` connections and a caller waits for a free one; if none frees up within `-cache-timeout` the call goes to the node and the cache is not paused (`rpccache_cache_busy_total`). The same run now gives 95.4% on both, with 0.54 ms (SnugKV) and 0.41 ms (Redis) median latency and no cache errors.
+- Not changed: SnugKV still accepts new connections slower than Redis. Long-lived connections, which every pooled client uses, are unaffected (68k PING/s at 50 clients).
+
 ### Tooling — `rpcbench` EVM workload, cache memory and latency in the wallet simulation
 
 - `rpcbench upstream -chain evm` answers `eth_blockNumber`, `eth_gasPrice`, `eth_getBalance`, `eth_call`, `eth_getBlockByNumber` and `eth_chainId`; `-slot-time` sets the slot or block time when `-advance` is on. `rpcbench wallets -chain evm` runs an Ethereum-style refresh cycle with a JSON-RPC batch of token balances and popular-contract calls.

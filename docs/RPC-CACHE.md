@@ -48,6 +48,7 @@ A cached answer can be older than the chain head by up to its TTL. With the defa
 - **Coalescing.** Identical requests that arrive while the first is still at the node wait for it and share one upstream call.
 - **Batches.** A JSON-RPC batch is answered element by element: cached elements locally, the rest as individual upstream calls (so a batch can cost more upstream calls than one batched request, never fewer than the misses).
 - **A broken cache never breaks the proxy.** If the cache server is down or slow, requests are served from the node and the cache is skipped for a second at a time. `rpccache_cache_errors_total` counts it.
+- **Bounded cache connections.** The proxy opens at most `-cache-pool` connections (32) to the cache. A request that finds them all busy waits up to `-cache-timeout` for one, then goes to the node without pausing the cache; `rpccache_cache_busy_total` counts those. Before this limit, a load of thousands of users made the proxy open and close extra connections, which SnugKV handled about 2.5 times slower than Redis (new connections per second, measured with `redis-benchmark -k 0`), so its calls timed out and the cache was skipped: 64% of calls answered without the node against Redis's 93% on identical traffic. With the limit both reach 95.4%.
 - **Size limit.** Results above `-max-entry-bytes` (1 MiB) are served but not stored; `getProgramAccounts` on large programs is the usual case.
 - Cache keys are 17 bytes: a tag plus 128 bits of a SHA-256 over the chain, method and whitespace-normalized params.
 
