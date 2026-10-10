@@ -4,7 +4,15 @@
 > Read this first when you need to understand what SnugKV is capable of without
 > walking every audit, benchmark, and implementation file.
 
-**Updated:** 2026-09-30
+**Updated:** 2026-10-10
+
+> **Since 2026-09-30:** atomic transactions (`MULTI ATOMIC`, `-atomic-transactions`),
+> the built-in `snug_*` function library, the TypeScript client, a smaller memory
+> layout (8-byte index slots with a per-shard key log, 16-byte entries), exact
+> codecs for hex, base58, uint256 and Solana token accounts (IDs 13 to 16), hex keys
+> stored in binary, and the separate `rpccache` JSON-RPC proxy. See
+> `docs/PROJECT-STATE.md` for the list and `CHANGELOG.md` for measurements.
+> Memory figures further down predate the new layout.
 
 ## 1. What SnugKV is
 

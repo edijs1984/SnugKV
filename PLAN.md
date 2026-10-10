@@ -101,9 +101,42 @@ spatial index and scans the source packed ZSET.
 
 Shared sparse-memory overhead has also been reduced substantially. On the canonical
 1,000-key / 256-shard / 16-byte-value benchmark, accounted memory moved from
-527,768 bytes to 179,224 bytes (-66.04%). Current sparse layout measurements include
-16-byte index slots, 32-byte common entries, 192 bytes of static shard structure,
-and 24-byte arena segment descriptors.
+527,768 bytes to 179,224 bytes (-66.04%). That measurement used 16-byte index slots,
+32-byte common entries, 192 bytes of static shard structure, and 24-byte arena
+segment descriptors. Since then the index slot is 8 bytes (keys live in a per-shard
+key log) and the stored entry is 16 bytes; the sparse benchmark has not been rerun
+with the new layout. See `docs/memory-format.md`.
+
+## Phase G — post-freeze additions (2026-10-08 to 2026-10-10)
+
+Evidence for each item is in `CHANGELOG.md` (most memory items there are marked
+"pending live benchmark"). Test, vet and race runs for the last items were done
+in a development sandbox, not in CI.
+
+- [x] `MULTI ATOMIC`, `-atomic-transactions`, atomic scripts/functions, and `EXEC` snapshots limited to touched keys. See `docs/ATOMIC-TRANSACTIONS.md`.
+- [x] Built-in `snug_*` function library. See `docs/BUILTIN-FUNCTIONS.md`.
+- [x] RedisJSON reply shapes and multi-match JSONPath updates.
+- [x] TypeScript client (`@snugkv/client`) with typed JSON, transactions and `snug_*` wrappers.
+- [x] Memory: 8-byte index slots with a per-shard key log; 16-byte stored entries; packed hashes up to 128 fields; front-coded fixed-width sets up to 128 members; cold list layout; idle trim; faster post-write maintenance.
+- [x] Throughput: index growth by half, in-place HSET for 32+ fields, optimizer duty cycle and futile-attempt thinning.
+- [x] Exact codecs for hex, base58, uint256 decimal and Solana SPL token accounts (IDs 13 to 16); base58 and uint256 convert in the background optimizer.
+- [x] Hex keys stored in binary in the key log (`hex-key`: 94.3 to 65.3 B/key in the sandbox; Benchmark Lab: SnugKV 61.0 vs Redis 110.1).
+- [x] `rpccache`: caching JSON-RPC proxy for Solana and EVM nodes (`docs/RPC-CACHE.md`).
+- [x] Benchmark profiles for the new data shapes in the wire bench, scripts and Benchmark Lab.
+- [ ] Rerun the sparse 1,000-key benchmark and the 1M-key counter baseline with the new layout, and replace the older figures quoted in `README.md` and `benchmarks/README.md`.
+- [ ] Lab run of `rpccache` against real traffic (the numbers so far use a generated node and generated responses).
+
+## Backlog (unscheduled)
+
+Ideas discussed but not started. None is committed work.
+
+- Key compression for base58 keys (decoding on every table growth is the cost to solve).
+- Mint/owner dictionary for token accounts (needs a real sample of accounts).
+- Chain-aware server functions (signature or address checks inside the server).
+- NVMe cold tier for infrequently read keys.
+- Arena block-header shrink.
+- `rpccache`: API keys, per-customer rate limits and metering, WebSocket subscriptions.
+- Secondary indexes beyond the JSON-backed search; built-in rate limiting beyond `snug_*`. Deferred by the owner on 2026-10-10.
 
 ## Completed milestones
 
@@ -368,9 +401,9 @@ its complexity with measurements.
 
 ### P3.5 — next product capability work
 
-Performance/memory tuning is intentionally paused after the realistic-workload
-milestone. Resume only for measured regressions or after the next capability work
-lands.
+Performance/memory tuning was paused after the realistic-workload milestone and
+resumed on 2026-10-08 to 2026-10-10 (see Phase G below). It was paused again when
+work moved to new capabilities.
 
 - [x] Expand first-class JSON operations beyond the SET/GET/TYPE/DEL core.
 - [x] Add JSONPath support with Redis 8.10 differential tests and AOF/restart persistence coverage. See `docs/JSONPATH-COMPATIBILITY.md`.

@@ -1,6 +1,6 @@
 # SnugKV Project State
 
-**Updated:** 2026-10-03
+**Updated:** 2026-10-10
 
 This is the canonical current-state handoff for maintainers and coding agents.
 For first-release scope and sequencing, use `FIRST_RELEASE.md` as the authoritative high-level plan and `docs/FIRST-RELEASE-IMPLEMENTATION.md` as the detailed execution queue.
@@ -43,6 +43,42 @@ Implemented distributed capabilities include:
 - TLS-capable authenticated internal migration.
 
 SnugKV intentionally exposes one logical database.
+
+## Changes since the 2026-10-03 freeze statement
+
+The first-release feature freeze was declared on 2026-10-03. New capability work
+has been merged since then, mostly on 2026-10-08 to 2026-10-10. The freeze rule
+in `FIRST_RELEASE.md` is therefore relaxed for the items below; record any
+further scope decision here. Details and measurements are in `CHANGELOG.md`.
+
+- **Transactions and scripting:** `MULTI ATOMIC` and the `-atomic-transactions`
+  option make `MULTI`/`EXEC` and writable scripts/functions all-or-nothing;
+  `EXEC` snapshots only the keys it touches for verified commands. See
+  `docs/ATOMIC-TRANSACTIONS.md`.
+- **Built-in functions:** a `snug_*` function library (rate limiter, lock with
+  fencing token, idempotency keys, bounded counter, reliable queue, leaderboard)
+  loads at startup. See `docs/BUILTIN-FUNCTIONS.md`.
+- **JSON:** RedisJSON reply shapes and multi-match updates for JSONPath queries.
+- **TypeScript client:** `clients/typescript`, published as `@snugkv/client`.
+- **Memory layout:** 8-byte index slots with a per-shard key log, 16-byte stored
+  entries, hashes packed up to 128 fields, fixed-width sets front-coded up to 128
+  members, cold list layout, idle trim and faster maintenance after writes,
+  optimizer duty cycle and futile-attempt thinning. See `docs/memory-format.md`.
+- **Blockchain-shaped data:** exact codecs for hex (ID 13), base58 (14), uint256
+  decimal (15) and Solana SPL token accounts (16); hex keys stored in binary in
+  the key log. Hex and token accounts convert on the write path; base58 and
+  uint256 convert in the background optimizer; signatures stay raw.
+- **`rpccache`:** a caching JSON-RPC proxy for Solana and EVM nodes with a
+  Redis-protocol backend (`cmd/rpccache`, `cmd/rpcbench`). See
+  `docs/RPC-CACHE.md`. It is a separate program; the server itself is unchanged.
+- **Benchmark profiles:** `eth-hash`, `eth-address`, `sol-pubkey`,
+  `sol-signature`, `uint256`, `sol-token-account`, `sol-token-account-b64`,
+  `hex-key` and `address-key`, in the wire bench, the bench scripts and the
+  Benchmark Lab.
+
+Most of the memory changes above are marked "pending live benchmark" in the
+changelog; sandbox and Benchmark Lab figures are recorded in
+`benchmarks/README.md`.
 
 
 ## Adaptive storage status
@@ -145,6 +181,8 @@ Do not infer current status from an old unchecked TODO item or an old audit's
 - `docs/CLUSTER-PRODUCTION-HARDENING.md`
 - `docs/AUTOMATIC-FAILOVER-AUDIT.md`
 - `docs/REPLICATION-TLS-AUDIT.md`
+- `docs/memory-format.md`
+- `docs/RPC-CACHE.md`
 - `docs/operations.md`
 - `SECURITY.md`
 

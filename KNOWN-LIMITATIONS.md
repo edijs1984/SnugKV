@@ -269,6 +269,27 @@ For alpha use:
 - test restore procedures;
 - do not treat SnugKV as the sole copy of critical data.
 
+## Blockchain codecs, key packing and `rpccache`
+
+- The identifier codecs are exact: a value is stored in the compact form only if
+  it rebuilds to the same bytes. Base58 is limited to values that decode to 32
+  bytes; 64-byte Solana signatures stay raw. Solana token-account storage covers
+  only the 165-byte SPL Token layout (raw or standard base64), not Token-2022
+  accounts with extensions.
+- Base58 and uint256 values are converted by the background optimizer, so their
+  smaller size appears after convergence, not immediately after the write.
+- Hex key packing applies only to keys that end in 16 to 128 hex digits.
+  Base58 keys, and keys with other structure, are stored as text. Mixed-case hex
+  keys save less memory and cost more throughput than lower-case ones.
+- Packed keys are decoded when the index table grows and when keys are iterated
+  (`SCAN`, snapshots, optimizer sampling).
+- Numbers for these features come from a generated data set in a development
+  sandbox and from the Benchmark Lab; none comes from production chain traffic.
+- `rpccache` is a separate program. It does not proxy WebSocket subscriptions,
+  does not authenticate clients, and does not run node functions. Cached state
+  can be as old as its TTL (1 second for account and state reads, 200 ms for the
+  chain tip). See `docs/RPC-CACHE.md`.
+
 ## Memory accounting and small-key overhead
 
 `SNUG.STATS` reports engine-accounted memory, not process RSS. RSS additionally
@@ -277,7 +298,8 @@ optimizer scratch space, allocator overhead, temporary EVAL Lua VM state, and
 persistent loaded Function Lua states.
 
 The sparse 1,000-key / 256-shard / 16-byte-value benchmark improved from 527,768
-to 179,224 accounted bytes, a 66.04% reduction. Current measured sparse layout:
+to 179,224 accounted bytes, a 66.04% reduction. The layout measured then (since
+changed to 8-byte index slots and 16-byte stored entries, and not yet remeasured):
 
 - 16-byte index slots;
 - 32-byte common entries;
