@@ -128,7 +128,7 @@ func (s *Store) Memory() MemoryStats {
 // prefix. Entry struct storage itself is charged by reserved []entry capacity,
 // because deleted slots remain allocated and reusable.
 func entryCharge(key string, _ any) uint64 {
-	return uint64(index.KeyRecordBytes(len(key)))
+	return uint64(index.KeyRecordSize(key))
 }
 
 func metadataCharge(e entry) uint64 {

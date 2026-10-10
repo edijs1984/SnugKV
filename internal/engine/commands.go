@@ -208,7 +208,11 @@ func (s *Store) SetPlainBatchFresh(keys [][]byte, values [][]byte) (bool, error)
 
 	for i := range items {
 		item := &items[i]
-		keyBytes += uint64(len(item.key))
+		if size, packed := index.PackedKeySize(item.key); packed {
+			keyBytes += uint64(size)
+		} else {
+			keyBytes += uint64(len(item.key))
+		}
 		metaBytes += metadataCharge(item.entry.entry)
 		if shouldInlinePrepared(item.entry) {
 			// Inline scalars live entirely inside arena.Ref. They must not

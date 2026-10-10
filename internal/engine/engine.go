@@ -442,12 +442,19 @@ func (s *Store) Stats() DatasetStats {
 		sh := &s.shards[i]
 		sh.mu.RLock()
 		now := s.now()
-		for k, e := range sh.all() {
-			if !sh.expired(k, e, now) {
-				result.Keys++
-				result.KeyBytes += uint64(len(k))
-				result.ValueBytes += uint64(e.rawLength)
+		for ref, id := range sh.data.AllRefs() {
+			if int(id) >= len(sh.entries) {
+				panic("invalid entry id")
 			}
+			e := sh.entryView(id)
+			// Only entries with a deadline need the key; the rest are counted
+			// from its length without decoding a packed key.
+			if e.hasExpiry && sh.expired(sh.data.Key(ref), e, now) {
+				continue
+			}
+			result.Keys++
+			result.KeyBytes += uint64(sh.data.KeyLen(ref))
+			result.ValueBytes += uint64(e.rawLength)
 		}
 		sh.mu.RUnlock()
 	}

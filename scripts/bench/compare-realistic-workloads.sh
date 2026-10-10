@@ -41,6 +41,8 @@ profiles=(
   "uint256:256"
   "sol-token-account:256"
   "sol-token-account-b64:256"
+  "hex-key:256"
+  "address-key:256"
 )
 
 if [[ -n "$PROFILE" ]]; then
