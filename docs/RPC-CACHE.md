@@ -92,3 +92,29 @@ Fake node that answers `getAccountInfo` with a real-shaped token-account respons
 | SnugKV | 345 (after its optimizer finished, about 40 s) |
 
 Reproduce with `cmd/rpcbench`: `rpcbench upstream` is the fake node, `rpcbench load` the client; `-cache` reports the cache server's memory.
+
+## Wallet simulation
+
+`rpcbench wallets` models users of a wallet or dashboard. Each user watches 15 accounts (half of them from a shared pool of 200 popular accounts, Zipf-distributed) and refreshes every 3 s with `getSlot`, one `getMultipleAccounts` for the whole set, `getBalance` for the owner and five `getAccountInfo` reads of popular accounts. With `-direct` it repeats a sample of the popular reads against the node to measure how stale cached answers are, and with `-keys` and `-store` it compares each key's usage in SnugKV with what the client sent. Start the fake node with `-advance` so the slot moves and some accounts change (a tenth every 2 slots, a fifth every 150, the rest never).
+
+```
+rpcbench upstream -listen 127.0.0.1:9100 -advance
+rpccache -auth -upstream http://127.0.0.1:9100 -cache 127.0.0.1:6383 -listen 127.0.0.1:8899
+rpcbench wallets -url http://127.0.0.1:8899 -direct http://127.0.0.1:9100 \
+         -upstream-stats http://127.0.0.1:9100 -users 100 -duration 30s \
+         -keys KEY1,KEY2 -store 127.0.0.1:6383
+```
+
+Result on the fake node, 100 users, 30 s, one key on a generous plan and one on a tight plan (default 1 s state TTL):
+
+| Measure | Result |
+|---|---|
+| Calls the cache answered without the node | 48.9% overall |
+| `getAccountInfo` of popular accounts | 62% hit or coalesced |
+| `getSlot` | 78% |
+| `getMultipleAccounts`, `getBalance` | 0% (every user's set and owner is unique) |
+| Cached answers that differed from the node | 1.5% of 404 checked, 2 slots behind at the median, 3 at most |
+| Generous key: calls sent vs counted | 3,520 vs 3,520 |
+| Tight key (1 call/s, burst 10, 400/day): admitted | 39 of 3,648 requests; counts also matched |
+
+These come from a generated workload, so the hit rates only describe the pattern above. What they show is where the cache helps: reads many users share. Per-user reads do not hit, and a `getMultipleAccounts` with a different set of accounts is a different cache entry even when most accounts are shared.
