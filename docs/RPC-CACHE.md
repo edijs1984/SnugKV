@@ -51,7 +51,32 @@ A cached answer can be older than the chain head by up to its TTL. With the defa
 - **Size limit.** Results above `-max-entry-bytes` (1 MiB) are served but not stored; `getProgramAccounts` on large programs is the usual case.
 - Cache keys are 17 bytes: a tag plus 128 bits of a SHA-256 over the chain, method and whitespace-normalized params.
 
-Not supported: WebSocket subscriptions, authentication or rate limiting of clients, and acting as a node.
+Not supported: WebSocket subscriptions and acting as a node. Client authentication and limits are optional, see below.
+
+## API keys, plans and metering (`-auth`)
+
+With `-auth`, every JSON-RPC request needs an API key, checked against records kept in SnugKV. Without the flag nothing changes.
+
+```
+snugkv  -listen 127.0.0.1:6379 ...                    # holds keys, plans, limits, usage
+rpccache -auth -cache 127.0.0.1:6379 -upstream ... -chain solana
+
+rpckeys plan set free -rps 10 -burst 20 -daily 100000
+rpckeys key create -label acme -plan free             # prints the secret once
+rpckeys usage <id> -days 7
+rpckeys key revoke <id>
+```
+
+A client sends the key as `Authorization: Bearer <key>`, `X-API-Key: <key>` or `?api-key=<key>`. `/healthz` and `/metrics` stay open.
+
+- **Plans** hold `rps` (sustained calls per second), `burst` (bucket size, and the largest batch) and `daily` (calls per UTC day, 0 for unlimited). A batch of n calls costs n. Rate limiting uses SnugKV's `snug_rate_limit`, so the limit is shared by every `rpccache` pointing at the same store. The store must be SnugKV; use `-auth-store` to point at a different server than the cache.
+- **Answers.** No or unknown or revoked key: 401. Key on a missing or invalid plan: 403. Over the rate, the batch size or the daily quota: 429 with `Retry-After` (seconds; to the next UTC midnight for the daily quota). Errors are JSON-RPC bodies with codes -32001 and -32005.
+- **Metering.** Each admitted call is counted per key per UTC day in `calls`, split into `immutable`, `static`, `recent`, `state`, `tip` and `bypass` by the method table; refused calls go to `denied`. Counts are buffered and written once a second, and kept 45 days. `rpckeys usage` prints them. The numbers are calls, not cache hits: a cached call counts like any other.
+- **Secrets.** The key is `rk_` plus 256 random bits. Only the first 128 bits of its SHA-256 are stored (as the key id); the secret cannot be recovered or listed.
+- **Staleness.** Key and plan records are trusted for `-auth-record-ttl` (5 s), so a revocation or plan change applies within that time. The daily quota is checked against the stored count plus what this process has admitted since it last read it, so with several `rpccache` processes it can overshoot by about what the others admit in one TTL.
+- **When the store is down.** A key already seen keeps working on its last record. A key never seen is refused with 503. Rate limiting and usage counting fail open (calls are allowed, and buffered usage is retried), so an outage costs accuracy, not availability. `rpcauth_store_errors_total` counts it.
+- **Cost.** About 36 µs per request in the sandbox (a store round trip for the rate limit, with the store on the same two cores), so a cached request costs roughly seven times the bare proxy there. Measure on your own hardware with `go test ./internal/rpccache -bench AuthOverhead`.
+- **Not included:** billing, a customer portal, per-method pricing weights, IP allow-lists, and WebSocket authentication. Keys are created by an operator with `rpckeys`.
 
 ## Measured
 

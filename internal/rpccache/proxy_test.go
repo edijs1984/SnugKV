@@ -23,7 +23,7 @@ type upstream struct {
 	srv     *httptest.Server
 }
 
-func newUpstream(t *testing.T, h func(string, json.RawMessage) (string, string)) *upstream {
+func newUpstream(t testing.TB, h func(string, json.RawMessage) (string, string)) *upstream {
 	u := &upstream{handler: h, status: 200}
 	u.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u.calls.Add(1)
