@@ -1,5 +1,9 @@
 # Changelog
 
+### Tooling — `pubsubbench`, a Pub/Sub fan-out and stuck-subscriber test
+
+- `cmd/pubsubbench` runs against any Redis-compatible server: N subscribers on C channels (`SUBSCRIBE` or `-pattern` for `PSUBSCRIBE`), P publishers at a target rate, and `-stuck` subscribers that connect and never read. It reports publish latency, delivery rate and latency, the share of expected deliveries that arrived, whether the stuck subscribers were disconnected, and how many bytes the server had buffered for them. Output is JSON.
+
 ### Change — Pub/Sub delivery no longer lets one stuck subscriber block `PUBLISH`
 
 - `PUBLISH` used to write to each subscriber's socket while holding a server-wide lock, with up to the 30 s write timeout per write, so one subscriber that stopped reading froze every publisher. Each subscriber now has a bounded queue and its own sender. `PUBLISH` only enqueues.
