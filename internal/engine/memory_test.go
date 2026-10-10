@@ -320,8 +320,8 @@ func TestEncodedCounterUsesInlineStorage(t *testing.T) {
 	if metaSlots != 0 {
 		t.Fatalf("metadata-free counter allocated %d metadata slots", metaSlots)
 	}
-	if entryStructBytes != 24 {
-		t.Fatalf("stored entry size=%d want=24", entryStructBytes)
+	if entryStructBytes != 16 {
+		t.Fatalf("stored entry size=%d want=16", entryStructBytes)
 	}
 
 	auditMemory(t, s)

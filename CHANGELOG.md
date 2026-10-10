@@ -1,5 +1,10 @@
 # Changelog
 
+### Memory — 16-byte stored entries (pending live benchmark)
+
+- Each key's stored entry (arena reference, length, codec, type, flags) was 24 bytes; it is now packed into 16. A 500,000-key counter load through the server drops from 54.2 to 45.3 bytes/key (Redis: about 55), UUID values from 80.1 to 71.1, 64-byte repetitive values from 137.0 to 128.0. Command code still reads and writes the same named fields; only the per-shard storage is packed.
+- The arena's allocation generation is now 18 bits (14 for an inline value) and wraps, instead of 59 bits and panicking when exhausted. It is the stale-reference check and the optimizer's change detector; an optimizer rewrite still re-decodes the current value and compares it with what it compressed before it publishes, so a wrapped generation cannot install stale data. A freed block is reused with a new generation, and a reference to it is rejected unless exactly 262,144 allocations in that shard happen in between.
+
 ### Memory — smaller key index: 8-byte slots and a per-shard key log (pending live benchmark)
 
 - The key index stored each key as a 16-byte slot holding a pointer to a separately allocated key string. A slot is now one 8-byte word (key offset, entry ID, 6-bit hash fingerprint) and keys are appended to a per-shard key log as a length byte plus the key. About 8 bytes per key less on small values: a 1M-key counter load drops from 66.5 to 54.2 bytes/key through the server (Redis: about 55), UUID values from 101 to 88. Slots no longer contain pointers, so the garbage collector does not scan the index. Large-value profiles are unchanged because their memory is in the values.

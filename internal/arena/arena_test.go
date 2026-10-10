@@ -225,3 +225,37 @@ func TestInlineRefStoresTinyPayloadWithoutArenaGrowth(t *testing.T) {
 		t.Fatal("inline generation did not advance")
 	}
 }
+
+func TestGenerationWrapsWithoutBreakingReferences(t *testing.T) {
+	var a Arena
+	value := []byte("0123456789abcdef")
+	live := a.Alloc(value)
+	for i := 0; i < 3*(1<<18); i++ {
+		ref := a.Alloc(value)
+		if ref.generation == 0 || ref.generation > blockGenerationMask {
+			t.Fatalf("alloc %d produced generation %#x outside 1..%#x", i, ref.generation, blockGenerationMask)
+		}
+		if _, err := a.View(ref); err != nil {
+			t.Fatalf("alloc %d: fresh reference rejected: %v", i, err)
+		}
+		a.Free(ref)
+	}
+	if got, err := a.View(live); err != nil || string(got) != string(value) {
+		t.Fatalf("long-lived reference broke across wraps: %q %v", got, err)
+	}
+	stale := a.Alloc(value)
+	a.Free(stale)
+	if _, err := a.View(stale); err == nil {
+		t.Fatal("stale reference accepted right after free")
+	}
+}
+
+func TestInlineGenerationFitsItsField(t *testing.T) {
+	var a Arena
+	for i := 0; i < 1<<16; i++ {
+		ref, ok := a.AllocInline([]byte{1, 2, 3})
+		if !ok || ref.generation>>GenerationBits != 0 || !ref.IsInline() {
+			t.Fatalf("inline ref %d: ok=%t generation=%#x", i, ok, ref.generation)
+		}
+	}
+}

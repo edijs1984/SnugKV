@@ -251,8 +251,8 @@ charges, and bounded schema/dictionary state. It is not process RSS. Network
 buffers, stacks, persistence buffers, Go runtime state, and optimizer scratch can
 add additional RSS.
 
-The shared storage layout now uses 16-byte open-addressed index slots and
-24-byte stored entries. Optional activity/schema metadata is kept in a lazy
+The shared storage layout now uses 8-byte open-addressed index slots (keys live
+in a per-shard key log) and 16-byte stored entries. Optional activity/schema metadata is kept in a lazy
 per-shard sidecar, so metadata-free scalar workloads do not pay an 8-byte nil
 metadata pointer per entry. Tiny encoded scalars can also live directly inside
 the existing 16-byte arena reference, avoiding arena allocation entirely.

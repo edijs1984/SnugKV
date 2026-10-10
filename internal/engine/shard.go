@@ -19,7 +19,7 @@ type shard struct {
 	mu           sync.RWMutex
 
 	data    index.Table[uint32]
-	entries []entryData
+	entries []packedEntry
 	metas   *entryMetaSidecar
 	freeIDs []uint32
 
@@ -82,7 +82,7 @@ func (sh *shard) entryView(id uint32) entry {
 	if sh.metas != nil {
 		meta = sh.metas.slots[id]
 	}
-	return entry{entryData: sh.entries[id], entryMeta: meta}
+	return entry{entryData: sh.entries[id].unpack(), entryMeta: meta}
 }
 
 func (sh *shard) ensureMetaSlots() {
@@ -195,7 +195,7 @@ func (sh *shard) getHashedBytes(key []byte, hash uint64) (entry, bool) {
 
 func (sh *shard) set(key string, e entry) {
 	if id, ok := sh.data.Get(key); ok {
-		sh.entries[id] = e.entryData
+		sh.entries[id] = packEntry(e.entryData)
 		sh.setMeta(id, e.entryMeta)
 		return
 	}
@@ -208,7 +208,7 @@ func (sh *shard) setKnownHashed(key string, hash uint64, e entry, exists bool) {
 		if !ok {
 			panic("known shard entry is missing")
 		}
-		sh.entries[id] = e.entryData
+		sh.entries[id] = packEntry(e.entryData)
 		sh.setMeta(id, e.entryMeta)
 		return
 	}
@@ -220,18 +220,18 @@ func (sh *shard) insertEntry(key string, hash uint64, e entry, hashKnown bool) {
 	if n := len(sh.freeIDs); n > 0 {
 		id = sh.freeIDs[n-1]
 		sh.freeIDs = sh.freeIDs[:n-1]
-		sh.entries[id] = e.entryData
+		sh.entries[id] = packEntry(e.entryData)
 		sh.setMeta(id, e.entryMeta)
 	} else {
 		id = uint32(len(sh.entries))
 		if len(sh.entries) == cap(sh.entries) {
 			next := sh.entryCapacityFor(1)
-			entries := make([]entryData, len(sh.entries), next)
+			entries := make([]packedEntry, len(sh.entries), next)
 			copy(entries, sh.entries)
 			sh.entries = entries
 			sh.growMetaSlots(next)
 		}
-		sh.entries = append(sh.entries, e.entryData)
+		sh.entries = append(sh.entries, packEntry(e.entryData))
 		if sh.metas != nil {
 			sh.metas.slots = append(sh.metas.slots, nil)
 		}
@@ -256,7 +256,7 @@ func (sh *shard) delete(key string) bool {
 		panic("invalid entry id")
 	}
 
-	sh.entries[id] = entryData{}
+	sh.entries[id] = packedEntry{}
 	if sh.metas != nil {
 		sh.metas.slots[id] = nil
 	}

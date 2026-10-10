@@ -340,7 +340,7 @@ func (s *Store) thawHotHashLocked(sh *shard, key string, e entry) (*hotHash, boo
 	}
 	e.rawStable = true
 	e.ref = arena.Ref{}
-	sh.entries[id] = e.entryData
+	sh.entries[id] = packEntry(e.entryData)
 	sh.setHotHash(id, h)
 	return h, true, nil
 }

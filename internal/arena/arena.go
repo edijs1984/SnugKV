@@ -39,10 +39,16 @@ const (
 	refOffsetMask  = uint64(1<<refOffsetBits) - 1
 	refSegmentMask = uint64(1<<refSegmentBits) - 1
 
-	inlineMarker         = uint64(1) << 63
-	inlineLengthShift    = 59
+	// The generation word is GenerationBits wide so a stored entry can pack it
+	// next to its other fields. Block references use all of GenerationBits-1
+	// low bits; an inline reference sets the top bit and uses the next four for
+	// its length, leaving 14 bits of generation.
+	GenerationBits       = 19
+	inlineMarker         = uint64(1) << (GenerationBits - 1)
+	inlineLengthShift    = GenerationBits - 5
 	inlineLengthMask     = uint64(0xF) << inlineLengthShift
 	inlineGenerationMask = (uint64(1) << inlineLengthShift) - 1
+	blockGenerationMask  = inlineMarker - 1
 )
 
 func newRef(segment, offset, length uint32, generation uint64) Ref {
@@ -79,6 +85,18 @@ func (r Ref) length() uint32 {
 	return uint32(r.location & refLengthMask)
 }
 
+// nextGeneration advances the allocation counter. The counter wraps and skips
+// zero, which marks a free block. A stale reference is therefore detected unless
+// exactly 2^18 allocations in this shard separate it from its block's reuse,
+// and every optimistic rewrite re-verifies the value's content in any case.
+func (a *Arena) nextGeneration() uint64 {
+	a.generation++
+	if a.generation > blockGenerationMask {
+		a.generation = 1
+	}
+	return a.generation
+}
+
 // AllocInline stores up to eight payload bytes directly in Ref. It consumes a
 // generation just like an arena allocation so optimistic rewrite version checks
 // retain the same semantics without reserving an arena block.
@@ -86,17 +104,14 @@ func (a *Arena) AllocInline(value []byte) (Ref, bool) {
 	if len(value) == 0 || len(value) > 8 {
 		return Ref{}, false
 	}
-	a.generation++
-	if a.generation == 0 || a.generation > inlineGenerationMask {
-		panic("arena generation exhausted")
-	}
+	generation := a.nextGeneration() & inlineGenerationMask
 	var buf [8]byte
 	copy(buf[:], value)
 	return Ref{
 		location: binary.LittleEndian.Uint64(buf[:]),
 		generation: inlineMarker |
 			uint64(len(value))<<inlineLengthShift |
-			a.generation,
+			generation,
 	}, true
 }
 
@@ -449,13 +464,10 @@ func (a *Arena) Alloc(value []byte) Ref {
 		offset = len(a.segments[seg].data)
 		a.segments[seg].data = a.segments[seg].data[:offset+block]
 	}
-	a.generation++
-	if a.generation == 0 || a.generation > inlineGenerationMask {
-		panic("arena generation exhausted")
-	}
-	binary.LittleEndian.PutUint64(a.segments[seg].data[offset:], a.generation)
+	generation := a.nextGeneration()
+	binary.LittleEndian.PutUint64(a.segments[seg].data[offset:], generation)
 	copy(a.segments[seg].data[offset+8:], value)
-	return newRef(uint32(seg), uint32(offset), uint32(len(value)), a.generation)
+	return newRef(uint32(seg), uint32(offset), uint32(len(value)), generation)
 }
 
 func (a *Arena) View(ref Ref) ([]byte, error) {
