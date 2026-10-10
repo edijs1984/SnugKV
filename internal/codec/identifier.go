@@ -67,8 +67,12 @@ func (r *Registry) EncodeHexForeground(src []byte) (Record, bool) {
 	return Record{ID: Hex, RawLength: n, Data: data}, true
 }
 
-// IsIdentifierCodec reports whether id is one of the identifier codecs.
-func IsIdentifierCodec(id ID) bool { return id == Hex || id == Base58 || id == BigDecimal }
+// IsIdentifierCodec reports whether id is an exact blockchain-value codec
+// (identifier text or a fixed-layout account record). Their conversions need no
+// optimizer metadata and are never revisited.
+func IsIdentifierCodec(id ID) bool {
+	return id == Hex || id == Base58 || id == BigDecimal || id == SolanaTokenAccount
+}
 
 // LooksLikeIdentifier is a constant-time filter for values the optimizer
 // should examine for base58 or big decimal encoding: 20 to 78 bytes whose first,

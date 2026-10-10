@@ -1,5 +1,11 @@
 # Changelog
 
+### Memory — Solana token accounts stored in compact form (pending live benchmark)
+
+- A new exact codec (`solana-token-account`, ID 16) stores an SPL Token account, the 165-byte record `getAccountInfo` returns for every token holder, as about 70 bytes: mint, owner, amount as a varint, and the optional delegate, native amount and close authority only when present. It accepts the 165 raw bytes and the 220-character standard base64 text of the same record (the RPC `base64` encoding) and rebuilds either exactly. Accounts with a malformed option tag, a non-zero payload behind an absent option, or a state above 2 are left as they are, and every record is decoded and compared before it is stored. The conversion is a few byte moves, so it runs on the write path.
+- 300,000 accounts through the server (64 mints, unique owners, log-distributed amounts), final bytes per key after convergence, SnugKV before then after (Redis): raw bytes 240.1 to 129.6 (293.1); base64 text 301.7 to 129.5 (325.1). The accounts in this benchmark are generated, not taken from the chain.
+- `cmd/rediswirebench` gains the value shapes `sol-token-account` and `sol-token-account-b64`, and the bench scripts accept them.
+
 ### Memory — base58 and uint256 conversion moves to the background optimizer; signatures are no longer converted
 
 - Hex (`0x` hashes and addresses) is still converted on the write path because it is a table lookup. Base58 public keys and large decimal integers (uint256 balances) are now converted by the background optimizer instead: a SET no longer pays for the conversion and the verifying decode, and the optimizer queues any 20 to 78 byte value that looks like one. The converted value, the final memory and the read cost are unchanged. A 300,000-key load through the server, final bytes per key after convergence: public key 92.2 to 93.4, uint256 92.1 to 92.4; SET throughput 32% and 38% higher than converting on the write path (255k to 336k and 345k to 474k per second on a small shared machine). Until the optimizer finishes, which took about 26 seconds for 300,000 keys, those values use their original size (about 141 bytes per key for uint256).

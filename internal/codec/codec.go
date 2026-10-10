@@ -59,6 +59,7 @@ func NewRegistry() *Registry {
 		hexCodec{},
 		base58Codec{},
 		bigDecimalCodec{},
+		solanaTokenCodec{},
 	} {
 		if err := r.Register(c); err != nil {
 			panic(err)
@@ -120,6 +121,9 @@ func (r *Registry) Encode(src []byte) Record {
 	// Hex hashes and addresses are exact binary values written in text and
 	// convert cheaply. Base58 and big decimal are left to the optimizer.
 	if rec, ok := r.EncodeHexForeground(src); ok {
+		return rec
+	}
+	if rec, ok := r.EncodeSolanaTokenAccount(src); ok {
 		return rec
 	}
 

@@ -4,6 +4,8 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -37,7 +39,7 @@ func main() {
 	ops := flag.Int("ops", 1000000, "operations for get/mixed/ttl")
 	workers := flag.Int("workers", runtime.NumCPU(), "concurrent workers")
 	valueBytes := flag.Int("value-bytes", 64, "value bytes")
-	valueShape := flag.String("value-shape", "repetitive", "value shape: random, repetitive, json, session-json, api-json, cache-json, counter, uuid, ulid, text, compressed, eth-hash, eth-address, sol-pubkey, sol-signature, or uint256 (the last five ignore value-bytes)")
+	valueShape := flag.String("value-shape", "repetitive", "value shape: random, repetitive, json, session-json, api-json, cache-json, counter, uuid, ulid, text, compressed, eth-hash, eth-address, sol-pubkey, sol-signature, uint256, sol-token-account or sol-token-account-b64 (the last seven ignore value-bytes)")
 	pipeline := flag.Int("pipeline", 256, "pipeline depth for load/get")
 	seed := flag.Int64("seed", 1, "deterministic seed")
 	settleMS := flag.Int("settle-ms", 0, "milliseconds to wait after workload before final memory snapshot")
@@ -56,7 +58,7 @@ func main() {
 		fatalf("workload must be load, get, get-seq, mixed, mixed-pipe, or ttl")
 	}
 	switch *valueShape {
-	case "random", "repetitive", "json", "session-json", "api-json", "cache-json", "counter", "uuid", "ulid", "text", "compressed", "eth-hash", "eth-address", "sol-pubkey", "sol-signature", "uint256":
+	case "random", "repetitive", "json", "session-json", "api-json", "cache-json", "counter", "uuid", "ulid", "text", "compressed", "eth-hash", "eth-address", "sol-pubkey", "sol-signature", "uint256", "sol-token-account", "sol-token-account-b64":
 	default:
 		fatalf("unsupported value-shape %q", *valueShape)
 	}
@@ -568,6 +570,13 @@ func benchmarkValue(shape string, size, keyIndex int, seed int64) []byte {
 	case "sol-signature":
 		return []byte(base58Text(identifierBytes(seed, keyIndex, 64)))
 
+	case "sol-token-account", "sol-token-account-b64":
+		raw := tokenAccountBytes(seed, keyIndex)
+		if shape == "sol-token-account" {
+			return raw
+		}
+		return []byte(base64.StdEncoding.EncodeToString(raw))
+
 	case "uint256":
 		n := new(big.Int).SetBytes(identifierBytes(seed, keyIndex, 32))
 		return []byte(n.String())
@@ -981,4 +990,30 @@ func base58Text(b []byte) string {
 		out[i], out[j] = out[j], out[i]
 	}
 	return string(out)
+}
+
+// tokenAccountBytes builds a deterministic SPL Token account (165 bytes): one
+// of 64 popular mints, a unique owner, a log-distributed amount, and rarely a
+// delegate or close authority.
+func tokenAccountBytes(seed int64, keyIndex int) []byte {
+	b := make([]byte, 165)
+	copy(b[0:32], identifierBytes(seed^0x6d696e74, keyIndex%64, 32))
+	copy(b[32:64], identifierBytes(seed, keyIndex, 32))
+	x := uint64(seed) ^ uint64(keyIndex+1)*0x9e3779b97f4a7c15
+	x ^= x << 13
+	x ^= x >> 7
+	x ^= x << 17
+	amount := x >> (x % 50) // anywhere from tiny to 64 bits
+	binary.LittleEndian.PutUint64(b[64:], amount)
+	b[108] = 1 // initialized
+	if x%50 == 0 {
+		binary.LittleEndian.PutUint32(b[72:], 1)
+		copy(b[76:108], identifierBytes(seed^0x646c67, keyIndex, 32))
+		binary.LittleEndian.PutUint64(b[121:], amount/2)
+	}
+	if x%97 == 0 {
+		binary.LittleEndian.PutUint32(b[129:], 1)
+		copy(b[133:165], identifierBytes(seed^0x636c73, keyIndex, 32))
+	}
+	return b
 }
