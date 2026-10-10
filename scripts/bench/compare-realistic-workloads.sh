@@ -34,6 +34,11 @@ profiles=(
   "repetitive:256"
   "compressed:256"
   "random:256"
+  "eth-hash:256"
+  "eth-address:256"
+  "sol-pubkey:256"
+  "sol-signature:256"
+  "uint256:256"
 )
 
 if [[ -n "$PROFILE" ]]; then
