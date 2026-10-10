@@ -51,9 +51,9 @@ func main() {
 	// Key-shaped profiles pair identifier keys with small counter values.
 	switch *valueShape {
 	case "hex-key":
-		keyShape, *valueShape = "hex64", "counter"
+		keyShape, *valueShape, *valueBytes = "hex64", "counter", 10
 	case "address-key":
-		keyShape, *valueShape = "address", "counter"
+		keyShape, *valueShape, *valueBytes = "address", "counter", 10
 	}
 
 	if *keys < 1 || *ops < 1 || *workers < 1 || *valueBytes < 1 || *pipeline < 1 {
