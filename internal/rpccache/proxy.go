@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -40,8 +41,8 @@ type Proxy struct {
 
 	cacheDownUntil atomic.Int64 // unix nanos; cache calls are skipped until then
 
-	hits, misses, bypass, coalesced, upstreamErrors, cacheErrors, stored, tooLarge atomic.Uint64
-	methods                                                                        sync.Map // string -> *methodStats
+	hits, misses, bypass, coalesced, upstreamErrors, cacheErrors, cacheBusy, stored, tooLarge atomic.Uint64
+	methods                                                                                   sync.Map // string -> *methodStats
 }
 
 type methodStats struct{ hit, miss, bypass, coalesced atomic.Uint64 }
@@ -343,6 +344,16 @@ func (p *Proxy) cacheUsable() bool {
 	return time.Now().UnixNano() >= p.cacheDownUntil.Load()
 }
 
+// cacheError records a failed cache call. A busy pool only means this call is
+// served by the node; any other error pauses the cache for a moment.
+func (p *Proxy) cacheError(err error) {
+	if errors.Is(err, ErrBusy) {
+		p.cacheBusy.Add(1)
+		return
+	}
+	p.cacheFailed()
+}
+
 func (p *Proxy) cacheFailed() {
 	p.cacheErrors.Add(1)
 	// Skip the cache for a moment instead of paying a timeout on every request.
@@ -355,7 +366,7 @@ func (p *Proxy) cacheGet(key string) ([]byte, bool) {
 	}
 	v, ok, err := p.cfg.Cache.Get([]byte(key))
 	if err != nil {
-		p.cacheFailed()
+		p.cacheError(err)
 		return nil, false
 	}
 	return v, ok
@@ -370,7 +381,7 @@ func (p *Proxy) cacheSet(key string, result []byte, ttl time.Duration) {
 		return
 	}
 	if err := p.cfg.Cache.Set([]byte(key), result, ttl); err != nil {
-		p.cacheFailed()
+		p.cacheError(err)
 		return
 	}
 	p.stored.Add(1)
@@ -421,12 +432,12 @@ func (p *Proxy) methodStats(m string) *methodStats {
 
 // Stats is a snapshot of the proxy counters.
 type Stats struct {
-	Hits, Misses, Bypass, Coalesced, UpstreamErrors, CacheErrors, Stored, TooLarge uint64
+	Hits, Misses, Bypass, Coalesced, UpstreamErrors, CacheErrors, CacheBusy, Stored, TooLarge uint64
 }
 
 func (p *Proxy) Stats() Stats {
 	return Stats{p.hits.Load(), p.misses.Load(), p.bypass.Load(), p.coalesced.Load(),
-		p.upstreamErrors.Load(), p.cacheErrors.Load(), p.stored.Load(), p.tooLarge.Load()}
+		p.upstreamErrors.Load(), p.cacheErrors.Load(), p.cacheBusy.Load(), p.stored.Load(), p.tooLarge.Load()}
 }
 
 func (p *Proxy) writeMetrics(w http.ResponseWriter) {
@@ -441,6 +452,7 @@ func (p *Proxy) writeMetrics(w http.ResponseWriter) {
 	line("rpccache_too_large_total", s.TooLarge)
 	line("rpccache_upstream_errors_total", s.UpstreamErrors)
 	line("rpccache_cache_errors_total", s.CacheErrors)
+	line("rpccache_cache_busy_total", s.CacheBusy)
 	var names []string
 	p.methods.Range(func(k, _ any) bool { names = append(names, k.(string)); return true })
 	sort.Strings(names)
