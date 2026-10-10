@@ -101,6 +101,12 @@ func (t *Table[V]) keyRecord(offset uint32) (start, n int) {
 }
 
 func (t *Table[V]) keyAt(offset uint32) string {
+	if t.log[offset] == packEscape {
+		var parts packedParts
+		parts.parse(t.log[offset:])
+		var buf [packMaxKey]byte
+		return string(parts.appendKey(buf[:0]))
+	}
 	start, n := t.keyRecord(offset)
 	if n == 0 {
 		return ""
@@ -226,8 +232,7 @@ func (t *Table[V]) rebuildSlots(capacity int) {
 		if w&liveBit == 0 {
 			continue
 		}
-		key := t.keyAt(slotOffset(w))
-		t.placeKnownAbsent(Hash(key), slotValue(w), slotOffset(w))
+		t.placeKnownAbsent(t.recordHash(slotOffset(w)), slotValue(w), slotOffset(w))
 	}
 }
 
@@ -246,26 +251,29 @@ func (t *Table[V]) rebuildPacked(capacity int, extra int) {
 		if w&liveBit == 0 {
 			continue
 		}
-		start, n := recordSpan(oldLog, slotOffset(w))
 		offset := uint32(len(t.log))
-		t.log = append(t.log, oldLog[slotOffset(w):start+n]...)
-		key := ""
-		if n > 0 {
-			key = unsafe.String(&t.log[len(t.log)-n], n)
-		}
-		t.placeKnownAbsent(Hash(key), slotValue(w), offset)
+		size := recordLen(oldLog, slotOffset(w))
+		t.log = append(t.log, oldLog[slotOffset(w):int(slotOffset(w))+size]...)
+		t.placeKnownAbsent(t.recordHash(offset), slotValue(w), offset)
 	}
 }
 
-// recordSpan returns where the key bytes of the record at offset begin and how
-// many there are, for a log that is not the table's current one.
-func recordSpan(log []byte, offset uint32) (start, n int) {
-	b := log[offset:]
-	if b[0] < 0x80 {
-		return int(offset) + 1, int(b[0])
+// recordHash hashes the key stored at offset without allocating.
+func (t *Table[V]) recordHash(offset uint32) uint64 {
+	b := t.log[offset:]
+	if b[0] == packEscape {
+		var parts packedParts
+		parts.parse(b)
+		// Most packed keys are far shorter than the limit, so a small buffer
+		// avoids clearing a large one on every rehash.
+		var small [160]byte
+		return HashBytes(parts.appendKey(small[:0]))
 	}
-	v, w := binary.Uvarint(b)
-	return int(offset) + w, int(v)
+	start, n := t.keyRecord(offset)
+	if n == 0 {
+		return Hash("")
+	}
+	return Hash(unsafe.String(&t.log[start], n))
 }
 
 func (t *Table[V]) capacityFor(n int) int {
@@ -340,6 +348,11 @@ func (t *Table[V]) GetHashed(key string, hash uint64) (V, bool) {
 
 func (t *Table[V]) keyEquals(offset uint32, key string) bool {
 	b := t.log[offset:]
+	if b[0] == packEscape {
+		var parts packedParts
+		parts.parse(b)
+		return parts.equals(key)
+	}
 	n, w := int(b[0]), 1
 	if n >= 0x80 {
 		v, width := binary.Uvarint(b)
@@ -391,7 +404,14 @@ func checkValue(value uint32) {
 
 // appendKey adds a key record to the log and returns its offset.
 func (t *Table[V]) appendKey(key string) uint32 {
+	packed, isPacked := packKey(key)
 	need := recordBytes(len(key))
+	switch {
+	case isPacked:
+		need = packed.size
+	case len(key) == 0:
+		need = 2
+	}
 	if len(t.log)+need > maxLogBytes {
 		panic("index key log exceeds its 1 GiB capacity")
 	}
@@ -405,8 +425,15 @@ func (t *Table[V]) appendKey(key string) uint32 {
 		t.log = next
 	}
 	offset := uint32(len(t.log))
-	t.log = binary.AppendUvarint(t.log, uint64(len(key)))
-	t.log = append(t.log, key...)
+	switch {
+	case isPacked:
+		t.log = packed.appendTo(t.log)
+	case len(key) == 0:
+		t.log = append(t.log, packEscape, packEmpty)
+	default:
+		t.log = binary.AppendUvarint(t.log, uint64(len(key)))
+		t.log = append(t.log, key...)
+	}
 	return offset
 }
 
@@ -529,9 +556,9 @@ func (t *Table[V]) deleteHashed(key string, hash uint64) {
 		if w&liveBit == 0 || slotFingerprint(w) != fingerprint || !t.keyEquals(slotOffset(w), key) {
 			continue
 		}
+		t.deadBytes += uint32(recordLen(t.log, slotOffset(w)))
 		t.slots[i] = slotTombstone
 		t.count--
-		t.deadBytes += uint32(recordBytes(len(key)))
 		if t.count == 0 {
 			t.tinyFilter = 0
 			t.log = nil
@@ -552,8 +579,49 @@ func (t *Table[V]) deleteHashed(key string, hash uint64) {
 // The yielded keys stay valid after the table changes.
 func (t *Table[V]) All() func(func(string, V) bool) {
 	return func(yield func(string, V) bool) {
+		var chunk keyChunk
 		for _, w := range t.slots {
-			if w&liveBit != 0 && !yield(t.keyAt(slotOffset(w)), V(slotValue(w))) {
+			if w&liveBit != 0 && !yield(t.keyChunked(&chunk, slotOffset(w)), V(slotValue(w))) {
+				return
+			}
+		}
+	}
+}
+
+// keyChunked is keyAt for iteration: packed keys are decoded into chunk.
+func (t *Table[V]) keyChunked(chunk *keyChunk, offset uint32) string {
+	if t.log[offset] == packEscape {
+		return chunk.decode(t.log[offset:])
+	}
+	return t.keyAt(offset)
+}
+
+// KeyRef locates a key in the table's log without decoding it.
+type KeyRef struct{ offset uint32 }
+
+// Key decodes the key a KeyRef from AllRefs points at. A ref is valid only
+// until the table next changes.
+func (t *Table[V]) Key(r KeyRef) string { return t.keyAt(r.offset) }
+
+// KeyLen is the decoded length of the key a KeyRef points at.
+func (t *Table[V]) KeyLen(r KeyRef) int {
+	b := t.log[r.offset:]
+	if b[0] == packEscape {
+		var parts packedParts
+		parts.parse(b)
+		return parts.keyLen()
+	}
+	_, n := t.keyRecord(r.offset)
+	return n
+}
+
+// AllRefs iterates live slots like All but defers decoding each key. Callers
+// that need only a key's length, or the key of a few entries, avoid decoding
+// the rest.
+func (t *Table[V]) AllRefs() func(func(KeyRef, V) bool) {
+	return func(yield func(KeyRef, V) bool) {
+		for _, w := range t.slots {
+			if w&liveBit != 0 && !yield(KeyRef{slotOffset(w)}, V(slotValue(w))) {
 				return
 			}
 		}
@@ -570,12 +638,13 @@ func (t *Table[V]) Sample(cursor, budget, limit int) ([]string, int) {
 		return nil, 0
 	}
 	out := make([]string, 0, limit)
+	var chunk keyChunk
 	cursor %= len(t.slots)
 	for n := 0; n < budget && n < len(t.slots); n++ {
 		w := t.slots[cursor]
 		cursor = (cursor + 1) % len(t.slots)
 		if w&liveBit != 0 {
-			out = append(out, t.keyAt(slotOffset(w)))
+			out = append(out, t.keyChunked(&chunk, slotOffset(w)))
 			if len(out) == limit {
 				break
 			}

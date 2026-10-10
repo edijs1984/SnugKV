@@ -1,5 +1,11 @@
 # Changelog
 
+### Memory — hex keys stored in binary in the key log
+
+- A key whose tail is 16 to 128 hex digits (a transaction or block hash, an address, optionally behind a prefix such as `tx:` or a `0x`) is now stored as raw bytes in the per-shard key log, with its letter case kept exactly (all lower, all upper, or a bit mask for mixed case such as checksummed addresses). Any key that does not re-encode to exactly the same bytes, and any key that would not get smaller, stays as it was, so other workloads are unchanged. The record is a zero byte followed by a flag byte; a raw record can never start with zero except for the empty key, which now writes `00 FF`.
+- Lookups compare the stored bytes with the request key without allocating. Iteration (`SCAN`, snapshots, the optimizer sample) decodes keys into shared chunks, and `Stats` counts key bytes without decoding. Memory accounting charges the packed size.
+- New bench profiles `hex-key` (64 lower-case hex digits) and `address-key` (`0x` plus 40 digits, checksum-style mixed case), both with 10-byte counter values. 500,000 keys on a small shared 2-core machine, bytes per key SnugKV before then after: `hex-key` 94.3 to 65.3 (−31%), `address-key` 72.3 to 58.3 (−19%). Throughput, median of three alternating runs: `hex-key` SET −7%, GET −4%; `address-key` SET −16%, GET −12%. Those numbers are noisy on this machine and should be repeated in the lab.
+
 ### Feature — `rpccache`, a caching JSON-RPC proxy for Solana and EVM nodes
 
 - New command `cmd/rpccache` (package `internal/rpccache`): an HTTP JSON-RPC proxy that serves repeated reads from a Redis-protocol cache (SnugKV or Redis) and forwards everything else to the upstream provider. A method table decides what may be cached and for how long (finalized transactions and blocks for 24 hours, account and state reads for 1 second, chain-head reads for 200 ms, writes and unknown methods never); identical in-flight misses share one upstream call; batches are answered element by element; a failing cache is skipped, never fatal. Errors, `null` results, non-200 replies and `minContextSlot` requests are not cached. Details and limits: `docs/RPC-CACHE.md`.

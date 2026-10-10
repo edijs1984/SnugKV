@@ -229,7 +229,7 @@ func (s *Store) Compact(scratch uint64) int {
 		// power-of-two growth leave it up to half empty.
 		keyLogBytes := 0
 		for _, item := range items {
-			keyLogBytes += index.KeyRecordBytes(len(item.key))
+			keyLogBytes += index.KeyRecordSize(item.key)
 		}
 		freshIndex.ReserveKeys(len(items), keyLogBytes)
 		freshEntries := make([]packedEntry, len(items))

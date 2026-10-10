@@ -39,7 +39,7 @@ func main() {
 	ops := flag.Int("ops", 1000000, "operations for get/mixed/ttl")
 	workers := flag.Int("workers", runtime.NumCPU(), "concurrent workers")
 	valueBytes := flag.Int("value-bytes", 64, "value bytes")
-	valueShape := flag.String("value-shape", "repetitive", "value shape: random, repetitive, json, session-json, api-json, cache-json, counter, uuid, ulid, text, compressed, eth-hash, eth-address, sol-pubkey, sol-signature, uint256, sol-token-account or sol-token-account-b64 (the last seven ignore value-bytes)")
+	valueShape := flag.String("value-shape", "repetitive", "value shape: random, repetitive, json, session-json, api-json, cache-json, counter, uuid, ulid, text, compressed, eth-hash, eth-address, sol-pubkey, sol-signature, uint256, sol-token-account or sol-token-account-b64 (the last seven ignore value-bytes); hex-key and address-key use identifier-shaped keys with counter values")
 	pipeline := flag.Int("pipeline", 256, "pipeline depth for load/get")
 	seed := flag.Int64("seed", 1, "deterministic seed")
 	settleMS := flag.Int("settle-ms", 0, "milliseconds to wait after workload before final memory snapshot")
@@ -48,6 +48,13 @@ func main() {
 	reset := flag.Bool("reset", false, "FLUSHDB before workload")
 	cleanup := flag.Bool("cleanup", false, "FLUSHDB after workload")
 	flag.Parse()
+	// Key-shaped profiles pair identifier keys with small counter values.
+	switch *valueShape {
+	case "hex-key":
+		keyShape, *valueShape = "hex64", "counter"
+	case "address-key":
+		keyShape, *valueShape = "address", "counter"
+	}
 
 	if *keys < 1 || *ops < 1 || *workers < 1 || *valueBytes < 1 || *pipeline < 1 {
 		fatalf("keys, ops, workers, value-bytes and pipeline must be positive")
@@ -635,7 +642,52 @@ func paddedJSON(size int, prefix, suffix string, salt int) []byte {
 	return v
 }
 
-func key(i int) []byte { return []byte(fmt.Sprintf("bench:%09d",i)) }
+// keyShape selects how benchmark keys look. The hex-key and address-key
+// profiles set it so the key log is measured on identifier-shaped keys.
+var keyShape = "bench"
+
+func mix64(x uint64) uint64 {
+	x += 0x9E3779B97F4A7C15
+	x = (x ^ x>>30) * 0xBF58476D1CE4E5B9
+	x = (x ^ x>>27) * 0x94D049BB133111EB
+	return x ^ x>>31
+}
+
+func appendHex64(dst []byte, x uint64) []byte {
+	const digits = "0123456789abcdef"
+	for shift := 60; shift >= 0; shift -= 4 {
+		dst = append(dst, digits[x>>uint(shift)&15])
+	}
+	return dst
+}
+
+func key(i int) []byte {
+	switch keyShape {
+	case "hex64":
+		// 64 lower-case hex digits, like a transaction or block hash.
+		b := make([]byte, 0, 64)
+		for w := uint64(0); w < 4; w++ {
+			b = appendHex64(b, mix64(uint64(i)*4+w))
+		}
+		return b
+	case "address":
+		// 0x plus 40 hex digits with a pseudo-random checksum casing.
+		b := make([]byte, 0, 42)
+		b = append(b, '0', 'x')
+		b = appendHex64(b, mix64(uint64(i)*3))
+		b = appendHex64(b, mix64(uint64(i)*3+1))
+		b = appendHex64(b[:len(b)], mix64(uint64(i)*3+2))
+		b = b[:42]
+		c := mix64(uint64(i) ^ 0xA5A5A5A5)
+		for j := 2; j < len(b); j++ {
+			if b[j] >= 'a' && b[j] <= 'f' && c>>(uint(j)&63)&1 == 1 {
+				b[j] -= 'a' - 'A'
+			}
+		}
+		return b
+	}
+	return []byte(fmt.Sprintf("bench:%09d", i))
+}
 func b(s string) []byte { return []byte(s) }
 
 func dial(addr string)(*client,error){
