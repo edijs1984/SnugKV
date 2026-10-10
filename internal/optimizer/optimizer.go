@@ -543,17 +543,23 @@ func (o *Optimizer) worker() {
 			additionalMetadataBytes := candidate.AdditionalMetadataBytes
 			if record.Schema == nil &&
 				(record.ID == codec.RepeatByte || record.ID == codec.Periodic ||
-					record.ID == codec.LZ4 || record.ID == codec.Zstandard) &&
+					record.ID == codec.LZ4 || record.ID == codec.Zstandard ||
+					codec.IsIdentifierCodec(record.ID)) &&
 				!candidate.RequiresOptimizationMetadata() {
 				additionalMetadataBytes = 0
 			}
 			requiredSaving := 16 + additionalMetadataBytes
+			if codec.IsIdentifierCodec(record.ID) {
+				// An identifier conversion is exact, needs no sidecar and never
+				// reverses, so a saving of one arena size class is enough.
+				requiredSaving = 8
+			}
 			if saving < requiredSaving || saving*8 < candidate.EncodedBytes {
 				// Plain compression candidates that fail the savings threshold
 				// have now been classified. Finalize that exact generation as
 				// terminal RAW so future reads take the zero-copy raw path and
 				// periodic sampling does not keep paying compression cost.
-				if class == engine.OptimizationCompress {
+				if class == engine.OptimizationCompress || class == engine.OptimizationIdentifier {
 					o.store.MarkRawStable(candidate.Key, candidate.Version)
 				}
 				atomic.AddUint64(&o.skipped, 1)

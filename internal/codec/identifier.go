@@ -43,6 +43,58 @@ const (
 	base58Alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 )
 
+// EncodeHexForeground is the only identifier encoder used on the write path:
+// hex conversion is a single table lookup per byte. Base58 and big decimal
+// conversion cost microseconds, so the background optimizer applies them.
+func (r *Registry) EncodeHexForeground(src []byte) (Record, bool) {
+	n := len(src)
+	if n < hexMinDigits || n > hexMaxDigits+2 {
+		return Record{}, false
+	}
+	c := hexCodec{}
+	data, ok := c.Encode(src)
+	if !ok || len(data) >= n {
+		return Record{}, false
+	}
+	// A plain run of decimal digits is better served by the big decimal codec.
+	if n <= bigDecimalMaxLen && data[0]&hexFlagPrefix == 0 && allDigits(src) {
+		return Record{}, false
+	}
+	decoded, err := c.DecodeInto(data, n, nil)
+	if err != nil || !bytes.Equal(decoded, src) {
+		return Record{}, false
+	}
+	return Record{ID: Hex, RawLength: n, Data: data}, true
+}
+
+// IsIdentifierCodec reports whether id is one of the identifier codecs.
+func IsIdentifierCodec(id ID) bool { return id == Hex || id == Base58 || id == BigDecimal }
+
+// LooksLikeIdentifier is a constant-time filter for values the optimizer
+// should examine for base58 or big decimal encoding: 20 to 78 bytes whose first,
+// middle and last bytes are letters or digits. It admits some plain text; the
+// codecs reject that in a few bytes.
+func LooksLikeIdentifier(src []byte) bool {
+	n := len(src)
+	if n < bigDecimalMinLen || n > bigDecimalMaxLen {
+		return false
+	}
+	return alnum(src[0]) && alnum(src[n/2]) && alnum(src[n-1])
+}
+
+func allDigits(src []byte) bool {
+	for _, c := range src {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func alnum(c byte) bool {
+	return c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+}
+
 // EncodeIdentifier returns the smallest blockchain-identifier representation
 // of src, or false when src is not one. It is cheap to call on arbitrary
 // values: length and the first bytes reject almost everything immediately.
@@ -81,7 +133,7 @@ func (r *Registry) EncodeIdentifier(src []byte) (Record, bool) {
 	if n >= hexMinDigits {
 		consider(Hex, hexCodec{})
 	}
-	if n <= 44 || (n >= 86 && n <= 88) {
+	if n <= 44 {
 		consider(Base58, base58Codec{})
 	}
 	return best, found
@@ -248,12 +300,13 @@ var base58Reverse = func() [256]int8 {
 	return t
 }()
 
-// base58Sizes are the decoded widths worth a codec: a 32-byte public key or
-// hash and a 64-byte signature.
-func base58Size(n int) bool { return n == 32 || n == 64 }
+// base58Size is the only decoded width worth a codec: a 32-byte public key or
+// hash. A 64-byte signature saves about 13% of its row but costs an 88-digit
+// conversion on every read, which measured as a poor trade.
+func base58Size(n int) bool { return n == 32 }
 
 func (base58Codec) Encode(src []byte) ([]byte, bool) {
-	if !(len(src) >= 32 && len(src) <= 44) && !(len(src) >= 86 && len(src) <= 88) {
+	if len(src) < 32 || len(src) > 44 {
 		return nil, false
 	}
 	out, ok := base58Decode(src)
