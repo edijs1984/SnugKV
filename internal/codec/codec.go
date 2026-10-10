@@ -56,6 +56,9 @@ func NewRegistry() *Registry {
 		lz4Codec{},
 		zstdCodec{},
 		periodicCodec{},
+		hexCodec{},
+		base58Codec{},
+		bigDecimalCodec{},
 	} {
 		if err := r.Register(c); err != nil {
 			panic(err)
@@ -112,6 +115,13 @@ func (r *Registry) Encode(src []byte) Record {
 				return Record{ID: Integer, RawLength: len(src), Data: bytes.Clone(buf[:size])}
 			}
 		}
+	}
+
+	// Blockchain identifiers (hex hashes and addresses, base58 keys and
+	// signatures, uint256 decimals) are exact fixed-width binary values written
+	// in text. The prefilter rejects other values after a few bytes.
+	if rec, ok := r.EncodeIdentifier(src); ok {
+		return rec
 	}
 
 	best := Record{ID: Raw, RawLength: len(src), Data: bytes.Clone(src)}

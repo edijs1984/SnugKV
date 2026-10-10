@@ -1,5 +1,13 @@
 # Changelog
 
+### Memory — blockchain identifier codecs: hex, base58, uint256 (pending live benchmark)
+
+- Three exact codecs store blockchain text in binary and rebuild the original bytes on read: **hex** (32 to 4096 digits, with or without `0x`, lower, upper or mixed case such as EIP-55 addresses; mixed case adds one bit per digit), **base58** (Bitcoin alphabet, decoding to 32 bytes or 64 bytes: Solana public keys, program ids, signatures, 32-byte hashes), and **big decimal** (canonical decimal text of a value between 2^64 and 2^256, such as uint256 token balances). Text that is not exactly one of these forms stays as it was (non-canonical decimals, `0X` prefixes, base58 that decodes to another width). Every record is decoded and compared with the input before it is stored.
+- Unlike the other scalar codecs these apply to values longer than 36 bytes, on the foreground write path, because a hash is 66 characters and a signature 88. Rejected values cost a few byte comparisons.
+- A 300,000-key load through the server, bytes per key: 66-char `0x` hash 132.9 to 99.7 (-25%), uint256 decimal 140.7 to 99.5 (-29%), 87-char Solana signature 148.8 to 132.8 (-11%), 44-char Solana public key 107.9 to 99.5 (-8%). Cost: encoding and the verifying decode add about 0.5 to 2 microseconds per SET and decoding adds 0.2 to 1.2 microseconds per GET; on a small shared machine SET and GET throughput measured 5 to 30% lower on these shapes.
+- New record IDs 13 (hex), 14 (base58), 15 (big decimal). Persisted data stores plain values, so files remain readable by older builds.
+- `cmd/rediswirebench` gains the value shapes `eth-hash`, `eth-address`, `sol-pubkey`, `sol-signature` and `uint256`.
+
 ### Memory — 16-byte stored entries (pending live benchmark)
 
 - Each key's stored entry (arena reference, length, codec, type, flags) was 24 bytes; it is now packed into 16. A 500,000-key counter load through the server drops from 54.2 to 45.3 bytes/key (Redis: about 55), UUID values from 80.1 to 71.1, 64-byte repetitive values from 137.0 to 128.0. Command code still reads and writes the same named fields; only the per-shard storage is packed.

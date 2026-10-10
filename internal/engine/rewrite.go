@@ -388,6 +388,8 @@ func (s *Store) EncodeCandidate(candidate Candidate) codec.Record {
 	best := codec.Record{ID: codec.Raw, RawLength: len(candidate.Value), Data: candidate.Value}
 	if len(candidate.Value) <= 36 {
 		best = s.codecs.Encode(candidate.Value)
+	} else if rec, ok := s.codecs.EncodeIdentifier(candidate.Value); ok {
+		best = rec
 	}
 	sh := s.shardFor(candidate.Key)
 	if structuredJSONCandidate(candidate.Value) {

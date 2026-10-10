@@ -4,11 +4,13 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"math/big"
 	"math/rand"
 	"net"
 	"os"
@@ -35,7 +37,7 @@ func main() {
 	ops := flag.Int("ops", 1000000, "operations for get/mixed/ttl")
 	workers := flag.Int("workers", runtime.NumCPU(), "concurrent workers")
 	valueBytes := flag.Int("value-bytes", 64, "value bytes")
-	valueShape := flag.String("value-shape", "repetitive", "value shape: random, repetitive, json, session-json, api-json, cache-json, counter, uuid, ulid, text, or compressed")
+	valueShape := flag.String("value-shape", "repetitive", "value shape: random, repetitive, json, session-json, api-json, cache-json, counter, uuid, ulid, text, compressed, eth-hash, eth-address, sol-pubkey, sol-signature, or uint256 (the last five ignore value-bytes)")
 	pipeline := flag.Int("pipeline", 256, "pipeline depth for load/get")
 	seed := flag.Int64("seed", 1, "deterministic seed")
 	settleMS := flag.Int("settle-ms", 0, "milliseconds to wait after workload before final memory snapshot")
@@ -54,7 +56,7 @@ func main() {
 		fatalf("workload must be load, get, get-seq, mixed, mixed-pipe, or ttl")
 	}
 	switch *valueShape {
-	case "random", "repetitive", "json", "session-json", "api-json", "cache-json", "counter", "uuid", "ulid", "text", "compressed":
+	case "random", "repetitive", "json", "session-json", "api-json", "cache-json", "counter", "uuid", "ulid", "text", "compressed", "eth-hash", "eth-address", "sol-pubkey", "sol-signature", "uint256":
 	default:
 		fatalf("unsupported value-shape %q", *valueShape)
 	}
@@ -545,6 +547,31 @@ func benchmarkValue(shape string, size, keyIndex int, seed int64) []byte {
 		x := (uint64(seed) << 32) ^ uint64(keyIndex+1)*0x9e3779b97f4a7c15
 		return []byte(fmt.Sprintf("01ARZ3NDEKTSV4%012X", x&0x0000ffffffffffff))
 
+	case "eth-hash":
+		return []byte("0x" + hex.EncodeToString(identifierBytes(seed, keyIndex, 32)))
+
+	case "eth-address":
+		// EIP-55 style mixed case: upper-case roughly half of the letters.
+		b := identifierBytes(seed, keyIndex, 20)
+		text := []byte(hex.EncodeToString(b))
+		sum := identifierBytes(seed^0x5555, keyIndex, 20)
+		for i, c := range text {
+			if c >= 'a' && c <= 'f' && sum[i/2]>>(uint(i%2)*4)&8 != 0 {
+				text[i] = c - 32
+			}
+		}
+		return append([]byte("0x"), text...)
+
+	case "sol-pubkey":
+		return []byte(base58Text(identifierBytes(seed, keyIndex, 32)))
+
+	case "sol-signature":
+		return []byte(base58Text(identifierBytes(seed, keyIndex, 64)))
+
+	case "uint256":
+		n := new(big.Int).SetBytes(identifierBytes(seed, keyIndex, 32))
+		return []byte(n.String())
+
 	case "text":
 		prefix := []byte(fmt.Sprintf("user %d cached response: ", keyIndex))
 		v := make([]byte, 0, size)
@@ -920,4 +947,38 @@ func measurementNote(workload string, pipeline int) string {
 func fatalf(format string,args ...any){
 	fmt.Fprintf(os.Stderr,"rediswirebench: "+format+"\n",args...)
 	os.Exit(1)
+}
+
+// identifierBytes returns n deterministic pseudo-random bytes for a key.
+func identifierBytes(seed int64, keyIndex, n int) []byte {
+	out := make([]byte, n)
+	x := uint64(seed) ^ uint64(keyIndex+1)*0x9e3779b97f4a7c15
+	for i := range out {
+		x ^= x << 13
+		x ^= x >> 7
+		x ^= x << 17
+		out[i] = byte(x >> 24)
+	}
+	return out
+}
+
+func base58Text(b []byte) string {
+	const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+	n := new(big.Int).SetBytes(b)
+	base, mod := big.NewInt(58), new(big.Int)
+	var out []byte
+	for n.Sign() > 0 {
+		n.DivMod(n, base, mod)
+		out = append(out, alphabet[mod.Int64()])
+	}
+	for _, c := range b {
+		if c != 0 {
+			break
+		}
+		out = append(out, '1')
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return string(out)
 }
