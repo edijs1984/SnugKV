@@ -60,14 +60,29 @@ func runUpstream(args []string) {
 	listen := fs.String("listen", "127.0.0.1:9100", "listen address")
 	delay := fs.Duration("delay", 20*time.Millisecond, "simulated node latency")
 	slot := fs.Uint64("slot", 300_000_000, "slot reported in every response")
-	advance := fs.Bool("advance", false, "let the slot advance with the clock (400 ms per slot) and let some accounts change as it does")
+	advance := fs.Bool("advance", false, "let the slot (block) advance with the clock and let some accounts change as it does")
+	chain := fs.String("chain", "solana", "method set to answer: solana or evm")
+	slotTime := fs.Duration("slot-time", 0, "time per slot or block when advancing (default 400ms for solana, 12s for evm)")
 	fs.Parse(args)
+	if *chain != "solana" && *chain != "evm" {
+		fmt.Fprintln(os.Stderr, "rpcbench: -chain must be solana or evm")
+		os.Exit(2)
+	}
+	if *slotTime <= 0 {
+		*slotTime = 400 * time.Millisecond
+		if *chain == "evm" {
+			*slotTime = 12 * time.Second
+			if *slot == 300_000_000 {
+				*slot = 18_000_000
+			}
+		}
+	}
 	started := time.Now()
 	curSlot := func() uint64 {
 		if !*advance {
 			return *slot
 		}
-		return *slot + uint64(time.Since(started)/(400*time.Millisecond))
+		return *slot + uint64(time.Since(started)/(*slotTime))
 	}
 
 	var calls atomic.Uint64
@@ -83,6 +98,11 @@ func runUpstream(args []string) {
 		}
 		json.Unmarshal(body, &req)
 		sl := curSlot()
+		if *chain == "evm" {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","result":%s,"id":%s}`, evmResult(req.Method, req.Params, sl, *advance), req.ID)
+			return
+		}
 		first := func() string {
 			var addr string
 			if len(req.Params) > 0 {
@@ -360,4 +380,60 @@ func dbSize(addr string) int64 {
 		n = 1
 	}
 	return n
+}
+
+// evmVersion says how many times a piece of state has changed by a block. A
+// tenth of keys change every block, a fifth every 10, the rest never.
+func evmVersion(key string, block uint64, advance bool) uint64 {
+	if !advance {
+		return 0
+	}
+	h := sha256.Sum256([]byte(key))
+	switch {
+	case h[1]%10 == 0:
+		return block
+	case h[1]%10 < 3:
+		return block / 10
+	}
+	return 0
+}
+
+func evmWord(key string, block uint64, advance bool) string {
+	h := sha256.Sum256([]byte(key))
+	return fmt.Sprintf("0x%064x", binary.BigEndian.Uint64(h[:8])>>8+evmVersion(key, block, advance))
+}
+
+// evmResult answers the JSON-RPC methods the wallet simulation uses.
+func evmResult(method string, params []json.RawMessage, block uint64, advance bool) string {
+	str := func(i int) string {
+		var v string
+		if i < len(params) {
+			json.Unmarshal(params[i], &v)
+		}
+		return v
+	}
+	switch method {
+	case "eth_blockNumber":
+		return fmt.Sprintf(`"0x%x"`, block)
+	case "eth_chainId", "net_version":
+		return `"0x1"`
+	case "eth_gasPrice":
+		return fmt.Sprintf(`"0x%x"`, 1_000_000_000+evmVersion("gas", block, advance)%7)
+	case "eth_getBalance":
+		return `"` + evmWord("bal:"+str(0), block, advance) + `"`
+	case "eth_call":
+		var call struct {
+			To   string `json:"to"`
+			Data string `json:"data"`
+		}
+		if len(params) > 0 {
+			json.Unmarshal(params[0], &call)
+		}
+		return `"` + evmWord("call:"+call.To+":"+call.Data, block, advance) + `"`
+	case "eth_getBlockByNumber":
+		h := sha256.Sum256([]byte("block-" + strconv.FormatUint(block, 10)))
+		return fmt.Sprintf(`{"number":"0x%x","hash":"0x%x","parentHash":"0x%x","timestamp":"0x%x","gasUsed":"0x%x","transactions":[]}`,
+			block, h[:], sha256.Sum256(h[:]), 1_700_000_000+block*12, 10_000_000+block%1000)
+	}
+	return `"0x0"`
 }

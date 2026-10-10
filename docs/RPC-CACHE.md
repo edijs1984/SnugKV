@@ -105,6 +105,8 @@ rpcbench wallets -url http://127.0.0.1:8899 -direct http://127.0.0.1:9100 \
          -keys KEY1,KEY2 -store 127.0.0.1:6383
 ```
 
+Add `-chain evm` (to the fake node, the proxy and the simulation) for an Ethereum-style workload: each refresh reads `eth_blockNumber`, `eth_gasPrice`, the owner's `eth_getBalance`, one JSON-RPC batch of `eth_call` token balances, and `-popular-reads` `eth_call`s to popular contracts. The fake EVM node advances a block every 12 s (`-slot-time` changes it). `-cache host:port` reports the cache server's memory: entries and bytes at the busiest sample during the run (entries expire within seconds at the default TTLs, so the end of the run says little), and after `-wait` for SnugKV's optimizer. Use thousands of entries (many `-users`, or a long `-ttl-state` on the proxy) before comparing bytes per entry between SnugKV and Redis. The run also reports p50 and p99 latency of admitted calls. A longer TTL raises the hit rate and the staleness together: on the fake node a 30 s state TTL took the share answered without the node from about 50% to 95%.
+
 Result on the fake node, 100 users, 30 s, one key on a generous plan and one on a tight plan (default 1 s state TTL):
 
 | Measure | Result |

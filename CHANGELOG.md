@@ -1,5 +1,10 @@
 # Changelog
 
+### Tooling — `rpcbench` EVM workload, cache memory and latency in the wallet simulation
+
+- `rpcbench upstream -chain evm` answers `eth_blockNumber`, `eth_gasPrice`, `eth_getBalance`, `eth_call`, `eth_getBlockByNumber` and `eth_chainId`; `-slot-time` sets the slot or block time when `-advance` is on. `rpcbench wallets -chain evm` runs an Ethereum-style refresh cycle with a JSON-RPC batch of token balances and popular-contract calls.
+- `rpcbench wallets` reports p50 and p99 latency, and with `-cache` the cache server's memory at the busiest sample (entries, bytes, bytes per entry) and after `-wait`.
+
 ### Tooling — `rpcbench wallets`, a wallet-style load and staleness test
 
 - `rpcbench wallets` simulates users who each watch a set of accounts and refresh it periodically (chain head, `getMultipleAccounts`, owner balance, reads of popular accounts shared between users). It reports calls answered without the node, a per-method breakdown, node calls saved, how stale cached answers were against the node (share that differed and slots behind), and, with API keys, whether each key's stored usage equals what the client sent. The fake node gains `-advance` (the slot moves, some accounts change) and answers `getSlot`, `getBalance`, `getLatestBlockhash` and `getMultipleAccounts`; without `-advance` its replies are unchanged. First run on the fake node: 48.9% of calls answered without the node, 1.5% of checked answers stale by 2 to 3 slots, key counts exact. Per-user calls (`getMultipleAccounts`, `getBalance`) never hit. See `docs/RPC-CACHE.md`.
