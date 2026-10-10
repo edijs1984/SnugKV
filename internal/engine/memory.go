@@ -29,7 +29,7 @@ func (s *Store) exceedsMemoryLimitLocked(next uint64, admission memoryAdmission)
 }
 
 // Reservations track owned engine allocations, not total process RSS.
-var entryStructBytes = uint64(unsafe.Sizeof(entryData{}))
+var entryStructBytes = uint64(unsafe.Sizeof(packedEntry{}))
 var entryMetaBytes = uint64(unsafe.Sizeof(entryMeta{}))
 var entryMetaSlotBytes = uint64(unsafe.Sizeof((*entryMeta)(nil)))
 

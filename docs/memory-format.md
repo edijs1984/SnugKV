@@ -7,9 +7,12 @@ are excluded from the generic scalar optimizer.
 
 ## Common entry and index layout
 
-The stored hot-path `entryData` is 24 bytes on the supported amd64 build.
-It contains the 16-byte arena reference plus logical length, codec/type tags, and
-expiry state. Optional activity/schema metadata is not embedded in every entry:
+The stored hot-path entry is 16 bytes on the supported amd64 build. Two words
+hold the arena reference's location (or an inline payload up to 8 bytes) and, in
+the second word, the logical length (32 bits), codec ID (6), value type (5),
+expiry and raw-stable flags, and the arena generation (19 bits). Command code
+works with an unpacked `entryData` view; only the per-shard array is packed.
+Optional activity/schema metadata is not embedded in every entry:
 each shard allocates a metadata sidecar lazily only when a stored value actually
 needs one. Metadata-free workloads therefore pay no per-entry nil metadata
 pointer.

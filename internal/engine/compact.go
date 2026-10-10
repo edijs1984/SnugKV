@@ -232,13 +232,13 @@ func (s *Store) Compact(scratch uint64) int {
 			keyLogBytes += index.KeyRecordBytes(len(item.key))
 		}
 		freshIndex.ReserveKeys(len(items), keyLogBytes)
-		freshEntries := make([]entryData, len(items))
+		freshEntries := make([]packedEntry, len(items))
 		var freshMetas *entryMetaSidecar
 		if sh.metas != nil {
 			freshMetas = &entryMetaSidecar{slots: make([]*entryMeta, len(items))}
 		}
 		for j, item := range items {
-			freshEntries[j] = item.value.entryData
+			freshEntries[j] = packEntry(item.value.entryData)
 			if freshMetas != nil {
 				freshMetas.slots[j] = item.value.entryMeta
 			}
