@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -36,6 +38,9 @@ type keyTally struct {
 // per-key counts match what was sent.
 func runWallets(args []string) {
 	fs := flag.NewFlagSet("wallets", flag.ExitOnError)
+	chain := fs.String("chain", "solana", "workload: solana or evm (must match the proxy's -chain and the node's -chain)")
+	cacheAddr := fs.String("cache", "", "cache server address, to report its memory")
+	wait := fs.Duration("wait", 0, "wait this long after the run before reading cache memory (lets SnugKV's optimizer finish)")
 	url := fs.String("url", "http://127.0.0.1:8899", "proxy URL")
 	direct := fs.String("direct", "", "the node itself, to measure staleness (a sample of reads is repeated there)")
 	checkRate := fs.Float64("check-rate", 0.2, "share of popular-account reads repeated against -direct")
@@ -52,6 +57,12 @@ func runWallets(args []string) {
 	store := fs.String("store", "", "SnugKV address holding key usage, to compare its counts with what was sent")
 	seed := fs.Int64("seed", 1, "random seed")
 	fs.Parse(args)
+	evm := *chain == "evm"
+	if !evm && *chain != "solana" {
+		fmt.Fprintln(os.Stderr, "rpcbench: -chain must be solana or evm")
+		os.Exit(2)
+	}
+	memBefore := usedMemory(*cacheAddr)
 
 	var tallies []*keyTally
 	for _, k := range strings.Split(*keys, ",") {
@@ -92,6 +103,8 @@ func runWallets(args []string) {
 	var httpReqs, calls, failures atomic.Uint64
 	var checked, stale, directCalls atomic.Uint64
 	var failStatus atomic.Int64 // first unexpected HTTP status
+	var latMu sync.Mutex
+	var lats []time.Duration
 	var lagMu sync.Mutex
 	var lags []int64 // slots the cached answer was behind, for stale answers
 
@@ -109,6 +122,7 @@ func runWallets(args []string) {
 			req.Header.Set("Authorization", "Bearer "+kt.secret)
 		}
 		httpReqs.Add(1)
+		t0 := time.Now()
 		resp, err := client.Do(req)
 		if err != nil {
 			failures.Add(1)
@@ -116,6 +130,12 @@ func runWallets(args []string) {
 		}
 		defer resp.Body.Close()
 		reply, _ = io.ReadAll(resp.Body)
+		if resp.StatusCode == http.StatusOK {
+			d := time.Since(t0)
+			latMu.Lock()
+			lats = append(lats, d)
+			latMu.Unlock()
+		}
 		if kt != nil {
 			kt.requests.Add(1)
 		}
@@ -157,7 +177,58 @@ func runWallets(args []string) {
 		return reply, ok
 	}
 
+	// batch sends several calls of one method as a JSON-RPC batch.
+	batch := func(kt *keyTally, method string, paramSets []string) {
+		var b strings.Builder
+		b.WriteByte('[')
+		for i, p := range paramSets {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			fmt.Fprintf(&b, `{"jsonrpc":"2.0","id":%d,"method":"%s","params":%s}`, i+1, method, p)
+		}
+		b.WriteByte(']')
+		_, label, ok := post(kt, b.String(), len(paramSets))
+		if !ok {
+			return
+		}
+		t := tally(method + " (batch)")
+		t.calls.Add(uint64(len(paramSets)))
+		var h, m, by uint64
+		fmt.Sscanf(label, "BATCH hit=%d miss=%d bypass=%d", &h, &m, &by)
+		t.hit.Add(h)
+		t.miss.Add(m)
+		t.bypass.Add(by)
+	}
+
 	popAddr := func(i int) string { return accountAddress(i) }
+	if evm {
+		popAddr = func(i int) string { return evmAddress(i) }
+	}
+	// Cached entries expire in seconds, so the end of the run says little about
+	// memory. Sample while it runs and keep the point with the most entries.
+	var peakEntries, peakBytes int64
+	sampleDone := make(chan struct{})
+	var sampleWG sync.WaitGroup
+	if *cacheAddr != "" {
+		sampleWG.Add(1)
+		go func() {
+			defer sampleWG.Done()
+			t := time.NewTicker(500 * time.Millisecond)
+			defer t.Stop()
+			for {
+				select {
+				case <-t.C:
+					if n, ok := dbCount(*cacheAddr); ok && n > peakEntries {
+						peakEntries, peakBytes = n, usedMemory(*cacheAddr)-memBefore
+					}
+				case <-sampleDone:
+					return
+				}
+			}
+		}()
+	}
+
 	var wg sync.WaitGroup
 	start := time.Now()
 	for u := 0; u < *users; u++ {
@@ -177,10 +248,22 @@ func runWallets(args []string) {
 					set[i] = popAddr(int(zipf.Uint64()))
 				} else {
 					set[i] = accountAddress(1_000_000 + u*1000 + i)
+					if evm {
+						set[i] = evmAddress(1_000_000 + u*1000 + i)
+					}
 				}
 			}
 			multi, _ := json.Marshal([]any{set, map[string]string{"encoding": "base64"}})
 			owner := accountAddress(2_000_000 + u)
+			if evm {
+				owner = evmAddress(2_000_000 + u)
+			}
+			var tokenCalls []string // eth_call balanceOf(owner) for each watched token
+			if evm {
+				for _, token := range set {
+					tokenCalls = append(tokenCalls, `[{"to":"`+token+`","data":"0x70a08231`+strings.Repeat("0", 24)+owner[2:]+`"},"latest"]`)
+				}
+			}
 
 			// Spread the first refreshes so users do not move in lockstep.
 			select {
@@ -189,32 +272,45 @@ func runWallets(args []string) {
 				return
 			}
 			for ctx.Err() == nil {
-				one(kt, "getSlot", `[]`)
-				one(kt, "getMultipleAccounts", string(multi))
-				one(kt, "getBalance", `["`+owner+`"]`)
+				if evm {
+					one(kt, "eth_blockNumber", `[]`)
+					one(kt, "eth_gasPrice", `[]`)
+					one(kt, "eth_getBalance", `["`+owner+`","latest"]`)
+					batch(kt, "eth_call", tokenCalls)
+				} else {
+					one(kt, "getSlot", `[]`)
+					one(kt, "getMultipleAccounts", string(multi))
+					one(kt, "getBalance", `["`+owner+`"]`)
+				}
 				for i := 0; i < *popularReads; i++ {
 					addr := popAddr(int(zipf.Uint64()))
-					params := `["` + addr + `",{"encoding":"base64"}]`
-					reply, ok := one(kt, "getAccountInfo", params)
+					method, params := "getAccountInfo", `["`+addr+`",{"encoding":"base64"}]`
+					if evm {
+						// A popular contract's view function: the same call for everyone.
+						method, params = "eth_call", `[{"to":"`+addr+`","data":"0xfeaf968c"},"latest"]`
+					}
+					reply, ok := one(kt, method, params)
 					if !ok || *direct == "" || rng.Float64() >= *checkRate {
 						continue
 					}
 					directCalls.Add(1)
-					fresh, err := directCall(client, *direct, "getAccountInfo", params)
+					fresh, err := directCall(client, *direct, method, params)
 					if err != nil {
 						continue
 					}
-					got, gotSlot := splitReply(reply)
-					want, wantSlot := splitReply(fresh)
+					got, gotSlot := splitReply(reply, evm)
+					want, wantSlot := splitReply(fresh, evm)
 					if got == nil || want == nil {
 						continue
 					}
 					checked.Add(1)
 					if !bytes.Equal(got, want) {
 						stale.Add(1)
-						lagMu.Lock()
-						lags = append(lags, int64(wantSlot)-int64(gotSlot))
-						lagMu.Unlock()
+						if !evm {
+							lagMu.Lock()
+							lags = append(lags, int64(wantSlot)-int64(gotSlot))
+							lagMu.Unlock()
+						}
 					}
 				}
 				select {
@@ -227,8 +323,18 @@ func runWallets(args []string) {
 	}
 	wg.Wait()
 	elapsed := time.Since(start)
+	close(sampleDone)
+	sampleWG.Wait()
 
+	sort.Slice(lats, func(i, j int) bool { return lats[i] < lats[j] })
+	pct := func(p float64) float64 {
+		if len(lats) == 0 {
+			return 0
+		}
+		return float64(lats[int(float64(len(lats)-1)*p)]) / 1e6
+	}
 	out := map[string]any{
+		"chain": *chain, "p50_ms": pct(0.50), "p99_ms": pct(0.99),
 		"users": *users, "seconds": elapsed.Seconds(),
 		"http_requests": httpReqs.Load(), "rpc_calls": calls.Load(), "failures": failures.Load(),
 		"calls_per_sec": float64(calls.Load()) / elapsed.Seconds(),
@@ -267,6 +373,17 @@ func runWallets(args []string) {
 			if c := calls.Load(); c > 0 {
 				out["node_calls_saved"] = 1 - float64(n)/float64(c)
 			}
+		}
+	}
+	if *cacheAddr != "" {
+		out["cache_peak_entries"], out["cache_peak_bytes"] = peakEntries, peakBytes
+		if peakEntries > 0 {
+			out["cache_bytes_per_entry_at_peak"] = float64(peakBytes) / float64(peakEntries)
+		}
+		time.Sleep(*wait)
+		out["cache_bytes_after_wait"] = usedMemory(*cacheAddr) - memBefore
+		if n, ok := dbCount(*cacheAddr); ok {
+			out["cache_entries_after_wait"] = n
 		}
 	}
 	if *direct != "" {
@@ -320,8 +437,18 @@ func directCall(c *http.Client, url, method, params string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
-// splitReply returns the "value" of a getAccountInfo reply and its slot.
-func splitReply(b []byte) (value []byte, slot uint64) {
+// splitReply returns the part of a reply to compare and, for Solana, its slot.
+// For EVM it is the whole result.
+func splitReply(b []byte, evm bool) (value []byte, slot uint64) {
+	if evm {
+		var r struct {
+			Result json.RawMessage `json:"result"`
+		}
+		if json.Unmarshal(b, &r) != nil || len(r.Result) == 0 {
+			return nil, 0
+		}
+		return r.Result, 0
+	}
 	var r struct {
 		Result struct {
 			Context struct {
@@ -334,4 +461,20 @@ func splitReply(b []byte) (value []byte, slot uint64) {
 		return nil, 0
 	}
 	return r.Result.Value, r.Result.Context.Slot
+}
+
+// evmAddress is a made-up 20-byte address.
+func evmAddress(i int) string {
+	h := sha256.Sum256([]byte("evm-account-" + strconv.Itoa(i)))
+	return fmt.Sprintf("0x%x", h[:20])
+}
+
+// dbCount is the number of keys in the cache server.
+func dbCount(addr string) (int64, bool) {
+	s, err := resp(addr, "DBSIZE")
+	if err != nil {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	return n, err == nil
 }
