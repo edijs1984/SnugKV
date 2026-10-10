@@ -1,5 +1,9 @@
 # Changelog
 
+### Tooling — `pubsubbench`, a Pub/Sub fan-out and stuck-subscriber test
+
+- `cmd/pubsubbench` runs against any Redis-compatible server: N subscribers on C channels (`SUBSCRIBE` or `-pattern` for `PSUBSCRIBE`), P publishers at a target rate, and `-stuck` subscribers that connect and never read. It reports publish latency, delivery rate and latency, the share of expected deliveries that arrived, whether the stuck subscribers were disconnected, and how many bytes the server had buffered for them. Output is JSON.
+
 ### Fix — `rpccache` opens at most `-cache-pool` connections to the cache
 
 - The cache client used to dial a new connection whenever its idle pool was empty and close the extra one afterwards. Under thousands of concurrent users that meant a stream of new connections, which cost SnugKV about 2.5 times what they cost Redis (measured with `redis-benchmark -k 0` on two cores: 14.3k against 5.7k connections per second at 50 clients). Cache calls timed out, the proxy skipped the cache, and SnugKV answered 64% of calls without the node against Redis's 93% on the same traffic (2,000 simulated users, 600 s cache time). The client now holds at most `-cache-pool` connections and a caller waits for a free one; if none frees up within `-cache-timeout` the call goes to the node and the cache is not paused (`rpccache_cache_busy_total`). The same run now gives 95.4% on both, with 0.54 ms (SnugKV) and 0.41 ms (Redis) median latency and no cache errors.
