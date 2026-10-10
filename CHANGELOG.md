@@ -1,5 +1,12 @@
 # Changelog
 
+### Change — streams keep their messages in chunks, so `XADD` no longer slows down as a stream grows
+
+- A stream used to be stored as one block that every command decoded and re-encoded in full. Sequential `XADD` of 200-byte messages took 434 ms per 1,000 with 1,000 messages in the stream and 2,201 ms per 1,000 with 4,000 (Redis: about 65 ms throughout), and 10,000 adds took 33 s. Messages now live in chunks of about 32 KiB and `XADD` only touches the newest chunk: 10,000 adds take 0.27 s, a 100,000-message stream fills in 0.55 s with `redis-cli --pipe`, and the engine benchmark gives about 1 µs per `XADD` whether the stream holds 0, 10,000 or 100,000 messages.
+- Consumer groups, consumers and pending entries stay in a small stored value, so `XREADGROUP`, `XACK`, `XCLAIM`, `XAUTOCLAIM`, `XPENDING` and `XINFO` no longer copy the messages either. `XRANGE`, `XREAD`, `XDEL` and `XTRIM` read or rewrite only the chunks they touch.
+- No behaviour change: replies, persistence files, `DUMP`/`RESTORE`, replication, `RENAME` and `COPY` use the same stream format as before, and the 32 MiB limit per stream is unchanged. Memory for 100,000 messages of 200 bytes: 22.2 MB (Redis 22.9 MB). `INFO`-level memory stats add `StreamBytes`.
+- Not changed: with `-aof`, every write still appends the whole key to the log. 3,000 `XADD` of 100 bytes wrote a 722 MB AOF and a restart replayed it in 16 s. Stream-specific log entries are the next step.
+
 ### Tooling — `pubsubbench`, a Pub/Sub fan-out and stuck-subscriber test
 
 - `cmd/pubsubbench` runs against any Redis-compatible server: N subscribers on C channels (`SUBSCRIBE` or `-pattern` for `PSUBSCRIBE`), P publishers at a target rate, and `-stuck` subscribers that connect and never read. It reports publish latency, delivery rate and latency, the share of expected deliveries that arrived, whether the stuck subscribers were disconnected, and how many bytes the server had buffered for them. Output is JSON.

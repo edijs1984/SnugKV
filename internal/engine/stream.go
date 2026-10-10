@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -216,7 +217,7 @@ func decodePackedStream(data []byte) (packedStream, error) {
 				state.EntriesAdded = uint64(group.EntriesRead)
 			}
 			for _, pending := range group.Pending {
-				if _, exists := streamEntryByID(state.Entries, pending.ID); !exists && state.MaxDeletedID.less(pending.ID) {
+				if !packedStreamHasEntry(state.Entries, pending.ID) && state.MaxDeletedID.less(pending.ID) {
 					state.MaxDeletedID = pending.ID
 				}
 			}
@@ -226,25 +227,6 @@ func decodePackedStream(data []byte) (packedStream, error) {
 		return packedStream{}, errors.New("invalid packed stream trailing data")
 	}
 	return state, nil
-}
-
-func streamPreparedEntry(packed []byte) preparedEntry {
-	return preparedEntry{
-		entry: entry{entryData: entryData{valueType: TypeStream, rawLength: uint32(len(packed))}},
-		data:  append([]byte(nil), packed...),
-	}
-}
-
-func (s *Store) streamStateFromEntry(sh *shard, e entry) (packedStream, error) {
-	return decodePackedStream(sh.encoded(e))
-}
-
-func (s *Store) streamLogicalValue(sh *shard, e entry) ([]byte, error) {
-	state, err := s.streamStateFromEntry(sh, e)
-	if err != nil {
-		return nil, err
-	}
-	return encodePackedStream(state)
 }
 
 func parseStreamIDPair(text string) (StreamID, error) {
@@ -366,38 +348,14 @@ func cloneStreamFields(fields []StreamField) []StreamField {
 	return out
 }
 
-func noteStreamDeleted(state *packedStream, id StreamID) {
+func noteStreamDeleted(state *streamState, id StreamID) {
 	if state.MaxDeletedID.less(id) {
 		state.MaxDeletedID = id
 	}
 }
 
-func trimStreamMaxLen(state *packedStream, maxLen, limit int) int {
-	remove := len(state.Entries) - maxLen
-	if remove <= 0 {
-		return 0
-	}
-	if limit > 0 && remove > limit {
-		remove = limit
-	}
-	state.Entries = state.Entries[remove:]
-	return remove
-}
-
-func trimStreamMinID(state *packedStream, minID StreamID, limit int) int {
-	remove := 0
-	for remove < len(state.Entries) && state.Entries[remove].ID.less(minID) {
-		if limit > 0 && remove >= limit {
-			break
-		}
-		remove++
-	}
-	if remove == 0 {
-		return 0
-	}
-	state.Entries = state.Entries[remove:]
-	return remove
-}
+// streamAddGrowth is the memory a new entry is expected to need.
+func streamAddGrowth(size int) uint64 { return uint64(size) + 64 }
 
 func (s *Store) StreamAdd(key, idSpec string, fields []StreamField, options StreamAddOptions) (StreamID, bool, error) {
 	if len(fields) == 0 {
@@ -419,14 +377,14 @@ func (s *Store) StreamAdd(key, idSpec string, fields []StreamField, options Stre
 	if !exists && options.NoMkStream {
 		return StreamID{}, false, nil
 	}
-	state := packedStream{}
+	state := streamState{log: newStreamBody()}
 	var expiresAt stamp
 	if exists {
 		if old.valueType != TypeStream {
 			return StreamID{}, false, streamWrongType()
 		}
 		var err error
-		state, err = s.streamStateFromEntry(sh, old)
+		state, err = s.streamStateFromEntry(sh, key, old)
 		if err != nil {
 			return StreamID{}, false, err
 		}
@@ -443,45 +401,76 @@ func (s *Store) StreamAdd(key, idSpec string, fields []StreamField, options Stre
 	if state.EntriesAdded == math.MaxUint64 {
 		return StreamID{}, false, errors.New("ERR stream entries-added counter overflow")
 	}
+	size := streamEntrySize(fields)
+	if state.log.dataBytes+uint64(size)+streamStubAllowance(state) > maxPackedStreamBytes {
+		return StreamID{}, false, errStreamTooLarge
+	}
+	if err := s.admitStreamGrowth(streamAddGrowth(size)); err != nil {
+		return StreamID{}, false, err
+	}
+
+	before := state.log.memory()
+	if !exists {
+		before = 0
+	}
+	state.log.Append(id, fields)
 	state.LastID = id
 	state.EntriesAdded++
-	state.Entries = append(state.Entries, StreamEntry{ID: id, Fields: cloneStreamFields(fields)})
+	state.syncLog()
 	if options.HasMaxLen {
-		trimStreamMaxLen(&state, options.MaxLen, options.Limit)
+		remove := state.log.Len() - options.MaxLen
+		if remove > 0 {
+			if options.Limit > 0 && remove > options.Limit {
+				remove = options.Limit
+			}
+			state.log.TrimFront(remove)
+		}
 	} else if options.HasMinID {
-		trimStreamMinID(&state, options.MinID, options.Limit)
+		if remove := state.log.CountBefore(options.MinID, options.Limit); remove > 0 {
+			state.log.TrimFront(remove)
+		}
 	}
-	packed, err := encodePackedStream(state)
-	if err != nil {
-		return StreamID{}, false, err
+	if !exists {
+		if err := s.createStreamLocked(sh, key, state, expiresAt); err != nil {
+			return StreamID{}, false, err
+		}
+		return id, true, nil
 	}
-	updated := streamPreparedEntry(packed)
-	updated.expiresAt = expiresAt
-	if err := s.publish(sh, key, updated); err != nil {
-		return StreamID{}, false, err
-	}
+	s.settleStreamMemory(before, state.log.memory())
 	return id, true, nil
+}
+
+// streamStubAllowance bounds the size of the stored part for limit checks
+// without encoding it on every append.
+func streamStubAllowance(state streamState) uint64 {
+	n := uint64(64)
+	for i := range state.Groups {
+		g := &state.Groups[i]
+		n += uint64(len(g.Name)) + 40 + uint64(len(g.Consumers))*24
+		for j := range g.Consumers {
+			n += uint64(len(g.Consumers[j].Name))
+		}
+		n += uint64(len(g.Pending)) * 40
+	}
+	return n
 }
 
 func (s *Store) StreamLen(key string) (int64, error) {
 	sh := s.shardFor(key)
-	sh.mu.Lock()
-	defer sh.mu.Unlock()
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
 	e, ok := sh.get(key)
 	if !ok || sh.expired(key, e, s.now()) {
-		if ok {
-			s.remove(sh, key)
-		}
 		return 0, nil
 	}
 	if e.valueType != TypeStream {
 		return 0, streamWrongType()
 	}
-	state, err := s.streamStateFromEntry(sh, e)
-	if err != nil {
-		return 0, err
+	body := s.streamLogs.get(key)
+	if body == nil {
+		return 0, errStreamLogMissing
 	}
-	return int64(len(state.Entries)), nil
+	return int64(body.Len()), nil
 }
 
 func streamIDInRange(id StreamID, start, end StreamRangeBound) bool {
@@ -512,33 +501,41 @@ func (s *Store) StreamRange(key string, start, end StreamRangeBound, count int, 
 	if e.valueType != TypeStream {
 		return nil, streamWrongType()
 	}
-	state, err := s.streamStateFromEntry(sh, e)
-	if err != nil {
-		return nil, err
+	body := s.streamLogs.get(key)
+	if body == nil {
+		return nil, errStreamLogMissing
 	}
 	if count == 0 {
 		return []StreamEntry{}, nil
 	}
 	out := make([]StreamEntry, 0)
 	if reverse {
-		for i := len(state.Entries) - 1; i >= 0; i-- {
-			if streamIDInRange(state.Entries[i].ID, start, end) {
-				out = append(out, cloneStreamEntry(state.Entries[i]))
+		body.ForEachReverse(end.ID, func(item StreamEntry) bool {
+			if item.ID.less(start.ID) {
+				return false
+			}
+			if streamIDInRange(item.ID, start, end) {
+				out = append(out, item)
 				if len(out) >= count {
-					break
+					return false
 				}
 			}
-		}
+			return true
+		})
 		return out, nil
 	}
-	for i := range state.Entries {
-		if streamIDInRange(state.Entries[i].ID, start, end) {
-			out = append(out, cloneStreamEntry(state.Entries[i]))
+	body.ForEachFrom(start.ID, true, func(item StreamEntry) bool {
+		if end.ID.less(item.ID) {
+			return false
+		}
+		if streamIDInRange(item.ID, start, end) {
+			out = append(out, item)
 			if len(out) >= count {
-				break
+				return false
 			}
 		}
-	}
+		return true
+	})
 	return out, nil
 }
 
@@ -556,38 +553,28 @@ func (s *Store) StreamDelete(key string, ids []StreamID) (int64, error) {
 	if e.valueType != TypeStream {
 		return 0, streamWrongType()
 	}
-	state, err := s.streamStateFromEntry(sh, e)
-	if err != nil {
-		return 0, err
+	body := s.streamLogs.get(key)
+	if body == nil {
+		return 0, errStreamLogMissing
 	}
-	wanted := make(map[StreamID]struct{}, len(ids))
+	existing := make(map[StreamID]struct{}, len(ids))
 	for _, id := range ids {
-		wanted[id] = struct{}{}
-	}
-	kept := state.Entries[:0]
-	var deleted int64
-	for _, item := range state.Entries {
-		if _, remove := wanted[item.ID]; remove {
-			deleted++
-			noteStreamDeleted(&state, item.ID)
-			continue
+		if body.Has(id) {
+			existing[id] = struct{}{}
 		}
-		kept = append(kept, item)
 	}
-	if deleted == 0 {
+	if len(existing) == 0 {
 		return 0, nil
 	}
-	state.Entries = kept
-	packed, err := encodePackedStream(state)
-	if err != nil {
-		return 0, err
+	before := body.memory()
+	deleted := body.Delete(existing)
+	for id := range existing {
+		if body.MaxDeletedID.less(id) {
+			body.MaxDeletedID = id
+		}
 	}
-	updated := streamPreparedEntry(packed)
-	updated.expiresAt = sh.expirationAt(key, e)
-	if err := s.publish(sh, key, updated); err != nil {
-		return 0, err
-	}
-	return deleted, nil
+	s.settleStreamMemory(before, body.memory())
+	return int64(deleted), nil
 }
 
 func (s *Store) StreamTrimMaxLen(key string, maxLen, limit int) (int64, error) {
@@ -607,24 +594,21 @@ func (s *Store) StreamTrimMaxLen(key string, maxLen, limit int) (int64, error) {
 	if e.valueType != TypeStream {
 		return 0, streamWrongType()
 	}
-	state, err := s.streamStateFromEntry(sh, e)
-	if err != nil {
-		return 0, err
+	body := s.streamLogs.get(key)
+	if body == nil {
+		return 0, errStreamLogMissing
 	}
-	remove := trimStreamMaxLen(&state, maxLen, limit)
-	if remove == 0 {
+	remove := body.Len() - maxLen
+	if remove <= 0 {
 		return 0, nil
 	}
-	packed, err := encodePackedStream(state)
-	if err != nil {
-		return 0, err
+	if limit > 0 && remove > limit {
+		remove = limit
 	}
-	updated := streamPreparedEntry(packed)
-	updated.expiresAt = sh.expirationAt(key, e)
-	if err := s.publish(sh, key, updated); err != nil {
-		return 0, err
-	}
-	return int64(remove), nil
+	before := body.memory()
+	removed := body.TrimFront(remove)
+	s.settleStreamMemory(before, body.memory())
+	return int64(removed), nil
 }
 
 func (s *Store) StreamTrimMinID(key string, minID StreamID, limit int) (int64, error) {
@@ -644,22 +628,21 @@ func (s *Store) StreamTrimMinID(key string, minID StreamID, limit int) (int64, e
 	if e.valueType != TypeStream {
 		return 0, streamWrongType()
 	}
-	state, err := s.streamStateFromEntry(sh, e)
-	if err != nil {
-		return 0, err
+	body := s.streamLogs.get(key)
+	if body == nil {
+		return 0, errStreamLogMissing
 	}
-	remove := trimStreamMinID(&state, minID, limit)
+	remove := body.CountBefore(minID, limit)
 	if remove == 0 {
 		return 0, nil
 	}
-	packed, err := encodePackedStream(state)
-	if err != nil {
-		return 0, err
-	}
-	updated := streamPreparedEntry(packed)
-	updated.expiresAt = sh.expirationAt(key, e)
-	if err := s.publish(sh, key, updated); err != nil {
-		return 0, err
-	}
-	return int64(remove), nil
+	before := body.memory()
+	removed := body.TrimFront(remove)
+	s.settleStreamMemory(before, body.memory())
+	return int64(removed), nil
+}
+
+func packedStreamHasEntry(entries []StreamEntry, id StreamID) bool {
+	i := sort.Search(len(entries), func(i int) bool { return !entries[i].ID.less(id) })
+	return i < len(entries) && entries[i].ID.equal(id)
 }

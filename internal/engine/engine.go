@@ -63,6 +63,10 @@ type preparedEntry struct {
 	entry
 	expiresAt stamp
 	data      []byte
+
+	// keepStream marks a STREAM value that replaces the stored value of the
+	// same key while keeping the entry log attached to it.
+	keepStream bool
 }
 
 func (e *entry) ensureMeta() *entryMeta {
@@ -137,6 +141,7 @@ type Store struct {
 	shapeEncoding    bool
 	compression      bool
 	memory           accounting
+	streamLogs       streamRegistry
 	sampleCursor     uint64
 	shapeCatalog     globalShapeCatalog
 	hashShapes       hashShapeCatalog

@@ -31,16 +31,13 @@ type StreamSnapshot struct {
 	Groups       []StreamSnapshotGroup
 }
 
-func cloneStreamSnapshot(state packedStream) StreamSnapshot {
+func cloneStreamSnapshot(state streamState) StreamSnapshot {
 	out := StreamSnapshot{
 		LastID:       state.LastID,
 		EntriesAdded: state.EntriesAdded,
 		MaxDeletedID: state.MaxDeletedID,
-		Entries:      make([]StreamEntry, 0, len(state.Entries)),
+		Entries:      state.log.All(),
 		Groups:       make([]StreamSnapshotGroup, 0, len(state.Groups)),
-	}
-	for _, entry := range state.Entries {
-		out.Entries = append(out.Entries, cloneStreamEntry(entry))
 	}
 	for _, group := range state.Groups {
 		g := StreamSnapshotGroup{
@@ -123,7 +120,7 @@ func (s *Store) StreamSnapshot(key string) (StreamSnapshot, bool, error) {
 	if e.valueType != TypeStream {
 		return StreamSnapshot{}, false, streamWrongType()
 	}
-	state, err := s.streamStateFromEntry(sh, e)
+	state, err := s.streamStateFromEntry(sh, key, e)
 	if err != nil {
 		return StreamSnapshot{}, false, err
 	}
