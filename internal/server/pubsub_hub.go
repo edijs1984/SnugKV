@@ -1,6 +1,7 @@
 package server
 
 import (
+	"time"
 	"snugkv/internal/engine"
 	"sort"
 	"sync"
@@ -12,6 +13,12 @@ type pubSubHub struct {
 	channels      map[string]map[*pubSubSession]struct{}
 	patterns      map[string]map[*pubSubSession]struct{}
 	shardChannels map[string]map[*pubSubSession]struct{}
+
+	// Delivery policy for async pushes; see pubsub_push.go.
+	attempts  atomic.Int64
+	timeoutNS atomic.Int64
+	queueSize atomic.Int64
+	dropped   atomic.Uint64
 }
 
 type pubSubSession struct {
@@ -22,6 +29,12 @@ type pubSubSession struct {
 	send          func([]byte) error
 	closed        bool
 	activeState   atomic.Bool
+
+	// Async push path, set by setPush. Without it publish delivers inline.
+	pushSend func(frame []byte, attempts int, timeout time.Duration) error
+	onDrop   func()
+	push     chan []byte
+	stop     chan struct{}
 }
 
 var pubSubHubs sync.Map // map[*Server]*pubSubHub
@@ -79,6 +92,9 @@ func (h *pubSubHub) removeSessionLocked(session *pubSubSession) {
 	session.shardChannels = make(map[string]struct{})
 	session.closed = true
 	session.activeState.Store(false)
+	if session.stop != nil {
+		close(session.stop)
+	}
 }
 
 func (session *pubSubSession) close() {
@@ -118,7 +134,7 @@ func (h *pubSubHub) publish(channel, message []byte) int64 {
 	)
 	for session := range h.channels[string(channel)] {
 		receivers++
-		if err := session.send(messageFrame); err != nil {
+		if !h.deliverLocked(session, messageFrame) {
 			failed[session] = struct{}{}
 		}
 	}
@@ -140,14 +156,12 @@ func (h *pubSubHub) publish(channel, message []byte) int64 {
 		)
 		for session := range h.patterns[pattern] {
 			receivers++
-			if err := session.send(frame); err != nil {
+			if !h.deliverLocked(session, frame) {
 				failed[session] = struct{}{}
 			}
 		}
 	}
-	for session := range failed {
-		h.removeSessionLocked(session)
-	}
+	h.dropFailedLocked(failed)
 	return receivers
 }
 
@@ -164,13 +178,11 @@ func (h *pubSubHub) publishShard(channel, message []byte) int64 {
 	failed := make(map[*pubSubSession]struct{})
 	for session := range h.shardChannels[string(channel)] {
 		receivers++
-		if err := session.send(frame); err != nil {
+		if !h.deliverLocked(session, frame) {
 			failed[session] = struct{}{}
 		}
 	}
-	for session := range failed {
-		h.removeSessionLocked(session)
-	}
+	h.dropFailedLocked(failed)
 	return receivers
 }
 
