@@ -61,7 +61,7 @@ func TestByteLookupHandlesCollisionsAndEmptyKey(t *testing.T) {
 
 	// Use a non-tiny table so this test isolates collision probing. The helper
 	// below intentionally bypasses normal Set bookkeeping, including tinyFilter.
-	table.slots = make([]slot[uint32], initialCapacity*2)
+	table.slots = make([]uint64, initialCapacity*2)
 	for i, key := range []string{"", "alpha", "beta", "gamma"} {
 		testInsertHashed(table, key, uint32(i+1), hash)
 	}
@@ -78,15 +78,18 @@ func TestByteLookupHandlesCollisionsAndEmptyKey(t *testing.T) {
 	}
 }
 
-func TestPackedSlotIs16Bytes(t *testing.T) {
+func TestPackedSlotIs8Bytes(t *testing.T) {
 	table := New[uint32]()
-	if got := table.EntryBytes(); got != 16 {
-		t.Fatalf("entry bytes = %d, want 16", got)
+	if got := table.EntryBytes(); got != 8 {
+		t.Fatalf("entry bytes = %d, want 8", got)
+	}
+	if got := unsafe.Sizeof(uint64(0)); got != 8 {
+		t.Fatalf("slot word = %d bytes", got)
 	}
 }
 
-func TestTableStructIs32Bytes(t *testing.T) {
-	if got, want := unsafe.Sizeof(Table[uint32]{}), uintptr(32); got != want {
+func TestTableStructIs64Bytes(t *testing.T) {
+	if got, want := unsafe.Sizeof(Table[uint32]{}), uintptr(64); got != want {
 		t.Fatalf("table struct size = %d, want %d", got, want)
 	}
 }
@@ -97,8 +100,8 @@ func TestTinyNegativeFilterPreservesExistingKeys(t *testing.T) {
 	for i, key := range keys {
 		table.Set(key, uint32(i+1))
 	}
-	if got := table.CapacityBytes(); got != 4*16 {
-		t.Fatalf("full tiny capacity = %d, want %d", got, 4*16)
+	if got := table.CapacityBytes(); got != 4*8 {
+		t.Fatalf("full tiny capacity = %d, want %d", got, 4*8)
 	}
 	for i, key := range keys {
 		bits := tinyFilterBits(Hash(key))
@@ -143,34 +146,34 @@ func TestTinyNegativeFilterPreservesExistingKeys(t *testing.T) {
 
 func TestSparseInitialCapacityAndCompaction(t *testing.T) {
 	table := New[uint32]()
-	if got := table.GrowthBytes(1); got != 4*16 {
-		t.Fatalf("first growth = %d, want %d", got, 4*16)
+	if got := table.GrowthBytes(1); got != 4*8 {
+		t.Fatalf("first growth = %d, want %d", got, 4*8)
 	}
 
 	for i := 0; i < 3; i++ {
 		table.Set(fmt.Sprintf("k%d", i), uint32(i))
 	}
-	if got := table.CapacityBytes(); got != 4*16 {
-		t.Fatalf("three-key capacity = %d, want %d", got, 4*16)
+	if got := table.CapacityBytes(); got != 4*8 {
+		t.Fatalf("three-key capacity = %d, want %d", got, 4*8)
 	}
 	if got := table.GrowthBytes(1); got != 0 {
 		t.Fatalf("fourth-key growth = %d, want 0", got)
 	}
 
 	table.Set("k3", 3)
-	if got := table.CapacityBytes(); got != 4*16 {
-		t.Fatalf("four-key capacity = %d, want %d", got, 4*16)
+	if got := table.CapacityBytes(); got != 4*8 {
+		t.Fatalf("four-key capacity = %d, want %d", got, 4*8)
 	}
 	if _, ok := table.Get("missing"); ok {
 		t.Fatal("missing key found in full tiny table")
 	}
-	if got := table.GrowthBytes(1); got != 4*16 {
-		t.Fatalf("fifth-key growth = %d, want %d", got, 4*16)
+	if got := table.GrowthBytes(1); got != 4*8 {
+		t.Fatalf("fifth-key growth = %d, want %d", got, 4*8)
 	}
 
 	table.Set("k4", 4)
-	if got := table.CapacityBytes(); got != 8*16 {
-		t.Fatalf("five-key capacity = %d, want %d", got, 8*16)
+	if got := table.CapacityBytes(); got != 8*8 {
+		t.Fatalf("five-key capacity = %d, want %d", got, 8*8)
 	}
 	if table.tinyFilter != 0 {
 		t.Fatalf("tiny filter retained after growth: %#x", table.tinyFilter)
@@ -179,8 +182,8 @@ func TestSparseInitialCapacityAndCompaction(t *testing.T) {
 	table.Delete("k3")
 	table.Delete("k4")
 	table.Compact()
-	if got := table.CapacityBytes(); got != 4*16 {
-		t.Fatalf("compact three-key capacity = %d, want %d", got, 4*16)
+	if got := table.CapacityBytes(); got != 4*8 {
+		t.Fatalf("compact three-key capacity = %d, want %d", got, 4*8)
 	}
 	for i := 0; i < 3; i++ {
 		got, ok := table.Get(fmt.Sprintf("k%d", i))
@@ -191,101 +194,39 @@ func TestSparseInitialCapacityAndCompaction(t *testing.T) {
 }
 
 func testGetHashed(table *Table[uint32], key string, hash uint64) (uint32, bool) {
-	if len(table.slots) == 0 {
-		return 0, false
-	}
-	size := len(table.slots)
-	for n, i := 0, table.probeStart(hash); n < size; n, i = n+1, i+1 {
-		if i == size {
-			i = 0
-		}
-		s := &table.slots[i]
-		switch s.state() {
-		case stateEmpty:
-			return 0, false
-		case stateLive:
-			if s.keyLen() == len(key) && s.key() == key {
-				return s.value(), true
-			}
-		}
-	}
-	return 0, false
+	return table.GetHashed(key, hash)
 }
 
 func testInsertHashed(table *Table[uint32], key string, value uint32, hash uint64) {
-	size := len(table.slots)
-	deleted := -1
-	for n, i := 0, table.probeStart(hash); n < size; n, i = n+1, i+1 {
-		if i == size {
-			i = 0
-		}
-		s := &table.slots[i]
-		switch s.state() {
-		case stateLive:
-			if s.keyLen() == len(key) && s.key() == key {
-				s.setLive(key, value, hash)
-				return
-			}
-		case stateDeleted:
-			if deleted < 0 {
-				deleted = i
-			}
-		case stateEmpty:
-			if deleted >= 0 {
-				s = &table.slots[deleted]
-			}
-			s.setLive(key, value, hash)
-			table.count++
-			return
+	table.insertHashed(key, value, hash)
+}
+
+// testRebuildHashed re-places every live key using the forced hash, so tests
+// that pin all keys to one probe chain keep that chain through growth.
+func testRebuildHashed(table *Table[uint32], capacity int, hash uint64) {
+	old := table.slots
+	table.slots = make([]uint64, capacity)
+	table.count = 0
+	table.tinyFilter = 0
+	for _, w := range old {
+		if w&liveBit != 0 {
+			table.placeKnownAbsent(hash, slotValue(w), slotOffset(w))
 		}
 	}
-	if deleted >= 0 {
-		table.slots[deleted].setLive(key, value, hash)
-		table.count++
-		return
-	}
-	panic("index capacity invariant")
 }
 
 func testSetHashed(table *Table[uint32], key string, value uint32, hash uint64) {
 	if _, ok := testGetHashed(table, key, hash); !ok {
 		capacity := table.capacityFor(int(table.count) + 1)
 		if capacity != len(table.slots) {
-			old := table.slots
-			table.slots = make([]slot[uint32], capacity)
-			table.count = 0
-			for i := range old {
-				s := &old[i]
-				if s.state() == stateLive {
-					testInsertHashed(table, s.key(), s.value(), hash)
-				}
-			}
+			testRebuildHashed(table, capacity, hash)
 		}
 	}
 	testInsertHashed(table, key, value, hash)
 }
 
 func testDeleteHashed(table *Table[uint32], key string, hash uint64) {
-	if len(table.slots) == 0 {
-		return
-	}
-	size := len(table.slots)
-	for n, i := 0, table.probeStart(hash); n < size; n, i = n+1, i+1 {
-		if i == size {
-			i = 0
-		}
-		s := &table.slots[i]
-		switch s.state() {
-		case stateEmpty:
-			return
-		case stateLive:
-			if s.keyLen() == len(key) && s.key() == key {
-				s.setDeleted()
-				table.count--
-				return
-			}
-		}
-	}
+	table.deleteHashed(key, hash)
 }
 
 func testCompactHashed(table *Table[uint32], hash uint64) {
@@ -297,15 +238,7 @@ func testCompactHashed(table *Table[uint32], hash uint64) {
 	for !capacityAccepts(int(table.count), capacity) {
 		capacity *= 2
 	}
-	old := table.slots
-	table.slots = make([]slot[uint32], capacity)
-	table.count = 0
-	for i := range old {
-		s := &old[i]
-		if s.state() == stateLive {
-			testInsertHashed(table, s.key(), s.value(), hash)
-		}
-	}
+	testRebuildHashed(table, capacity, hash)
 }
 
 func TestFullTinyTableRemainsCollisionSafe(t *testing.T) {
@@ -315,8 +248,8 @@ func TestFullTinyTableRemainsCollisionSafe(t *testing.T) {
 	for i, key := range []string{"alpha", "beta", "gamma", "delta"} {
 		testSetHashed(table, key, uint32(i+1), hash)
 	}
-	if got := table.CapacityBytes(); got != 4*16 {
-		t.Fatalf("full tiny capacity = %d, want %d", got, 4*16)
+	if got := table.CapacityBytes(); got != 4*8 {
+		t.Fatalf("full tiny capacity = %d, want %d", got, 4*8)
 	}
 	if _, ok := testGetHashed(table, "missing", hash); ok {
 		t.Fatal("missing colliding key returned from full table")
@@ -326,13 +259,13 @@ func TestFullTinyTableRemainsCollisionSafe(t *testing.T) {
 	if got, ok := testGetHashed(table, "gamma", hash); !ok || got != 99 {
 		t.Fatalf("full-table update got=%d ok=%t", got, ok)
 	}
-	if got := table.CapacityBytes(); got != 4*16 {
+	if got := table.CapacityBytes(); got != 4*8 {
 		t.Fatalf("update grew tiny table to %d bytes", got)
 	}
 
 	testSetHashed(table, "epsilon", 5, hash)
-	if got := table.CapacityBytes(); got != 8*16 {
-		t.Fatalf("fifth colliding key capacity = %d, want %d", got, 8*16)
+	if got := table.CapacityBytes(); got != 8*8 {
+		t.Fatalf("fifth colliding key capacity = %d, want %d", got, 8*8)
 	}
 	for key, want := range map[string]uint32{
 		"alpha": 1,
@@ -393,9 +326,9 @@ func TestGrowthAccounting(t *testing.T) {
 	}
 }
 
-func TestPackedSlotPreservesFullUint32ValueAndEmptyKey(t *testing.T) {
+func TestPackedSlotPreservesMaxValueAndEmptyKey(t *testing.T) {
 	table := New[uint32]()
-	const max = ^uint32(0)
+	max := MaxValue
 	table.Set("", max)
 	got, ok := table.Get("")
 	if !ok || got != max {
@@ -509,5 +442,89 @@ func TestSetKnownHashedInsertAndUpdate(t *testing.T) {
 	}
 	if table.Len() != 1 {
 		t.Fatalf("len=%d want=1", table.Len())
+	}
+}
+
+func TestValueAboveSlotCapacityPanicsClearly(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected a panic for a value above MaxValue")
+		}
+	}()
+	New[uint32]().Set("k", MaxValue+1)
+}
+
+func TestKeysYieldedByAllAndSampleSurviveGrowthAndCompaction(t *testing.T) {
+	table := New[uint32]()
+	for i := 0; i < 50; i++ {
+		table.Set(fmt.Sprintf("early:%d", i), uint32(i))
+	}
+	var held []string
+	for k := range table.All() {
+		held = append(held, k)
+	}
+	sampled, _ := table.Sample(0, 1000, 1000)
+	held = append(held, sampled...)
+
+	// Force the log to grow, then to be packed after heavy deletion.
+	for i := 0; i < 20000; i++ {
+		table.Set(fmt.Sprintf("later:%06d:%s", i, "xxxxxxxxxxxxxxxx"), uint32(i+100))
+	}
+	for i := 0; i < 20000; i++ {
+		table.Delete(fmt.Sprintf("later:%06d:%s", i, "xxxxxxxxxxxxxxxx"))
+	}
+	table.Compact()
+	for _, k := range held {
+		if len(k) < 7 || k[:6] != "early:" {
+			t.Fatalf("held key changed underneath the caller: %q", k)
+		}
+	}
+	if table.Len() != 50 {
+		t.Fatalf("len=%d want 50", table.Len())
+	}
+}
+
+func TestChurnDoesNotGrowKeyLogWithoutBound(t *testing.T) {
+	table := New[uint32]()
+	for i := 0; i < 1000; i++ {
+		table.Set(fmt.Sprintf("stable:%d", i), uint32(i))
+	}
+	for round := 0; round < 200; round++ {
+		for i := 0; i < 1000; i++ {
+			table.Set(fmt.Sprintf("churn:%d:%d", round, i), uint32(i))
+		}
+		for i := 0; i < 1000; i++ {
+			table.Delete(fmt.Sprintf("churn:%d:%d", round, i))
+		}
+	}
+	live := 1000 * recordBytes(len("stable:999"))
+	if got := table.KeyLogBytes(); got > uint64(live)*8 {
+		t.Fatalf("key log %d bytes for ~%d live bytes: dead records are not being reclaimed", got, live)
+	}
+	for i := 0; i < 1000; i++ {
+		if v, ok := table.Get(fmt.Sprintf("stable:%d", i)); !ok || v != uint32(i) {
+			t.Fatalf("stable key %d lost", i)
+		}
+	}
+}
+
+func TestLongKeysRoundTrip(t *testing.T) {
+	table := New[uint32]()
+	keys := []string{string(make([]byte, 127)), string(make([]byte, 128)), string(make([]byte, 300)), string(make([]byte, 70000))}
+	for i := range keys {
+		b := []byte(keys[i])
+		for j := range b {
+			b[j] = byte('a' + (i+j)%26)
+		}
+		keys[i] = string(b)
+		table.Set(keys[i], uint32(i+1))
+	}
+	for i, k := range keys {
+		if v, ok := table.Get(k); !ok || v != uint32(i+1) {
+			t.Fatalf("long key %d: v=%d ok=%t", i, v, ok)
+		}
+		if v, ok := table.GetHashedBytes([]byte(k), HashBytes([]byte(k))); !ok || v != uint32(i+1) {
+			t.Fatalf("long key bytes %d: v=%d ok=%t", i, v, ok)
+		}
 	}
 }

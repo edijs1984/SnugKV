@@ -5,6 +5,7 @@ import (
 	"snugkv/internal/arena"
 	"snugkv/internal/codec"
 	"snugkv/internal/codec/jsonshape"
+	"snugkv/internal/index"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -123,11 +124,11 @@ func (s *Store) Memory() MemoryStats {
 	}
 }
 
-// entryCharge is the live key-byte charge. Entry struct storage itself is
-// charged by reserved []entry capacity, because deleted slots remain allocated
-// and reusable.
+// entryCharge is the live key-log charge: the key bytes plus their length
+// prefix. Entry struct storage itself is charged by reserved []entry capacity,
+// because deleted slots remain allocated and reusable.
 func entryCharge(key string, _ any) uint64 {
-	return uint64(len(key))
+	return uint64(index.KeyRecordBytes(len(key)))
 }
 
 func metadataCharge(e entry) uint64 {
