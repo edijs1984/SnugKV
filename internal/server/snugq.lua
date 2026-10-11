@@ -179,8 +179,8 @@ local function parse_job(a, off)
   if o.delay < 0 or o.prio < 0 or o.prio > 2097152 or o.att < 1 or o.bd < 0 or o.ddttl < 0 then
     return nil, 'delay, priority (0..2097152), attempts (>=1), backoff delay and dedup ttl must be valid'
   end
-  if o.bt ~= '' and o.bt ~= 'fixed' and o.bt ~= 'exponential' then
-    return nil, 'backoff type must be fixed or exponential'
+  if o.bt ~= '' and o.bt ~= 'fixed' and o.bt ~= 'exponential' and o.bt ~= 'custom' then
+    return nil, 'backoff type must be fixed, exponential or custom'
   end
   if o.onfail ~= '' and o.onfail ~= 'fail' and o.onfail ~= 'ignore' and o.onfail ~= 'remove' then
     return nil, 'onFail must be fail, ignore or remove'

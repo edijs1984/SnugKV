@@ -248,6 +248,17 @@ func TestQueueExponentialBackoff(t *testing.T) {
 	}
 }
 
+func TestQueueCustomBackoffUsesWorkerDelay(t *testing.T) {
+	q := newQT(t)
+	id := q.add("job", "x", "7=3", "8=custom")
+	q.fetch("w")
+	q.call("snugq_fail", id, "w", "e", "", "0", "150")
+	f, _ := strconv.ParseFloat(q.raw("ZSCORE", q.p+"delayed", id).(string), 64)
+	if d := int64(f/4096) - time.Now().UnixMilli(); d < 50 || d > 170 {
+		t.Fatalf("custom backoff = %dms", d)
+	}
+}
+
 func TestQueueDelayDedupAndCustomIds(t *testing.T) {
 	q := newQT(t)
 	id := q.add("job", "x", "4=80")
