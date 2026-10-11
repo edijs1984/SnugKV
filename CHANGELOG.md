@@ -1,5 +1,9 @@
 # Changelog
 
+### Feature — webhooks module (optional)
+
+- New `internal/webhook`, started with `-webhooks-listen` and/or `-webhooks-api-listen` (off by default). Inbound webhooks (`POST /hook/<id>`) publish into a stream with HMAC or token checks and a rate limit; outbound webhooks deliver a stream to a URL through a consumer group with retries, backoff, dead-letter topic, custom headers (API keys) and a signature. Definitions, logs and counters live in the store itself; secrets are encrypted with `-webhooks-key`; outbound requests to private addresses are refused. A small JSON management API creates, edits, tests and removes webhooks. See `docs/WEBHOOKS.md`.
+
 ### Change — consumer-group changes are written as small deltas too
 
 - After `XREADGROUP`, `XACK`, `XCLAIM`, `XAUTOCLAIM` and `XGROUP`, the AOF and replicas used to receive every group of the stream whole, including all pending entries. They now receive only what changed: the group's cursor, the consumers that changed, and the pending entries added, changed or removed. A soak with 3 services × 3 instances over 100,000 messages wrote a 453 MB AOF instead of 739 MB, and an entry no longer grows with the size of the backlog. AOFs written by the previous version still replay.
