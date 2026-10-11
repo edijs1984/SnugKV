@@ -124,6 +124,9 @@ in a development sandbox, not in CI.
 - [x] `rpccache`: caching JSON-RPC proxy for Solana and EVM nodes (`docs/RPC-CACHE.md`).
 - [x] `rpccache -auth` and `rpckeys`: API keys, plans, rate limits, daily quotas and per-class usage metering stored in SnugKV.
 - [x] Benchmark profiles for the new data shapes in the wire bench, scripts and Benchmark Lab.
+- [x] Streams stored as chunks: `XADD` cost no longer depends on stream length (engine part of durable streams).
+- [ ] Stream-specific AOF and replication entries (append one message, acknowledge one message) instead of rewriting the whole key; then lift the 32 MiB per-stream limit.
+- [ ] Disk-backed streams: move old chunks to segment files when a stream passes a RAM limit, delete a segment once every group has acknowledged it.
 - [ ] Rerun the sparse 1,000-key benchmark and the 1M-key counter baseline with the new layout, and replace the older figures quoted in `README.md` and `benchmarks/README.md`.
 - [ ] Lab run of `rpccache` against real traffic (the numbers so far use a generated node and generated responses).
 

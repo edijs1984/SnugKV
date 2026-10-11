@@ -77,7 +77,7 @@ func (s *Store) Export(keys []string) []persistence.Record {
 				}
 				record.Value = logical
 			case TypeStream:
-				logical, err := s.streamLogicalValue(sh, e)
+				logical, err := s.streamLogicalValue(sh, key, e)
 				if err != nil {
 					panic(err)
 				}
@@ -141,10 +141,19 @@ func (s *Store) restoreSingleRecord(record persistence.Record, force bool) error
 		}
 		e = zsetPreparedEntry(record.Value)
 	case TypeStream:
-		if _, err := decodePackedStream(record.Value); err != nil {
+		packed, err := decodePackedStream(record.Value)
+		if err != nil {
 			return errors.New("ERR recovered STREAM value is invalid")
 		}
-		e = streamPreparedEntry(record.Value)
+		var expiresAt stamp
+		if record.ExpiresAtMS != 0 {
+			expiresAt = stamp(record.ExpiresAtMS)
+		}
+		admission := enforceMemoryLimit
+		if force {
+			admission = allowOverMemoryLimit
+		}
+		return s.installStreamLocked(sh, key, packed, expiresAt, admission)
 	case TypeBloom:
 		if _, err := decodeBloom(record.Value); err != nil {
 			return errors.New("ERR recovered BLOOM value is invalid")
@@ -230,6 +239,7 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 	now := s.now()
 	updates := make(map[string]preparedEntry)
 	deletions := make(map[string]bool)
+	streamLogs := make(map[string]*streamBody)
 	for _, record := range records {
 		if record.Replication != nil {
 			continue
@@ -238,8 +248,10 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 		if record.Deleted || record.ExpiresAtMS != 0 && record.ExpiresAtMS <= now.UnixMilli() {
 			deletions[key] = true
 			delete(updates, key)
+			delete(streamLogs, key)
 			continue
 		}
+		delete(streamLogs, key)
 
 		var e preparedEntry
 		switch ValueType(record.ValueType) {
@@ -265,10 +277,21 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 			}
 			e = zsetPreparedEntry(record.Value)
 		case TypeStream:
-			if _, err := decodePackedStream(record.Value); err != nil {
+			packed, err := decodePackedStream(record.Value)
+			if err != nil {
 				return errors.New("ERR recovered STREAM value is invalid")
 			}
-			e = streamPreparedEntry(record.Value)
+			body := streamBodyFromEntries(packed.Entries, packed.LastID, packed.MaxDeletedID, packed.EntriesAdded)
+			stub, err := encodeStreamStub(streamState{
+				LastID: packed.LastID, EntriesAdded: packed.EntriesAdded, MaxDeletedID: packed.MaxDeletedID,
+				Groups: packed.Groups, log: body,
+			})
+			if err != nil {
+				return errors.New("ERR recovered STREAM value is invalid")
+			}
+			e = streamPreparedEntry(stub)
+			e.keepStream = true
+			streamLogs[key] = body
 		case TypeBloom:
 			if _, err := decodeBloom(record.Value); err != nil {
 				return errors.New("ERR recovered BLOOM value is invalid")
@@ -363,8 +386,15 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 	for sh, lengths := range allocations {
 		extraArena += sh.arena.GrowthFor(lengths)
 	}
+	var streamNew, streamOld uint64
+	for key, body := range streamLogs {
+		streamNew += body.memory()
+		if oldBody := s.streamLogs.get(key); oldBody != nil {
+			streamOld += oldBody.memory()
+		}
+	}
 	s.memory.mu.Lock()
-	next := s.memory.used - before - beforeMeta + after + afterMeta + extra + extraEntries + extraMetaSlots + extraArena
+	next := s.memory.used - before - beforeMeta + after + afterMeta + extra + extraEntries + extraMetaSlots + extraArena + streamNew - streamOld
 	if max := s.memory.max.Load(); !force && max > 0 && next > max {
 		s.memory.mu.Unlock()
 		return ErrOOM
@@ -378,6 +408,9 @@ func (s *Store) Restore(records []persistence.Record, force bool) error {
 		sh := s.shardFor(key)
 		if err := s.publishRecord(sh, key, e, allowOverMemoryLimit); err != nil {
 			return err
+		}
+		if body := streamLogs[key]; body != nil {
+			s.attachStreamBody(sh, key, body)
 		}
 		if !isNativeContainerType(e.valueType) {
 			if current, ok := sh.get(key); ok {
@@ -431,6 +464,8 @@ func (s *Store) resetForRecovery() {
 	s.memory.schemas = 0
 	s.memory.metas = 0
 	s.memory.hotHashes = 0
+	s.memory.streams = 0
+	s.streamLogs.clear()
 	s.memory.mu.Unlock()
 }
 func (s *Store) FlushDB() {

@@ -618,6 +618,9 @@ func (s *Store) MSet(keys []string, values [][]byte) error {
 		}
 		e.hasExpiry = !e.expiresAt.IsZero()
 		sh.set(k, e.entry)
+		if exists && old.valueType == TypeStream {
+			s.dropStreamBodyLocked(sh, k)
+		}
 		if exists {
 			released := sh.arena.Free(old.ref)
 			s.memory.used -= released
@@ -999,6 +1002,11 @@ func (s *Store) Rename(source, destination string, nx bool) (bool, error) {
 		}
 
 		return false, errors.New("ERR no such key")
+	}
+
+	if sourceEntry.valueType == TypeStream {
+		_, renamed, err := s.renameStreamLocked(source, destination, nx)
+		return renamed, err
 	}
 
 	destinationEntry, destinationExists := destinationShard.get(destination)

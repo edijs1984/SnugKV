@@ -87,7 +87,7 @@ func (s *Store) StreamGroupClaim(key, groupName, consumer string, minIdle time.D
 	if e.valueType != TypeStream {
 		return nil, nil, streamWrongType()
 	}
-	state, err := s.streamStateFromEntry(sh, e)
+	state, err := s.streamStateFromEntry(sh, key, e)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -112,7 +112,7 @@ func (s *Store) StreamGroupClaim(key, groupName, consumer string, minIdle time.D
 
 	for _, id := range ids {
 		pi := streamPendingIndex(group.Pending, id)
-		entry, exists := streamEntryByID(state.Entries, id)
+		entry, exists := state.log.Get(id)
 		if pi < 0 {
 			if !options.Force || !exists {
 				continue
@@ -179,7 +179,7 @@ func (s *Store) StreamGroupAutoClaim(key, groupName, consumer string, minIdle ti
 	if e.valueType != TypeStream {
 		return StreamAutoClaimResult{}, streamWrongType()
 	}
-	state, err := s.streamStateFromEntry(sh, e)
+	state, err := s.streamStateFromEntry(sh, key, e)
 	if err != nil {
 		return StreamAutoClaimResult{}, err
 	}
@@ -208,7 +208,7 @@ func (s *Store) StreamGroupAutoClaim(key, groupName, consumer string, minIdle ti
 	for i < len(group.Pending) && scanned < scanLimit && claimed < count {
 		scanned++
 		pending := &group.Pending[i]
-		entry, exists := streamEntryByID(state.Entries, pending.ID)
+		entry, exists := state.log.Get(pending.ID)
 		if !exists {
 			result.DeletedIDs = append(result.DeletedIDs, pending.ID)
 			group.Pending = append(group.Pending[:i], group.Pending[i+1:]...)

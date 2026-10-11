@@ -16,16 +16,7 @@ func validStreamRefPolicy(policy StreamRefPolicy) bool {
 	return policy == StreamRefKeep || policy == StreamRefDelete || policy == StreamRefAcked
 }
 
-func streamEntryIndex(entries []StreamEntry, id StreamID) int {
-	for i := range entries {
-		if entries[i].ID.equal(id) {
-			return i
-		}
-	}
-	return -1
-}
-
-func streamAckedByAllGroups(state *packedStream, id StreamID) bool {
+func streamAckedByAllGroups(state *streamState, id StreamID) bool {
 	if len(state.Groups) == 0 {
 		return false
 	}
@@ -41,7 +32,7 @@ func streamAckedByAllGroups(state *packedStream, id StreamID) bool {
 	return true
 }
 
-func streamRemovePendingRefs(state *packedStream, ids map[StreamID]struct{}) int {
+func streamRemovePendingRefs(state *streamState, ids map[StreamID]struct{}) int {
 	removed := 0
 	for gi := range state.Groups {
 		group := &state.Groups[gi]
@@ -68,75 +59,118 @@ func streamRemoveOnePendingRef(group *streamGroup, id StreamID) bool {
 	return true
 }
 
-func streamPolicyAllowsTrim(state *packedStream, id StreamID, policy StreamRefPolicy) bool {
+func streamPolicyAllowsTrim(state *streamState, id StreamID, policy StreamRefPolicy) bool {
 	if policy != StreamRefAcked || len(state.Groups) == 0 {
 		return true
 	}
 	return streamAckedByAllGroups(state, id)
 }
 
-func trimStreamMaxLenPolicy(state *packedStream, maxLen, limit int, policy StreamRefPolicy) int {
-	need := len(state.Entries) - maxLen
-	if need <= 0 {
-		return 0
-	}
-	kept := make([]StreamEntry, 0, len(state.Entries))
-	deletedIDs := make(map[StreamID]struct{})
-	deleted := 0
-	examined := 0
-	for i, item := range state.Entries {
-		if deleted >= need || limit > 0 && examined >= limit {
-			kept = append(kept, state.Entries[i:]...)
-			break
-		}
-		examined++
-		if !streamPolicyAllowsTrim(state, item.ID, policy) {
-			kept = append(kept, item)
-			continue
-		}
-		deletedIDs[item.ID] = struct{}{}
-		deleted++
-	}
-	if deleted == 0 {
-		return 0
-	}
-	state.Entries = kept
-	if policy == StreamRefDelete {
-		streamRemovePendingRefs(state, deletedIDs)
-	}
-	return deleted
+// streamTrimPlan lists the entries a trim removes. The plan is computed before
+// anything is changed so a failed publish leaves the stream untouched.
+type streamTrimPlan struct {
+	ids map[StreamID]struct{}
+	// prefix is the number of oldest entries removed when the plan is exactly
+	// that many entries from the front, and -1 when it is not.
+	prefix int
 }
 
-func trimStreamMinIDPolicy(state *packedStream, minID StreamID, limit int, policy StreamRefPolicy) int {
-	kept := make([]StreamEntry, 0, len(state.Entries))
-	deletedIDs := make(map[StreamID]struct{})
-	deleted := 0
-	examined := 0
-	for i, item := range state.Entries {
-		if !item.ID.less(minID) {
-			kept = append(kept, state.Entries[i:]...)
-			break
-		}
-		if limit > 0 && examined >= limit {
-			kept = append(kept, state.Entries[i:]...)
-			break
+func (p streamTrimPlan) empty() bool { return len(p.ids) == 0 }
+
+func planTrimMaxLen(state *streamState, maxLen, limit int, policy StreamRefPolicy) (streamTrimPlan, bool) {
+	plan := streamTrimPlan{ids: map[StreamID]struct{}{}}
+	need := state.log.Len() - maxLen
+	if need <= 0 {
+		return plan, false
+	}
+	deleted, examined := 0, 0
+	skipped := false
+	state.log.ForEachID(func(id StreamID) bool {
+		if deleted >= need || limit > 0 && examined >= limit {
+			return false
 		}
 		examined++
-		if !streamPolicyAllowsTrim(state, item.ID, policy) {
-			kept = append(kept, item)
+		if !streamPolicyAllowsTrim(state, id, policy) {
+			skipped = true
+			return true
+		}
+		plan.ids[id] = struct{}{}
+		deleted++
+		return true
+	})
+	return finishTrimPlan(state, plan, skipped, policy)
+}
+
+func planTrimMinID(state *streamState, minID StreamID, limit int, policy StreamRefPolicy, already map[StreamID]struct{}) (streamTrimPlan, bool) {
+	plan := streamTrimPlan{ids: map[StreamID]struct{}{}}
+	deleted, examined := 0, 0
+	skipped := len(already) > 0
+	state.log.ForEachID(func(id StreamID) bool {
+		if _, gone := already[id]; gone {
+			return true
+		}
+		if !id.less(minID) {
+			return false
+		}
+		if limit > 0 && examined >= limit {
+			return false
+		}
+		examined++
+		if !streamPolicyAllowsTrim(state, id, policy) {
+			skipped = true
+			return true
+		}
+		plan.ids[id] = struct{}{}
+		deleted++
+		return true
+	})
+	return finishTrimPlan(state, plan, skipped, policy)
+}
+
+// finishTrimPlan records whether the plan is a pure prefix and, for DELREF,
+// drops the pending references of the removed entries from the working groups.
+// It reports whether any group changed.
+func finishTrimPlan(state *streamState, plan streamTrimPlan, skipped bool, policy StreamRefPolicy) (streamTrimPlan, bool) {
+	plan.prefix = -1
+	if len(plan.ids) == 0 {
+		return plan, false
+	}
+	if !skipped {
+		plan.prefix = len(plan.ids)
+	}
+	groupsChanged := false
+	if policy == StreamRefDelete && streamRemovePendingRefs(state, plan.ids) > 0 {
+		groupsChanged = true
+	}
+	return plan, groupsChanged
+}
+
+// applyTrimPlans removes the planned entries from the shared log.
+func applyTrimPlans(state streamState, plans ...streamTrimPlan) int {
+	total, prefix := 0, 0
+	pure := true
+	union := map[StreamID]struct{}{}
+	for _, plan := range plans {
+		if plan.empty() {
 			continue
 		}
-		deletedIDs[item.ID] = struct{}{}
-		deleted++
+		total += len(plan.ids)
+		if plan.prefix < 0 {
+			pure = false
+		} else {
+			prefix += plan.prefix
+		}
+		for id := range plan.ids {
+			union[id] = struct{}{}
+		}
 	}
-	if deleted == 0 {
+	if total == 0 {
 		return 0
 	}
-	state.Entries = kept
-	if policy == StreamRefDelete {
-		streamRemovePendingRefs(state, deletedIDs)
+	if pure {
+		return state.log.TrimFront(prefix)
 	}
-	return deleted
+	return state.log.Delete(union)
 }
 
 // StreamAddWithPolicy is the policy-aware XADD path introduced by Redis 8.2.
@@ -164,14 +198,14 @@ func (s *Store) StreamAddWithPolicy(key, idSpec string, fields []StreamField, op
 	if !exists && options.NoMkStream {
 		return StreamID{}, false, nil
 	}
-	state := packedStream{}
+	state := streamState{log: newStreamBody()}
 	var expiresAt stamp
 	if exists {
 		if old.valueType != TypeStream {
 			return StreamID{}, false, streamWrongType()
 		}
 		var err error
-		state, err = s.streamStateFromEntry(sh, old)
+		state, err = s.streamStateFromEntry(sh, key, old)
 		if err != nil {
 			return StreamID{}, false, err
 		}
@@ -185,24 +219,54 @@ func (s *Store) StreamAddWithPolicy(key, idSpec string, fields []StreamField, op
 	if err != nil {
 		return StreamID{}, false, err
 	}
+	size := streamEntrySize(fields)
+	if state.log.dataBytes+uint64(size)+streamStubAllowance(state) > maxPackedStreamBytes {
+		return StreamID{}, false, errStreamTooLarge
+	}
+	if err := s.admitStreamGrowth(streamAddGrowth(size)); err != nil {
+		return StreamID{}, false, err
+	}
+
+	mark := state.log.mark()
+	before := mark.memory
+	if !exists {
+		before = 0
+	}
+	state.log.Append(id, fields)
 	state.LastID = id
 	state.EntriesAdded++
-	state.Entries = append(state.Entries, StreamEntry{ID: id, Fields: cloneStreamFields(fields)})
+	state.syncLog()
+
+	var plans []streamTrimPlan
+	groupsChanged := false
+	var first map[StreamID]struct{}
 	if options.HasMaxLen {
-		trimStreamMaxLenPolicy(&state, options.MaxLen, options.Limit, policy)
+		plan, changed := planTrimMaxLen(&state, options.MaxLen, options.Limit, policy)
+		plans = append(plans, plan)
+		groupsChanged = groupsChanged || changed
+		first = plan.ids
 	}
 	if options.HasMinID {
-		trimStreamMinIDPolicy(&state, options.MinID, options.Limit, policy)
+		plan, changed := planTrimMinID(&state, options.MinID, options.Limit, policy, first)
+		plans = append(plans, plan)
+		groupsChanged = groupsChanged || changed
 	}
-	packed, err := encodePackedStream(state)
-	if err != nil {
-		return StreamID{}, false, err
+
+	if !exists {
+		applyTrimPlans(state, plans...)
+		if err := s.createStreamLocked(sh, key, state, expiresAt); err != nil {
+			return StreamID{}, false, err
+		}
+		return id, true, nil
 	}
-	updated := streamPreparedEntry(packed)
-	updated.expiresAt = expiresAt
-	if err := s.publish(sh, key, updated); err != nil {
-		return StreamID{}, false, err
+	if groupsChanged {
+		if err := s.publishStreamStateLocked(sh, key, old, state); err != nil {
+			state.log.rollback(mark)
+			return StreamID{}, false, err
+		}
 	}
+	applyTrimPlans(state, plans...)
+	s.settleStreamMemory(before, state.log.memory())
 	return id, true, nil
 }
 
@@ -210,37 +274,21 @@ func (s *Store) StreamTrimMaxLenWithPolicy(key string, maxLen, limit int, policy
 	if maxLen < 0 || limit < 0 || !validStreamRefPolicy(policy) {
 		return 0, errors.New("ERR value is not an integer or out of range")
 	}
-	sh := s.shardFor(key)
-	sh.mu.Lock()
-	defer sh.mu.Unlock()
-	e, ok := sh.get(key)
-	if !ok || sh.expired(key, e, s.now()) {
-		if ok {
-			s.remove(sh, key)
-		}
-		return 0, nil
-	}
-	if e.valueType != TypeStream {
-		return 0, streamWrongType()
-	}
-	state, err := s.streamStateFromEntry(sh, e)
-	if err != nil {
-		return 0, err
-	}
-	trimmed := trimStreamMaxLenPolicy(&state, maxLen, limit, policy)
-	if trimmed == 0 {
-		return 0, nil
-	}
-	if err := s.publishStreamStateLocked(sh, key, e, state); err != nil {
-		return 0, err
-	}
-	return int64(trimmed), nil
+	return s.streamTrimWithPolicy(key, policy, func(state *streamState) (streamTrimPlan, bool) {
+		return planTrimMaxLen(state, maxLen, limit, policy)
+	})
 }
 
 func (s *Store) StreamTrimMinIDWithPolicy(key string, minID StreamID, limit int, policy StreamRefPolicy) (int64, error) {
 	if limit < 0 || !validStreamRefPolicy(policy) {
 		return 0, errors.New("ERR value is not an integer or out of range")
 	}
+	return s.streamTrimWithPolicy(key, policy, func(state *streamState) (streamTrimPlan, bool) {
+		return planTrimMinID(state, minID, limit, policy, nil)
+	})
+}
+
+func (s *Store) streamTrimWithPolicy(key string, policy StreamRefPolicy, plan func(*streamState) (streamTrimPlan, bool)) (int64, error) {
 	sh := s.shardFor(key)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
@@ -254,18 +302,23 @@ func (s *Store) StreamTrimMinIDWithPolicy(key string, minID StreamID, limit int,
 	if e.valueType != TypeStream {
 		return 0, streamWrongType()
 	}
-	state, err := s.streamStateFromEntry(sh, e)
+	state, err := s.streamStateFromEntry(sh, key, e)
 	if err != nil {
 		return 0, err
 	}
-	trimmed := trimStreamMinIDPolicy(&state, minID, limit, policy)
-	if trimmed == 0 {
+	p, groupsChanged := plan(&state)
+	if p.empty() {
 		return 0, nil
 	}
-	if err := s.publishStreamStateLocked(sh, key, e, state); err != nil {
-		return 0, err
+	if groupsChanged {
+		if err := s.publishStreamStateLocked(sh, key, e, state); err != nil {
+			return 0, err
+		}
 	}
-	return int64(trimmed), nil
+	before := state.log.memory()
+	removed := applyTrimPlans(state, p)
+	s.settleStreamMemory(before, state.log.memory())
+	return int64(removed), nil
 }
 
 // StreamDeleteEx implements XDELEX and returns one Redis 8.2 status code per ID.
@@ -290,38 +343,53 @@ func (s *Store) StreamDeleteEx(key string, ids []StreamID, policy StreamRefPolic
 	if e.valueType != TypeStream {
 		return nil, streamWrongType()
 	}
-	state, err := s.streamStateFromEntry(sh, e)
+	state, err := s.streamStateFromEntry(sh, key, e)
 	if err != nil {
 		return nil, err
 	}
-	changed := false
+	toDelete := map[StreamID]struct{}{}
+	groupsChanged := false
 	for i, id := range ids {
-		index := streamEntryIndex(state.Entries, id)
+		_, gone := toDelete[id]
+		exists := !gone && state.log.Has(id)
 		if policy == StreamRefDelete {
 			if streamRemovePendingRefs(&state, map[StreamID]struct{}{id: {}}) > 0 {
-				changed = true
+				groupsChanged = true
 			}
 		}
-		if index < 0 {
+		if !exists {
 			continue
 		}
 		if policy == StreamRefAcked && !streamAckedByAllGroups(&state, id) {
 			statuses[i] = 2
 			continue
 		}
-		copy(state.Entries[index:], state.Entries[index+1:])
-		state.Entries = state.Entries[:len(state.Entries)-1]
+		toDelete[id] = struct{}{}
 		noteStreamDeleted(&state, id)
 		statuses[i] = 1
-		changed = true
 	}
-	if !changed {
-		return statuses, nil
-	}
-	if err := s.publishStreamStateLocked(sh, key, e, state); err != nil {
+	if err := s.commitStreamChange(sh, key, e, state, groupsChanged, toDelete); err != nil {
 		return nil, err
 	}
 	return statuses, nil
+}
+
+// commitStreamChange publishes changed groups first and only then removes
+// entries, so a failed publish leaves the stream as it was.
+func (s *Store) commitStreamChange(sh *shard, key string, old entry, state streamState, groupsChanged bool, toDelete map[StreamID]struct{}) error {
+	if !groupsChanged && len(toDelete) == 0 {
+		return nil
+	}
+	if groupsChanged {
+		if err := s.publishStreamStateLocked(sh, key, old, state); err != nil {
+			return err
+		}
+	}
+	before := state.log.memory()
+	state.log.Delete(toDelete)
+	state.syncLog()
+	s.settleStreamMemory(before, state.log.memory())
+	return nil
 }
 
 // StreamAckDelete implements XACKDEL. The target group's PEL reference is
@@ -348,7 +416,7 @@ func (s *Store) StreamAckDelete(key, groupName string, ids []StreamID, policy St
 	if e.valueType != TypeStream {
 		return nil, streamWrongType()
 	}
-	state, err := s.streamStateFromEntry(sh, e)
+	state, err := s.streamStateFromEntry(sh, key, e)
 	if err != nil {
 		return nil, err
 	}
@@ -356,12 +424,13 @@ func (s *Store) StreamAckDelete(key, groupName string, ids []StreamID, policy St
 	if gi < 0 {
 		return nil, streamNoGroup(groupName, key)
 	}
-	changed := false
+	toDelete := map[StreamID]struct{}{}
+	groupsChanged := false
 	for i, id := range ids {
 		changedForID := false
 
 		if streamRemoveOnePendingRef(&state.Groups[gi], id) {
-			changed = true
+			groupsChanged = true
 			changedForID = true
 		}
 
@@ -370,13 +439,13 @@ func (s *Store) StreamAckDelete(key, groupName string, ids []StreamID, policy St
 				&state,
 				map[StreamID]struct{}{id: {}},
 			) > 0 {
-				changed = true
+				groupsChanged = true
 				changedForID = true
 			}
 		}
 
-		index := streamEntryIndex(state.Entries, id)
-		if index < 0 {
+		_, gone := toDelete[id]
+		if gone || !state.log.Has(id) {
 			if changedForID {
 				statuses[i] = 1
 			}
@@ -386,16 +455,11 @@ func (s *Store) StreamAckDelete(key, groupName string, ids []StreamID, policy St
 			statuses[i] = 2
 			continue
 		}
-		copy(state.Entries[index:], state.Entries[index+1:])
-		state.Entries = state.Entries[:len(state.Entries)-1]
+		toDelete[id] = struct{}{}
 		noteStreamDeleted(&state, id)
 		statuses[i] = 1
-		changed = true
 	}
-	if !changed {
-		return statuses, nil
-	}
-	if err := s.publishStreamStateLocked(sh, key, e, state); err != nil {
+	if err := s.commitStreamChange(sh, key, e, state, groupsChanged, toDelete); err != nil {
 		return nil, err
 	}
 	return statuses, nil

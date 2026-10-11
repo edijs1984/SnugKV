@@ -51,6 +51,7 @@ type MemoryStats struct {
 	SchemaBytes,
 	MetaBytes,
 	HotHashBytes,
+	StreamBytes,
 	SearchBytes uint64
 }
 
@@ -99,9 +100,9 @@ func (s *Store) Layout() LayoutStats {
 }
 
 type accounting struct {
-	mu                                                                         sync.Mutex
-	used, index, entries, arenas, arenaPayload, arenaLiveBlocks, schemas, metas, hotHashes uint64
-	max                                                                        atomic.Uint64
+	mu                                                                                              sync.Mutex
+	used, index, entries, arenas, arenaPayload, arenaLiveBlocks, schemas, metas, hotHashes, streams uint64
+	max                                                                                             atomic.Uint64
 }
 
 func (s *Store) Memory() MemoryStats {
@@ -120,6 +121,7 @@ func (s *Store) Memory() MemoryStats {
 		SchemaBytes:         s.memory.schemas,
 		MetaBytes:           s.memory.metas,
 		HotHashBytes:        s.memory.hotHashes,
+		StreamBytes:         s.memory.streams,
 		SearchBytes:         searchBytes,
 	}
 }
@@ -525,6 +527,9 @@ func (s *Store) publishRecordKnownWithHash(
 			sh.setHotHash(id, nil)
 		}
 	}
+	if exists && old.valueType == TypeStream && !e.keepStream {
+		s.dropStreamBody(sh, key)
+	}
 
 	if exists && !oldHot {
 		s.arenaReleased(sh.arena.Free(old.ref))
@@ -573,7 +578,15 @@ func (s *Store) remove(sh *shard, key string) {
 		if h, _, found := sh.hotHashForKey(key); found && h != nil {
 			hotBytes = h.memoryBytes()
 		}
-		s.memory.used -= cost + metaCost + hotBytes
+		streamBytes := uint64(0)
+		if e.valueType == TypeStream {
+			if body := s.streamLogs.get(key); body != nil {
+				streamBytes = body.memory()
+				s.streamLogs.del(key)
+			}
+		}
+		s.memory.used -= cost + metaCost + hotBytes + streamBytes
+		s.memory.streams -= streamBytes
 		s.memory.hotHashes -= hotBytes
 		s.memory.used += freeGrowth
 		s.memory.entries -= cost
@@ -638,6 +651,11 @@ func (s *Store) MemoryUsage(key string) (uint64, bool) {
 	}
 
 	arenaBytes := sh.arena.AllocationBytes(e.ref)
+	if e.valueType == TypeStream {
+		if body := s.streamLogs.get(key); body != nil {
+			arenaBytes += body.memory()
+		}
+	}
 	return entryBytes + arenaBytes, true
 }
 

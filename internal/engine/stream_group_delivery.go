@@ -31,14 +31,6 @@ type StreamPendingInfo struct {
 	Deliveries uint64
 }
 
-func streamEntryByID(entries []StreamEntry, id StreamID) (StreamEntry, bool) {
-	i := sort.Search(len(entries), func(i int) bool { return !entries[i].ID.less(id) })
-	if i < len(entries) && entries[i].ID.equal(id) {
-		return cloneStreamEntry(entries[i]), true
-	}
-	return StreamEntry{}, false
-}
-
 func ensureStreamConsumer(group *streamGroup, name string, nowMS int64) *streamConsumer {
 	i := streamConsumerIndex(group.Consumers, name)
 	if i < 0 {
@@ -78,7 +70,7 @@ func (s *Store) StreamGroupRead(keys []string, groupName, consumer string, curso
 		if e.valueType != TypeStream {
 			return nil, streamWrongType()
 		}
-		state, err := s.streamStateFromEntry(sh, e)
+		state, err := s.streamStateFromEntry(sh, key, e)
 		if err != nil {
 			return nil, err
 		}
@@ -100,11 +92,8 @@ func (s *Store) StreamGroupRead(keys []string, groupName, consumer string, curso
 				}
 			}
 
-			for _, item := range state.Entries {
-				if !group.LastDeliveredID.less(item.ID) {
-					continue
-				}
-				entries = append(entries, cloneStreamEntry(item))
+			state.log.ForEachFrom(group.LastDeliveredID, false, func(item StreamEntry) bool {
+				entries = append(entries, item)
 				group.LastDeliveredID = item.ID
 				if group.EntriesRead >= 0 {
 					group.EntriesRead++
@@ -118,17 +107,15 @@ func (s *Store) StreamGroupRead(keys []string, groupName, consumer string, curso
 				if !noAck {
 					group.Pending = append(group.Pending, streamPending{ID: item.ID, Consumer: consumer, DeliveredAt: nowMS, Deliveries: 1})
 				}
-				if len(entries) == count {
-					break
-				}
-			}
+				return len(entries) != count
+			})
 		} else {
 			for pi := range group.Pending {
 				pending := &group.Pending[pi]
 				if pending.Consumer != consumer || !cursors[i].ID.less(pending.ID) {
 					continue
 				}
-				if entry, exists := streamEntryByID(state.Entries, pending.ID); exists {
+				if entry, exists := state.log.Get(pending.ID); exists {
 					entries = append(entries, entry)
 				} else {
 					entries = append(entries, StreamEntry{ID: pending.ID, Fields: nil})
@@ -168,7 +155,7 @@ func (s *Store) StreamGroupAck(key, groupName string, ids []StreamID) (int64, er
 	if e.valueType != TypeStream {
 		return 0, streamWrongType()
 	}
-	state, err := s.streamStateFromEntry(sh, e)
+	state, err := s.streamStateFromEntry(sh, key, e)
 	if err != nil {
 		return 0, err
 	}
@@ -211,7 +198,7 @@ func (s *Store) StreamGroupPendingSummary(key, groupName string) (StreamPendingS
 	if e.valueType != TypeStream {
 		return StreamPendingSummary{}, streamWrongType()
 	}
-	state, err := s.streamStateFromEntry(sh, e)
+	state, err := s.streamStateFromEntry(sh, key, e)
 	if err != nil {
 		return StreamPendingSummary{}, err
 	}
@@ -259,7 +246,7 @@ func (s *Store) StreamGroupPendingRange(key, groupName string, start, end Stream
 	if e.valueType != TypeStream {
 		return nil, streamWrongType()
 	}
-	state, err := s.streamStateFromEntry(sh, e)
+	state, err := s.streamStateFromEntry(sh, key, e)
 	if err != nil {
 		return nil, err
 	}

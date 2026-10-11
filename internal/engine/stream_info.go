@@ -104,7 +104,7 @@ func streamInfoConsumer(group streamGroup, consumer streamConsumer, nowMS int64,
 	}
 }
 
-func streamInfoGroup(state packedStream, group streamGroup, nowMS int64, count int, full bool) StreamInfoGroup {
+func streamInfoGroup(state streamState, group streamGroup, nowMS int64, count int, full bool) StreamInfoGroup {
 	result := StreamInfoGroup{
 		Name:            group.Name,
 		Consumers:       int64(len(group.Consumers)),
@@ -144,21 +144,21 @@ func streamInfoGroup(state packedStream, group streamGroup, nowMS int64, count i
 	return result
 }
 
-func (s *Store) streamInfoState(key string) (packedStream, int64, error) {
+func (s *Store) streamInfoState(key string) (streamState, int64, error) {
 	sh := s.shardFor(key)
 	sh.mu.RLock()
 	defer sh.mu.RUnlock()
 	e, ok := sh.get(key)
 	now := s.now()
 	if !ok || sh.expired(key, e, now) {
-		return packedStream{}, 0, errors.New("ERR no such key")
+		return streamState{}, 0, errors.New("ERR no such key")
 	}
 	if e.valueType != TypeStream {
-		return packedStream{}, 0, streamWrongType()
+		return streamState{}, 0, streamWrongType()
 	}
-	state, err := s.streamStateFromEntry(sh, e)
+	state, err := s.streamStateFromEntry(sh, key, e)
 	if err != nil {
-		return packedStream{}, 0, err
+		return streamState{}, 0, err
 	}
 	return state, streamNowMillis(now), nil
 }
@@ -175,28 +175,29 @@ func (s *Store) StreamInfo(key string, full bool, count int) (StreamInfoResult, 
 		return StreamInfoResult{}, errors.New("ERR stream entries-added counter out of range")
 	}
 	result := StreamInfoResult{
-		Length:            int64(len(state.Entries)),
+		Length:            int64(state.log.Len()),
 		Groups:            int64(len(state.Groups)),
 		LastGeneratedID:   state.LastID,
 		EntriesAdded:      int64(state.EntriesAdded),
 		MaxDeletedEntryID: state.MaxDeletedID,
 	}
-	if len(state.Entries) > 0 {
+	if first, ok := state.log.First(); ok {
+		last, _ := state.log.Last()
 		result.RadixTreeKeys = 1
 		result.RadixTreeNodes = 1
-		result.RecordedFirstEntryID = state.Entries[0].ID
-		result.FirstEntry = cloneStreamEntryPtr(state.Entries[0])
-		result.LastEntry = cloneStreamEntryPtr(state.Entries[len(state.Entries)-1])
+		result.RecordedFirstEntryID = first.ID
+		result.FirstEntry = cloneStreamEntryPtr(first)
+		result.LastEntry = cloneStreamEntryPtr(last)
 	}
 	if full {
-		entries := state.Entries
-		if count > 0 && len(entries) > count {
-			entries = entries[:count]
-		}
-		result.Entries = make([]StreamEntry, 0, len(entries))
-		for _, entry := range entries {
-			result.Entries = append(result.Entries, cloneStreamEntry(entry))
-		}
+		result.Entries = make([]StreamEntry, 0)
+		state.log.ForEachFrom(StreamID{}, true, func(entry StreamEntry) bool {
+			if count > 0 && len(result.Entries) >= count {
+				return false
+			}
+			result.Entries = append(result.Entries, entry)
+			return true
+		})
 		result.GroupInfos = make([]StreamInfoGroup, 0, len(state.Groups))
 		for _, group := range state.Groups {
 			result.GroupInfos = append(result.GroupInfos, streamInfoGroup(state, group, nowMS, count, true))
