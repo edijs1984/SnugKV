@@ -531,7 +531,11 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				if err := conn.SetReadDeadline(time.Time{}); err != nil {
 					return
 				}
-			} else if err := conn.SetReadDeadline(time.Now().Add(time.Duration(s.config.ReadTimeoutMS) * time.Millisecond)); err != nil {
+			} else if s.config.ReadTimeoutMS > 0 {
+				if err := conn.SetReadDeadline(time.Now().Add(time.Duration(s.config.ReadTimeoutMS) * time.Millisecond)); err != nil {
+					return
+				}
+			} else if err := conn.SetReadDeadline(time.Time{}); err != nil {
 				return
 			}
 
