@@ -33,6 +33,7 @@ type Config struct {
 	AOFPath             string `json:"aof_path"`
 	StreamDir           string `json:"stream_dir"`
 	StreamRAMBytes      uint64 `json:"stream_ram_bytes"`
+	StreamRAMTotal      uint64 `json:"stream_ram_total"`
 	AOFRewritePath      string `json:"aof_rewrite_path"`
 	SnapshotPath        string `json:"snapshot_path"`
 	SnapshotIntervalMS  int64  `json:"snapshot_interval_ms"`

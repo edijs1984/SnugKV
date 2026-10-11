@@ -44,6 +44,9 @@ type Options struct {
 	// memory one stream may hold before its oldest chunks move to disk.
 	StreamDir      string
 	StreamRAMBytes uint64
+	// StreamRAMTotal, when set, is shared by all streams: each may hold an
+	// equal share of it (but not more than StreamRAMBytes).
+	StreamRAMTotal uint64
 }
 type MemoryStats struct {
 	AccountedBytes,

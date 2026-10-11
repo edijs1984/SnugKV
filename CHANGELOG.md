@@ -1,5 +1,9 @@
 # Changelog
 
+### Change — one memory budget for all spilled streams (`-stream-ram-total`)
+
+- `-stream-ram-total <bytes>` (config `stream_ram_total`) sets the memory all streams together may use before their oldest messages move to `-stream-dir`. Each stream gets an equal share of it, never more than `-stream-ram-bytes` and never less than 128 KiB, so many streams no longer each keep their own 64 MiB. A stream spills on its next write after the share shrinks. Zero (default) keeps the per-stream limit only.
+
 ### Change — streams can spill old messages to disk (`-stream-dir`)
 
 - New flags `-stream-dir <dir>` and `-stream-ram-bytes <n>` (default 64 MiB; config `stream_dir`, `stream_ram_bytes`). When a stream holds more than that in memory, its oldest messages are written to segment files in the directory and dropped from memory. Reads (`XRANGE`, `XREAD`, `XREADGROUP` on old messages, `XCLAIM`, …) fetch them back on demand. The newest messages always stay in memory.

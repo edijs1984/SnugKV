@@ -185,3 +185,34 @@ func TestStreamSpillWithTransactionsAndRollback(t *testing.T) {
 		}
 	}
 }
+
+func TestStreamSpillSharedBudget(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewWithOptions(Options{Shards: 4, StreamDir: dir, StreamRAMBytes: 8 << 20, StreamRAMTotal: 1 << 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := []string{"a", "b", "c", "d"} // a quarter of 1 MiB each
+	for n := 1; n <= 6000; n++ {
+		for _, k := range keys {
+			if _, _, err := s.StreamAdd(k, fmt.Sprintf("%d-0", n), testStreamFields(n, n), StreamAddOptions{}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	var total uint64
+	for _, k := range keys {
+		total += s.streamLogs.get(k).memory()
+	}
+	if total > (1<<20)+4*(64<<10) {
+		t.Fatalf("streams hold %d bytes against a 1 MiB budget", total)
+	}
+	if segmentFiles(t, dir) == 0 {
+		t.Fatal("nothing spilled")
+	}
+	for _, k := range keys {
+		if l, _ := s.StreamLen(k); l != 6000 {
+			t.Fatalf("%s len = %d", k, l)
+		}
+	}
+}

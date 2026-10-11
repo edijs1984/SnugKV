@@ -175,7 +175,7 @@ func NewWithOptions(options Options) (*Store, error) {
 	}
 	s.memory.max.Store(options.MaxMemory)
 	if options.StreamDir != "" {
-		sp, err := newStreamSpill(options.StreamDir, options.StreamRAMBytes)
+		sp, err := newStreamSpill(options.StreamDir, options.StreamRAMBytes, options.StreamRAMTotal, &s.streamLogs.count)
 		if err != nil {
 			return nil, err
 		}
