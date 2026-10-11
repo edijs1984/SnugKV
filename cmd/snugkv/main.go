@@ -66,6 +66,7 @@ func main() {
 	flag.StringVar(&cfg.AOFRewritePath, "aof-rewrite", cfg.AOFRewritePath, "one-off AOF rewrite destination when journaling is disabled (not loaded at startup)")
 	flag.StringVar(&cfg.StreamDir, "stream-dir", cfg.StreamDir, "directory for stream messages that no longer fit in memory; enables streams larger than 32 MiB (emptied at startup)")
 	flag.Uint64Var(&cfg.StreamRAMBytes, "stream-ram-bytes", cfg.StreamRAMBytes, "memory one stream may use before its oldest messages move to -stream-dir (default 64 MiB)")
+	flag.Uint64Var(&cfg.StreamRAMTotal, "stream-ram-total", cfg.StreamRAMTotal, "memory all streams together may use before old messages move to -stream-dir; each stream gets an equal share, at least 128 KiB (zero: only the per-stream limit applies)")
 	flag.StringVar(&cfg.AOFPath, "aof", cfg.AOFPath, "append-only file path (optional)")
 	flag.StringVar(&cfg.SnapshotPath, "snapshot", cfg.SnapshotPath, "snapshot file path (optional)")
 	flag.Int64Var(&cfg.SnapshotIntervalMS, "snapshot-interval-ms", cfg.SnapshotIntervalMS, "automatic background snapshot interval in milliseconds, zero disables")
@@ -110,7 +111,7 @@ func main() {
 	if cfg.GoMemoryLimit > 0 {
 		debug.SetMemoryLimit(cfg.GoMemoryLimit)
 	}
-	store, err := engine.NewWithOptions(engine.Options{Shards: cfg.Shards, MaxMemory: cfg.MaxMemory, Encoding: cfg.Encoding, ShapeEncoding: cfg.JSONShape, Compression: cfg.Compression, StreamDir: cfg.StreamDir, StreamRAMBytes: cfg.StreamRAMBytes})
+	store, err := engine.NewWithOptions(engine.Options{Shards: cfg.Shards, MaxMemory: cfg.MaxMemory, Encoding: cfg.Encoding, ShapeEncoding: cfg.JSONShape, Compression: cfg.Compression, StreamDir: cfg.StreamDir, StreamRAMBytes: cfg.StreamRAMBytes, StreamRAMTotal: cfg.StreamRAMTotal})
 	if err != nil {
 		log.Fatal(err)
 	}

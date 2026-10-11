@@ -3,6 +3,7 @@ package engine
 import (
 	"errors"
 	"sync"
+	"sync/atomic"
 
 	"snugkv/internal/index"
 )
@@ -331,6 +332,7 @@ func (s *Store) attachStreamBody(sh *shard, key string, body *streamBody) {
 // struct small for stores that hold no streams at all.
 type streamRegistry struct {
 	spill   *streamSpill
+	count   atomic.Int64 // streams with an entry log
 	stripes [32]streamStripe
 }
 
@@ -352,23 +354,29 @@ func (r *streamRegistry) get(key string) *streamBody {
 }
 
 func (r *streamRegistry) set(key string, b *streamBody) {
-	if r.spill != nil && b.sp == nil {
-		b.sp = r.spill
-		b.spillCold()
-	}
 	st := r.stripe(key)
 	st.mu.Lock()
 	if st.m == nil {
 		st.m = make(map[string]*streamBody)
 	}
+	if _, had := st.m[key]; !had {
+		r.count.Add(1)
+	}
 	st.m[key] = b
 	st.mu.Unlock()
+	if r.spill != nil && b.sp == nil {
+		b.sp = r.spill
+		b.spillCold()
+	}
 }
 
 func (r *streamRegistry) del(key string) {
 	st := r.stripe(key)
 	st.mu.Lock()
-	delete(st.m, key)
+	if _, had := st.m[key]; had {
+		delete(st.m, key)
+		r.count.Add(-1)
+	}
 	st.mu.Unlock()
 }
 
@@ -379,6 +387,7 @@ func (r *streamRegistry) clear() {
 		for _, b := range st.m {
 			b.release()
 		}
+		r.count.Add(-int64(len(st.m)))
 		st.m = nil
 		st.mu.Unlock()
 	}

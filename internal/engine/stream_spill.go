@@ -23,7 +23,9 @@ const streamSegmentPrefix = "seg-"
 
 type streamSpill struct {
 	dir      string
-	ramLimit uint64
+	ramLimit uint64 // per stream
+	budget   uint64 // all streams together, zero for no shared budget
+	streams  *atomic.Int64
 	next     atomic.Uint64
 
 	files   atomic.Int64
@@ -43,7 +45,7 @@ type streamSegment struct {
 
 // newStreamSpill prepares dir for use by one store. Leftover segments from an
 // earlier run are removed.
-func newStreamSpill(dir string, ramLimit uint64) (*streamSpill, error) {
+func newStreamSpill(dir string, ramLimit, budget uint64, streams *atomic.Int64) (*streamSpill, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
@@ -64,7 +66,26 @@ func newStreamSpill(dir string, ramLimit uint64) (*streamSpill, error) {
 	if ramLimit < 4*streamChunkTarget {
 		ramLimit = 4 * streamChunkTarget
 	}
-	return &streamSpill{dir: dir, ramLimit: ramLimit}, nil
+	return &streamSpill{dir: dir, ramLimit: ramLimit, budget: budget, streams: streams}, nil
+}
+
+// limit is the memory one stream may hold. With a shared budget it is an equal
+// share of it, never above the per-stream limit and never below four chunks.
+func (sp *streamSpill) limit() uint64 {
+	limit := sp.ramLimit
+	if sp.budget > 0 {
+		n := uint64(1)
+		if sp.streams != nil && sp.streams.Load() > 1 {
+			n = uint64(sp.streams.Load())
+		}
+		if share := sp.budget / n; share < limit {
+			limit = share
+		}
+	}
+	if limit < 4*streamChunkTarget {
+		limit = 4 * streamChunkTarget
+	}
+	return limit
 }
 
 func (c *streamChunk) size() int {
@@ -109,10 +130,14 @@ func (b *streamBody) unspill(c *streamChunk) {
 // were; the transaction's end calls it again.
 func (b *streamBody) spillCold() {
 	sp := b.sp
-	if sp == nil || b.j != nil || b.dataCap <= sp.ramLimit || len(b.chunks) < 2 {
+	if sp == nil || b.j != nil || len(b.chunks) < 2 {
 		return
 	}
-	target := sp.ramLimit / 2
+	limit := sp.limit()
+	if b.dataCap <= limit {
+		return
+	}
+	target := limit / 2
 	resident := b.dataCap
 	var picks []int
 	for i := 0; i < len(b.chunks)-1 && resident > target; i++ {
