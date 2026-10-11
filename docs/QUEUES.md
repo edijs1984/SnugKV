@@ -8,7 +8,7 @@ Every function takes the **queue prefix** as its only key, for example `snugq:{e
 
 - Jobs with data, FIFO, LIFO, priorities (1 is the most urgent, up to 2,097,152; no priority runs first)
 - Delayed jobs, promote, change delay
-- Attempts with fixed or exponential backoff, or a backoff the worker computes; unrecoverable failures skip the remaining attempts
+- Attempts with fixed or exponential backoff, or `custom` (the worker computes the delay); unrecoverable failures skip the remaining attempts
 - Locks with expiry, lock renewal and stalled-job recovery with a stall limit
 - `removeOnComplete` / `removeOnFail` by count and age
 - Pause and resume, global concurrency, queue rate limit (`max` jobs per `duration` ms) and a manual `rateLimit` from a worker
@@ -45,6 +45,7 @@ Every function takes the **queue prefix** as its only key, for example `snugq:{e
 | `snugq_move_to_wait` | `id token limitMs` | `0`, `-1`, `-2` (no attempt is used) |
 | `snugq_extend_lock` | `id token ms` | `1` or `0` |
 | `snugq_stalled` | `maxStalledCount intervalMs` | `{{stalled ids}, {failed ids}}`; runs once per interval across workers |
+| `snugq_state` | `id` | the job's state |
 | `snugq_progress`, `snugq_update_data`, `snugq_log` | `id value [keepLogs]` | |
 | `snugq_pause`, `snugq_resume` | | |
 | `snugq_counts` | | `{type, count...}` |

@@ -248,6 +248,36 @@ func TestQueueExponentialBackoff(t *testing.T) {
 	}
 }
 
+func TestQueueState(t *testing.T) {
+	q := newQT(t)
+	state := func(id string) any { return q.raw("FCALL_RO", "snugq_state", "1", q.p, id) }
+	w := q.add("job", "x")
+	d := q.add("job", "x", "4=100000")
+	p := q.add("job", "x", "5=2")
+	if state(w) != "wait" || state(d) != "delayed" || state(p) != "prioritized" || state("nope") != "unknown" {
+		t.Fatalf("states: %v %v %v", state(w), state(d), state(p))
+	}
+	r := q.fetch("w")
+	if state(r[1].(string)) != "active" {
+		t.Fatalf("active state = %v", state(r[1].(string)))
+	}
+	q.call("snugq_complete", r[1].(string), "w", "1")
+	if state(r[1].(string)) != "completed" {
+		t.Fatalf("completed state = %v", state(r[1].(string)))
+	}
+}
+
+func TestQueueCustomBackoffUsesWorkerDelay(t *testing.T) {
+	q := newQT(t)
+	id := q.add("job", "x", "7=3", "8=custom")
+	q.fetch("w")
+	q.call("snugq_fail", id, "w", "e", "", "0", "150")
+	f, _ := strconv.ParseFloat(q.raw("ZSCORE", q.p+"delayed", id).(string), 64)
+	if d := int64(f/4096) - time.Now().UnixMilli(); d < 50 || d > 170 {
+		t.Fatalf("custom backoff = %dms", d)
+	}
+}
+
 func TestQueueDelayDedupAndCustomIds(t *testing.T) {
 	q := newQT(t)
 	id := q.add("job", "x", "4=80")
