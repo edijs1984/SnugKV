@@ -1408,6 +1408,11 @@ func (s *Server) executeDurableLocked(args [][]byte) ([]byte, error) {
 
 	if s.journal == nil {
 		if ok && info.write && s.replication.primaryHasReplicas() {
+			if streamDeltaCommands[cmd] && len(args) >= info.min && (info.max <= 0 || len(args) <= info.max) {
+				if result, err, handled := s.executeStreamDeltaLocked(args, streamCommandKeys(cmd, args, info)); handled {
+					return result, err
+				}
+			}
 			return s.executeReplicatedWriteLocked(args)
 		}
 		result, err := s.executePressure(args)
@@ -1544,6 +1549,11 @@ func (s *Server) executeDurableLocked(args [][]byte) ([]byte, error) {
 		}
 		for i := info.first; i > 0 && i <= last && i < len(args); i += info.step {
 			affected = append(affected, string(args[i]))
+		}
+	}
+	if streamDeltaCommands[cmd] {
+		if result, err, handled := s.executeStreamDeltaLocked(args, affected); handled {
+			return result, err
 		}
 	}
 	before := s.store.Export(affected)

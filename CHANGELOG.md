@@ -1,5 +1,12 @@
 # Changelog
 
+### Change — stream writes go to the AOF and to replicas as small entries
+
+- With `-aof` (or a replica attached), `XADD`, `XDEL`, `XTRIM`, `XACK`, `XGROUP`, `XREADGROUP`, `XCLAIM`, `XAUTOCLAIM`, `XDELEX` and `XACKDEL` used to write the whole stream after every command. They now write what changed: the messages added, the range or IDs removed, the counters, and the stream's consumer groups when they changed. 60,000 `XADD` of 200 bytes (the earlier 3,000 × 100 bytes produced a 722 MB file) now give a 28 MB AOF, `XADD` cost stays flat at about 70 µs per call over the network, and with `-fsync always` a `kill -9` loses nothing and the restart replays 20,000 messages in 0.4 s.
+- Entries are safe to replay more than once and over a newer snapshot: adds skip IDs the stream already passed, removals are idempotent and counters only move forward. A failed AOF write undoes the command in memory exactly as before. Where a change cannot be described this way (for example a key evicted during the command) the whole stream is written, as before.
+- Consumer-group state (pending entries) is still written whole for the stream's groups after each `XREADGROUP`/`XACK`; a group with a very large backlog of unacknowledged messages makes those entries large. Acknowledged traffic stays small.
+- Old binaries refuse to start on an AOF that contains these entries (unknown field), instead of silently skipping them. The 32 MiB per-stream limit is unchanged; it goes with disk-backed streams.
+
 ### Change — streams keep their messages in chunks, so `XADD` no longer slows down as a stream grows
 
 - A stream used to be stored as one block that every command decoded and re-encoded in full. Sequential `XADD` of 200-byte messages took 434 ms per 1,000 with 1,000 messages in the stream and 2,201 ms per 1,000 with 4,000 (Redis: about 65 ms throughout), and 10,000 adds took 33 s. Messages now live in chunks of about 32 KiB and `XADD` only touches the newest chunk: 10,000 adds take 0.27 s, a 100,000-message stream fills in 0.55 s with `redis-cli --pipe`, and the engine benchmark gives about 1 µs per `XADD` whether the stream holds 0, 10,000 or 100,000 messages.

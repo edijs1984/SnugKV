@@ -142,6 +142,7 @@ type Store struct {
 	compression      bool
 	memory           accounting
 	streamLogs       streamRegistry
+	streamTx         atomic.Pointer[StreamTx]
 	sampleCursor     uint64
 	shapeCatalog     globalShapeCatalog
 	hashShapes       hashShapeCatalog

@@ -116,7 +116,12 @@ func (s *Store) publishStreamStateLocked(sh *shard, key string, old entry, state
 	updated := streamPreparedEntry(stub)
 	updated.keepStream = true
 	updated.expiresAt = sh.expirationAt(key, old)
-	return s.publish(sh, key, updated)
+	s.notePreStub(sh, key, old)
+	if err := s.publish(sh, key, updated); err != nil {
+		return err
+	}
+	s.noteStreamGroups(key, state.Groups)
+	return nil
 }
 
 // createStreamLocked stores a stream that does not exist yet. The log is
@@ -141,6 +146,7 @@ func (s *Store) createStreamLocked(sh *shard, key string, state streamState, exp
 		return err
 	}
 	s.streamLogs.set(key, state.log)
+	s.noteStreamGroups(key, state.Groups)
 	return nil
 }
 
