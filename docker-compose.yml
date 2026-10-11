@@ -1,9 +1,57 @@
+# SnugKV with every shipped feature switched on.
+#
+#   docker compose up -d --build
+#
+# The webhook key and API token below are development defaults. For anything
+# reachable from outside, set SNUGKV_WEBHOOKS_KEY and SNUGKV_WEBHOOKS_API_TOKEN
+# in the environment (or a .env file) before starting.
+#
+# Redis clients:     redis://127.0.0.1:6380
+# Webhook endpoint:  POST http://127.0.0.1:8090/hook/<id>
+# Webhook API:       http://127.0.0.1:8091 (bearer SNUGKV_WEBHOOKS_API_TOKEN)
+# Metrics and the admin RESP port listen on loopback inside the container only
+# (the server refuses non-loopback addresses); use `docker compose exec`.
 services:
   snugkv:
     build: .
+    restart: unless-stopped
     ports:
       - "127.0.0.1:6380:6380"
+      - "127.0.0.1:8090:8090"
+      - "127.0.0.1:8091:8091"
+    volumes:
+      - snugkv-data:/data
+    command:
+      - -listen=0.0.0.0:6380
+      # Memory efficiency
+      - -encoding
+      - -compression
+      - -json-shape
+      - -optimizer-mode=dedicated
+      # Built-in Lua library (snug_* helpers and the snugq job queue)
+      - -builtin-functions
+      - -atomic-transactions
+      # Durability: AOF journal plus periodic snapshot
+      - -aof=/data/snugkv.aof
+      - -snapshot=/data/snugkv.snap
+      - -snapshot-interval-ms=300000
+      - -fsync=${SNUGKV_FSYNC:-everysec}
+      # Streams larger than memory spill to disk
+      - -stream-dir=/data/streams
+      # Never evict: queues and locks must not lose keys
+      - -eviction-policy=noeviction
+      - -max-memory=${SNUGKV_MAX_MEMORY:-0}
+      # Observability (loopback inside the container)
+      - -metrics-listen=127.0.0.1:9121
+      - -admin-listen=127.0.0.1:6381
+      # Inbound webhooks module
+      - -webhooks-listen=0.0.0.0:8090
+      - -webhooks-api-listen=0.0.0.0:8091
+      - -webhooks-public-url=${SNUGKV_WEBHOOKS_PUBLIC_URL:-http://127.0.0.1:8090}
     environment:
-      SNUGKV_ENCODING: "true"
-      SNUGKV_COMPRESSION: "true"
-    stop_grace_period: 10s
+      SNUGKV_WEBHOOKS_KEY: ${SNUGKV_WEBHOOKS_KEY:-dev-only-webhook-key-change-me}
+      SNUGKV_WEBHOOKS_API_TOKEN: ${SNUGKV_WEBHOOKS_API_TOKEN:-dev-only-token-change-me}
+    stop_grace_period: 20s
+
+volumes:
+  snugkv-data:
