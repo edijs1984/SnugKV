@@ -1,5 +1,9 @@
 # Changelog
 
+### Fix — `PUBLISH` and `SPUBLISH` on a primary now reach subscribers on its replicas
+
+- Replicas copied the data but not Pub/Sub messages, so a subscriber connected to a replica never saw a `PUBLISH` made on the primary (Redis delivers it). The primary now adds each `PUBLISH` to the replication stream and the replica hands it to its own subscribers, also through chained replicas. Nothing is stored in the AOF. A replica that reconnects with a partial resync receives the messages published while it was away, as in Redis. `PUBLISH` run on a replica reaches only that replica's own subscribers and leaves its replication offset alone.
+
 ### Change — one memory budget for all spilled streams (`-stream-ram-total`)
 
 - `-stream-ram-total <bytes>` (config `stream_ram_total`) sets the memory all streams together may use before their oldest messages move to `-stream-dir`. Each stream gets an equal share of it, never more than `-stream-ram-bytes` and never less than 128 KiB, so many streams no longer each keep their own 64 MiB. A stream spills on its next write after the share shrinks. Zero (default) keeps the per-stream limit only.

@@ -54,13 +54,17 @@ func (s *Server) executePubSubServer(args [][]byte) ([]byte, error) {
 		if len(args) != 3 {
 			return nil, errors.New("ERR wrong number of arguments for 'publish' command")
 		}
-		return integer(pubSubHubForServer(s).publish(args[1], args[2])), nil
+		n := pubSubHubForServer(s).publish(args[1], args[2])
+		s.replicatePublish(args[1], args[2], false)
+		return integer(n), nil
 
 	case "SPUBLISH":
 		if len(args) != 3 {
 			return nil, errors.New("ERR wrong number of arguments for 'spublish' command")
 		}
-		return integer(pubSubHubForServer(s).publishShard(args[1], args[2])), nil
+		n := pubSubHubForServer(s).publishShard(args[1], args[2])
+		s.replicatePublish(args[1], args[2], true)
+		return integer(n), nil
 
 	case "PUBSUB":
 		if len(args) < 2 {

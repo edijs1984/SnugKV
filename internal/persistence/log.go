@@ -43,6 +43,16 @@ type Record struct {
 	// it. Applying it twice, or on top of a newer copy of the same stream, gives
 	// the same result as applying it once.
 	Stream *StreamDelta `json:"stream,omitempty"`
+	// Publish is a Pub/Sub message to hand to subscribers on a replica. It is
+	// never stored: it travels only through replication.
+	Publish *PublishEvent `json:"publish,omitempty"`
+}
+
+// PublishEvent is one PUBLISH or SPUBLISH.
+type PublishEvent struct {
+	Channel []byte `json:"channel"`
+	Message []byte `json:"message"`
+	Shard   bool   `json:"shard,omitempty"`
 }
 
 // StreamDelta is the change one command made to one stream. Entries are in the
