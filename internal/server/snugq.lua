@@ -915,6 +915,20 @@ local function q_obliterate(keys, args)
   return 0
 end
 
+-- FCALL_RO snugq_state 1 <prefix> id -> completed|failed|delayed|prioritized|waiting-children|active|wait|paused|unknown
+local function q_state(keys, args)
+  local p, id = keys[1], args[1]
+  if not p or not id then return bad('usage: snugq_state 1 prefix id') end
+  if redis.call('EXISTS', p .. 'job:' .. id) == 0 then return 'unknown' end
+  for _, z in ipairs({'completed', 'failed', 'delayed', 'prioritized', 'waiting-children'}) do
+    if redis.call('ZSCORE', p .. z, id) then return z end
+  end
+  for _, l in ipairs({'active', 'wait', 'paused'}) do
+    if redis.call('LPOS', p .. l, id) then return l end
+  end
+  return 'unknown'
+end
+
 local function version()
   return VERSION
 end
@@ -945,4 +959,5 @@ redis.register_function{function_name='snugq_change_delay', callback=q_change_de
 redis.register_function{function_name='snugq_drain', callback=q_drain, description='Queue: remove waiting jobs'}
 redis.register_function{function_name='snugq_clean', callback=q_clean, description='Queue: remove old jobs'}
 redis.register_function{function_name='snugq_obliterate', callback=q_obliterate, description='Queue: delete the queue and all its jobs'}
+redis.register_function{function_name='snugq_state', callback=q_state, description='Queue: state of a job', flags={'no-writes'}}
 redis.register_function{function_name='snugq_version', callback=version, description='Version of the queue library', flags={'no-writes'}}

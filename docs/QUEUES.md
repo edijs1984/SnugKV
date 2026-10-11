@@ -45,6 +45,7 @@ Every function takes the **queue prefix** as its only key, for example `snugq:{e
 | `snugq_move_to_wait` | `id token limitMs` | `0`, `-1`, `-2` (no attempt is used) |
 | `snugq_extend_lock` | `id token ms` | `1` or `0` |
 | `snugq_stalled` | `maxStalledCount intervalMs` | `{{stalled ids}, {failed ids}}`; runs once per interval across workers |
+| `snugq_state` | `id` | the job's state |
 | `snugq_progress`, `snugq_update_data`, `snugq_log` | `id value [keepLogs]` | |
 | `snugq_pause`, `snugq_resume` | | |
 | `snugq_counts` | | `{type, count...}` |
