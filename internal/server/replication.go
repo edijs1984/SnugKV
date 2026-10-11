@@ -1373,6 +1373,10 @@ func (s *Server) runReplicaFollow(host string, port int, cancel <-chan struct{})
 }
 
 func (s *Server) applySnugReplicationRecordsLocked(records []persistence.Record) error {
+	records = s.deliverReplicatedPublishes(records)
+	if len(records) == 0 {
+		return nil
+	}
 	if s.journal != nil {
 		if s.durabilityFailed {
 			return errors.New("ERR persistence is unavailable; restart after repairing storage")
