@@ -110,7 +110,7 @@ func (s *Store) publishStreamStateLocked(sh *shard, key string, old entry, state
 	if err != nil {
 		return err
 	}
-	if streamLogicalSize(state, len(stub)) > maxPackedStreamBytes {
+	if s.streamTooLarge(streamLogicalSize(state, len(stub)), uint64(len(stub))) {
 		return errStreamTooLarge
 	}
 	updated := streamPreparedEntry(stub)
@@ -131,7 +131,7 @@ func (s *Store) createStreamLocked(sh *shard, key string, state streamState, exp
 	if err != nil {
 		return err
 	}
-	if streamLogicalSize(state, len(stub)) > maxPackedStreamBytes {
+	if s.streamTooLarge(streamLogicalSize(state, len(stub)), uint64(len(stub))) {
 		return errStreamTooLarge
 	}
 	bytes := state.log.memory()
@@ -204,6 +204,7 @@ func (s *Store) dropStreamBodyLocked(sh *shard, key string) {
 	}
 	bytes := body.memory()
 	s.streamLogs.del(key)
+	body.release()
 	s.memory.used -= bytes
 	s.memory.streams -= bytes
 }
@@ -329,6 +330,7 @@ func (s *Store) attachStreamBody(sh *shard, key string, body *streamBody) {
 // streams in different shards do not contend, and it keeps the per-shard
 // struct small for stores that hold no streams at all.
 type streamRegistry struct {
+	spill   *streamSpill
 	stripes [32]streamStripe
 }
 
@@ -350,6 +352,10 @@ func (r *streamRegistry) get(key string) *streamBody {
 }
 
 func (r *streamRegistry) set(key string, b *streamBody) {
+	if r.spill != nil && b.sp == nil {
+		b.sp = r.spill
+		b.spillCold()
+	}
 	st := r.stripe(key)
 	st.mu.Lock()
 	if st.m == nil {
@@ -370,7 +376,20 @@ func (r *streamRegistry) clear() {
 	for i := range r.stripes {
 		st := &r.stripes[i]
 		st.mu.Lock()
+		for _, b := range st.m {
+			b.release()
+		}
 		st.m = nil
 		st.mu.Unlock()
 	}
+}
+
+// streamTooLarge reports whether a stream breaks the size limit. Without a
+// spill directory the whole stream must fit in one 32 MiB value; with one, only
+// the small stored part (consumer groups) is bounded.
+func (s *Store) streamTooLarge(logical, stub uint64) bool {
+	if s.streamSpill != nil {
+		return stub > maxPackedStreamBytes
+	}
+	return logical > maxPackedStreamBytes
 }

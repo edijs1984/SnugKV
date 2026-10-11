@@ -20,6 +20,12 @@ type streamChunk struct {
 	head        int
 	lastOff     int
 	data        []byte
+
+	// A spilled chunk keeps no bytes in memory: data is nil and the bytes live
+	// in seg at segOff (segLen long). See stream_spill.go.
+	seg    *streamSegment
+	segOff int64
+	segLen int
 }
 
 // streamBody holds the entries of one stream as a list of chunks. Appending an
@@ -41,6 +47,11 @@ type streamBody struct {
 	// j, when set, records what a command changes so it can be journaled and,
 	// if the journal write fails, undone. See stream_tx.go.
 	j *bodyJournal
+
+	// Disk spill (nil sp means everything stays in memory).
+	sp       *streamSpill
+	segs     map[*streamSegment]struct{}
+	segDirty bool
 }
 
 var streamBodyBaseBytes = uint64(unsafe.Sizeof(streamBody{}))
@@ -133,7 +144,7 @@ func decodeStreamEntryAt(data []byte, off int) (StreamEntry, int) {
 
 func (b *streamBody) Len() int { return b.length }
 
-func (c *streamChunk) live() []byte { return c.data[c.head:] }
+func (c *streamChunk) live() []byte { return c.get()[c.head:] }
 
 // firstChunkAtOrAfter returns the index of the first chunk that may hold an
 // entry >= id (inclusive) or > id (exclusive).
@@ -152,7 +163,7 @@ func (b *streamBody) First() (StreamEntry, bool) {
 		return StreamEntry{}, false
 	}
 	c := &b.chunks[0]
-	e, _ := decodeStreamEntryAt(c.data, c.head)
+	e, _ := decodeStreamEntryAt(c.get(), c.head)
 	return e, true
 }
 
@@ -161,7 +172,7 @@ func (b *streamBody) Last() (StreamEntry, bool) {
 		return StreamEntry{}, false
 	}
 	c := &b.chunks[len(b.chunks)-1]
-	e, _ := decodeStreamEntryAt(c.data, c.lastOff)
+	e, _ := decodeStreamEntryAt(c.get(), c.lastOff)
 	return e, true
 }
 
@@ -187,16 +198,17 @@ func (b *streamBody) Get(id StreamID) (StreamEntry, bool) {
 		return StreamEntry{}, false
 	}
 	c := &b.chunks[ci]
+	data := c.get()
 	for off, k := c.head, 0; k < c.count; k++ {
-		eid := streamEntryIDAt(c.data, off)
+		eid := streamEntryIDAt(data, off)
 		if eid.equal(id) {
-			e, _ := decodeStreamEntryAt(c.data, off)
+			e, _ := decodeStreamEntryAt(data, off)
 			return e, true
 		}
 		if id.less(eid) {
 			break
 		}
-		off = streamEntryEnd(c.data, off)
+		off = streamEntryEnd(data, off)
 	}
 	return StreamEntry{}, false
 }
@@ -207,15 +219,16 @@ func (b *streamBody) Has(id StreamID) bool {
 		return false
 	}
 	c := &b.chunks[ci]
+	data := c.get()
 	for off, k := c.head, 0; k < c.count; k++ {
-		eid := streamEntryIDAt(c.data, off)
+		eid := streamEntryIDAt(data, off)
 		if eid.equal(id) {
 			return true
 		}
 		if id.less(eid) {
 			return false
 		}
-		off = streamEntryEnd(c.data, off)
+		off = streamEntryEnd(data, off)
 	}
 	return false
 }
@@ -226,18 +239,19 @@ func (b *streamBody) Has(id StreamID) bool {
 func (b *streamBody) ForEachFrom(start StreamID, inclusive bool, fn func(StreamEntry) bool) {
 	for ci := b.firstChunkAtOrAfter(start, inclusive); ci < len(b.chunks); ci++ {
 		c := &b.chunks[ci]
+		data := c.get()
 		off := c.head
 		for k := 0; k < c.count; k++ {
-			id := streamEntryIDAt(c.data, off)
+			id := streamEntryIDAt(data, off)
 			pass := !id.less(start)
 			if !inclusive {
 				pass = start.less(id)
 			}
 			if !pass {
-				off = streamEntryEnd(c.data, off)
+				off = streamEntryEnd(data, off)
 				continue
 			}
-			e, next := decodeStreamEntryAt(c.data, off)
+			e, next := decodeStreamEntryAt(data, off)
 			if !fn(e) {
 				return
 			}
@@ -252,16 +266,17 @@ func (b *streamBody) ForEachReverse(end StreamID, fn func(StreamEntry) bool) {
 	ci := sort.Search(len(b.chunks), func(i int) bool { return end.less(b.chunks[i].first) }) - 1
 	for ; ci >= 0; ci-- {
 		c := &b.chunks[ci]
+		data := c.get()
 		offsets := make([]int, 0, c.count)
 		for off, k := c.head, 0; k < c.count; k++ {
 			offsets = append(offsets, off)
-			off = streamEntryEnd(c.data, off)
+			off = streamEntryEnd(data, off)
 		}
 		for i := len(offsets) - 1; i >= 0; i-- {
-			if end.less(streamEntryIDAt(c.data, offsets[i])) {
+			if end.less(streamEntryIDAt(data, offsets[i])) {
 				continue
 			}
-			e, _ := decodeStreamEntryAt(c.data, offsets[i])
+			e, _ := decodeStreamEntryAt(data, offsets[i])
 			if !fn(e) {
 				return
 			}
@@ -275,10 +290,11 @@ func (b *streamBody) All() []StreamEntry {
 	out := make([]StreamEntry, 0, b.length)
 	for i := range b.chunks {
 		c := &b.chunks[i]
+		data := c.get()
 		off := c.head
 		for k := 0; k < c.count; k++ {
 			var e StreamEntry
-			e, off = decodeStreamEntryAt(c.data, off)
+			e, off = decodeStreamEntryAt(data, off)
 			out = append(out, e)
 		}
 	}
@@ -300,7 +316,7 @@ func (b *streamBody) Append(id StreamID, fields []StreamField) {
 	}
 	size := streamEntrySize(fields)
 	n := len(b.chunks)
-	if n == 0 || len(b.chunks[n-1].data) >= streamChunkTarget {
+	if n == 0 || b.chunks[n-1].seg != nil || len(b.chunks[n-1].data) >= streamChunkTarget {
 		if n > 0 {
 			b.seal(n - 1)
 		}
@@ -320,6 +336,9 @@ func (b *streamBody) Append(id StreamID, fields []StreamField) {
 	c.count++
 	b.length++
 	b.dataBytes += uint64(size)
+	if b.sp != nil && b.j == nil {
+		b.spillCold()
+	}
 }
 
 // seal trims the spare capacity of a chunk that will not be appended to again.
@@ -337,8 +356,11 @@ func (b *streamBody) seal(i int) {
 func (b *streamBody) dropChunk(i int) {
 	c := &b.chunks[i]
 	b.dataCap -= uint64(cap(c.data))
-	b.dataBytes -= uint64(len(c.data) - c.head)
+	b.dataBytes -= uint64(c.size() - c.head)
 	b.length -= c.count
+	if c.seg != nil {
+		b.segDirty = true
+	}
 	copy(b.chunks[i:], b.chunks[i+1:])
 	b.chunks[len(b.chunks)-1] = streamChunk{}
 	b.chunks = b.chunks[:len(b.chunks)-1]
@@ -358,12 +380,16 @@ func (b *streamBody) TrimFront(n int) int {
 			n -= c.count
 			removed += c.count
 			b.dataCap -= uint64(cap(c.data))
-			b.dataBytes -= uint64(len(c.data) - c.head)
+			b.dataBytes -= uint64(c.size() - c.head)
 			b.length -= c.count
+			if c.seg != nil {
+				b.segDirty = true
+			}
 			b.chunks[0] = streamChunk{}
 			b.chunks = b.chunks[1:]
 			continue
 		}
+		b.unspill(c)
 		off := c.head
 		for k := 0; k < n; k++ {
 			lastGone = streamEntryIDAt(c.data, off)
@@ -388,6 +414,7 @@ func (b *streamBody) TrimFront(n int) int {
 	if b.j != nil && removed > 0 {
 		b.j.noteThrough(lastGone)
 	}
+	b.gcSegments()
 	return removed
 }
 
@@ -404,16 +431,17 @@ func (b *streamBody) CountBefore(minID StreamID, limit int) int {
 			}
 			continue
 		}
+		data := c.get()
 		off := c.head
 		for k := 0; k < c.count; k++ {
-			if !streamEntryIDAt(c.data, off).less(minID) {
+			if !streamEntryIDAt(data, off).less(minID) {
 				return count
 			}
 			count++
 			if limit > 0 && count >= limit {
 				return limit
 			}
-			off = streamEntryEnd(c.data, off)
+			off = streamEntryEnd(data, off)
 		}
 		return count
 	}
@@ -450,11 +478,13 @@ func (b *streamBody) Delete(ids map[StreamID]struct{}) int {
 	for _, ci := range order {
 		removed += b.rewriteChunk(ci, byChunk[ci])
 	}
+	b.gcSegments()
 	return removed
 }
 
 func (b *streamBody) rewriteChunk(ci int, drop map[StreamID]struct{}) int {
 	c := &b.chunks[ci]
+	b.unspill(c)
 	kept := make([]byte, 0, len(c.data)-c.head)
 	count, removed := 0, 0
 	var first, last StreamID
@@ -513,12 +543,13 @@ func streamBodyFromEntries(entries []StreamEntry, last, maxDeleted StreamID, add
 func (b *streamBody) ForEachID(fn func(StreamID) bool) {
 	for ci := range b.chunks {
 		c := &b.chunks[ci]
+		data := c.get()
 		off := c.head
 		for k := 0; k < c.count; k++ {
-			if !fn(streamEntryIDAt(c.data, off)) {
+			if !fn(streamEntryIDAt(data, off)) {
 				return
 			}
-			off = streamEntryEnd(c.data, off)
+			off = streamEntryEnd(data, off)
 		}
 	}
 }
@@ -533,13 +564,14 @@ func (b *streamBody) CountThrough(id StreamID) int {
 			count += c.count
 			continue
 		}
+		data := c.get()
 		off := c.head
 		for k := 0; k < c.count; k++ {
-			if id.less(streamEntryIDAt(c.data, off)) {
+			if id.less(streamEntryIDAt(data, off)) {
 				return count
 			}
 			count++
-			off = streamEntryEnd(c.data, off)
+			off = streamEntryEnd(data, off)
 		}
 		return count
 	}
@@ -569,4 +601,25 @@ func (b *streamBody) restoreSnapshot(sn *streamBodySnapshot) {
 	b.length, b.dataBytes = sn.length, sn.dataBytes
 	b.LastID, b.MaxDeletedID, b.EntriesAdded = sn.lastID, sn.maxDeletedID, sn.entriesAdded
 	b.recountCapacity()
+}
+
+// packedPieces hands the live entries to fn in runs of about maxBytes, in the
+// logical encoding, with the number of entries in each run.
+func (b *streamBody) packedPieces(maxBytes int, fn func(data []byte, count int, last StreamID, final bool)) {
+	var buf []byte
+	count := 0
+	var last StreamID
+	for i := range b.chunks {
+		c := &b.chunks[i]
+		buf = append(buf, c.live()...)
+		count += c.count
+		last = c.last
+		if len(buf) >= maxBytes && i < len(b.chunks)-1 {
+			fn(buf, count, last, false)
+			buf, count = nil, 0
+		}
+	}
+	if count > 0 {
+		fn(buf, count, last, true)
+	}
 }
