@@ -1,7 +1,10 @@
 # SnugKV with every shipped feature switched on.
 #
-#   cp .env.example .env     # set the webhook key and token
 #   docker compose up -d --build
+#
+# The webhook key and API token below are development defaults. For anything
+# reachable from outside, set SNUGKV_WEBHOOKS_KEY and SNUGKV_WEBHOOKS_API_TOKEN
+# in the environment (or a .env file) before starting.
 #
 # Redis clients:     redis://127.0.0.1:6380
 # Webhook endpoint:  POST http://127.0.0.1:8090/hook/<id>
@@ -46,8 +49,8 @@ services:
       - -webhooks-api-listen=0.0.0.0:8091
       - -webhooks-public-url=${SNUGKV_WEBHOOKS_PUBLIC_URL:-http://127.0.0.1:8090}
     environment:
-      SNUGKV_WEBHOOKS_KEY: ${SNUGKV_WEBHOOKS_KEY:?set SNUGKV_WEBHOOKS_KEY (16+ characters) in .env}
-      SNUGKV_WEBHOOKS_API_TOKEN: ${SNUGKV_WEBHOOKS_API_TOKEN:?set SNUGKV_WEBHOOKS_API_TOKEN in .env}
+      SNUGKV_WEBHOOKS_KEY: ${SNUGKV_WEBHOOKS_KEY:-dev-only-webhook-key-change-me}
+      SNUGKV_WEBHOOKS_API_TOKEN: ${SNUGKV_WEBHOOKS_API_TOKEN:-dev-only-token-change-me}
     stop_grace_period: 20s
 
 volumes:
