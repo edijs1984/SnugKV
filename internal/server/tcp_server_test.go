@@ -584,3 +584,32 @@ func TestOptimizeSampleDoesNotContinuouslyRescanWithoutDrops(t *testing.T) {
 		t.Fatalf("queued=%d before periodic discovery, want 0", got)
 	}
 }
+
+func TestIdleConnectionStaysOpenByDefault(t *testing.T) {
+	cfg := config.Default()
+	cfg.ListenAddr = "127.0.0.1:0"
+	if cfg.ReadTimeoutMS != 0 {
+		t.Fatalf("default read timeout = %d ms", cfg.ReadTimeoutMS)
+	}
+	s, err := ListenWithConfig(cfg, engine.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	c, err := net.Dial("tcp", s.listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	io.WriteString(c, "*1\r\n$4\r\nPING\r\n")
+	reply := make([]byte, 7)
+	c.SetDeadline(time.Now().Add(2 * time.Second))
+	if _, err = io.ReadFull(c, reply); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	io.WriteString(c, "*1\r\n$4\r\nPING\r\n")
+	if _, err = io.ReadFull(c, reply); err != nil {
+		t.Fatalf("idle connection was closed: %v", err)
+	}
+}

@@ -79,7 +79,7 @@ func Default() Config {
 		ListenAddr:                      "127.0.0.1:6380",
 		Shards:                          256,
 		MaxConnections:                  10000,
-		ReadTimeoutMS:                   30000,
+		ReadTimeoutMS:                   0,
 		WriteTimeoutMS:                  30000,
 		PubSubSendAttempts:              5,
 		PubSubSendTimeoutMS:             1000,
@@ -310,7 +310,10 @@ func (c Config) Validate() error {
 	if c.MaxConnections < 1 {
 		return errors.New("max_connections must be positive")
 	}
-	for _, n := range []int64{c.ReadTimeoutMS, c.WriteTimeoutMS, c.CleanupIntervalMS} {
+	if c.ReadTimeoutMS < 0 || c.ReadTimeoutMS > int64((24*time.Hour)/time.Millisecond) {
+		return errors.New("read_timeout_ms must be between 0 (no timeout) and 24h")
+	}
+	for _, n := range []int64{c.WriteTimeoutMS, c.CleanupIntervalMS} {
 		if n <= 0 || n > int64((24*time.Hour)/time.Millisecond) {
 			return errors.New("timeouts and cleanup interval must be between 1ms and 24h")
 		}

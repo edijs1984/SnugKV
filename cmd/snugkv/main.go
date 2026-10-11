@@ -51,7 +51,7 @@ func main() {
 	flag.StringVar(&cfg.MasterTLSServerName, "mastertls-server-name", cfg.MasterTLSServerName, "TLS server name override for replication upstream (optional)")
 	flag.IntVar(&cfg.Shards, "shards", cfg.Shards, "power-of-two shard count")
 	flag.IntVar(&cfg.MaxConnections, "max-connections", cfg.MaxConnections, "maximum simultaneous clients")
-	flag.Int64Var(&cfg.ReadTimeoutMS, "read-timeout-ms", cfg.ReadTimeoutMS, "request deadline in milliseconds")
+	flag.Int64Var(&cfg.ReadTimeoutMS, "read-timeout-ms", cfg.ReadTimeoutMS, "close a connection that sends no complete command for this many milliseconds, zero (default) never, as in Redis")
 	flag.Int64Var(&cfg.WriteTimeoutMS, "write-timeout-ms", cfg.WriteTimeoutMS, "response deadline in milliseconds")
 	flag.IntVar(&cfg.PubSubSendAttempts, "pubsub-send-attempts", cfg.PubSubSendAttempts, "failed delivery attempts in a row before a Pub/Sub subscriber is disconnected")
 	flag.Int64Var(&cfg.PubSubSendTimeoutMS, "pubsub-send-timeout-ms", cfg.PubSubSendTimeoutMS, "deadline of one Pub/Sub delivery attempt in milliseconds")
