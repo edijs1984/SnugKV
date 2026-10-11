@@ -1,5 +1,9 @@
 # Changelog
 
+### Feature — job queues (`snugq_*`)
+
+- A BullMQ-style queue library is loaded with the built-in functions: priorities, LIFO, delayed jobs, retries with backoff, locks and stalled-job recovery, pause/resume, global concurrency and rate limits, deduplication, repeatable schedulers, parent/child flows, progress and logs, an events stream and counters. The existing `snug_queue_*` functions are unchanged. See `docs/QUEUES.md`.
+
 ### Feature — webhooks module (optional)
 
 - New `internal/webhook`, started with `-webhooks-listen` and/or `-webhooks-api-listen` (off by default). Inbound webhooks (`POST /hook/<id>`) publish into a stream with HMAC or token checks and a rate limit; outbound webhooks deliver a stream to a URL through a consumer group with retries, backoff, dead-letter topic, custom headers (API keys) and a signature. Definitions, logs and counters live in the store itself; secrets are encrypted with `-webhooks-key`; outbound requests to private addresses are refused. A small JSON management API creates, edits, tests and removes webhooks. See `docs/WEBHOOKS.md`.
