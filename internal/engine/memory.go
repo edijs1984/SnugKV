@@ -556,6 +556,9 @@ func (s *Store) publishRecordKnownWithHash(
 
 func (s *Store) remove(sh *shard, key string) {
 	if e, ok := sh.get(key); ok {
+		if e.valueType == TypeStream {
+			s.noteStreamRemoved(key)
+		}
 		if sh.expired(key, e, s.now()) {
 			atomic.AddUint64(&s.expired, 1)
 		}

@@ -39,6 +39,37 @@ type Record struct {
 	Deleted     bool                   `json:"deleted,omitempty"`
 	ValueType   uint8                  `json:"value_type,omitempty"`
 	Replication *ReplicationCheckpoint `json:"replication,omitempty"`
+	// Stream, when set, changes the stream stored at Key instead of replacing
+	// it. Applying it twice, or on top of a newer copy of the same stream, gives
+	// the same result as applying it once.
+	Stream *StreamDelta `json:"stream,omitempty"`
+}
+
+// StreamDelta is the change one command made to one stream. Entries are in the
+// packed stream-entry encoding (16-byte ID, field count, then length-prefixed
+// fields and values). The ID counters only ever move forward, which is what
+// lets a delta replay safely over a snapshot that already contains it.
+type StreamDelta struct {
+	// Create means the stream did not exist before the command. Applying it
+	// replaces any stream already stored at the key.
+	Create bool `json:"create,omitempty"`
+	// Append holds entries added to the end of the stream.
+	Append      []byte `json:"append,omitempty"`
+	AppendCount int    `json:"append_count,omitempty"`
+	// RemoveThrough, when HasRemoveThrough is set, removes every entry whose ID
+	// is at or below it (trimming from the front).
+	RemoveThrough    [2]uint64 `json:"remove_through,omitempty"`
+	HasRemoveThrough bool      `json:"has_remove_through,omitempty"`
+	// Delete holds 16-byte IDs of entries removed one by one.
+	Delete []byte `json:"delete,omitempty"`
+	// Counters after the command.
+	LastID       [2]uint64 `json:"last_id"`
+	MaxDeletedID [2]uint64 `json:"max_deleted_id"`
+	EntriesAdded uint64    `json:"entries_added"`
+	// Groups is the full packed state of all consumer groups after the
+	// command; it is only present when the command changed them.
+	Groups    []byte `json:"groups,omitempty"`
+	GroupsSet bool   `json:"groups_set,omitempty"`
 }
 
 // RecoverReplicationCheckpoint advances crash-recovery replication metadata in

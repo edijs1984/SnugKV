@@ -213,6 +213,11 @@ func (s *Store) restoreSingleRecord(record persistence.Record, force bool) error
 // Restore applies a logical batch atomically. force is reserved for rollback of
 // previously admitted data after a failed durability write.
 func (s *Store) Restore(records []persistence.Record, force bool) error {
+	for i := range records {
+		if records[i].Stream != nil {
+			return s.restoreWithStreamDeltas(records, force)
+		}
+	}
 	if len(records) == 1 && !records[0].Reset {
 		return s.restoreSingleRecord(records[0], force)
 	}

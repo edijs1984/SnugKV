@@ -37,6 +37,10 @@ type streamBody struct {
 	LastID       StreamID
 	MaxDeletedID StreamID
 	EntriesAdded uint64
+
+	// j, when set, records what a command changes so it can be journaled and,
+	// if the journal write fails, undone. See stream_tx.go.
+	j *bodyJournal
 }
 
 var streamBodyBaseBytes = uint64(unsafe.Sizeof(streamBody{}))
@@ -291,6 +295,9 @@ func (b *streamBody) packedEntries(dst []byte) []byte {
 
 // Append adds an entry whose ID is greater than every existing ID.
 func (b *streamBody) Append(id StreamID, fields []StreamField) {
+	if b.j != nil {
+		b.j.noteAppend(b, id, fields)
+	}
 	size := streamEntrySize(fields)
 	n := len(b.chunks)
 	if n == 0 || len(b.chunks[n-1].data) >= streamChunkTarget {
@@ -340,9 +347,14 @@ func (b *streamBody) dropChunk(i int) {
 // TrimFront removes up to n of the oldest entries and returns how many went.
 func (b *streamBody) TrimFront(n int) int {
 	removed := 0
+	if b.j != nil && n > 0 && b.length > 0 {
+		b.j.beforeDestructive(b)
+	}
+	var lastGone StreamID
 	for n > 0 && len(b.chunks) > 0 {
 		c := &b.chunks[0]
 		if c.count <= n {
+			lastGone = c.last
 			n -= c.count
 			removed += c.count
 			b.dataCap -= uint64(cap(c.data))
@@ -354,6 +366,7 @@ func (b *streamBody) TrimFront(n int) int {
 		}
 		off := c.head
 		for k := 0; k < n; k++ {
+			lastGone = streamEntryIDAt(c.data, off)
 			off = streamEntryEnd(c.data, off)
 		}
 		b.dataBytes -= uint64(off - c.head)
@@ -371,6 +384,9 @@ func (b *streamBody) TrimFront(n int) int {
 			c.data = live
 			c.head = 0
 		}
+	}
+	if b.j != nil && removed > 0 {
+		b.j.noteThrough(lastGone)
 	}
 	return removed
 }
@@ -409,6 +425,9 @@ func (b *streamBody) Delete(ids map[StreamID]struct{}) int {
 	if len(ids) == 0 || b.length == 0 {
 		return 0
 	}
+	if b.j != nil {
+		b.j.beforeDestructive(b)
+	}
 	byChunk := make(map[int]map[StreamID]struct{})
 	for id := range ids {
 		ci := b.firstChunkAtOrAfter(id, true)
@@ -446,6 +465,9 @@ func (b *streamBody) rewriteChunk(ci int, drop map[StreamID]struct{}) int {
 		id := streamEntryIDAt(c.data, off)
 		if _, gone := drop[id]; gone {
 			removed++
+			if b.j != nil {
+				b.j.deleted = append(b.j.deleted, id)
+			}
 		} else {
 			if count == 0 {
 				first = id
@@ -499,4 +521,52 @@ func (b *streamBody) ForEachID(fn func(StreamID) bool) {
 			off = streamEntryEnd(c.data, off)
 		}
 	}
+}
+
+// CountThrough returns how many of the oldest entries have an ID at or below
+// id.
+func (b *streamBody) CountThrough(id StreamID) int {
+	count := 0
+	for ci := range b.chunks {
+		c := &b.chunks[ci]
+		if !id.less(c.last) {
+			count += c.count
+			continue
+		}
+		off := c.head
+		for k := 0; k < c.count; k++ {
+			if id.less(streamEntryIDAt(c.data, off)) {
+				return count
+			}
+			count++
+			off = streamEntryEnd(c.data, off)
+		}
+		return count
+	}
+	return count
+}
+
+// streamBodySnapshot is a cheap copy of everything that describes a log:
+// chunk buffers are shared, because they are never rewritten in place.
+type streamBodySnapshot struct {
+	chunks       []streamChunk
+	length       int
+	dataBytes    uint64
+	lastID       StreamID
+	maxDeletedID StreamID
+	entriesAdded uint64
+}
+
+func (b *streamBody) snapshot() *streamBodySnapshot {
+	return &streamBodySnapshot{
+		chunks: append([]streamChunk(nil), b.chunks...), length: b.length, dataBytes: b.dataBytes,
+		lastID: b.LastID, maxDeletedID: b.MaxDeletedID, entriesAdded: b.EntriesAdded,
+	}
+}
+
+func (b *streamBody) restoreSnapshot(sn *streamBodySnapshot) {
+	b.chunks = sn.chunks
+	b.length, b.dataBytes = sn.length, sn.dataBytes
+	b.LastID, b.MaxDeletedID, b.EntriesAdded = sn.lastID, sn.maxDeletedID, sn.entriesAdded
+	b.recountCapacity()
 }
