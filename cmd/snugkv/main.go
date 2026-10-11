@@ -80,6 +80,8 @@ func main() {
 	flag.StringVar(&cfg.MetricsAddr, "metrics-listen", cfg.MetricsAddr, "separate loopback metrics address (optional)")
 	flag.StringVar(&cfg.EvictionPolicy, "eviction-policy", cfg.EvictionPolicy, "noeviction, allkeys-lru, or volatile-lru")
 	flag.StringVar(&cfg.AdminAddr, "admin-listen", cfg.AdminAddr, "separate loopback RESP admin address")
+	var wh webhookFlags
+	wh.register()
 	pprofAddr := flag.String("pprof-listen", "", "optional loopback pprof HTTP address")
 	flag.Parse()
 	if flag.NArg() != 0 {
@@ -179,6 +181,11 @@ func main() {
 			log.Fatal(err)
 		}
 	}
+	webhooks, err := wh.start(cfg.ListenAddr)
+	if err != nil {
+		listener.Close()
+		log.Fatalf("webhooks: %v", err)
+	}
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signals)
@@ -195,6 +202,9 @@ func main() {
 	for {
 		select {
 		case <-signals:
+			if webhooks != nil {
+				webhooks.Close()
+			}
 			listener.Close()
 			if metrics != nil {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
