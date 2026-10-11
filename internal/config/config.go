@@ -31,6 +31,8 @@ type Config struct {
 	JSONShape           bool   `json:"json_shape"`
 	OptimizerMode       string `json:"optimizer_mode"`
 	AOFPath             string `json:"aof_path"`
+	StreamDir           string `json:"stream_dir"`
+	StreamRAMBytes      uint64 `json:"stream_ram_bytes"`
 	AOFRewritePath      string `json:"aof_rewrite_path"`
 	SnapshotPath        string `json:"snapshot_path"`
 	SnapshotIntervalMS  int64  `json:"snapshot_interval_ms"`
@@ -423,7 +425,7 @@ func (c *Config) ApplyEnv() error {
 		}
 		c.JSONShape = b
 	}
-	for name, dst := range map[string]*string{"AOF_PATH": &c.AOFPath, "AOF_REWRITE_PATH": &c.AOFRewritePath, "SNAPSHOT_PATH": &c.SnapshotPath, "ACL_FILE": &c.ACLFile, "FSYNC": &c.Fsync, "EVICTION_POLICY": &c.EvictionPolicy, "METRICS_LISTEN": &c.MetricsAddr, "ADMIN_LISTEN": &c.AdminAddr, "OPTIMIZER_MODE": &c.OptimizerMode, "MASTERUSER": &c.MasterUser, "MASTERAUTH": &c.MasterAuth, "FAILOVER_GROUP_ID": &c.FailoverGroupID, "FAILOVER_ADVERTISE_ADDR": &c.FailoverAdvertiseAddr, "CLUSTER_NODE_ADDR": &c.ClusterNodeAddr, "CLUSTER_CONTROL_AUTH": &c.ClusterControlAuth, "MASTERTLS_CA_CERT": &c.MasterTLSCACert, "MASTERTLS_CERT": &c.MasterTLSCert, "MASTERTLS_KEY": &c.MasterTLSKey, "MASTERTLS_SERVER_NAME": &c.MasterTLSServerName} {
+	for name, dst := range map[string]*string{"AOF_PATH": &c.AOFPath, "STREAM_DIR": &c.StreamDir, "AOF_REWRITE_PATH": &c.AOFRewritePath, "SNAPSHOT_PATH": &c.SnapshotPath, "ACL_FILE": &c.ACLFile, "FSYNC": &c.Fsync, "EVICTION_POLICY": &c.EvictionPolicy, "METRICS_LISTEN": &c.MetricsAddr, "ADMIN_LISTEN": &c.AdminAddr, "OPTIMIZER_MODE": &c.OptimizerMode, "MASTERUSER": &c.MasterUser, "MASTERAUTH": &c.MasterAuth, "FAILOVER_GROUP_ID": &c.FailoverGroupID, "FAILOVER_ADVERTISE_ADDR": &c.FailoverAdvertiseAddr, "CLUSTER_NODE_ADDR": &c.ClusterNodeAddr, "CLUSTER_CONTROL_AUTH": &c.ClusterControlAuth, "MASTERTLS_CA_CERT": &c.MasterTLSCACert, "MASTERTLS_CERT": &c.MasterTLSCert, "MASTERTLS_KEY": &c.MasterTLSKey, "MASTERTLS_SERVER_NAME": &c.MasterTLSServerName} {
 		if v, ok := os.LookupEnv("SNUGKV_" + name); ok {
 			*dst = v
 		}

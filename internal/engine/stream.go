@@ -402,7 +402,7 @@ func (s *Store) StreamAdd(key, idSpec string, fields []StreamField, options Stre
 		return StreamID{}, false, errors.New("ERR stream entries-added counter overflow")
 	}
 	size := streamEntrySize(fields)
-	if state.log.dataBytes+uint64(size)+streamStubAllowance(state) > maxPackedStreamBytes {
+	if allowance := streamStubAllowance(state); s.streamTooLarge(state.log.dataBytes+uint64(size)+allowance, allowance) {
 		return StreamID{}, false, errStreamTooLarge
 	}
 	if err := s.admitStreamGrowth(streamAddGrowth(size)); err != nil {

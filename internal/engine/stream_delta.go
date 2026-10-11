@@ -194,3 +194,41 @@ func (s *Store) restoreWithStreamDeltas(records []persistence.Record, force bool
 	}
 	return flush(len(records))
 }
+
+// streamExportInlineMax is the largest stream exported as one ordinary record.
+// Bigger streams are exported as a create record followed by append records, so
+// no single record has to hold the whole stream.
+var streamExportInlineMax uint64 = 16 << 20
+
+var streamExportPiece = 4 << 20
+
+func (s *Store) streamExportRecords(key string, st streamState, expiresAtMS int64) ([]persistence.Record, error) {
+	groups, err := appendStreamGroups(nil, st.Groups)
+	if err != nil {
+		return nil, err
+	}
+	var out []persistence.Record
+	st.log.packedPieces(streamExportPiece, func(data []byte, count int, last StreamID, final bool) {
+		// A piece only claims the progress up to its own last entry, so later
+		// pieces are not mistaken for entries the stream already passed.
+		d := &persistence.StreamDelta{
+			Create: len(out) == 0, Append: data, AppendCount: count,
+			LastID: idPair(last), EntriesAdded: st.EntriesAdded,
+		}
+		if final {
+			d.LastID, d.MaxDeletedID = idPair(st.LastID), idPair(st.MaxDeletedID)
+		}
+		if d.Create {
+			d.Groups, d.GroupsSet = groups, true
+		}
+		rec := persistence.Record{Key: []byte(key), ValueType: uint8(TypeStream), Stream: d}
+		if d.Create {
+			rec.ExpiresAtMS = expiresAtMS
+		}
+		out = append(out, rec)
+	})
+	if len(out) == 0 {
+		return nil, errors.New("ERR empty stream export")
+	}
+	return out, nil
+}

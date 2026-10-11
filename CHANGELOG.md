@@ -1,5 +1,14 @@
 # Changelog
 
+### Change — streams can spill old messages to disk (`-stream-dir`)
+
+- New flags `-stream-dir <dir>` and `-stream-ram-bytes <n>` (default 64 MiB; config `stream_dir`, `stream_ram_bytes`). When a stream holds more than that in memory, its oldest messages are written to segment files in the directory and dropped from memory. Reads (`XRANGE`, `XREAD`, `XREADGROUP` on old messages, `XCLAIM`, …) fetch them back on demand. The newest messages always stay in memory.
+- A segment file is deleted when none of its messages remain: after `XTRIM`, `XDEL` of everything in it, `DEL`, `FLUSHALL`, or `RENAME` over the key. `INFO` (Stats) reports `stream_spill_segments` and `stream_spill_bytes_written`.
+- The segment files are a cache, not the record of the data. The AOF or snapshot still holds every message, and the directory is emptied at startup (use a directory only SnugKV uses). A restart replays the AOF and spills again as it goes.
+- With `-stream-dir` set the 32 MiB limit per stream is gone. Streams bigger than 16 MiB are written to the AOF rewrite, snapshots and replica full sync as a create entry followed by 4 MiB append entries. `DUMP`/`RESTORE`, `MIGRATE` and the Redis RDB sync still use one value per key and refuse a stream over 32 MiB.
+- Measured with 1 KB messages and 2 MB of memory per stream: 40,000 messages (40 MB) used 1.7 MB of memory with 7 segment files; `kill -9` and restart brought all 40,000 back in 0.8 s; after `BGREWRITEAOF` the restart and a replica full sync still held all 40,000.
+- Without `-stream-dir` nothing changes.
+
 ### Change — stream writes go to the AOF and to replicas as small entries
 
 - With `-aof` (or a replica attached), `XADD`, `XDEL`, `XTRIM`, `XACK`, `XGROUP`, `XREADGROUP`, `XCLAIM`, `XAUTOCLAIM`, `XDELEX` and `XACKDEL` used to write the whole stream after every command. They now write what changed: the messages added, the range or IDs removed, the counters, and the stream's consumer groups when they changed. 60,000 `XADD` of 200 bytes (the earlier 3,000 × 100 bytes produced a 722 MB file) now give a 28 MB AOF, `XADD` cost stays flat at about 70 µs per call over the network, and with `-fsync always` a `kill -9` loses nothing and the restart replays 20,000 messages in 0.4 s.

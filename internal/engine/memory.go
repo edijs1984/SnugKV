@@ -39,6 +39,11 @@ type Options struct {
 	Encoding      bool
 	ShapeEncoding bool
 	Compression   bool
+
+	// StreamDir enables disk spill of stream entries; StreamRAMBytes is the
+	// memory one stream may hold before its oldest chunks move to disk.
+	StreamDir      string
+	StreamRAMBytes uint64
 }
 type MemoryStats struct {
 	AccountedBytes,
@@ -586,6 +591,7 @@ func (s *Store) remove(sh *shard, key string) {
 			if body := s.streamLogs.get(key); body != nil {
 				streamBytes = body.memory()
 				s.streamLogs.del(key)
+				body.release()
 			}
 		}
 		s.memory.used -= cost + metaCost + hotBytes + streamBytes

@@ -77,6 +77,18 @@ func (s *Store) Export(keys []string) []persistence.Record {
 				}
 				record.Value = logical
 			case TypeStream:
+				if st, err := s.streamStateFromEntry(sh, key, e); err == nil && st.log.dataBytes > streamExportInlineMax {
+					var expires int64
+					if e.hasExpiry {
+						expires = sh.expirationAt(key, e).UnixMilli()
+					}
+					pieces, perr := s.streamExportRecords(key, st, expires)
+					if perr != nil {
+						panic(perr)
+					}
+					records = append(records, pieces...)
+					continue
+				}
 				logical, err := s.streamLogicalValue(sh, key, e)
 				if err != nil {
 					panic(err)

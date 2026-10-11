@@ -127,6 +127,11 @@ func (tx *StreamTx) End() {
 		sh.mu.Lock()
 		if item.body.j == item.j {
 			item.body.j = nil
+			if tx.s.streamLogs.get(key) == item.body {
+				before := item.body.memory()
+				item.body.settle()
+				tx.s.settleStreamMemory(before, item.body.memory())
+			}
 		}
 		sh.mu.Unlock()
 	}

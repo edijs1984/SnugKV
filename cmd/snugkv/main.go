@@ -64,6 +64,8 @@ func main() {
 	flag.Int64Var(&cfg.GoMemoryLimit, "go-memory-limit", cfg.GoMemoryLimit, "Go runtime soft memory limit in bytes, zero preserves the existing runtime/GOMEMLIMIT setting")
 	flag.BoolVar(&cfg.Encoding, "encoding", cfg.Encoding, "enable verified cheap codecs")
 	flag.StringVar(&cfg.AOFRewritePath, "aof-rewrite", cfg.AOFRewritePath, "one-off AOF rewrite destination when journaling is disabled (not loaded at startup)")
+	flag.StringVar(&cfg.StreamDir, "stream-dir", cfg.StreamDir, "directory for stream messages that no longer fit in memory; enables streams larger than 32 MiB (emptied at startup)")
+	flag.Uint64Var(&cfg.StreamRAMBytes, "stream-ram-bytes", cfg.StreamRAMBytes, "memory one stream may use before its oldest messages move to -stream-dir (default 64 MiB)")
 	flag.StringVar(&cfg.AOFPath, "aof", cfg.AOFPath, "append-only file path (optional)")
 	flag.StringVar(&cfg.SnapshotPath, "snapshot", cfg.SnapshotPath, "snapshot file path (optional)")
 	flag.Int64Var(&cfg.SnapshotIntervalMS, "snapshot-interval-ms", cfg.SnapshotIntervalMS, "automatic background snapshot interval in milliseconds, zero disables")
@@ -108,7 +110,7 @@ func main() {
 	if cfg.GoMemoryLimit > 0 {
 		debug.SetMemoryLimit(cfg.GoMemoryLimit)
 	}
-	store, err := engine.NewWithOptions(engine.Options{Shards: cfg.Shards, MaxMemory: cfg.MaxMemory, Encoding: cfg.Encoding, ShapeEncoding: cfg.JSONShape, Compression: cfg.Compression})
+	store, err := engine.NewWithOptions(engine.Options{Shards: cfg.Shards, MaxMemory: cfg.MaxMemory, Encoding: cfg.Encoding, ShapeEncoding: cfg.JSONShape, Compression: cfg.Compression, StreamDir: cfg.StreamDir, StreamRAMBytes: cfg.StreamRAMBytes})
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -142,6 +142,7 @@ type Store struct {
 	compression      bool
 	memory           accounting
 	streamLogs       streamRegistry
+	streamSpill *streamSpill
 	streamTx         atomic.Pointer[StreamTx]
 	sampleCursor     uint64
 	shapeCatalog     globalShapeCatalog
@@ -173,6 +174,14 @@ func NewWithOptions(options Options) (*Store, error) {
 		},
 	}
 	s.memory.max.Store(options.MaxMemory)
+	if options.StreamDir != "" {
+		sp, err := newStreamSpill(options.StreamDir, options.StreamRAMBytes)
+		if err != nil {
+			return nil, err
+		}
+		s.streamSpill = sp
+		s.streamLogs.spill = sp
+	}
 	for i := range s.shards {
 		s.shards[i].data = *index.New[uint32]()
 	}
