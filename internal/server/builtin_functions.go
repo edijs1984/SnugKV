@@ -1,9 +1,15 @@
 package server
 
 import (
+	_ "embed"
 	"errors"
 	"fmt"
 )
+
+// queueFunctionsLibrary is the "snugq" library: BullMQ-style job queues.
+//
+//go:embed snugq.lua
+var queueFunctionsLibrary string
 
 // builtinFunctionsLibrary is the "snug" function library. It is loaded at
 // startup (unless disabled) with replace semantics, so upgrading the server
@@ -318,14 +324,16 @@ func (s *TCPServer) LoadBuiltinFunctions() error {
 }
 
 func (s *Server) loadBuiltinFunctions() error {
-	lib, err := s.loadFunctionLibrary(builtinFunctionsLibrary)
-	if err != nil {
-		return fmt.Errorf("built-in functions: %w", err)
-	}
-	registry := functionRegistryForServer(s)
-	if err := registry.load(lib, true); err != nil {
-		lib.state.Close()
-		return errors.New("built-in functions: " + err.Error())
+	for _, src := range []string{builtinFunctionsLibrary, queueFunctionsLibrary} {
+		lib, err := s.loadFunctionLibrary(src)
+		if err != nil {
+			return fmt.Errorf("built-in functions: %w", err)
+		}
+		registry := functionRegistryForServer(s)
+		if err := registry.load(lib, true); err != nil {
+			lib.state.Close()
+			return errors.New("built-in functions: " + err.Error())
+		}
 	}
 	return nil
 }
