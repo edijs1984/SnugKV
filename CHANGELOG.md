@@ -5,6 +5,10 @@
 - `-read-timeout-ms` used to default to 30,000, so SnugKV closed any connection that sent nothing for 30 s. Redis never does (its `timeout` is 0), and client pools such as ioredis then logged a closed connection and reconnected. The default is now 0, meaning never. Set a positive value to close connections that send no complete command within that time; Pub/Sub subscribers and `MONITOR` sessions were already exempt. `SNUGKV_READ_TIMEOUT_MS=0` and `"read_timeout_ms": 0` are accepted.
 - Exposed servers that relied on the 30 s limit to drop abandoned or half-open clients should set `-read-timeout-ms` again; `-max-connections` still bounds the total.
 
+### Fix — `PUBLISH` and `SPUBLISH` on a primary now reach subscribers on its replicas
+
+- Replicas copied the data but not Pub/Sub messages, so a subscriber connected to a replica never saw a `PUBLISH` made on the primary (Redis delivers it). The primary now adds each `PUBLISH` to the replication stream and the replica hands it to its own subscribers, also through chained replicas. Nothing is stored in the AOF. A replica that reconnects with a partial resync receives the messages published while it was away, as in Redis. `PUBLISH` run on a replica reaches only that replica's own subscribers and leaves its replication offset alone.
+
 ### Change — one memory budget for all spilled streams (`-stream-ram-total`)
 
 - `-stream-ram-total <bytes>` (config `stream_ram_total`) sets the memory all streams together may use before their oldest messages move to `-stream-dir`. Each stream gets an equal share of it, never more than `-stream-ram-bytes` and never less than 128 KiB, so many streams no longer each keep their own 64 MiB. A stream spills on its next write after the share shrinks. Zero (default) keeps the per-stream limit only.
