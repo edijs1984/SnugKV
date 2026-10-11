@@ -2,6 +2,7 @@ package engine
 
 import (
 	"errors"
+	"sort"
 
 	"snugkv/internal/persistence"
 )
@@ -79,6 +80,11 @@ func (s *Store) applyStreamDelta(rec persistence.Record, force bool) error {
 			return errBadStreamDelta
 		}
 	}
+	for _, op := range d.GroupOps {
+		if op.Name == "" {
+			return errBadStreamDelta
+		}
+	}
 	lastID, maxDel := pairID(d.LastID), pairID(d.MaxDeletedID)
 	admission := enforceMemoryLimit
 	if force {
@@ -153,12 +159,97 @@ func (s *Store) applyStreamDelta(rec persistence.Record, force bool) error {
 	if last, ok := body.LastEntryID(); ok && body.LastID.less(last) || body.EntriesAdded < uint64(body.length) {
 		return errBadStreamDelta
 	}
-	if d.GroupsSet {
+	if d.GroupsSet || len(d.GroupOps) > 0 {
 		state.LastID, state.EntriesAdded, state.MaxDeletedID = body.LastID, body.EntriesAdded, body.MaxDeletedID
-		state.Groups = groups
+		if d.GroupsSet {
+			state.Groups = groups
+		}
+		if len(d.GroupOps) > 0 {
+			state.Groups = applyGroupOps(state.Groups, d.GroupOps)
+		}
 		return s.publishStreamStateLocked(sh, key, old, state)
 	}
 	return nil
+}
+
+// applyGroupOps applies group deltas to a private copy of the groups. Each
+// delta sets the entries it lists to absolute values, so applying it again, or
+// over a newer state, still converges once the later deltas are applied.
+func applyGroupOps(groups []streamGroup, ops []persistence.GroupDelta) []streamGroup {
+	out := make([]streamGroup, len(groups))
+	for i, g := range groups {
+		g.Consumers = append([]streamConsumer(nil), g.Consumers...)
+		g.Pending = append([]streamPending(nil), g.Pending...)
+		out[i] = g
+	}
+	for _, op := range ops {
+		gi := -1
+		for i := range out {
+			if out[i].Name == op.Name {
+				gi = i
+				break
+			}
+		}
+		if op.Remove {
+			if gi >= 0 {
+				out = append(out[:gi], out[gi+1:]...)
+			}
+			continue
+		}
+		if gi < 0 {
+			out = append(out, streamGroup{Name: op.Name, EntriesRead: -1})
+			gi = len(out) - 1
+		}
+		g := &out[gi]
+		if op.Set {
+			g.LastDeliveredID, g.EntriesRead = pairID(op.LastDelivered), op.EntriesRead
+		}
+		consumerAt := func(name string) int {
+			for i := range g.Consumers {
+				if g.Consumers[i].Name == name {
+					return i
+				}
+			}
+			return -1
+		}
+		for _, c := range op.Consumers {
+			if i := consumerAt(c.Name); i >= 0 {
+				g.Consumers[i].SeenAt, g.Consumers[i].ActiveAt = c.SeenAt, c.ActiveAt
+			} else {
+				g.Consumers = append(g.Consumers, streamConsumer{Name: c.Name, SeenAt: c.SeenAt, ActiveAt: c.ActiveAt})
+			}
+		}
+		pending := make(map[StreamID]streamPending, len(g.Pending)+len(op.Pending))
+		for _, p := range g.Pending {
+			pending[p.ID] = p
+		}
+		for _, id := range op.DelPending {
+			delete(pending, pairID(id))
+		}
+		for _, p := range op.Pending {
+			id := pairID(p.ID)
+			pending[id] = streamPending{ID: id, Consumer: p.Consumer, DeliveredAt: p.DeliveredAt, Deliveries: p.Deliveries}
+			if p.Consumer != "" && consumerAt(p.Consumer) < 0 {
+				// Only possible when replaying over a newer state; later deltas
+				// settle it.
+				g.Consumers = append(g.Consumers, streamConsumer{Name: p.Consumer, SeenAt: p.DeliveredAt, ActiveAt: p.DeliveredAt})
+			}
+		}
+		for _, name := range op.DelConsumers {
+			if i := consumerAt(name); i >= 0 {
+				g.Consumers = append(g.Consumers[:i], g.Consumers[i+1:]...)
+			}
+		}
+		g.Pending = g.Pending[:0]
+		for _, p := range pending {
+			if p.Consumer != "" && consumerAt(p.Consumer) < 0 {
+				p.Consumer = "" // its consumer was removed by a later change
+			}
+			g.Pending = append(g.Pending, p)
+		}
+		sort.Slice(g.Pending, func(i, j int) bool { return g.Pending[i].ID.less(g.Pending[j].ID) })
+	}
+	return out
 }
 
 // restoreWithStreamDeltas handles a batch that contains stream deltas. Records

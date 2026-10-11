@@ -80,6 +80,42 @@ type StreamDelta struct {
 	// command; it is only present when the command changed them.
 	Groups    []byte `json:"groups,omitempty"`
 	GroupsSet bool   `json:"groups_set,omitempty"`
+	// GroupOps changes consumer groups one group at a time, listing only what
+	// differs. It is used instead of Groups for an existing stream.
+	GroupOps []GroupDelta `json:"group_ops,omitempty"`
+}
+
+// GroupDelta is the change to one consumer group. Entries it lists are set to
+// the given values; entries it does not list are untouched.
+type GroupDelta struct {
+	Name string `json:"name"`
+	// Remove destroys the group (XGROUP DESTROY); nothing else is read.
+	Remove bool `json:"remove,omitempty"`
+	// Set carries the group-wide fields below; it is also what creates a group.
+	Set           bool      `json:"set,omitempty"`
+	LastDelivered [2]uint64 `json:"last_delivered,omitempty"`
+	EntriesRead   int64     `json:"entries_read,omitempty"`
+	// Consumers to add or update, and names to remove.
+	Consumers    []ConsumerState `json:"consumers,omitempty"`
+	DelConsumers []string        `json:"del_consumers,omitempty"`
+	// Pending entries to add or update, and IDs to remove.
+	Pending    []PendingState `json:"pending,omitempty"`
+	DelPending [][2]uint64    `json:"del_pending,omitempty"`
+}
+
+// ConsumerState is one consumer of a group.
+type ConsumerState struct {
+	Name     string `json:"name"`
+	SeenAt   int64  `json:"seen_at"`
+	ActiveAt int64  `json:"active_at"`
+}
+
+// PendingState is one delivered, unacknowledged entry.
+type PendingState struct {
+	ID          [2]uint64 `json:"id"`
+	Consumer    string    `json:"consumer"`
+	DeliveredAt int64     `json:"delivered_at"`
+	Deliveries  uint64    `json:"deliveries"`
 }
 
 // RecoverReplicationCheckpoint advances crash-recovery replication metadata in

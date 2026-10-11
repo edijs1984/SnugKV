@@ -228,7 +228,16 @@ func (tx *StreamTx) Records() ([]persistence.Record, bool) {
 			for _, id := range j.deleted {
 				d.Delete = appendStreamID(d.Delete, id)
 			}
-			d.Groups, d.GroupsSet = item.groups, item.groupsSet
+			if item.groupsSet {
+				if ops, ok := item.groupOpsFor(); ok {
+					d.GroupOps = ops
+				} else {
+					d.Groups, d.GroupsSet = item.groups, true
+				}
+			}
+			if !j.touched() && len(d.GroupOps) == 0 && !d.GroupsSet {
+				continue
+			}
 		}
 		out = append(out, persistence.Record{Key: []byte(key), ValueType: uint8(TypeStream), Stream: d})
 	}
@@ -290,4 +299,91 @@ func (s *Store) rollbackStreamItem(sh *shard, key string, item *streamTxItem) er
 		}
 	}
 	return nil
+}
+
+// diffStreamGroups lists what changed between two group lists, one entry per
+// group that differs.
+func diffStreamGroups(before, after []streamGroup) []persistence.GroupDelta {
+	old := make(map[string]*streamGroup, len(before))
+	for i := range before {
+		old[before[i].Name] = &before[i]
+	}
+	var out []persistence.GroupDelta
+	seen := make(map[string]bool, len(after))
+	for i := range after {
+		g := &after[i]
+		seen[g.Name] = true
+		prev := old[g.Name]
+		d := persistence.GroupDelta{Name: g.Name}
+		if prev == nil {
+			d.Set = true
+			prev = &streamGroup{}
+		} else if prev.LastDeliveredID != g.LastDeliveredID || prev.EntriesRead != g.EntriesRead {
+			d.Set = true
+		}
+		if d.Set {
+			d.LastDelivered, d.EntriesRead = idPair(g.LastDeliveredID), g.EntriesRead
+		}
+		prevConsumers := make(map[string]streamConsumer, len(prev.Consumers))
+		for _, c := range prev.Consumers {
+			prevConsumers[c.Name] = c
+		}
+		nowConsumers := make(map[string]bool, len(g.Consumers))
+		for _, c := range g.Consumers {
+			nowConsumers[c.Name] = true
+			if p, ok := prevConsumers[c.Name]; !ok || p != c {
+				d.Consumers = append(d.Consumers, persistence.ConsumerState{Name: c.Name, SeenAt: c.SeenAt, ActiveAt: c.ActiveAt})
+			}
+		}
+		for _, c := range prev.Consumers {
+			if !nowConsumers[c.Name] {
+				d.DelConsumers = append(d.DelConsumers, c.Name)
+			}
+		}
+		prevPending := make(map[StreamID]streamPending, len(prev.Pending))
+		for _, p := range prev.Pending {
+			prevPending[p.ID] = p
+		}
+		nowPending := make(map[StreamID]bool, len(g.Pending))
+		for _, p := range g.Pending {
+			nowPending[p.ID] = true
+			if q, ok := prevPending[p.ID]; !ok || q != p {
+				d.Pending = append(d.Pending, persistence.PendingState{
+					ID: idPair(p.ID), Consumer: p.Consumer, DeliveredAt: p.DeliveredAt, Deliveries: p.Deliveries,
+				})
+			}
+		}
+		for _, p := range prev.Pending {
+			if !nowPending[p.ID] {
+				d.DelPending = append(d.DelPending, idPair(p.ID))
+			}
+		}
+		if d.Set || len(d.Consumers) > 0 || len(d.DelConsumers) > 0 || len(d.Pending) > 0 || len(d.DelPending) > 0 {
+			out = append(out, d)
+		}
+	}
+	for i := range before {
+		if !seen[before[i].Name] {
+			out = append(out, persistence.GroupDelta{Name: before[i].Name, Remove: true})
+		}
+	}
+	return out
+}
+
+// groupOpsFor describes the command's change to the consumer groups of an
+// existing stream. ok is false when the before-image is not available.
+func (item *streamTxItem) groupOpsFor() (ops []persistence.GroupDelta, ok bool) {
+	if !item.hasPreStub {
+		return nil, false
+	}
+	before, err := decodePackedStream(item.preStub)
+	if err != nil {
+		return nil, false
+	}
+	offset := 0
+	after, err := readStreamGroups(item.groups, &offset, packedStreamHeaderV3[2])
+	if err != nil || offset != len(item.groups) {
+		return nil, false
+	}
+	return diffStreamGroups(before.Groups, after), true
 }

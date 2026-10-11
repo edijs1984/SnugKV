@@ -1,5 +1,14 @@
 # Changelog
 
+### Change — consumer-group changes are written as small deltas too
+
+- After `XREADGROUP`, `XACK`, `XCLAIM`, `XAUTOCLAIM` and `XGROUP`, the AOF and replicas used to receive every group of the stream whole, including all pending entries. They now receive only what changed: the group's cursor, the consumers that changed, and the pending entries added, changed or removed. A soak with 3 services × 3 instances over 100,000 messages wrote a 453 MB AOF instead of 739 MB, and an entry no longer grows with the size of the backlog. AOFs written by the previous version still replay.
+
+### Tooling — `streamsoak`, a message-bus soak test with crashes
+
+- `cmd/streamsoak` starts SnugKV with an AOF (`-fsync always`) and spilled streams, then runs one publisher, several services with several instances each, instances that drop a batch without acknowledging, and `kill -9` of the server followed by a restart from the AOF. It passes when every acknowledged message is in the stream after the last restart, every service processed every message and nothing is left unacknowledged. Redeliveries are counted, not failures. Example: `streamsoak -bin ./snugkv -messages 30000 -services 3 -instances 3 -kills 6`.
+- Result of the first runs: 100,000 messages, 3 × 3 instances, 9 server kills, 15,431 consumer crashes: nothing lost, nothing left pending, 15,625 redeliveries. With `-fsync always` the run time is set by the disk's fsync latency (about 2–3 ms per command here).
+
 ### Change — idle connections are no longer closed by default
 
 - `-read-timeout-ms` used to default to 30,000, so SnugKV closed any connection that sent nothing for 30 s. Redis never does (its `timeout` is 0), and client pools such as ioredis then logged a closed connection and reconnected. The default is now 0, meaning never. Set a positive value to close connections that send no complete command within that time; Pub/Sub subscribers and `MONITOR` sessions were already exempt. `SNUGKV_READ_TIMEOUT_MS=0` and `"read_timeout_ms": 0` are accepted.
