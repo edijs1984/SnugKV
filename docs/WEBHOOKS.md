@@ -2,7 +2,7 @@
 
 An optional module that connects streams to HTTP. It is off unless you start it with a listen flag, and it does not change the data protocol.
 
-- **Inbound webhook.** `POST /hook/<id>` publishes the request into a stream, in the same message format `snugkv-nest` uses (`payload`, `event`, `mid`, `ts`, `producer`, `headers`).
+- **Inbound webhook.** `POST /hook/<id>` publishes the request into a stream, in the same message format `snugkv-nest` uses (`payload`, `event`, `mid`, `ts`, `producer`, `headers`). A trace header (`x-snug-trace`, see [TRACING.md](TRACING.md)) in `headers` is passed through like any other `X-*` header.
 - **Outbound webhook.** A consumer group reads a stream and POSTs each message to a URL, with retries, backoff and a dead-letter stream.
 
 The module connects to the server over loopback like any client. Everything it stores (definitions, delivery logs, counters) is ordinary data, so it is journaled, snapshotted and replicated. Only the primary runs webhooks; on a replica inbound requests get `503` and no worker starts.
