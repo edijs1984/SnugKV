@@ -1,5 +1,14 @@
 # Changelog
 
+### Security fix — a password on the default user is now enforced
+
+- A connection authenticated as the default user only while that user had no password, but commands were allowed whenever the default user had all permissions, so a password on the default user (`user default on >pass ~* +@all` in an ACL file, or `ACL SETUSER default >pass`) was never asked for. Unauthenticated connections now get `NOAUTH` for everything except `AUTH`, `HELLO … AUTH` and `QUIT`, as in Redis. Setups that disabled the default user (`user default off`) were not affected.
+
+### Feature — `-requirepass`, `-acl-file` and a TLS listener
+
+- `-requirepass` (`SNUGKV_REQUIREPASS`) gives the default user a password; the secrets and webhook modules use it automatically. `-acl-file` loads a Redis-style ACL file (it could only be set in the config file before).
+- `-tls-listen` with `-tls-cert` / `-tls-key` serves RESP over TLS 1.2+ on its own port next to the plain one; certificates are reloaded when the files change; `-tls-ca-cert` and `-tls-auth-clients` add client certificates. Replicas reach a SnugKV primary over it with the existing `-mastertls` options. See `docs/TLS-AND-AUTH.md`.
+
 ### Feature — secrets module (optional)
 
 - New `internal/secrets`, started with `-secrets-api-listen` and `-secrets-key` (off by default): environment variables per project and environment, encrypted with AES-256-GCM before they are stored and bound to their name, with versions and rollback, `.env` import and export, an audit stream of every read and change, and read tokens scoped to environments. A wrong key is refused at start. See `docs/SECRETS.md`.

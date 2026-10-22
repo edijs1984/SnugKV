@@ -51,6 +51,15 @@ type Config struct {
 	ClusterControlAuth    string            `json:"cluster_control_auth"`
 	ClusterSlots          map[string]string `json:"cluster_slots"`
 	ACLFile             string `json:"acl_file"`
+	// RequirePass sets the password of the default user (like Redis requirepass).
+	RequirePass string `json:"requirepass"`
+	// TLSListen serves RESP over TLS on its own address, next to the plain
+	// ListenAddr (bind that one to loopback to allow TLS only from outside).
+	TLSListen      string `json:"tls_listen"`
+	TLSCert        string `json:"tls_cert"`
+	TLSKey         string `json:"tls_key"`
+	TLSCACert      string `json:"tls_ca_cert"`
+	TLSAuthClients bool   `json:"tls_auth_clients"`
 	Fsync               string `json:"fsync"`
 	MaxMemory           uint64 `json:"max_memory"`
 	GoMemoryLimit       int64  `json:"go_memory_limit"`
@@ -249,6 +258,22 @@ func (c Config) Validate() error {
 	} else if c.MasterTLSCACert != "" || c.MasterTLSCert != "" || c.MasterTLSKey != "" || c.MasterTLSServerName != "" {
 		return errors.New("mastertls certificate settings require mastertls")
 	}
+	if c.TLSListen != "" {
+		if c.TLSCert == "" || c.TLSKey == "" {
+			return errors.New("tls_listen requires tls_cert and tls_key")
+		}
+		if c.TLSListen == c.ListenAddr || c.TLSListen == c.AdminAddr {
+			return errors.New("tls_listen must differ from the other listen addresses")
+		}
+		if c.TLSAuthClients && c.TLSCACert == "" {
+			return errors.New("tls_auth_clients requires tls_ca_cert")
+		}
+	} else if c.TLSCert != "" || c.TLSKey != "" || c.TLSCACert != "" || c.TLSAuthClients {
+		return errors.New("tls certificate settings require tls_listen")
+	}
+	if c.RequirePass != "" && c.ACLFile != "" {
+		return errors.New("use either requirepass or acl_file (set the default user's password in the ACL file)")
+	}
 	if c.AdminAddr != "" && c.AdminAddr == c.ListenAddr {
 		return errors.New("admin and public listen addresses must differ")
 	}
@@ -422,6 +447,13 @@ func (c *Config) ApplyEnv() error {
 		}
 		c.Compression = b
 	}
+	if v, ok := os.LookupEnv("SNUGKV_TLS_AUTH_CLIENTS"); ok {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return errors.New("invalid SNUGKV_TLS_AUTH_CLIENTS")
+		}
+		c.TLSAuthClients = b
+	}
 	if v, ok := os.LookupEnv("SNUGKV_JSON_SHAPE"); ok {
 		b, err := strconv.ParseBool(v)
 		if err != nil {
@@ -429,7 +461,7 @@ func (c *Config) ApplyEnv() error {
 		}
 		c.JSONShape = b
 	}
-	for name, dst := range map[string]*string{"AOF_PATH": &c.AOFPath, "STREAM_DIR": &c.StreamDir, "AOF_REWRITE_PATH": &c.AOFRewritePath, "SNAPSHOT_PATH": &c.SnapshotPath, "ACL_FILE": &c.ACLFile, "FSYNC": &c.Fsync, "EVICTION_POLICY": &c.EvictionPolicy, "METRICS_LISTEN": &c.MetricsAddr, "ADMIN_LISTEN": &c.AdminAddr, "OPTIMIZER_MODE": &c.OptimizerMode, "MASTERUSER": &c.MasterUser, "MASTERAUTH": &c.MasterAuth, "FAILOVER_GROUP_ID": &c.FailoverGroupID, "FAILOVER_ADVERTISE_ADDR": &c.FailoverAdvertiseAddr, "CLUSTER_NODE_ADDR": &c.ClusterNodeAddr, "CLUSTER_CONTROL_AUTH": &c.ClusterControlAuth, "MASTERTLS_CA_CERT": &c.MasterTLSCACert, "MASTERTLS_CERT": &c.MasterTLSCert, "MASTERTLS_KEY": &c.MasterTLSKey, "MASTERTLS_SERVER_NAME": &c.MasterTLSServerName} {
+	for name, dst := range map[string]*string{"AOF_PATH": &c.AOFPath, "STREAM_DIR": &c.StreamDir, "AOF_REWRITE_PATH": &c.AOFRewritePath, "SNAPSHOT_PATH": &c.SnapshotPath, "ACL_FILE": &c.ACLFile, "FSYNC": &c.Fsync, "EVICTION_POLICY": &c.EvictionPolicy, "METRICS_LISTEN": &c.MetricsAddr, "ADMIN_LISTEN": &c.AdminAddr, "OPTIMIZER_MODE": &c.OptimizerMode, "MASTERUSER": &c.MasterUser, "MASTERAUTH": &c.MasterAuth, "FAILOVER_GROUP_ID": &c.FailoverGroupID, "FAILOVER_ADVERTISE_ADDR": &c.FailoverAdvertiseAddr, "CLUSTER_NODE_ADDR": &c.ClusterNodeAddr, "CLUSTER_CONTROL_AUTH": &c.ClusterControlAuth, "MASTERTLS_CA_CERT": &c.MasterTLSCACert, "MASTERTLS_CERT": &c.MasterTLSCert, "MASTERTLS_KEY": &c.MasterTLSKey, "MASTERTLS_SERVER_NAME": &c.MasterTLSServerName, "REQUIREPASS": &c.RequirePass, "TLS_LISTEN": &c.TLSListen, "TLS_CERT": &c.TLSCert, "TLS_KEY": &c.TLSKey, "TLS_CA_CERT": &c.TLSCACert} {
 		if v, ok := os.LookupEnv("SNUGKV_" + name); ok {
 			*dst = v
 		}

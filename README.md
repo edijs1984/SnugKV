@@ -52,7 +52,8 @@ chronological implementation evidence. Benchmark details are in
 [benchmarks/README.md](benchmarks/README.md).
 Job queues are in [docs/QUEUES.md](docs/QUEUES.md), webhooks in
 [docs/WEBHOOKS.md](docs/WEBHOOKS.md), the optional secrets manager in
-[docs/SECRETS.md](docs/SECRETS.md), and the flow-tracing stream used by
+[docs/SECRETS.md](docs/SECRETS.md), passwords and TLS in
+[docs/TLS-AND-AUTH.md](docs/TLS-AND-AUTH.md), and the flow-tracing stream used by
 snugkv-nest and snugkv-stream-ui in [docs/TRACING.md](docs/TRACING.md).
 
 ## Supported command surface
