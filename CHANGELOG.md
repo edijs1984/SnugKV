@@ -1,5 +1,11 @@
 # Changelog
 
+### Feature — WireGuard mesh per region
+
+- `snug-agent mesh` (root, its own systemd unit from the console's join.sh): keeps interface `snug0` with the server's mesh address and syncs its WireGuard peers with `snug:agent:mesh:<region>` every 10 s; validates every record, never removes peers while SnugKV is unreachable, keeps the interface up across restarts, starts from the peers given at join. See "The mesh" in `docs/AGENT.md`.
+- `snug-agent join` creates the WireGuard key (`wg.key`), sends the public key and endpoint, and stores the mesh address (`SNUG_AGENT_MESH_IP`) and the first peers (`mesh-peers.json`). `-no-mesh`, `-endpoint`.
+- The agent no longer counts WireGuard/tun/tap interfaces as network traffic. Agent version 0.2.0.
+
 ### Feature — joining servers from the console
 
 - `snug-agent join -panel URL -token TOKEN`: redeems a one-time join token from the console (Servers > Add server) and writes `/etc/snug-agent/agent.env` (0600) for the systemd unit. Used by the console's `join.sh`.
