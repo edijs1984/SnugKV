@@ -53,7 +53,7 @@ func startKV(t *testing.T) string {
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	addr := startKV(t)
-	e := &env{t: t, kvAddr: addr, tok: "admin-token-0123456789"}
+	e := &env{t: t, kvAddr: addr, tok: "admin-token-0123456789abcdef"}
 	m, err := Start(Options{KVAddr: addr, APIListen: "127.0.0.1:0", APIToken: e.tok, Key: testKey, Logf: t.Logf})
 	if err != nil {
 		t.Fatal(err)
@@ -167,6 +167,9 @@ func TestStartRefusesUnsafeConfig(t *testing.T) {
 		{KVAddr: addr, APIListen: "127.0.0.1:0"},                                        // no key
 		{KVAddr: addr, APIListen: "127.0.0.1:0", Key: "short"},                          // weak key
 		{KVAddr: addr, APIListen: "127.0.0.1:0", Key: testKey, APIToken: "sks_abc_def"}, // admin token shaped like a read token
+		{KVAddr: addr, APIListen: "127.0.0.1:0", Key: testKey, APIToken: "too-short-token"},
+		{KVAddr: addr, APIListen: "127.0.0.1:0", Key: testKey, OldKey: testKey}, // old = new
+		{KVAddr: addr, APIListen: "127.0.0.1:0", Key: testKey, OldKey: "short"},
 	}
 	for i, o := range cases {
 		if m, err := Start(o); err == nil {
@@ -438,5 +441,171 @@ func TestBrowserRequestsAndForeignHostsAreRefused(t *testing.T) {
 		if resp.StatusCode != want {
 			t.Errorf("Host %s = %d, want %d", host, resp.StatusCode, want)
 		}
+	}
+}
+
+func TestAdminTokensAndExpiry(t *testing.T) {
+	e := newEnv(t)
+	e.must("PUT", "/v1/envs/app/prod/secrets/A", map[string]string{"value": "1"}, 200)
+
+	if code, _ := e.admin("POST", "/v1/tokens", map[string]any{"name": "x", "admin": true, "envs": []string{"app/prod"}}); code != 400 {
+		t.Fatalf("admin token with envs = %d", code)
+	}
+	out := e.must("POST", "/v1/tokens", map[string]any{"name": "ci", "admin": true}, 201)
+	ska := out["secret"].(string)
+	if !strings.HasPrefix(ska, "ska_") || out["token"].(map[string]any)["admin"] != true {
+		t.Fatalf("admin token = %v", out)
+	}
+	// It is an admin: creates a read token, changes secrets, reads the audit
+	code, rt, _ := e.req(ska, "POST", "/v1/tokens", map[string]any{"name": "svc", "envs": []string{"app/prod"}, "ttlDays": 30})
+	if code != 201 {
+		t.Fatalf("admin token creating a read token = %d", code)
+	}
+	exp := rt["token"].(map[string]any)["expiresMs"].(float64)
+	if d := exp - float64(time.Now().UnixMilli()); d < 29*24*3600*1000 || d > 31*24*3600*1000 {
+		t.Fatalf("30-day expiry = %v ms from now", d)
+	}
+	req, _ := http.NewRequest("PUT", e.api+"/v1/envs/app/prod/secrets/B", strings.NewReader(`{"value":"2"}`))
+	req.Header.Set("Authorization", "Bearer "+ska)
+	req.Header.Set("X-Snugkv-Actor", "deploy")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("admin token PUT: %v %v", resp, err)
+	}
+	resp.Body.Close()
+	entries := e.must("GET", "/v1/audit", nil, 200)["entries"].([]any)
+	if a := entries[0].(map[string]any)["actor"]; a != "admin:ci/deploy" {
+		t.Fatalf("audit actor = %v", a)
+	}
+	// A read token cannot make tokens; a read token presented as ska_ (or the reverse) does not work
+	readTok := rt["secret"].(string)
+	if code, _, _ := e.req(readTok, "POST", "/v1/tokens", map[string]any{"name": "y", "envs": []string{"app/prod"}}); code != 403 {
+		t.Fatalf("read token creating tokens = %d", code)
+	}
+	if code, _, _ := e.req("ska_"+strings.TrimPrefix(readTok, "sks_"), "GET", "/v1/envs", nil); code != 401 {
+		t.Fatalf("read token with the admin prefix = %d", code)
+	}
+	if code, _ := e.admin("POST", "/v1/tokens", map[string]any{"name": "z", "envs": []string{"app/prod"}, "ttlDays": 9999}); code != 400 {
+		t.Fatalf("ttlDays out of range = %d", code)
+	}
+
+	// An expired token stops working
+	id := rt["token"].(map[string]any)["id"].(string)
+	raw, _ := e.kv.do("HGET", keyTokens, id)
+	var tk Token
+	json.Unmarshal([]byte(raw.str), &tk)
+	tk.ExpiresMs = time.Now().UnixMilli() - 1000
+	b, _ := json.Marshal(tk)
+	e.kv.do("HSET", keyTokens, id, string(b))
+	if code, _, _ := e.req(readTok, "GET", "/v1/envs/app/prod/export", nil); code != 401 {
+		t.Fatalf("expired token = %d", code)
+	}
+
+	// Revoking the admin token
+	adminID := out["token"].(map[string]any)["id"].(string)
+	e.must("DELETE", "/v1/tokens/"+adminID, nil, 200)
+	if code, _, _ := e.req(ska, "GET", "/v1/envs", nil); code != 401 {
+		t.Fatalf("revoked admin token = %d", code)
+	}
+}
+
+func TestKeyRotation(t *testing.T) {
+	addr := startKV(t)
+	const keyA, keyB = "first-key-0123456789", "second-key-0123456789"
+	start := func(key, old string) (*Manager, error) {
+		return Start(Options{KVAddr: addr, APIListen: "127.0.0.1:0", Key: key, OldKey: old})
+	}
+	m, err := start(keyA, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := &env{t: t, api: "http://" + m.Addr()}
+	put := func(name, v string) {
+		e.req("", "PUT", "/v1/envs/app/prod/secrets/"+name, map[string]string{"value": v})
+	}
+	put("A", "a1")
+	put("A", "a2") // history has two versions
+	put("B", "b1")
+	e.req("", "DELETE", "/v1/envs/app/prod/secrets/B", nil) // history of a deleted secret
+	m.Close()
+
+	if _, err := start(keyB, ""); err == nil {
+		t.Fatal("the new key alone must be refused before the rotation")
+	}
+	if _, err := start(keyB, "not-the-old-key-01234"); err == nil {
+		t.Fatal("a wrong old key must be refused")
+	}
+	m, err = start(keyB, keyA)
+	if err != nil {
+		t.Fatalf("rotation: %v", err)
+	}
+	e.api = "http://" + m.Addr()
+	_, one, _ := e.req("", "GET", "/v1/envs/app/prod/secrets/A", nil)
+	if one["value"] != "a2" {
+		t.Fatalf("after rotation A = %v", one)
+	}
+	m.Close()
+
+	// From now on the new key alone is enough, and the old one opens nothing
+	m, err = start(keyB, "")
+	if err != nil {
+		t.Fatalf("new key after the rotation: %v", err)
+	}
+	e.api = "http://" + m.Addr()
+	_, one, _ = e.req("", "GET", "/v1/envs/app/prod/secrets/A", nil)
+	if one["value"] != "a2" {
+		t.Fatalf("A with the new key = %v", one)
+	}
+	_, vs, _ := e.req("", "GET", "/v1/envs/app/prod/secrets/A/versions", nil)
+	for _, v := range vs["versions"].([]any) {
+		if v.(map[string]any)["hint"] == nil || v.(map[string]any)["hint"] == "" {
+			t.Fatalf("history entry not readable with the new key: %v", v)
+		}
+	}
+	if code, out, _ := e.req("", "POST", "/v1/envs/app/prod/secrets/B/rollback", map[string]int{"version": 1}); code != 200 {
+		t.Fatalf("restoring a deleted secret's old version after rotation = %d %v", code, out)
+	}
+	m.Close()
+	if _, err := start(keyA, ""); err == nil {
+		t.Fatal("the old key must no longer open the data")
+	}
+}
+
+func TestRotationThatStoppedHalfwayContinues(t *testing.T) {
+	addr := startKV(t)
+	const keyA, keyB = "first-key-0123456789", "second-key-0123456789"
+	m, _ := Start(Options{KVAddr: addr, APIListen: "127.0.0.1:0", Key: keyA})
+	e := &env{t: t, api: "http://" + m.Addr()}
+	e.req("", "PUT", "/v1/envs/app/prod/secrets/A", map[string]string{"value": "a"})
+	e.req("", "PUT", "/v1/envs/app/prod/secrets/B", map[string]string{"value": "b"})
+	m.Close()
+	// Simulate a rotation that re-sealed A and stopped: A under B's key, B and the check value still under A's
+	kv := newKVClient(addr, "", "", 1, 5*time.Second)
+	defer kv.close()
+	sa, _ := newSealer(keyA)
+	sb, _ := newSealer(keyB)
+	raw, _ := kv.do("HGET", keyEnv+"app/prod", "A")
+	var r record
+	json.Unmarshal([]byte(raw.str), &r)
+	plain, _ := sa.open(r.Value, bind("app/prod", "A"))
+	r.Value, _ = sb.seal(plain, bind("app/prod", "A"))
+	b, _ := json.Marshal(r)
+	kv.do("HSET", keyEnv+"app/prod", "A", string(b))
+
+	m, err := Start(Options{KVAddr: addr, APIListen: "127.0.0.1:0", Key: keyB, OldKey: keyA})
+	if err != nil {
+		t.Fatalf("continuing the rotation: %v", err)
+	}
+	m.Close()
+	m, err = Start(Options{KVAddr: addr, APIListen: "127.0.0.1:0", Key: keyB})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	e.api = "http://" + m.Addr()
+	_, out, _ := e.req("", "GET", "/v1/envs/app/prod/export", nil)
+	vals := out["values"].(map[string]any)
+	if vals["A"] != "a" || vals["B"] != "b" {
+		t.Fatalf("after a resumed rotation: %v", vals)
 	}
 }

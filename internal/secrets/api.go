@@ -70,13 +70,19 @@ func (m *Manager) handler() http.Handler {
 		got, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 		var c caller
 		switch {
-		case strings.HasPrefix(got, "sks_"):
+		case strings.HasPrefix(got, "sks_") || strings.HasPrefix(got, "ska_"):
 			t, ok := m.tokenFor(got)
 			if !ok {
 				httpJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 				return
 			}
 			c = caller{token: t, actor: "token:" + t.Name}
+			if t.Admin {
+				c = caller{admin: true, token: t, actor: "admin:" + t.Name}
+				if a := r.Header.Get("X-Snugkv-Actor"); actorRe.MatchString(a) {
+					c.actor += "/" + a
+				}
+			}
 		case m.opts.APIToken == "" || subtle.ConstantTimeCompare([]byte(got), []byte(m.opts.APIToken)) == 1:
 			c = caller{admin: true, actor: "admin"}
 			// Tools in front of the API (the console) can name who acts
@@ -162,7 +168,7 @@ func (m *Manager) secretName(w http.ResponseWriter, r *http.Request) (string, bo
 func (m *Manager) apiStatus(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{"ready": true, "primary": m.isPrimary()}
 	if c := who(r); !c.admin {
-		out["token"] = map[string]any{"name": c.token.Name, "envs": c.token.Envs}
+		out["token"] = map[string]any{"name": c.token.Name, "envs": c.token.Envs, "expiresMs": c.token.ExpiresMs}
 	} else {
 		out["maxEnvs"], out["maxSecrets"], out["historyKept"] = maxEnvs, maxSecrets, histKeep
 	}
@@ -474,19 +480,25 @@ func (m *Manager) apiTokens(w http.ResponseWriter, r *http.Request) {
 
 func (m *Manager) apiCreateToken(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name string   `json:"name"`
-		Envs []string `json:"envs"`
+		Name    string   `json:"name"`
+		Envs    []string `json:"envs"`
+		Admin   bool     `json:"admin"`
+		TTLDays int      `json:"ttlDays"`
 	}
 	if err := decode(r, &body); err != nil {
 		badRequest(w, err)
 		return
 	}
-	t, secret, err := m.createToken(body.Name, body.Envs)
+	t, secret, err := m.createToken(body.Name, body.Envs, body.Admin, body.TTLDays)
 	if err != nil {
 		badRequest(w, err)
 		return
 	}
-	m.audit("token.create", "", t.Name, who(r).actor)
+	action := "token.create"
+	if t.Admin {
+		action = "token.create.admin"
+	}
+	m.audit(action, "", t.Name, who(r).actor)
 	httpJSON(w, http.StatusCreated, map[string]any{"token": t, "secret": secret})
 }
 

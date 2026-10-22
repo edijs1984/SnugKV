@@ -1,5 +1,11 @@
 # Changelog
 
+### Secrets module: admin tokens, expiry, key rotation
+
+- Named admin tokens (`ska_…`) created through the API: each shows up under its own name in the audit log and can be revoked on its own. Read and admin tokens can expire (`ttlDays`).
+- `-secrets-api-token` must be at least 24 characters.
+- Key rotation: start with `-secrets-old-key` next to the new `-secrets-key` and every value and history entry is re-encrypted at start; an interrupted rotation continues at the next start. See `docs/SECRETS.md`.
+
 ### Security fix — a password on the default user is now enforced
 
 - A connection authenticated as the default user only while that user had no password, but commands were allowed whenever the default user had all permissions, so a password on the default user (`user default on >pass ~* +@all` in an ACL file, or `ACL SETUSER default >pass`) was never asked for. Unauthenticated connections now get `NOAUTH` for everything except `AUTH`, `HELLO … AUTH` and `QUIT`, as in Redis. Setups that disabled the default user (`user default off`) were not affected.
