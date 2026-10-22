@@ -250,7 +250,7 @@ func (m *Manager) deliverEntry(ctx context.Context, oc *outboundConfig, e stream
 // runOutbound consumes the topic through a consumer group until ctx ends.
 // Entries are delivered one at a time so order is kept; the group makes
 // restarts safe: unacknowledged entries are delivered again.
-func (m *Manager) runOutbound(ctx context.Context, oc *outboundConfig, setErr func(string)) {
+func (m *Manager) runOutbound(ctx context.Context, oc *outboundConfig, setErr func(string), setReady func()) {
 	def := oc.def
 	group := def.group()
 	const consumer = "snugkv-webhook"
@@ -267,6 +267,7 @@ func (m *Manager) runOutbound(ctx context.Context, oc *outboundConfig, setErr fu
 			continue
 		}
 		setErr("")
+		setReady()
 		failures = 0
 		if err := m.consumeLoop(ctx, kv, oc, group, consumer, &pendingFirst); err != nil && ctx.Err() == nil {
 			failures++

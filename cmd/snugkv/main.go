@@ -82,6 +82,8 @@ func main() {
 	flag.StringVar(&cfg.AdminAddr, "admin-listen", cfg.AdminAddr, "separate loopback RESP admin address")
 	var wh webhookFlags
 	wh.register()
+	var sf secretsFlags
+	sf.register()
 	pprofAddr := flag.String("pprof-listen", "", "optional loopback pprof HTTP address")
 	flag.Parse()
 	if flag.NArg() != 0 {
@@ -186,6 +188,14 @@ func main() {
 		listener.Close()
 		log.Fatalf("webhooks: %v", err)
 	}
+	secretsModule, err := sf.start(cfg.ListenAddr)
+	if err != nil {
+		if webhooks != nil {
+			webhooks.Close()
+		}
+		listener.Close()
+		log.Fatalf("secrets: %v", err)
+	}
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signals)
@@ -204,6 +214,9 @@ func main() {
 		case <-signals:
 			if webhooks != nil {
 				webhooks.Close()
+			}
+			if secretsModule != nil {
+				secretsModule.Close()
 			}
 			listener.Close()
 			if metrics != nil {
