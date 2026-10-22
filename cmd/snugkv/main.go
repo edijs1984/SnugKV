@@ -80,6 +80,13 @@ func main() {
 	flag.StringVar(&cfg.MetricsAddr, "metrics-listen", cfg.MetricsAddr, "separate loopback metrics address (optional)")
 	flag.StringVar(&cfg.EvictionPolicy, "eviction-policy", cfg.EvictionPolicy, "noeviction, allkeys-lru, or volatile-lru")
 	flag.StringVar(&cfg.AdminAddr, "admin-listen", cfg.AdminAddr, "separate loopback RESP admin address")
+	flag.StringVar(&cfg.RequirePass, "requirepass", cfg.RequirePass, "password of the default user, like Redis requirepass (env SNUGKV_REQUIREPASS; keeps it out of process listings)")
+	flag.StringVar(&cfg.ACLFile, "acl-file", cfg.ACLFile, "Redis-style ACL file with users and passwords, loaded at start and written by ACL SAVE (env SNUGKV_ACL_FILE)")
+	flag.StringVar(&cfg.TLSListen, "tls-listen", cfg.TLSListen, "also serve RESP over TLS on this address, for example 0.0.0.0:6390 (env SNUGKV_TLS_LISTEN)")
+	flag.StringVar(&cfg.TLSCert, "tls-cert", cfg.TLSCert, "TLS certificate (PEM, chain included); reloaded when the file changes")
+	flag.StringVar(&cfg.TLSKey, "tls-key", cfg.TLSKey, "TLS private key (PEM); reloaded when the file changes")
+	flag.StringVar(&cfg.TLSCACert, "tls-ca-cert", cfg.TLSCACert, "CA that signs client certificates (optional)")
+	flag.BoolVar(&cfg.TLSAuthClients, "tls-auth-clients", cfg.TLSAuthClients, "require a client certificate signed by -tls-ca-cert (mutual TLS)")
 	var wh webhookFlags
 	wh.register()
 	var sf secretsFlags
@@ -183,6 +190,14 @@ func main() {
 			log.Fatal(err)
 		}
 	}
+	// The modules connect to this server like any client: with requirepass
+	// they use it unless they were given their own credentials.
+	if wh.auth == "" {
+		wh.auth = cfg.RequirePass
+	}
+	if sf.auth == "" {
+		sf.auth = cfg.RequirePass
+	}
 	webhooks, err := wh.start(cfg.ListenAddr)
 	if err != nil {
 		listener.Close()
@@ -208,7 +223,7 @@ func main() {
 		defer snapshotTicker.Stop()
 		snapshotTicks = snapshotTicker.C
 	}
-	log.Printf("event=started listen=%s shards=%d", cfg.ListenAddr, cfg.Shards)
+	log.Printf("event=started listen=%s tls_listen=%s auth=%t shards=%d", cfg.ListenAddr, listener.TLSAddr(), cfg.RequirePass != "" || cfg.ACLFile != "", cfg.Shards)
 	for {
 		select {
 		case <-signals:

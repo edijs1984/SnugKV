@@ -16,8 +16,9 @@ snugkv -listen :6379 \
 | Flag | Environment | Meaning |
 |---|---|---|
 | `-secrets-api-listen` | `SNUGKV_SECRETS_API_LISTEN` | Address of the API. Turns the module on. |
-| `-secrets-api-token` | `SNUGKV_SECRETS_API_TOKEN` | Admin bearer token. Required unless the API listens on loopback. |
+| `-secrets-api-token` | `SNUGKV_SECRETS_API_TOKEN` | The first admin token (24+ characters, e.g. `openssl rand -hex 24`). Required unless the API listens on loopback. |
 | `-secrets-key` | `SNUGKV_SECRETS_KEY` | Encrypts the values. Required. **Losing it makes the stored secrets unreadable**; keep a copy outside SnugKV. |
+| `-secrets-old-key` | `SNUGKV_SECRETS_OLD_KEY` | The previous key during a key rotation (see below). |
 | `-secrets-auth` | `SNUGKV_SECRETS_AUTH` | `password` or `user:password` the module uses against this server when ACLs are on. |
 
 Starting with a different key than the one the data was written with fails at once ("the secrets key does not match"), instead of on the first read.
@@ -26,12 +27,22 @@ Put TLS in front of the API when it is reached over a network; the module speaks
 
 ## Who can do what
 
-- **Admin token** (`-secrets-api-token`): everything below. Give it to people and the console, not to services.
-- **Read tokens** (`sks_…`), created through the API or the console: read the secrets of the environments they list (`airsig/prod`, or `airsig/*` for every environment of a project), nothing else. Only a hash is stored; the token is shown once. The listing shows when each was last used. Revoking works at once.
+- **The first admin token** (`-secrets-api-token`): everything below. Use it to create named admin tokens, then keep it for emergencies.
+- **Admin tokens** (`ska_…`), created through the API or the console: everything the first one can, under their own name in the audit log (`admin:<name>`), and each can be revoked on its own. One per person or tool (the console, CI).
+- **Read tokens** (`sks_…`): read the secrets of the environments they list (`airsig/prod`, or `airsig/*` for every environment of a project), nothing else.
+- Created tokens can expire (`ttlDays`). Only a hash is stored; a token is shown once. The listing shows when each was last used. Revoking works at once.
 
 Every read (one value, a reveal, an export) and every change is written to the `snugkv:secrets:audit` stream with who did it: `admin`, `admin:<name>` when a tool in front says who acts (the console sends its basic-auth user), or `token:<name>`.
 
 Everything lives under `snugkv:secrets:*`. With ACLs on, give the module its own user with access to that prefix and keep other users away from it; they would only see ciphertext, but they could delete it.
+
+## Changing the key
+
+1. Restart SnugKV with the new key and the old one:
+   `SNUGKV_SECRETS_KEY=<new> SNUGKV_SECRETS_OLD_KEY=<old>`. At start the module re-encrypts every value and every history entry still sealed with the old key, and logs how many. If it stops halfway, the next start with both keys continues.
+2. Restart with only the new key. Starting with the old key now fails.
+
+On replicas, set both keys too until the primary has rotated (they read values sealed with either key and leave the rewriting to the primary). The audit log and tokens are not encrypted with the key, so they are unaffected; tokens keep working.
 
 ## Using the secrets
 
@@ -74,7 +85,7 @@ All paths take `Authorization: Bearer <token>`. Answers are JSON with `Cache-Con
 | `POST /v1/envs/{project}/{env}/import` | admin | `{"dotenv": "…", "overwrite": false}` or `{"values": {…}}`; answers `created`, `updated`, `unchanged`, `skipped` |
 | `GET /v1/envs/{project}/{env}/export` | admin, read token | `{"values": {…}}`; `?format=dotenv` for a `.env` file |
 | `GET /v1/audit?env=&limit=` | admin | newest first (the last 5,000 are kept) |
-| `GET /v1/tokens` · `POST /v1/tokens` · `DELETE /v1/tokens/{id}` | admin | list; create `{"name": "…", "envs": ["airsig/prod"]}` (answers the token once); revoke |
+| `GET /v1/tokens` · `POST /v1/tokens` · `DELETE /v1/tokens/{id}` | admin | list; create a read token `{"name": "…", "envs": ["airsig/prod"], "ttlDays": 90}` or an admin token `{"name": "…", "admin": true}` (answers the token once); revoke |
 
 `.env` import understands comments, `export `, unquoted values (a ` #` starts a comment), `'single quoted'` (literal) and `"double quoted"` values with `\n \t \" \\ \$` escapes and line breaks. Export writes values that import back unchanged.
 

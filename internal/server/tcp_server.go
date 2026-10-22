@@ -1,13 +1,14 @@
 package server
 
 import (
-	"os"
 	"bufio"
 	"bytes"
+	"crypto/tls"
 	"errors"
 	"io"
 	"log"
 	"net"
+	"os"
 	"runtime/debug"
 	"snugkv/internal/config"
 	"snugkv/internal/engine"
@@ -32,6 +33,7 @@ type TCPServer struct {
 	optimizerDroppedSeen     uint64
 	optimizerRecoveryBudget  uint64
 	listener                 net.Listener
+	tlsListener              net.Listener
 	server                   *Server
 	config                   config.Config
 	mu                       sync.Mutex
@@ -172,6 +174,13 @@ func ListenWithJournal(c config.Config, store *engine.Store, journal Journal) (*
 			return nil, err
 		}
 	}
+	// requirepass: the default user keeps its rights but needs this password
+	if c.RequirePass != "" {
+		if err := s.server.acl.SetUser("default", []string{"resetpass", ">" + c.RequirePass}); err != nil {
+			_ = ln.Close()
+			return nil, err
+		}
+	}
 
 	// CONFIG SET appendfsync changes the real persistence policy when
 	// the configured journal supports runtime policy mutation.
@@ -248,6 +257,15 @@ func ListenWithJournal(c config.Config, store *engine.Store, journal Journal) (*
 	}
 	s.server.eviction = c.EvictionPolicy
 	s.server.SetJournal(journal)
+	if c.TLSListen != "" {
+		if err := s.openTLS(c); err != nil {
+			ln.Close()
+			if s.server.optimizer != nil {
+				s.server.optimizer.Close()
+			}
+			return nil, err
+		}
+	}
 	s.wg.Add(1)
 	go s.serve()
 	return s, nil
@@ -262,6 +280,9 @@ func (s *TCPServer) Close() error {
 		s.server.CancelBlockingZSets()
 		s.server.CancelBlockingStreams()
 		s.listener.Close()
+		if s.tlsListener != nil {
+			s.tlsListener.Close()
+		}
 		for conn := range s.connections {
 			conn.Close()
 		}
@@ -279,10 +300,12 @@ func (s *TCPServer) Close() error {
 	<-s.done
 	return nil
 }
-func (s *TCPServer) serve() {
+func (s *TCPServer) serve() { s.serveListener(s.listener) }
+
+func (s *TCPServer) serveListener(ln net.Listener) {
 	defer s.wg.Done()
 	for {
-		conn, err := s.listener.Accept()
+		conn, err := ln.Accept()
 		if err != nil {
 			return
 		}
@@ -310,7 +333,11 @@ func (s *TCPServer) serve() {
 				input:  &s.inputBytes,
 				output: &s.outputBytes,
 			}
-			s.handleConnRaw(counted, conn)
+			peer := conn
+			if tc, ok := conn.(*tls.Conn); ok {
+				peer = tc.NetConn() // the TCP socket, for disconnect detection
+			}
+			s.handleConnRaw(counted, peer)
 		}()
 	}
 }
@@ -704,7 +731,9 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 
 		if len(msg) > 0 && strings.EqualFold(string(msg[0]), "RESET") {
 			if len(msg) != 1 {
-				if writer.write([]byte("-ERR wrong number of arguments for 'reset' command\r\n")) != nil { return }
+				if writer.write([]byte("-ERR wrong number of arguments for 'reset' command\r\n")) != nil {
+					return
+				}
 				continue
 			}
 			s.server.removeMonitor(monitor)
@@ -712,9 +741,13 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			txSession.close()
 			pubSession.close()
 			pubSession = newPubSubSession(s.server, func(response []byte) error {
-				if clientSession.protocolVersion() == 3 { response = resp3PubSubPush(response) }
+				if clientSession.protocolVersion() == 3 {
+					response = resp3PubSubPush(response)
+				}
 				err := writer.write(response)
-				if err != nil { _ = peer.Close() }
+				if err != nil {
+					_ = peer.Close()
+				}
 				return err
 			})
 			setupPush(pubSession)
@@ -732,7 +765,9 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			clientSession.setProtocol(2)
 			*authSession = *newAuthSession(s.server.acl)
 			authSession.client = clientSession
-			if writer.write([]byte("+RESET\r\n")) != nil { return }
+			if writer.write([]byte("+RESET\r\n")) != nil {
+				return
+			}
 			s.server.feedMonitor(clientSession, msg, nil)
 			continue
 		}
@@ -902,12 +937,16 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 		}
 		if len(msg) > 0 && strings.EqualFold(string(msg[0]), "MONITOR") {
 			if len(msg) != 1 {
-				if writer.write([]byte("-ERR wrong number of arguments for 'monitor' command\r\n")) != nil { return }
+				if writer.write([]byte("-ERR wrong number of arguments for 'monitor' command\r\n")) != nil {
+					return
+				}
 				continue
 			}
 			if txSession.multi {
 				txSession.markACLFailure()
-				if writer.write([]byte("-ERR MONITOR is not allowed in MULTI\r\n")) != nil { return }
+				if writer.write([]byte("-ERR MONITOR is not allowed in MULTI\r\n")) != nil {
+					return
+				}
 				continue
 			}
 			if monitor == nil {
@@ -918,7 +957,9 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				})
 				ackErr := writer.write([]byte("+OK\r\n"))
 				close(ready)
-				if ackErr != nil { return }
+				if ackErr != nil {
+					return
+				}
 			}
 			continue
 		}
@@ -1380,9 +1421,15 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			nativeBatchKeyArena = nativeBatchKeyArena[:0]
 			nativeBatchArg2Arena = nativeBatchArg2Arena[:0]
 			nativeBatchArg3Arena = nativeBatchArg3Arena[:0]
-			if cap(nativeBatchKeyArena) < 4<<10 { nativeBatchKeyArena = make([]byte, 0, 4<<10) }
-			if cap(nativeBatchArg2Arena) < 32<<10 { nativeBatchArg2Arena = make([]byte, 0, 32<<10) }
-			if cap(nativeBatchArg3Arena) < 32<<10 { nativeBatchArg3Arena = make([]byte, 0, 32<<10) }
+			if cap(nativeBatchKeyArena) < 4<<10 {
+				nativeBatchKeyArena = make([]byte, 0, 4<<10)
+			}
+			if cap(nativeBatchArg2Arena) < 32<<10 {
+				nativeBatchArg2Arena = make([]byte, 0, 32<<10)
+			}
+			if cap(nativeBatchArg3Arena) < 32<<10 {
+				nativeBatchArg3Arena = make([]byte, 0, 32<<10)
+			}
 
 			appendOwnedNative := func(key, arg2, arg3 []byte) {
 				start := len(nativeBatchKeyArena)
@@ -1410,7 +1457,9 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				if isZSet {
 					prefix = []byte("*4\r\n$4\r\nZADD\r\n")
 				}
-				if reader.Buffered() < len(prefix) { return false }
+				if reader.Buffered() < len(prefix) {
+					return false
+				}
 				buf, peekErr := reader.Peek(len(prefix))
 				return peekErr == nil && bytes.EqualFold(buf, prefix)
 			}
@@ -1418,7 +1467,9 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			var pendingAuthErr error
 			for len(nativeBatchKeys) < maxBatch && nextBufferedSameNative() {
 				cmd, args, argc, ok, nativeErr := decoder.ReadBufferedNativeMutation(&nativeScratch)
-				if nativeErr != nil { return }
+				if nativeErr != nil {
+					return
+				}
 				if !ok || (isZSet && (cmd != "ZADD" || argc != 3)) || (!isZSet && (cmd != "RPUSH" || argc != 2)) {
 					break
 				}
@@ -1456,10 +1507,14 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				}
 				if handled {
 					if fastErr != nil {
-						if writer.writeBuffered(errorResponse(fastErr)) != nil { return }
+						if writer.writeBuffered(errorResponse(fastErr)) != nil {
+							return
+						}
 					} else {
 						for i, result := range results {
-							if writer.writeBuffered(integerReply(result)) != nil { return }
+							if writer.writeBuffered(integerReply(result)) != nil {
+								return
+							}
 							var command [][]byte
 							if isZSet {
 								command = [][]byte{[]byte("ZADD"), nativeBatchKeys[i], nativeBatchArg2[i], nativeBatchArg3[i]}
@@ -1471,7 +1526,9 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 						}
 					}
 					if pendingAuthErr != nil {
-						if writer.writeBuffered(errorResponse(pendingAuthErr)) != nil { return }
+						if writer.writeBuffered(errorResponse(pendingAuthErr)) != nil {
+							return
+						}
 					}
 					continue
 				}
@@ -2032,16 +2089,24 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			const lindexPrefix = "*3\r\n$6\r\nLINDEX\r\n"
 			for parseErr == nil && len(listIndexBatchKeys) < maxBatch && reader.Buffered() >= len(lindexPrefix) {
 				buf, peekErr := reader.Peek(len(lindexPrefix))
-				if peekErr != nil || !bytes.EqualFold(buf, []byte(lindexPrefix)) { break }
+				if peekErr != nil || !bytes.EqualFold(buf, []byte(lindexPrefix)) {
+					break
+				}
 				nextMsg, readErr := decoder.ReadCommand()
-				if readErr != nil { return }
-				if len(nextMsg) != 3 { break }
+				if readErr != nil {
+					return
+				}
+				if len(nextMsg) != 3 {
+					break
+				}
 				if authErr := s.server.authorizeConnectionCommand(authSession, nextMsg); authErr != nil {
 					pendingAuthErr = authErr
 					break
 				}
 				nextIndex, nextErr := strconv.ParseInt(string(nextMsg[2]), 10, 64)
-				if nextErr != nil { break }
+				if nextErr != nil {
+					break
+				}
 				clientSession.touch(nextMsg)
 				listIndexBatchKeys = append(listIndexBatchKeys, nextMsg[1])
 				listIndexBatchIndexes = append(listIndexBatchIndexes, nextIndex)
@@ -2052,19 +2117,27 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				)
 				if handled {
 					if fastErr != nil {
-						if writeProtocol(msg, errorResponse(fastErr)) != nil { return }
+						if writeProtocol(msg, errorResponse(fastErr)) != nil {
+							return
+						}
 					} else {
 						for i, result := range results {
 							command := [][]byte{[]byte("LINDEX"), listIndexBatchKeys[i], strconv.AppendInt(nil, listIndexBatchIndexes[i], 10)}
 							monitorCommand = command
 							if result.Found {
-								if writeBulkProtocol(result.Value) != nil { return }
-							} else if writeProtocol(command, nullBulk()) != nil { return }
+								if writeBulkProtocol(result.Value) != nil {
+									return
+								}
+							} else if writeProtocol(command, nullBulk()) != nil {
+								return
+							}
 							s.trackCommandRead(clientSession, command)
 						}
 					}
 					if pendingAuthErr != nil {
-						if writeProtocol([][]byte{[]byte("LINDEX")}, errorResponse(pendingAuthErr)) != nil { return }
+						if writeProtocol([][]byte{[]byte("LINDEX")}, errorResponse(pendingAuthErr)) != nil {
+							return
+						}
 					}
 					continue
 				}
@@ -2089,10 +2162,16 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 			const zscorePrefix = "*3\r\n$6\r\nZSCORE\r\n"
 			for len(zscoreBatchKeys) < maxBatch && reader.Buffered() >= len(zscorePrefix) {
 				buf, peekErr := reader.Peek(len(zscorePrefix))
-				if peekErr != nil || !bytes.EqualFold(buf, []byte(zscorePrefix)) { break }
+				if peekErr != nil || !bytes.EqualFold(buf, []byte(zscorePrefix)) {
+					break
+				}
 				nextMsg, readErr := decoder.ReadCommand()
-				if readErr != nil { return }
-				if len(nextMsg) != 3 { break }
+				if readErr != nil {
+					return
+				}
+				if len(nextMsg) != 3 {
+					break
+				}
 				if authErr := s.server.authorizeConnectionCommand(authSession, nextMsg); authErr != nil {
 					pendingAuthErr = authErr
 					break
@@ -2107,18 +2186,26 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 				)
 				if handled {
 					if fastErr != nil {
-						if writeProtocol(msg, errorResponse(fastErr)) != nil { return }
+						if writeProtocol(msg, errorResponse(fastErr)) != nil {
+							return
+						}
 					} else {
 						for i, result := range results {
 							command := [][]byte{[]byte("ZSCORE"), zscoreBatchKeys[i], zscoreBatchMembers[i]}
 							if result.Found {
-								if writeProtocol(command, formatBulkString(formatZSetScore(result.Score))) != nil { return }
-							} else if writeProtocol(command, nullBulk()) != nil { return }
+								if writeProtocol(command, formatBulkString(formatZSetScore(result.Score))) != nil {
+									return
+								}
+							} else if writeProtocol(command, nullBulk()) != nil {
+								return
+							}
 							s.trackCommandRead(clientSession, command)
 						}
 					}
 					if pendingAuthErr != nil {
-						if writeProtocol([][]byte{[]byte("ZSCORE")}, errorResponse(pendingAuthErr)) != nil { return }
+						if writeProtocol([][]byte{[]byte("ZSCORE")}, errorResponse(pendingAuthErr)) != nil {
+							return
+						}
 					}
 					continue
 				}
@@ -2127,9 +2214,15 @@ func (s *TCPServer) handleConnRaw(conn net.Conn, peer net.Conn) {
 
 		if result, handled, fastErr := s.server.executeAuthorizedConcurrentListIndex(msg); handled {
 			s.server.recordSlowlogForClient(clientSession, msg, time.Since(requestNow))
-			if fastErr != nil { result = errorResponse(fastErr) }
-			if writeProtocol(msg, result) != nil { return }
-			if fastErr == nil { s.trackCommandRead(clientSession, msg) }
+			if fastErr != nil {
+				result = errorResponse(fastErr)
+			}
+			if writeProtocol(msg, result) != nil {
+				return
+			}
+			if fastErr == nil {
+				s.trackCommandRead(clientSession, msg)
+			}
 			continue
 		}
 

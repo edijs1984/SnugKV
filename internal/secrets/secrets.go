@@ -13,9 +13,12 @@ package secrets
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -29,9 +32,15 @@ type Options struct {
 	APIToken string
 	// Key encrypts the stored values (16+ characters). Required.
 	Key string
+	// OldKey is the previous key during a rotation: values still sealed with
+	// it are re-sealed with Key at start. Remove it afterwards.
+	OldKey string
 	// Logf receives log lines. Default: discard.
 	Logf func(format string, args ...any)
 }
+
+// minAdminToken is the shortest -secrets-api-token accepted.
+const minAdminToken = 24
 
 // Manager runs the module.
 type Manager struct {
@@ -59,11 +68,20 @@ func Start(opts Options) (*Manager, error) {
 	if opts.Key == "" {
 		return nil, errors.New("secrets: -secrets-key (or SNUGKV_SECRETS_KEY) is required")
 	}
-	if strings.HasPrefix(opts.APIToken, "sks_") {
-		return nil, errors.New("secrets: the admin token must not look like a read token (sks_...)")
+	if strings.HasPrefix(opts.APIToken, "sks_") || strings.HasPrefix(opts.APIToken, "ska_") {
+		return nil, errors.New("secrets: the admin token must not look like a created token (sks_/ska_)")
+	}
+	if opts.APIToken != "" && len(opts.APIToken) < minAdminToken {
+		return nil, fmt.Errorf("secrets: -secrets-api-token must be at least %d characters (for example: openssl rand -hex 24)", minAdminToken)
+	}
+	if opts.OldKey != "" && opts.OldKey == opts.Key {
+		return nil, errors.New("secrets: the old key is the same as the new key")
 	}
 	sl, err := newSealer(opts.Key)
 	if err != nil {
+		return nil, err
+	}
+	if err := sl.withOld(opts.OldKey); err != nil {
 		return nil, err
 	}
 	m := &Manager{opts: opts, kv: newKVClient(opts.KVAddr, opts.KVUser, opts.KVPass, 8, 5*time.Second), sealer: sl}
@@ -82,21 +100,24 @@ func Start(opts Options) (*Manager, error) {
 	return m, nil
 }
 
-// checkKeyWithRetry gives the server a moment when both start together.
+// checkKeyWithRetry gives the server a moment when both start together: it
+// retries while the server cannot be reached, nothing else.
 func (m *Manager) checkKeyWithRetry() error {
 	var err error
 	for i := 0; i < 20; i++ {
-		if err = m.checkKey(); err == nil {
-			return nil
-		}
+		err = m.checkKey()
 		var se serverError
-		if errors.As(err, &se) || strings.Contains(err.Error(), "secrets key") {
-			if strings.HasPrefix(string(se), "READONLY") {
-				return nil // a replica: the primary holds the check value
-			}
+		var ne net.Error
+		switch {
+		case err == nil:
+			return nil
+		case errors.As(err, &se) && strings.HasPrefix(string(se), "READONLY"):
+			return nil // a replica: the primary writes the check value and rotates
+		case errors.As(err, &ne), errors.Is(err, io.EOF), errors.Is(err, syscall.ECONNREFUSED):
+			time.Sleep(250 * time.Millisecond)
+		default:
 			return err
 		}
-		time.Sleep(250 * time.Millisecond)
 	}
 	return err
 }

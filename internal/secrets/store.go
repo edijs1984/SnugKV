@@ -101,16 +101,32 @@ type EnvInfo struct {
 
 // Token is a read token: it can read the secrets of the environments it lists
 // ("airsig/prod", or "airsig/*" for every environment of a project).
+//
+// An admin token (ska_…) can do everything the -secrets-api-token can, under
+// its own name in the audit log, and can be revoked on its own. Tokens can
+// expire.
 type Token struct {
 	ID         string   `json:"id"`
 	Name       string   `json:"name"`
 	Envs       []string `json:"envs"`
+	Admin      bool     `json:"admin,omitempty"`
 	Hash       string   `json:"hash,omitempty"`
 	CreatedMs  int64    `json:"createdMs"`
+	ExpiresMs  int64    `json:"expiresMs,omitempty"`
 	LastUsedMs int64    `json:"lastUsedMs,omitempty"`
 }
 
+func (t *Token) prefix() string {
+	if t.Admin {
+		return "ska_"
+	}
+	return "sks_"
+}
+
 func (t *Token) allows(env string) bool {
+	if t.Admin {
+		return true
+	}
 	for _, p := range t.Envs {
 		if p == env || (strings.HasSuffix(p, "/*") && strings.HasPrefix(env, strings.TrimSuffix(p, "*"))) {
 			return true
@@ -398,12 +414,18 @@ func (m *Manager) rollback(env, name string, version int64, actor string) (int64
 
 // ---- tokens
 
-func (m *Manager) createToken(name string, envs []string) (*Token, string, error) {
+func (m *Manager) createToken(name string, envs []string, admin bool, ttlDays int) (*Token, string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || len(name) > 64 {
 		return nil, "", errors.New("a token needs a name (up to 64 characters)")
 	}
-	if len(envs) == 0 || len(envs) > 50 {
+	if ttlDays < 0 || ttlDays > 3650 {
+		return nil, "", errors.New("ttlDays is 0 (never expires) to 3650")
+	}
+	if admin && len(envs) > 0 {
+		return nil, "", errors.New("an admin token reaches every environment; leave envs out")
+	}
+	if !admin && (len(envs) == 0 || len(envs) > 50) {
 		return nil, "", errors.New("a token needs 1 to 50 environments")
 	}
 	for _, e := range envs {
@@ -423,7 +445,13 @@ func (m *Manager) createToken(name string, envs []string) (*Token, string, error
 	if _, err := rand.Read(sb); err != nil {
 		return nil, "", err
 	}
-	t := &Token{ID: newID(), Name: name, Envs: envs, CreatedMs: time.Now().UnixMilli()}
+	t := &Token{ID: newID(), Name: name, Envs: envs, Admin: admin, CreatedMs: time.Now().UnixMilli()}
+	if admin {
+		t.Envs = []string{}
+	}
+	if ttlDays > 0 {
+		t.ExpiresMs = t.CreatedMs + int64(ttlDays)*24*3600*1000
+	}
 	secret := hex.EncodeToString(sb)
 	t.Hash = hashToken(secret)
 	b, _ := json.Marshal(t)
@@ -431,7 +459,7 @@ func (m *Manager) createToken(name string, envs []string) (*Token, string, error
 		return nil, "", err
 	}
 	t.Hash = ""
-	return t, "sks_" + t.ID + "_" + secret, nil
+	return t, t.prefix() + t.ID + "_" + secret, nil
 }
 
 func (m *Manager) listTokens() ([]Token, error) {
@@ -469,12 +497,12 @@ func (m *Manager) deleteToken(id string) error {
 	return nil
 }
 
-// tokenFor checks a presented read token ("sks_<id>_<secret>").
+// tokenFor checks a presented token ("sks_<id>_<secret>" to read, "ska_…" for admin).
 func (m *Manager) tokenFor(presented string) (*Token, bool) {
-	rest, ok := strings.CutPrefix(presented, "sks_")
-	if !ok {
+	if len(presented) < 4 || (presented[:4] != "sks_" && presented[:4] != "ska_") {
 		return nil, false
 	}
+	rest := presented[4:]
 	id, secret, ok := strings.Cut(rest, "_")
 	if !ok || !idRe.MatchString(id) {
 		return nil, false
@@ -488,6 +516,9 @@ func (m *Manager) tokenFor(presented string) (*Token, bool) {
 		return nil, false
 	}
 	if subtle.ConstantTimeCompare([]byte(hashToken(secret)), []byte(t.Hash)) != 1 {
+		return nil, false
+	}
+	if presented[:4] != t.prefix() || (t.ExpiresMs > 0 && time.Now().UnixMilli() >= t.ExpiresMs) {
 		return nil, false
 	}
 	m.kv.do("HSET", keyTokUsed, id, strconv.FormatInt(time.Now().UnixMilli(), 10))
@@ -551,6 +582,9 @@ func (m *Manager) readAudit(limit int, env string) ([]AuditEntry, error) {
 
 // checkKey makes sure the configured key is the one the stored data was
 // written with, so a mistyped key fails at start instead of on first read.
+// With an old key (a rotation) it re-seals everything still sealed with it,
+// then marks the data as written with the new key. A rotation that stopped
+// halfway simply continues at the next start.
 func (m *Manager) checkKey() error {
 	v, err := m.kv.do("GET", keyCheck)
 	if err != nil {
@@ -564,8 +598,128 @@ func (m *Manager) checkKey() error {
 		_, err = m.kv.do("SET", keyCheck, enc, "NX")
 		return err
 	}
-	if _, err := m.sealer.open(v.str, "check"); err != nil {
+	_, withOld, err := m.sealer.openWith(v.str, "check")
+	if err != nil {
+		if m.sealer.old != nil {
+			return errors.New("neither the secrets key nor the old secrets key matches the stored secrets")
+		}
 		return errors.New("the secrets key does not match the one the stored secrets were written with")
 	}
+	if m.sealer.old == nil {
+		return nil
+	}
+	n, err := m.rekey()
+	if err != nil {
+		return fmt.Errorf("re-encrypting with the new key: %w", err)
+	}
+	if withOld {
+		enc, err := m.sealer.seal("snugkv-secrets", "check")
+		if err != nil {
+			return err
+		}
+		if _, err := m.kv.do("SET", keyCheck, enc); err != nil {
+			return err
+		}
+	}
+	m.logf("secrets: %d values re-encrypted with the new key; the old key can be removed", n)
 	return nil
+}
+
+// rekey re-seals every current value and every history entry that is still
+// sealed with the old key.
+func (m *Manager) rekey() (int, error) {
+	count := 0
+	reseal := func(stored, bind string) (string, bool, error) {
+		plain, old, err := m.sealer.openWith(stored, bind)
+		if err != nil || !old {
+			return "", false, err
+		}
+		enc, err := m.sealer.seal(plain, bind)
+		return enc, err == nil, err
+	}
+	envs, err := m.kv.do("SMEMBERS", keyEnvs)
+	if err != nil {
+		return 0, err
+	}
+	for _, e := range envs.arr {
+		env := e.str
+		all, err := m.kv.do("HGETALL", keyEnv+env)
+		if err != nil {
+			return count, err
+		}
+		for i := 0; i+1 < len(all.arr); i += 2 {
+			name := all.arr[i].str
+			var r record
+			if json.Unmarshal([]byte(all.arr[i+1].str), &r) != nil {
+				return count, fmt.Errorf("%s %s: stored secret is corrupt", env, name)
+			}
+			enc, changed, err := reseal(r.Value, bind(env, name))
+			if err != nil {
+				return count, fmt.Errorf("%s %s: %w", env, name, err)
+			}
+			if !changed {
+				continue
+			}
+			r.Value = enc
+			b, _ := json.Marshal(r)
+			if _, err := m.kv.do("HSET", keyEnv+env, name, string(b)); err != nil {
+				return count, err
+			}
+			count++
+		}
+	}
+	// History, including that of deleted secrets
+	cursor := "0"
+	for {
+		page, err := m.kv.do("SCAN", cursor, "MATCH", keyHist+"*", "COUNT", "500")
+		if err != nil {
+			return count, err
+		}
+		if len(page.arr) != 2 {
+			return count, errors.New("unexpected SCAN reply")
+		}
+		for _, k := range page.arr[1].arr {
+			envName, name, ok := splitHistKey(k.str)
+			if !ok {
+				continue
+			}
+			items, err := m.kv.do("LRANGE", k.str, "0", "-1")
+			if err != nil {
+				return count, err
+			}
+			for idx, it := range items.arr {
+				var r record
+				if json.Unmarshal([]byte(it.str), &r) != nil || r.Deleted {
+					continue
+				}
+				enc, changed, err := reseal(r.Value, bind(envName, name))
+				if err != nil {
+					return count, fmt.Errorf("history of %s %s: %w", envName, name, err)
+				}
+				if !changed {
+					continue
+				}
+				r.Value = enc
+				b, _ := json.Marshal(r)
+				if _, err := m.kv.do("LSET", k.str, strconv.Itoa(idx), string(b)); err != nil {
+					return count, err
+				}
+				count++
+			}
+		}
+		cursor = page.arr[0].str
+		if cursor == "0" {
+			return count, nil
+		}
+	}
+}
+
+// splitHistKey reads "snugkv:secrets:hist:<project>/<env>:<NAME>".
+func splitHistKey(k string) (env, name string, ok bool) {
+	rest := strings.TrimPrefix(k, keyHist)
+	i := strings.LastIndexByte(rest, ':')
+	if i <= 0 {
+		return "", "", false
+	}
+	return rest[:i], rest[i+1:], true
 }

@@ -164,6 +164,13 @@ func (s *TCPServer) executeHelloConnectionCommand(
 		}
 	}
 
+	// Without AUTH, HELLO is for clients that already authenticated (Redis).
+	if !doAuth && auth != nil && !auth.authenticated {
+		return nil, errors.New(
+			"NOAUTH HELLO must be called with the client already authenticated, otherwise the HELLO <proto> AUTH <user> <pass> option can be used to authenticate the client and select the RESP protocol version at the same time",
+		)
+	}
+
 	if doName {
 		client.setName(setName)
 	}

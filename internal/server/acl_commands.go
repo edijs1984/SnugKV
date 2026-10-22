@@ -98,12 +98,17 @@ func (s *Server) authorizeConnectionCommand(
 		return nil
 	}
 
-	// AUTH must remain available before authentication succeeds.
-	if strings.EqualFold(
-		string(args[0]),
-		"AUTH",
-	) {
+	// AUTH must remain available before authentication succeeds, and so
+	// must HELLO (it can carry AUTH) and QUIT, as in Redis.
+	name := string(args[0])
+	if strings.EqualFold(name, "AUTH") || strings.EqualFold(name, "HELLO") || strings.EqualFold(name, "QUIT") {
 		return nil
+	}
+
+	// A connection that has not authenticated may run nothing else. The
+	// default user starts authenticated only while it has no password.
+	if session != nil && !session.authenticated {
+		return errors.New("NOAUTH Authentication required.")
 	}
 
 	username := "default"

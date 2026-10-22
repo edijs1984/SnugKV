@@ -15,7 +15,7 @@ import (
 	"snugkv/internal/server"
 )
 
-const admin = "admin-token-0123456789"
+const admin = "admin-token-0123456789abcdef"
 
 func freeAddr(t *testing.T) string {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
