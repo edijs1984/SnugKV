@@ -5,9 +5,12 @@ RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
 RUN CGO_ENABLED=0 go build -trimpath -o /snugkv ./cmd/snugkv
+# Secrets reader for other images: COPY --from=<this image> /snugkv-secrets /usr/local/bin/
+RUN CGO_ENABLED=0 go build -trimpath -o /snugkv-secrets ./cmd/snugkv-secrets
 RUN mkdir /data
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /snugkv /snugkv
+COPY --from=build /snugkv-secrets /snugkv-secrets
 # Data directory owned by the nonroot user, so a fresh named volume is writable.
 COPY --from=build --chown=65532:65532 /data /data
 VOLUME /data

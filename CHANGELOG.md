@@ -1,5 +1,10 @@
 # Changelog
 
+### Feature — secrets module (optional)
+
+- New `internal/secrets`, started with `-secrets-api-listen` and `-secrets-key` (off by default): environment variables per project and environment, encrypted with AES-256-GCM before they are stored and bound to their name, with versions and rollback, `.env` import and export, an audit stream of every read and change, and read tokens scoped to environments. A wrong key is refused at start. See `docs/SECRETS.md`.
+- New `cmd/snugkv-secrets` (also in the image): `snugkv-secrets run --env airsig/prod -- <command>` starts any process with the secrets as environment variables; `export` and `get` read them.
+
 ### Feature — job queues (`snugq_*`)
 
 - A BullMQ-style queue library is loaded with the built-in functions: priorities, LIFO, delayed jobs, retries with backoff, locks and stalled-job recovery, pause/resume, global concurrency and rate limits, deduplication, repeatable schedulers, parent/child flows, progress and logs, an events stream and counters. The existing `snug_queue_*` functions are unchanged. See `docs/QUEUES.md`.
