@@ -22,6 +22,7 @@ type kvConn struct {
 	tls                          *tls.Config
 	c                            net.Conn
 	r                            *bufio.Reader
+	blockFor                     time.Duration // longest XREAD BLOCK on this connection
 }
 
 func parseKVURL(raw, caFile string) (*kvConn, error) {
@@ -107,6 +108,100 @@ func (k *kvConn) doList(args ...string) ([]string, error) {
 	return list, err
 }
 
+// doAny sends one command and returns the reply as nested values: string,
+// nil, or []any (XREAD and the like).
+func (k *kvConn) doAny(args ...string) (any, error) {
+	if err := k.write(args); err != nil {
+		return nil, err
+	}
+	v, err := readValue(k.r)
+	if err != nil {
+		var se serverErr
+		if !errors.As(err, &se) {
+			k.close()
+		}
+	}
+	return v, err
+}
+
+func (k *kvConn) write(args []string) error {
+	if k.c == nil {
+		if err := k.dial(); err != nil {
+			return err
+		}
+	}
+	var b strings.Builder
+	b.WriteString("*" + strconv.Itoa(len(args)) + "\r\n")
+	for _, a := range args {
+		b.WriteString("$" + strconv.Itoa(len(a)) + "\r\n" + a + "\r\n")
+	}
+	k.c.SetDeadline(time.Now().Add(k.timeout()))
+	if _, err := io.WriteString(k.c, b.String()); err != nil {
+		k.close()
+		return err
+	}
+	return nil
+}
+
+// timeout of one call; blocking reads (XREAD BLOCK) get longer.
+func (k *kvConn) timeout() time.Duration {
+	if k.blockFor > 0 {
+		return k.blockFor + 5*time.Second
+	}
+	return 5 * time.Second
+}
+
+// readValue reads any reply, arrays (and RESP3 maps) as []any.
+func readValue(r *bufio.Reader) (any, error) {
+	line, err := r.ReadString('\n')
+	if err != nil {
+		return nil, err
+	}
+	line = strings.TrimRight(line, "\r\n")
+	if line == "" {
+		return nil, errors.New("empty reply")
+	}
+	switch line[0] {
+	case '+', ':':
+		return line[1:], nil
+	case '-':
+		return nil, serverErr(line[1:])
+	case '_':
+		return nil, nil
+	case '$':
+		n, _ := strconv.Atoi(line[1:])
+		if n < 0 {
+			return nil, nil
+		}
+		buf := make([]byte, n+2)
+		if _, err := io.ReadFull(r, buf); err != nil {
+			return nil, err
+		}
+		return string(buf[:n]), nil
+	case '*', '%':
+		n, _ := strconv.Atoi(line[1:])
+		if n < 0 {
+			return nil, nil
+		}
+		if line[0] == '%' {
+			n *= 2
+		}
+		out := make([]any, 0, n)
+		for i := 0; i < n; i++ {
+			v, err := readValue(r)
+			if err != nil {
+				var se serverErr
+				if !errors.As(err, &se) {
+					return nil, err
+				}
+			}
+			out = append(out, v)
+		}
+		return out, nil
+	}
+	return nil, fmt.Errorf("unexpected reply %q", line)
+}
+
 func (k *kvConn) send(args []string, wantList bool) (string, []string, error) {
 	if k.c == nil {
 		if err := k.dial(); err != nil {
@@ -118,7 +213,7 @@ func (k *kvConn) send(args []string, wantList bool) (string, []string, error) {
 	for _, a := range args {
 		b.WriteString("$" + strconv.Itoa(len(a)) + "\r\n" + a + "\r\n")
 	}
-	k.c.SetDeadline(time.Now().Add(5 * time.Second))
+	k.c.SetDeadline(time.Now().Add(k.timeout()))
 	if _, err := io.WriteString(k.c, b.String()); err != nil {
 		k.close()
 		return "", nil, err

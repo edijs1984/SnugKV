@@ -1,9 +1,12 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"sort"
@@ -140,4 +143,115 @@ func firstOf(m map[string]string, keys ...string) string {
 		}
 	}
 	return ""
+}
+
+// slow is a client for calls that take long (swarm init/join).
+func (d *dockerClient) slow() *http.Client {
+	c := *d.http
+	c.Timeout = 90 * time.Second
+	return &c
+}
+
+// post sends JSON to the engine; out may be nil. Errors carry the engine's message.
+func (d *dockerClient) post(path string, body, out any) error {
+	var rd io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		rd = bytes.NewReader(b)
+	}
+	resp, err := d.slow().Post("http://docker"+path, "application/json", rd)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 300 {
+		var e struct{ Message string }
+		if json.Unmarshal(raw, &e) == nil && e.Message != "" {
+			return fmt.Errorf("docker: %s", e.Message)
+		}
+		return fmt.Errorf("docker %s: HTTP %d", path, resp.StatusCode)
+	}
+	if out != nil && len(raw) > 0 {
+		return json.Unmarshal(raw, out)
+	}
+	return nil
+}
+
+// SwarmTokens are the join tokens of a swarm (managers only can read them).
+type SwarmTokens struct {
+	NodeID        string `json:"nodeId"`
+	WorkerToken   string `json:"workerToken"`
+	ManagerToken  string `json:"managerToken"`
+	AdvertiseAddr string `json:"advertiseAddr"`
+}
+
+func (d *dockerClient) swarmState() (state, nodeID string, manager bool, err error) {
+	var info struct {
+		Swarm struct {
+			LocalNodeState   string
+			NodeID           string
+			ControlAvailable bool
+		}
+	}
+	if err := d.get("/info", &info); err != nil {
+		return "", "", false, err
+	}
+	return info.Swarm.LocalNodeState, info.Swarm.NodeID, info.Swarm.ControlAvailable, nil
+}
+
+func (d *dockerClient) swarmTokens() (SwarmTokens, error) {
+	var sw struct {
+		JoinTokens struct{ Worker, Manager string }
+	}
+	if err := d.get("/swarm", &sw); err != nil {
+		return SwarmTokens{}, err
+	}
+	_, id, _, _ := d.swarmState()
+	return SwarmTokens{NodeID: id, WorkerToken: sw.JoinTokens.Worker, ManagerToken: sw.JoinTokens.Manager}, nil
+}
+
+// swarmInit makes this server the first manager, on its mesh address.
+func (d *dockerClient) swarmInit(addr string) (SwarmTokens, error) {
+	state, _, manager, err := d.swarmState()
+	if err != nil {
+		return SwarmTokens{}, err
+	}
+	if state == "active" {
+		if !manager {
+			return SwarmTokens{}, errors.New("this server is already a worker in a swarm")
+		}
+		t, err := d.swarmTokens()
+		t.AdvertiseAddr = addr
+		return t, err
+	}
+	req := map[string]any{"ListenAddr": net.JoinHostPort(addr, "2377"), "AdvertiseAddr": addr, "DataPathAddr": addr}
+	var nodeID string
+	if err := d.post("/swarm/init", req, &nodeID); err != nil {
+		return SwarmTokens{}, err
+	}
+	t, err := d.swarmTokens()
+	t.AdvertiseAddr = addr
+	return t, err
+}
+
+// swarmJoin joins a swarm through one of its managers.
+func (d *dockerClient) swarmJoin(addr string, managers []string, token string) error {
+	state, _, _, err := d.swarmState()
+	if err != nil {
+		return err
+	}
+	if state == "active" {
+		return errors.New("this server is already in a swarm; leave it first")
+	}
+	req := map[string]any{"ListenAddr": net.JoinHostPort(addr, "2377"), "AdvertiseAddr": addr, "DataPathAddr": addr, "RemoteAddrs": managers, "JoinToken": token}
+	return d.post("/swarm/join", req, nil)
+}
+
+func (d *dockerClient) swarmLeave(force bool) error {
+	path := "/swarm/leave"
+	if force {
+		path += "?force=1"
+	}
+	return d.post(path, nil, nil)
 }

@@ -1,5 +1,11 @@
 # Changelog
 
+### Feature — signed commands and Swarm over the mesh
+
+- The agent runs commands from the console, only when signed with the console's Ed25519 key (given at join, `SNUG_AGENT_COMMAND_KEY`), naming this server, current and not seen before; results on `snug:agent:results:<region>:<server>`; position kept in the systemd state directory. The card says whether commands are on.
+- Commands: `ping`, `swarm.init`, `swarm.join`, `swarm.leave`, `swarm.tokens`; Swarm listens and advertises on the server's mesh address only.
+- Agent version 0.3.0.
+
 ### Feature — WireGuard mesh per region
 
 - `snug-agent mesh` (root, its own systemd unit from the console's join.sh): keeps interface `snug0` with the server's mesh address and syncs its WireGuard peers with `snug:agent:mesh:<region>` every 10 s; validates every record, never removes peers while SnugKV is unreachable, keeps the interface up across restarts, starts from the peers given at join. See "The mesh" in `docs/AGENT.md`.

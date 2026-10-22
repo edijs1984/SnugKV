@@ -32,6 +32,28 @@ Options of `snug-agent mesh`: `-ip` (`SNUG_AGENT_MESH_IP`, from join), `-key`, `
 
 Anyone who can write `snug:agent:mesh:<region>` can add a peer to the region's mesh: keep the agent password as safe as the servers (signed commands, a later phase, will not depend on it).
 
+## Commands from the console
+
+The console can send the agent commands, signed with the console's own Ed25519 key (a file on the console, `--command-key`; not stored in SnugKV). A server gets the console's public key when it joins (`SNUG_AGENT_COMMAND_KEY` in agent.env) and runs a command only when:
+
+- the signature is valid for that key,
+- the command names this region and server,
+- it is current (expires 2 minutes after it was sent; anything meant to live over 10 minutes is refused) and was not run before.
+
+So the SnugKV password alone is not enough to run anything on a server. Commands arrive on `snug:agent:cmd:<region>:<server>` (fields `c` = JSON, `s` = signature), results go to `snug:agent:results:<region>:<server>`; the last command handled is kept in the systemd state directory, so a restart neither repeats nor skips one.
+
+| Command | What it does |
+|---|---|
+| `ping` | answers `pong` |
+| `swarm.init` | starts a Docker Swarm with this server as the first manager, on its mesh address (`ListenAddr`/`AdvertiseAddr`/`DataPathAddr`), returns the join tokens |
+| `swarm.join` | joins a swarm through the given managers, on this server's mesh address |
+| `swarm.leave` | leaves the swarm |
+| `swarm.tokens` | the join tokens (managers) |
+
+In the console: Servers shows a Swarm line under each region (create the swarm on one server, then add the others: the first three become managers, the rest workers), and each server's page has a Commands card (ping, history). Servers that joined before need the 0.3 agent and a new join command to get the key.
+
+Overlay networks run over WireGuard: give them an MTU of 1370 (`--opt com.docker.network.driver.mtu=1370`); phase 3 will create them that way.
+
 ## Run it on a server (systemd)
 
 ```bash
@@ -89,7 +111,7 @@ The server name is the host's name unless `SNUG_AGENT_SERVER` says otherwise.
 With ACLs, give the agents their own user that can only write their keys:
 
 ```text
-user agent on >AGENT-PASSWORD ~snug:agent:* +set +zadd +xadd +del +hset +hgetall +auth +ping
+user agent on >AGENT-PASSWORD ~snug:agent:* +set +zadd +xadd +del +hset +hgetall +xread +xrevrange +auth +ping
 ```
 
 ## What it writes

@@ -42,6 +42,9 @@ func main() {
 	flag.StringVar(&o.Paths.Proc, "proc", os.Getenv("SNUG_AGENT_PROC"), "the host's /proc (in a container: where it is mounted)")
 	flag.StringVar(&o.Paths.Sys, "sys", os.Getenv("SNUG_AGENT_SYS"), "the host's /sys")
 	flag.StringVar(&o.Paths.Root, "root", os.Getenv("SNUG_AGENT_ROOT"), "the host's / (for disks and os-release)")
+	flag.StringVar(&o.CommandKey, "command-key", os.Getenv("SNUG_AGENT_COMMAND_KEY"), "the console's public key; with it the agent runs commands the console signed (env SNUG_AGENT_COMMAND_KEY)")
+	flag.StringVar(&o.StateDir, "state-dir", os.Getenv("STATE_DIRECTORY"), "where to keep the last command handled (env STATE_DIRECTORY, set by systemd)")
+	flag.StringVar(&o.MeshIP, "mesh-ip", os.Getenv("SNUG_AGENT_MESH_IP"), "this server's mesh address (env SNUG_AGENT_MESH_IP)")
 	version := flag.Bool("version", false, "print the version")
 	flag.Parse()
 	if *version {
