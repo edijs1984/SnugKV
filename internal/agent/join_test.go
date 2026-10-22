@@ -32,14 +32,17 @@ func TestJoinRedeemsAndWritesConfig(t *testing.T) {
 			_, _ = w.Write([]byte(`{"error":"this join token is not valid (used or expired)"}`))
 			return
 		}
-		_ = json.NewEncoder(w).Encode(JoinConfig{Region: "eu-1", Server: "box-1", URL: `redis://agent:p%22a$s@10.0.0.2:6380`, CA: "PEM"})
+		_ = json.NewEncoder(w).Encode(JoinConfig{Region: "eu-1", Server: "box-1", URL: `redis://agent:p%22a$s@10.0.0.2:6380`, CA: "PEM", MeshIP: "10.88.1.3/24", MeshPeers: []MeshRecord{{Server: "kv-1", PublicKey: "K", IP: "10.88.1.1/24", Endpoint: "203.0.113.1:51820"}}})
 	}))
 	defer srv.Close()
 
 	paths := Paths{Proc: proc, Sys: filepath.Join(root, "sys"), Root: root}
-	cfg, err := Join(context.Background(), srv.URL+"/", " tok\n", "", paths)
+	cfg, err := Join(context.Background(), srv.URL+"/", " tok\n", "", paths, &JoinMesh{PublicKey: "PUB", Endpoint: "203.0.113.7:51820"})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if got.WGPublicKey != "PUB" || got.Endpoint != "203.0.113.7:51820" {
+		t.Fatalf("mesh fields not sent: %+v", got)
 	}
 	if got.Hostname != "box-1" || got.MachineID != "abc123" || got.OS != "Debian GNU/Linux 12" || got.Agent != Version {
 		t.Fatalf("request = %+v", got)
@@ -48,7 +51,7 @@ func TestJoinRedeemsAndWritesConfig(t *testing.T) {
 	must(t, WriteConfig(dir, cfg))
 	env, err := os.ReadFile(filepath.Join(dir, "agent.env"))
 	must(t, err)
-	for _, want := range []string{`SNUG_AGENT_URL="redis://agent:p%22a\$s@10.0.0.2:6380"`, `SNUG_AGENT_REGION="eu-1"`, `SNUG_AGENT_SERVER="box-1"`, `SNUG_AGENT_CA="` + filepath.Join(dir, "ca.pem") + `"`} {
+	for _, want := range []string{`SNUG_AGENT_URL="redis://agent:p%22a\$s@10.0.0.2:6380"`, `SNUG_AGENT_REGION="eu-1"`, `SNUG_AGENT_SERVER="box-1"`, `SNUG_AGENT_MESH_IP="10.88.1.3/24"`, `SNUG_AGENT_CA="` + filepath.Join(dir, "ca.pem") + `"`} {
 		if !strings.Contains(string(env), want) {
 			t.Fatalf("agent.env missing %s:\n%s", want, env)
 		}
@@ -58,7 +61,10 @@ func TestJoinRedeemsAndWritesConfig(t *testing.T) {
 		t.Fatalf("agent.env mode %v", st.Mode())
 	}
 
-	if _, err := Join(context.Background(), srv.URL, "wrong", "", paths); err == nil || !strings.Contains(err.Error(), "not valid") {
+	if peers, err := os.ReadFile(filepath.Join(dir, MeshBootstrapFile)); err != nil || !strings.Contains(string(peers), "kv-1") {
+		t.Fatalf("mesh peers file: %s %v", peers, err)
+	}
+	if _, err := Join(context.Background(), srv.URL, "wrong", "", paths, nil); err == nil || !strings.Contains(err.Error(), "not valid") {
 		t.Fatalf("wrong token: %v", err)
 	}
 }

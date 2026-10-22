@@ -232,7 +232,7 @@ func cpuTimes(path string) ([]uint64, int) {
 
 // virtualNIC: loopback and the interfaces Docker, bridges and VPN tunnels make.
 func virtualNIC(name string) bool {
-	for _, p := range []string{"lo", "veth", "docker", "br-", "virbr", "vxlan", "ifb", "dummy", "cni", "flannel", "tunl", "kube"} {
+	for _, p := range []string{"lo", "veth", "docker", "br-", "virbr", "vxlan", "ifb", "dummy", "cni", "flannel", "tunl", "kube", "snug", "wg", "tun", "tap"} {
 		if strings.HasPrefix(name, p) {
 			return true
 		}

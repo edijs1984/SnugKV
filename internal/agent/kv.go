@@ -97,9 +97,20 @@ func (k *kvConn) dial() error {
 
 // do sends one command and returns a simple reply (string, int or nil).
 func (k *kvConn) do(args ...string) (string, error) {
+	v, _, err := k.send(args, false)
+	return v, err
+}
+
+// doList sends one command whose reply is a flat array (HGETALL, ...).
+func (k *kvConn) doList(args ...string) ([]string, error) {
+	_, list, err := k.send(args, true)
+	return list, err
+}
+
+func (k *kvConn) send(args []string, wantList bool) (string, []string, error) {
 	if k.c == nil {
 		if err := k.dial(); err != nil {
-			return "", err
+			return "", nil, err
 		}
 	}
 	var b strings.Builder
@@ -110,16 +121,56 @@ func (k *kvConn) do(args ...string) (string, error) {
 	k.c.SetDeadline(time.Now().Add(5 * time.Second))
 	if _, err := io.WriteString(k.c, b.String()); err != nil {
 		k.close()
-		return "", err
+		return "", nil, err
 	}
-	v, err := readReply(k.r)
+	var (
+		v    string
+		list []string
+		err  error
+	)
+	if wantList {
+		list, err = readList(k.r)
+	} else {
+		v, err = readReply(k.r)
+	}
 	if err != nil {
 		var se serverErr
 		if !errors.As(err, &se) {
 			k.close()
 		}
 	}
-	return v, err
+	return v, list, err
+}
+
+// readList reads an array of simple values (nil array: empty).
+func readList(r *bufio.Reader) ([]string, error) {
+	line, err := r.ReadString('\n')
+	if err != nil {
+		return nil, err
+	}
+	line = strings.TrimRight(line, "\r\n")
+	if line == "" {
+		return nil, errors.New("empty reply")
+	}
+	switch line[0] {
+	case '-':
+		return nil, serverErr(line[1:])
+	case '*', '%':
+		n, _ := strconv.Atoi(line[1:])
+		if line[0] == '%' {
+			n *= 2
+		}
+		out := make([]string, 0, max(n, 0))
+		for i := 0; i < n; i++ {
+			v, err := readReply(r)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, v)
+		}
+		return out, nil
+	}
+	return nil, fmt.Errorf("expected an array, got %q", line)
 }
 
 type serverErr string

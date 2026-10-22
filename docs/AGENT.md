@@ -16,6 +16,22 @@ It downloads `snug-agent` (from the latest GitHub release, checksum checked), ru
 
 Binaries: pushing a tag `v*` runs `.github/workflows/release.yml`, which attaches `snug-agent-linux-amd64`, `snug-agent-linux-arm64` and `SHA256SUMS` to the release.
 
+## The mesh (WireGuard between the servers of a region)
+
+Every region has a private range (`10.88.<n>.0/24` unless you set one on the region in the console). When a server joins, `snug-agent join` creates a WireGuard key (`/etc/snug-agent/wg.key`, never leaves the server) and sends the public key and the server's public address; the console gives the server the next free address in the range, publishes it to the other servers and returns the current ones. `join.sh` then starts a second unit:
+
+```text
+snug-mesh.service   snug-agent mesh   (root, CAP_NET_ADMIN only)
+```
+
+It keeps the interface `snug0` up with the server's address (UDP 51820), publishes its key and state to `snug:agent:mesh:<region>`, and every 10 seconds makes the interface's peers match what the region's servers published: new servers are added, moved ones updated, forgotten ones removed. Records from SnugKV are checked before they reach `wg` (key format, address inside the range, `ip:port` endpoint; when two servers claim one address, the first by name keeps it). It changes nothing while SnugKV cannot be read, and the interface stays up when the unit stops or restarts, so the mesh never depends on SnugKV being up. Until the first sync, it uses the peers the console gave at join (`mesh-peers.json`), so a new server can reach SnugKV over the mesh right away.
+
+To keep SnugKV off the internet: join the SnugKV server first (it gets `.1`), set the region's agent address in the console to `redis://agent:PASSWORD@10.88.<n>.1:6380`, and let the firewall close the SnugKV port to the outside (join.sh allows only SSH, WireGuard and, on ingress servers, 80/443 in; everything from `snug0` is allowed).
+
+Options of `snug-agent mesh`: `-ip` (`SNUG_AGENT_MESH_IP`, from join), `-key`, `-endpoint` (`SNUG_AGENT_ENDPOINT`; default: the server's address towards the internet), `-port` (51820), `-iface` (snug0). `snug-agent join -no-mesh` joins without it.
+
+Anyone who can write `snug:agent:mesh:<region>` can add a peer to the region's mesh: keep the agent password as safe as the servers (signed commands, a later phase, will not depend on it).
+
 ## Run it on a server (systemd)
 
 ```bash
@@ -73,7 +89,7 @@ The server name is the host's name unless `SNUG_AGENT_SERVER` says otherwise.
 With ACLs, give the agents their own user that can only write their keys:
 
 ```text
-user agent on >AGENT-PASSWORD ~snug:agent:* +set +zadd +xadd +del +auth +ping
+user agent on >AGENT-PASSWORD ~snug:agent:* +set +zadd +xadd +del +hset +hgetall +auth +ping
 ```
 
 ## What it writes
@@ -83,6 +99,7 @@ user agent on >AGENT-PASSWORD ~snug:agent:* +set +zadd +xadd +del +auth +ping
 | `snug:agent:servers` | sorted set | `<region>/<server>` → time of the last report (ms) |
 | `snug:agent:card:<region>:<server>` | string (JSON) | inventory, latest metrics, disks, interfaces, containers; expires after 3 intervals, so a server that stops reporting shows as offline |
 | `snug:agent:metrics:<region>:<server>` | stream | one sample per interval (`s` = `{"c":cpu%,"m":memory used,"l":load,"rx","tx","rd","wr":bytes/s,"d":fullest disk %,"r":running containers}`), trimmed to the retention |
+| `snug:agent:mesh:<region>` | hash | server → `{"publicKey","ip","endpoint","peersTotal","peersUp","updatedMs","error"}`, written by `snug-agent mesh` |
 
 A stopped agent deletes its card at once. The console's Servers page can forget a server that no longer reports.
 

@@ -13,17 +13,19 @@ import (
 )
 
 // Version is reported on the card.
-const Version = "0.1.0"
+const Version = "0.2.0"
 
 // Keys in SnugKV (the console's Servers page reads them):
 //
 //	snug:agent:servers                    ZSET  "<region>/<server>" -> last report (ms)
 //	snug:agent:card:<region>:<server>     JSON  inventory + latest sample; expires, so a stopped agent shows as offline
 //	snug:agent:metrics:<region>:<server>  STREAM one compact sample per interval, kept for Retention
+//	snug:agent:mesh:<region>              HASH  server -> MeshRecord JSON (snug-agent mesh, see mesh.go)
 const (
 	KeyServers = "snug:agent:servers"
 	KeyCard    = "snug:agent:card:"
 	KeyMetrics = "snug:agent:metrics:"
+	KeyMesh    = "snug:agent:mesh:"
 )
 
 var nameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
