@@ -39,6 +39,8 @@ type JoinConfig struct {
 	CA        string       `json:"ca,omitempty"`        // PEM, for rediss:// with a private CA
 	MeshIP    string       `json:"meshIp,omitempty"`    // this server's address in the region's WireGuard mesh, 10.88.1.5/24
 	MeshPeers []MeshRecord `json:"meshPeers,omitempty"` // the region's servers at join time, to reach them before SnugKV
+	// The console's Ed25519 public key: the agent runs only commands it signed
+	CommandKey string `json:"commandKey,omitempty"`
 }
 
 // Join redeems a join token at the console and returns this server's agent
@@ -122,6 +124,12 @@ func WriteConfig(dir string, c JoinConfig) error {
 	line("SNUG_AGENT_SERVER", c.Server)
 	if c.MeshIP != "" {
 		line("SNUG_AGENT_MESH_IP", c.MeshIP)
+	}
+	if c.CommandKey != "" {
+		if _, err := ParseCommandKey(c.CommandKey); err != nil {
+			return err
+		}
+		line("SNUG_AGENT_COMMAND_KEY", c.CommandKey)
 	}
 	if c.CA != "" {
 		ca := filepath.Join(dir, "ca.pem")

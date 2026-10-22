@@ -13,7 +13,7 @@ import (
 )
 
 // Version is reported on the card.
-const Version = "0.2.0"
+const Version = "0.3.0"
 
 // Keys in SnugKV (the console's Servers page reads them):
 //
@@ -40,7 +40,11 @@ type Options struct {
 	Retention time.Duration // how long samples are kept (default 24h)
 	Paths     Paths
 	Docker    string // Docker socket; "" disables, default /var/run/docker.sock
-	Logf      func(format string, args ...any)
+	// Commands from the console: its Ed25519 public key (base64); empty turns commands off
+	CommandKey string
+	StateDir   string // where the agent keeps the last command it handled (systemd StateDirectory)
+	MeshIP     string // this server's mesh address with prefix (swarm commands use it)
+	Logf       func(format string, args ...any)
 }
 
 // Card is what the console shows for a server.
@@ -57,6 +61,7 @@ type Card struct {
 	NICs       []NIC     `json:"nics"`
 	Disks      []Disk    `json:"disks"`
 	Docker     *Docker   `json:"docker,omitempty"`
+	Commands   bool      `json:"commands"` // takes signed commands from the console
 }
 
 // sample is one entry of the metrics stream (short names: it is stored every few seconds).
@@ -115,6 +120,14 @@ func Run(ctx context.Context, o Options) error {
 		dock = newDockerClient(o.Docker)
 	}
 	card := Card{V: 1, Region: o.Region, Server: o.Server, Agent: Version, StartedMs: time.Now().UnixMilli(), IntervalMs: o.Interval.Milliseconds()}
+	if o.CommandKey != "" {
+		if cr, err := newCommandRunner(o, dock); err != nil {
+			o.Logf("commands: off: %v", err)
+		} else {
+			card.Commands = true
+			go cr.loop(ctx)
+		}
+	}
 	id := o.Region + "/" + o.Server
 	cardKey := KeyCard + o.Region + ":" + o.Server
 	streamKey := KeyMetrics + o.Region + ":" + o.Server
