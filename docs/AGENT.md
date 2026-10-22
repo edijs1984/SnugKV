@@ -2,6 +2,20 @@
 
 `snug-agent` reports the server it runs on to SnugKV every few seconds; the console's **Servers** page shows it: CPU, memory, load, disks, disk I/O, network, OS and hardware, Docker containers (with health) and the Swarm role. It is one static binary that reads `/proc`, `/sys` and the Docker socket, and talks to SnugKV like any client (password and TLS supported). It only reads; it changes nothing on the server.
 
+## Add a server from the console (easiest)
+
+In the console, **Servers > Add server** creates a one-time command for a fresh Debian 12+ / Ubuntu 22.04+ machine:
+
+```bash
+curl -fsSL 'https://panel.example.com/join.sh' | sudo bash -s -- --panel 'https://panel.example.com' --token snj_...
+```
+
+It downloads `snug-agent` (from the latest GitHub release, checksum checked), runs `snug-agent join`, which trades the token for the region's SnugKV address and writes `/etc/snug-agent/agent.env`, then installs Docker, the systemd unit below, automatic security updates, key-only SSH and a firewall (`table inet snug`: SSH, WireGuard and, with `--ingress`, 80/443 in; nothing else). See the console's README for the options.
+
+`snug-agent join -panel URL -token TOKEN [-name NAME] [-dir /etc/snug-agent]` can also be run by hand.
+
+Binaries: pushing a tag `v*` runs `.github/workflows/release.yml`, which attaches `snug-agent-linux-amd64`, `snug-agent-linux-arm64` and `SHA256SUMS` to the release.
+
 ## Run it on a server (systemd)
 
 ```bash

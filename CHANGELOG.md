@@ -1,5 +1,10 @@
 # Changelog
 
+### Feature — joining servers from the console
+
+- `snug-agent join -panel URL -token TOKEN`: redeems a one-time join token from the console (Servers > Add server) and writes `/etc/snug-agent/agent.env` (0600) for the systemd unit. Used by the console's `join.sh`.
+- Release workflow: a `v*` tag attaches `snug-agent-linux-amd64`, `snug-agent-linux-arm64` and `SHA256SUMS` to the GitHub release, where `join.sh` downloads them.
+
 ### Feature — snug-agent, server monitoring
 
 - New `cmd/snug-agent`: a static binary (also in the image at `/snug-agent`) that reports the server it runs on to SnugKV every few seconds: CPU, memory, load, disks, disk I/O, network, OS and hardware, Docker containers with health, and the Swarm role. The console's Servers page shows it. Reads `/proc`, `/sys` and the Docker socket only; password and TLS supported. See `docs/AGENT.md`.

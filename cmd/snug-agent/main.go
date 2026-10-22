@@ -1,5 +1,9 @@
 // Command snug-agent reports the server it runs on to SnugKV for the
 // console's Servers page. See docs/AGENT.md.
+//
+//	snug-agent [flags]                       report this server
+//	snug-agent join -panel URL -token TOKEN  redeem a join token from the console
+//	                                         and write /etc/snug-agent/agent.env
 package main
 
 import (
@@ -10,11 +14,16 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"snugkv/internal/agent"
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "join" {
+		join(os.Args[2:])
+		return
+	}
 	var o agent.Options
 	flag.StringVar(&o.URL, "url", os.Getenv("SNUG_AGENT_URL"), "SnugKV address: redis://:password@host:6380 or rediss://… (env SNUG_AGENT_URL)")
 	flag.StringVar(&o.CAFile, "ca", os.Getenv("SNUG_AGENT_CA"), "CA certificate for rediss:// with a private CA (env SNUG_AGENT_CA)")
@@ -44,6 +53,31 @@ func main() {
 	if err := agent.Run(ctx, o); err != nil {
 		log.Fatalf("snug-agent: %v", err)
 	}
+}
+
+// join redeems a one-time join token (Servers > Add server in the console)
+// and stores what the console answers for the systemd unit.
+func join(args []string) {
+	fs := flag.NewFlagSet("join", flag.ExitOnError)
+	panel := fs.String("panel", os.Getenv("SNUG_PANEL"), "console address, e.g. https://panel.example.com")
+	token := fs.String("token", os.Getenv("SNUG_JOIN_TOKEN"), "one-time join token")
+	name := fs.String("name", "", "server name (default: host name)")
+	dir := fs.String("dir", "/etc/snug-agent", "where to write agent.env (and ca.pem)")
+	_ = fs.Parse(args)
+	if *panel == "" || *token == "" {
+		fmt.Fprintln(os.Stderr, "usage: snug-agent join -panel https://console -token TOKEN [-name NAME]")
+		os.Exit(2)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	cfg, err := agent.Join(ctx, *panel, *token, *name, agent.Paths{})
+	if err != nil {
+		log.Fatalf("snug-agent join: %v", err)
+	}
+	if err := agent.WriteConfig(*dir, cfg); err != nil {
+		log.Fatalf("snug-agent join: writing %s: %v", *dir, err)
+	}
+	fmt.Printf("joined region %s as %s\n", cfg.Region, cfg.Server)
 }
 
 func envOr(k, def string) string {

@@ -1,0 +1,32 @@
+# Push a tag like v1.2.3 to publish snug-agent binaries on the GitHub release.
+# The console's join script downloads them from
+#   https://github.com/<owner>/<repo>/releases/latest/download/snug-agent-linux-<arch>
+# (set AGENT_DOWNLOAD_URL on the console to host them on your own servers instead).
+name: release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test -count=1 ./internal/agent
+      - name: build
+        run: |
+          mkdir -p dist
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath -ldflags "-s -w" -o dist/snug-agent-linux-$arch ./cmd/snug-agent
+          done
+          (cd dist && sha256sum snug-agent-linux-* > SHA256SUMS)
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --generate-notes --title "$GITHUB_REF_NAME"
+          gh release upload "$GITHUB_REF_NAME" dist/* --clobber
