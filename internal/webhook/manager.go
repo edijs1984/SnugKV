@@ -47,6 +47,10 @@ type workerState struct {
 	done   chan struct{}
 	sig    string
 	errMsg atomic.Value // string
+	// ready is set once the consumer group exists: from then on every new
+	// message of the topic is delivered. Before it, "running" would be a lie
+	// for a group that starts at "$".
+	ready atomic.Bool
 }
 
 // Manager runs the webhooks.
@@ -309,7 +313,7 @@ func (m *Manager) reconcile() {
 					return
 				}
 			}
-			m.runOutbound(ctx, oc, func(s string) { w.errMsg.Store(s) })
+			m.runOutbound(ctx, oc, func(s string) { w.errMsg.Store(s) }, func() { w.ready.Store(true) })
 		}()
 	}
 }
@@ -334,7 +338,7 @@ func (m *Manager) status(d Definition) (running bool, errMsg string) {
 			return false, ""
 		}
 		e, _ := w.errMsg.Load().(string)
-		return e == "", e
+		return e == "" && w.ready.Load(), e
 	}
 	return false, ""
 }
