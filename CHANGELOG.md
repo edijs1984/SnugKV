@@ -1,5 +1,9 @@
 # Changelog
 
+### Feature — snug-agent, server monitoring
+
+- New `cmd/snug-agent`: a static binary (also in the image at `/snug-agent`) that reports the server it runs on to SnugKV every few seconds: CPU, memory, load, disks, disk I/O, network, OS and hardware, Docker containers with health, and the Swarm role. The console's Servers page shows it. Reads `/proc`, `/sys` and the Docker socket only; password and TLS supported. See `docs/AGENT.md`.
+
 ### Secrets module: admin tokens, expiry, key rotation
 
 - Named admin tokens (`ska_…`) created through the API: each shows up under its own name in the audit log and can be revoked on its own. Read and admin tokens can expire (`ttlDays`).
