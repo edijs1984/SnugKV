@@ -30,9 +30,11 @@ import (
 // UpdateRequest is what the agent writes for the root updater.
 type UpdateRequest struct {
 	ID          string `json:"id"`
-	URL         string `json:"url"`
-	SHA256      string `json:"sha256"`
+	URL         string `json:"url,omitempty"`
+	SHA256      string `json:"sha256,omitempty"`
 	RequestedMs int64  `json:"requestedMs"`
+	// Remove: take the agent off this server instead (agent.remove, see Uninstall)
+	Remove bool `json:"remove,omitempty"`
 }
 
 // UpdateResult is written next to the request by the updater.
@@ -48,6 +50,9 @@ type UpdateResult struct {
 var sha256Re = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 func checkUpdate(req UpdateRequest) error {
+	if req.Remove {
+		return nil
+	}
 	u, err := url.Parse(req.URL)
 	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
 		return errors.New("the download address must be an http(s) URL")
@@ -100,6 +105,51 @@ func (r *commandRunner) requestUpdate(c Command) (any, string, error) {
 	return map[string]bool{"requested": true}, "update requested: the updater downloads and checks the new agent, then restarts it (about a minute)", nil
 }
 
+// requestRemove hands "take the agent off this server" to the root updater.
+func (r *commandRunner) requestRemove(c Command) (any, string, error) {
+	if r.o.StateDir == "" {
+		return nil, "", errors.New("this agent has no state directory (it was not installed by the join script)")
+	}
+	b, _ := json.Marshal(UpdateRequest{ID: c.ID, RequestedMs: time.Now().UnixMilli(), Remove: true})
+	if err := writeFileAtomic(filepath.Join(r.o.StateDir, "update.json"), b, 0o644); err != nil {
+		return nil, "", err
+	}
+	return map[string]bool{"requested": true}, "removal requested: the agent leaves the swarm, stops and deletes itself (Docker and the SSH settings stay)", nil
+}
+
+// Uninstall takes the platform off this server (root): leaves the swarm, stops and
+// deletes the agent, mesh, updater and firewall units, the WireGuard interface,
+// the agent's settings, state and binary. Docker, its containers' images and the
+// SSH settings stay. root stands in for / in tests. Returns what was done.
+func Uninstall(ctx context.Context, run func(ctx context.Context, name string, args ...string) error, root string) []string {
+	var done []string
+	try := func(what, name string, args ...string) {
+		if run(ctx, name, args...) == nil {
+			done = append(done, what)
+		}
+	}
+	try("left the swarm", "docker", "swarm", "leave", "--force")
+	units := []string{"snug-agent.service", "snug-mesh.service", "snug-firewall.service", "snug-agent-update.path", "snug-agent-update.service"}
+	try("stopped the units", "systemctl", append([]string{"disable", "--now"}, units...)...)
+	try("removed the mesh interface", "ip", "link", "delete", "snug0")
+	try("removed the firewall table", "nft", "delete", "table", "inet", "snug")
+	for _, f := range []string{
+		"/etc/systemd/system/snug-agent.service", "/etc/systemd/system/snug-mesh.service", "/etc/systemd/system/snug-firewall.service",
+		"/etc/systemd/system/snug-agent-update.path", "/etc/systemd/system/snug-agent-update.service",
+		"/etc/modules-load.d/snug-wireguard.conf", "/etc/snug-agent", "/etc/snug", "/var/lib/private/snug-agent", "/var/lib/snug-agent",
+		"/usr/local/bin/snug-agent",
+	} {
+		_ = os.RemoveAll(filepath.Join(root, f))
+	}
+	done = append(done, "deleted the agent's files")
+	try("reloaded systemd", "systemctl", "daemon-reload")
+	return done
+}
+
+func runCommand(ctx context.Context, name string, args ...string) error {
+	return exec.CommandContext(ctx, name, args...).Run()
+}
+
 // SelfUpdate is the root half (`snug-agent self-update`): download, check,
 // swap, restart. Its result goes to update.result next to the request.
 func SelfUpdate(ctx context.Context, requestFile, binPath string, restart func() error) (res UpdateResult) {
@@ -128,6 +178,11 @@ func SelfUpdate(ctx context.Context, requestFile, binPath string, restart func()
 	}
 	if time.Since(time.UnixMilli(req.RequestedMs)) > 15*time.Minute {
 		res.Message = "request too old"
+		return
+	}
+	if req.Remove {
+		steps := Uninstall(ctx, runCommand, "")
+		res.OK, res.Message = true, "removed: "+strings.Join(steps, "; ")
 		return
 	}
 	res.From = binVersion(binPath)

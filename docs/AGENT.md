@@ -53,6 +53,10 @@ So the SnugKV password alone is not enough to run anything on a server. Commands
 | `stack.rm`, `stack.services` | remove a stack, list its services |
 | `service.scale`, `service.restart`, `service.rollback`, `service.logs` | on one service (`restart` is a rolling `update --force`) |
 | `registry.login` | `docker login` for private images, password sealed to this server |
+| `node.ls` | every swarm node: role, availability, state, mesh address, labels (manager) |
+| `node.update` | availability `active`/`pause`/`drain`, role `manager`/`worker`, labels to add or remove (manager) |
+| `node.rm` | removes a node that left the swarm (`force` for one that is down) (manager) |
+| `agent.remove` | takes the platform off this server (see below) |
 
 Secret values in commands are sealed to the server (`box.go`): the agent keeps an X25519 key in its state directory and shows the public half on its card (`boxKey`); the console seals each value with a one-time key (X25519 + HKDF-SHA256 + AES-256-GCM, bound to the region and server). So values never sit in SnugKV in clear, and a value sealed for one server cannot be opened by another. The docker CLI keeps its config (registry logins) in the agent's state directory.
 
@@ -67,6 +71,10 @@ printf '[Unit]\nDescription=snug-agent update (asked for by the console)\n\n[Ser
 printf '[Unit]\nDescription=snug-agent update requests\n\n[Path]\nPathExists=/var/lib/private/snug-agent/update.json\n\n[Install]\nWantedBy=multi-user.target\n' > /etc/systemd/system/snug-agent-update.path
 systemctl daemon-reload && systemctl enable --now snug-agent-update.path
 ```
+
+## Removing a server
+
+The console's **Remove server** drains the server (its containers move to the others), demotes it if it is a manager, then sends `agent.remove`. Like an update, the unprivileged agent only writes `update.json` (`"remove": true`); `snug-agent self-update` (root) then leaves the swarm, stops and disables `snug-agent`, `snug-mesh`, `snug-firewall` and the updater units, deletes the WireGuard interface, the firewall table, `/etc/snug-agent`, `/etc/snug`, the agent's state (keys) and the binary. Docker, images and the SSH settings stay. The console then removes the node from the swarm and forgets the server and its mesh address.
 
 A new swarm gets an `ingress` network with MTU 1370, so published ports work over the mesh.
 
