@@ -88,6 +88,17 @@ type stackArgs struct {
 	Extra    json.RawMessage `json:"extra,omitempty"`
 }
 
+// TaskRow is one task of a service (`docker service ps`): where it runs or ran, and why it stopped.
+type TaskRow struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Image   string `json:"image"`
+	Node    string `json:"node"`
+	Desired string `json:"desired"`
+	Current string `json:"current"`
+	Error   string `json:"error,omitempty"`
+}
+
 // ServiceRow is one line of `docker stack services`.
 type ServiceRow struct {
 	ID       string `json:"id"`
@@ -213,6 +224,22 @@ func (r *commandRunner) runStack(ctx context.Context, c Command) (any, string, e
 		}
 		out, err := r.dockerCLI(ctx, time.Minute, nil, "", "service", "rollback", "--detach", a.Service)
 		return nil, out, err
+	case "service.ps":
+		if err := needService(); err != nil {
+			return nil, "", err
+		}
+		out, err := r.dockerCLI(ctx, 20*time.Second, nil, "", "service", "ps", "--no-trunc", "--format", "{{json .}}", a.Service)
+		if err != nil {
+			return nil, out, err
+		}
+		rows := []TaskRow{}
+		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+			var raw map[string]string
+			if json.Unmarshal([]byte(line), &raw) == nil {
+				rows = append(rows, TaskRow{ID: raw["ID"], Name: raw["Name"], Image: raw["Image"], Node: raw["Node"], Desired: raw["DesiredState"], Current: raw["CurrentState"], Error: raw["Error"]})
+			}
+		}
+		return rows, "", nil
 	case "service.logs":
 		if err := needService(); err != nil {
 			return nil, "", err

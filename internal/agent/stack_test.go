@@ -54,6 +54,7 @@ func fakeCLI(t *testing.T) (bin, log string) {
 case "$1 $2" in
   "stack services") echo '{"ID":"abc","Name":"web_api","Mode":"replicated","Replicas":"2/2","Image":"nginx:1","Ports":"*:80->80/tcp"}';;
   "stack deploy") echo "Creating service web_api";;
+  "service ps") echo '{"ID":"t1","Name":"web_api.1","Image":"nginx:1","Node":"kv-1","DesiredState":"Running","CurrentState":"Running 2 minutes ago","Error":""}'; echo '{"ID":"t0","Name":"web_api.1","Image":"nginx:1","Node":"kv-2","DesiredState":"Shutdown","CurrentState":"Failed 3 minutes ago","Error":"task: non-zero exit (1)"}';;
 esac
 `
 	must(t, os.WriteFile(bin, []byte(script), 0o755))
@@ -94,6 +95,11 @@ func TestStackCommands(t *testing.T) {
 	must(t, err)
 	if r := rows.([]ServiceRow); len(r) != 1 || r[0].Replicas != "2/2" || r[0].Name != "web_api" {
 		t.Fatalf("services: %+v", rows)
+	}
+	tasks, _, err := cr.run(context.Background(), Command{Kind: "service.ps", Args: json.RawMessage(`{"service":"web_api"}`)})
+	must(t, err)
+	if tr := tasks.([]TaskRow); len(tr) != 2 || tr[0].Node != "kv-1" || tr[1].Error != "task: non-zero exit (1)" || tr[1].Desired != "Shutdown" {
+		t.Fatalf("service.ps: %+v", tasks)
 	}
 	for _, c := range []struct{ kind, args, want string }{
 		{"service.scale", `{"service":"web_api","replicas":3}`, "ARGS service scale --detach web_api=3"},

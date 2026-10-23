@@ -1,5 +1,9 @@
 # Changelog
 
+### Feature — service tasks
+
+- `service.ps`: a service's tasks with node, desired/current state and error (the console's Tasks view). Agent version 0.6.1.
+
 ### Feature — swarm nodes and removing a server
 
 - Agent commands on a manager: `node.ls` (role, availability, state, address, labels), `node.update` (drain/pause/active, promote/demote, labels such as a data center), `node.rm`.
