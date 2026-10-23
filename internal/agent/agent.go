@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -13,7 +14,7 @@ import (
 )
 
 // Version is reported on the card.
-const Version = "0.4.0"
+const Version = "0.5.0"
 
 // Keys in SnugKV (the console's Servers page reads them):
 //
@@ -63,6 +64,10 @@ type Card struct {
 	Docker     *Docker   `json:"docker,omitempty"`
 	Commands   bool      `json:"commands"`         // takes signed commands from the console
 	BoxKey     string    `json:"boxKey,omitempty"` // X25519 key the console seals secrets to (box.go)
+	// SHA-256 of the agent binary, so the console can tell an update is available
+	BinSHA256 string        `json:"binSha256,omitempty"`
+	Updater   bool          `json:"updater"`          // the root updater unit is installed
+	Update    *UpdateResult `json:"update,omitempty"` // last update by the console
 }
 
 // sample is one entry of the metrics stream (short names: it is stored every few seconds).
@@ -121,10 +126,13 @@ func Run(ctx context.Context, o Options) error {
 		dock = newDockerClient(o.Docker)
 	}
 	card := Card{V: 1, Region: o.Region, Server: o.Server, Agent: Version, StartedMs: time.Now().UnixMilli(), IntervalMs: o.Interval.Milliseconds()}
+	card.BinSHA256 = BinarySHA256()
+	updateState(o, &card)
 	if o.CommandKey != "" {
 		if cr, err := newCommandRunner(o, dock); err != nil {
 			o.Logf("commands: off: %v", err)
 		} else {
+			cr.binSHA = card.BinSHA256
 			card.Commands, card.BoxKey = true, cr.BoxKey()
 			go cr.loop(ctx)
 		}
@@ -155,6 +163,7 @@ func Run(ctx context.Context, o Options) error {
 		}
 		if now.Sub(lastDisks) > 30*time.Second {
 			card.Disks, lastDisks = col.disks(), now
+			updateState(o, &card)
 		}
 		card.Metrics, card.NICs = col.sample()
 		if dock != nil {
@@ -199,4 +208,17 @@ func report(kv *kvConn, card *Card, id, cardKey, streamKey, keep, ttl string) er
 		return fmt.Errorf("metrics: %w", err)
 	}
 	return nil
+}
+
+// updateState puts the updater's presence and its last result on the card.
+func updateState(o Options, card *Card) {
+	if o.StateDir == "" {
+		return
+	}
+	var u UpdateResult
+	if b, err := os.ReadFile(filepath.Join(o.StateDir, "update.result")); err == nil && json.Unmarshal(b, &u) == nil {
+		card.Update = &u
+	}
+	_, err := os.Stat("/etc/systemd/system/snug-agent-update.path")
+	card.Updater = err == nil
 }

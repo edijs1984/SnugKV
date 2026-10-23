@@ -106,6 +106,7 @@ type commandRunner struct {
 	box    *ecdh.PrivateKey // opens values sealed to this server
 	// docker CLI (tests use a fake)
 	dockerBin string
+	binSHA    string // SHA-256 of the running binary
 	mu        sync.Mutex
 	seen      map[string]int64 // id -> expiry, against replays
 	state     string           // file with the last stream id handled
@@ -391,6 +392,9 @@ func (r *commandRunner) run(_ context.Context, c Command) (data any, output stri
 	}
 	if isStackKind(c.Kind) {
 		return r.runStack(context.Background(), c)
+	}
+	if c.Kind == "agent.update" {
+		return r.requestUpdate(c)
 	}
 	return nil, "", fmt.Errorf("unknown command %q", c.Kind)
 }

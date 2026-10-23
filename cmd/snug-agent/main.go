@@ -5,6 +5,7 @@
 //	snug-agent join -panel URL -token TOKEN  redeem a join token from the console
 //	                                         and write /etc/snug-agent/agent.env
 //	snug-agent mesh                          (root) keep this server in the region's WireGuard mesh
+//	snug-agent self-update                   (root) install the update the console asked for
 package main
 
 import (
@@ -25,6 +26,10 @@ import (
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "join" {
 		join(os.Args[2:])
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "self-update" {
+		selfUpdate(os.Args[2:])
 		return
 	}
 	if len(os.Args) > 1 && os.Args[1] == "mesh" {
@@ -140,6 +145,23 @@ func mesh(args []string) {
 	if err := agent.RunMesh(ctx, o); err != nil {
 		log.Fatalf("snug-agent mesh: %v", err)
 	}
+}
+
+// selfUpdate runs from snug-agent-update.service when the agent wrote an update
+// request (the console's signed agent.update command).
+func selfUpdate(args []string) {
+	fs := flag.NewFlagSet("self-update", flag.ExitOnError)
+	request := fs.String("request", "/var/lib/private/snug-agent/update.json", "update request written by the agent")
+	bin := fs.String("bin", "/usr/local/bin/snug-agent", "the agent binary to replace")
+	_ = fs.Parse(args)
+	if _, err := os.Stat(*request); err != nil {
+		return // nothing requested (the path unit also fires when the file goes away)
+	}
+	res := agent.SelfUpdate(context.Background(), *request, *bin, agent.RestartServices)
+	if !res.OK {
+		log.Fatalf("snug-agent self-update: %s", res.Message)
+	}
+	log.Printf("snug-agent self-update: %s", res.Message)
 }
 
 func envOr(k, def string) string {

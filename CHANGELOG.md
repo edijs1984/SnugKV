@@ -1,5 +1,10 @@
 # Changelog
 
+### Feature — agent updates from the console
+
+- Signed command `agent.update` (URL + SHA-256): the unprivileged agent writes `update.json` to its state directory; `snug-agent self-update` (root, started by `snug-agent-update.path` from the join script) downloads, checks the SHA-256, checks that the binary runs, swaps it in and restarts the agent and the mesh. The request is removed either way; the result is on the card.
+- The card shows the binary's SHA-256 (`binSha256`), whether the updater is installed and the last update. Agent version 0.5.0.
+
 ### Feature — stacks on the swarm
 
 - Agent commands `stack.deploy`, `stack.rm`, `stack.services`, `service.scale`, `service.restart`, `service.rollback`, `service.logs`, `registry.login` (docker CLI on a manager).

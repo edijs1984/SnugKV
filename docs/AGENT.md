@@ -56,6 +56,18 @@ So the SnugKV password alone is not enough to run anything on a server. Commands
 
 Secret values in commands are sealed to the server (`box.go`): the agent keeps an X25519 key in its state directory and shows the public half on its card (`boxKey`); the console seals each value with a one-time key (X25519 + HKDF-SHA256 + AES-256-GCM, bound to the region and server). So values never sit in SnugKV in clear, and a value sealed for one server cannot be opened by another. The docker CLI keeps its config (registry logins) in the agent's state directory.
 
+## Updating the agent from the console
+
+Servers > (region) shows how many agents are older than the newest release (the console compares each agent's binary SHA-256, on its card, with the release's `SHA256SUMS`); **Update all**, or **Update agent** on a server's page, sends the signed `agent.update` command with the download URL and checksum. The agent itself is unprivileged, so it only writes `update.json` to its state directory; the root unit `snug-agent-update.path` (installed by the join script) starts `snug-agent self-update`, which downloads the binary, checks the SHA-256, checks that it runs, swaps it in and restarts `snug-agent` and `snug-mesh`. Containers keep running. The result is on the server's card (`update`) and page.
+
+Servers joined before agent 0.5 have no updater unit: install it once (as root):
+
+```bash
+printf '[Unit]\nDescription=snug-agent update (asked for by the console)\n\n[Service]\nType=oneshot\nExecStart=/usr/local/bin/snug-agent self-update\n' > /etc/systemd/system/snug-agent-update.service
+printf '[Unit]\nDescription=snug-agent update requests\n\n[Path]\nPathExists=/var/lib/private/snug-agent/update.json\n\n[Install]\nWantedBy=multi-user.target\n' > /etc/systemd/system/snug-agent-update.path
+systemctl daemon-reload && systemctl enable --now snug-agent-update.path
+```
+
 A new swarm gets an `ingress` network with MTU 1370, so published ports work over the mesh.
 
 In the console: Servers shows a Swarm line under each region (create the swarm on one server, then add the others: the first three become managers, the rest workers), and each server's page has a Commands card (ping, history). Servers that joined before need the 0.3 agent and a new join command to get the key.
