@@ -305,7 +305,7 @@ func (r *commandRunner) firstTime(c Command) bool {
 }
 
 // run does one command. Kinds: ping, swarm.init, swarm.join, swarm.leave, swarm.tokens,
-// and the stack ones in stack.go.
+// the stack ones in stack.go and the node ones in node.go.
 func (r *commandRunner) run(_ context.Context, c Command) (data any, output string, err error) {
 	var args struct {
 		Managers []string `json:"managers"`
@@ -393,8 +393,14 @@ func (r *commandRunner) run(_ context.Context, c Command) (data any, output stri
 	if isStackKind(c.Kind) {
 		return r.runStack(context.Background(), c)
 	}
+	if isNodeKind(c.Kind) {
+		return r.runNode(context.Background(), c)
+	}
 	if c.Kind == "agent.update" {
 		return r.requestUpdate(c)
+	}
+	if c.Kind == "agent.remove" {
+		return r.requestRemove(c)
 	}
 	return nil, "", fmt.Errorf("unknown command %q", c.Kind)
 }

@@ -1,5 +1,11 @@
 # Changelog
 
+### Feature — swarm nodes and removing a server
+
+- Agent commands on a manager: `node.ls` (role, availability, state, address, labels), `node.update` (drain/pause/active, promote/demote, labels such as a data center), `node.rm`.
+- `agent.remove`: the root updater leaves the swarm and deletes the agent, mesh, firewall and updater units, the WireGuard interface, settings, keys and binary; Docker and SSH settings stay.
+- Agent version 0.6.0.
+
 ### Release — server image on GitHub
 
 - A `v*` tag also publishes `ghcr.io/<owner>/snugkv:<version>` and `:latest` (amd64 and arm64), for swarm stacks. Agent version 0.5.1.
