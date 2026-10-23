@@ -1,5 +1,9 @@
 # Changelog
 
+### Release — server image on GitHub
+
+- A `v*` tag also publishes `ghcr.io/<owner>/snugkv:<version>` and `:latest` (amd64 and arm64), for swarm stacks. Agent version 0.5.1.
+
 ### Feature — agent updates from the console
 
 - Signed command `agent.update` (URL + SHA-256): the unprivileged agent writes `update.json` to its state directory; `snug-agent self-update` (root, started by `snug-agent-update.path` from the join script) downloads, checks the SHA-256, checks that the binary runs, swaps it in and restarts the agent and the mesh. The request is removed either way; the result is on the card.
