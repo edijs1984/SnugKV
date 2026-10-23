@@ -53,6 +53,7 @@ So the SnugKV password alone is not enough to run anything on a server. Commands
 | `stack.rm`, `stack.services` | remove a stack, list its services |
 | `service.scale`, `service.restart`, `service.rollback`, `service.logs` | on one service (`restart` is a rolling `update --force`) |
 | `registry.login` | `docker login` for private images, password sealed to this server |
+| `service.ps` | a service's tasks: node, desired and current state, error (why a container stopped) |
 | `node.ls` | every swarm node: role, availability, state, mesh address, labels (manager) |
 | `node.update` | availability `active`/`pause`/`drain`, role `manager`/`worker`, labels to add or remove (manager) |
 | `node.rm` | removes a node that left the swarm (`force` for one that is down) (manager) |

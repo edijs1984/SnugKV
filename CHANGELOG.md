@@ -4,6 +4,7 @@
 
 - Agent commands on a manager: `node.ls` (role, availability, state, address, labels), `node.update` (drain/pause/active, promote/demote, labels such as a data center), `node.rm`.
 - `agent.remove`: the root updater leaves the swarm and deletes the agent, mesh, firewall and updater units, the WireGuard interface, settings, keys and binary; Docker and SSH settings stay.
+- `service.ps`: a service's tasks with node, desired/current state and error.
 - Agent version 0.6.0.
 
 ### Release — server image on GitHub
