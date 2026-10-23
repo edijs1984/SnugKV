@@ -230,6 +230,7 @@ func (d *dockerClient) swarmInit(addr string) (SwarmTokens, error) {
 	if err := d.post("/swarm/init", req, &nodeID); err != nil {
 		return SwarmTokens{}, err
 	}
+	d.ingressMTU()
 	t, err := d.swarmTokens()
 	t.AdvertiseAddr = addr
 	return t, err
@@ -254,4 +255,32 @@ func (d *dockerClient) swarmLeave(force bool) error {
 		path += "?force=1"
 	}
 	return d.post(path, nil, nil)
+}
+
+// ingressMTU recreates the routing-mesh network of a new swarm with an MTU that
+// fits inside WireGuard (published ports would lose large packets otherwise).
+// Best effort: only possible while no service uses it.
+func (d *dockerClient) ingressMTU() {
+	req, err := http.NewRequest(http.MethodDelete, "http://docker/networks/ingress", nil)
+	if err != nil {
+		return
+	}
+	resp, err := d.slow().Do(req)
+	if err != nil {
+		return
+	}
+	resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return
+	}
+	for i := 0; i < 10; i++ { // the old one goes away asynchronously
+		err = d.post("/networks/create", map[string]any{
+			"Name": "ingress", "Driver": "overlay", "Ingress": true, "CheckDuplicate": true,
+			"Options": map[string]string{"com.docker.network.driver.mtu": OverlayMTU},
+		}, nil)
+		if err == nil {
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 }

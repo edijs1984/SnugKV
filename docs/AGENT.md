@@ -49,10 +49,18 @@ So the SnugKV password alone is not enough to run anything on a server. Commands
 | `swarm.join` | joins a swarm through the given managers, on this server's mesh address |
 | `swarm.leave` | leaves the swarm |
 | `swarm.tokens` | the join tokens (managers) |
+| `stack.deploy` | `docker stack deploy --with-registry-auth --prune` of the console's compose file; values from the secrets module arrive sealed to this server and are given to the docker CLI as environment (`${VAR}`, `environment: [VAR]`); the stack's default network gets MTU 1370 |
+| `stack.rm`, `stack.services` | remove a stack, list its services |
+| `service.scale`, `service.restart`, `service.rollback`, `service.logs` | on one service (`restart` is a rolling `update --force`) |
+| `registry.login` | `docker login` for private images, password sealed to this server |
+
+Secret values in commands are sealed to the server (`box.go`): the agent keeps an X25519 key in its state directory and shows the public half on its card (`boxKey`); the console seals each value with a one-time key (X25519 + HKDF-SHA256 + AES-256-GCM, bound to the region and server). So values never sit in SnugKV in clear, and a value sealed for one server cannot be opened by another. The docker CLI keeps its config (registry logins) in the agent's state directory.
+
+A new swarm gets an `ingress` network with MTU 1370, so published ports work over the mesh.
 
 In the console: Servers shows a Swarm line under each region (create the swarm on one server, then add the others: the first three become managers, the rest workers), and each server's page has a Commands card (ping, history). Servers that joined before need the 0.3 agent and a new join command to get the key.
 
-Overlay networks run over WireGuard: give them an MTU of 1370 (`--opt com.docker.network.driver.mtu=1370`); phase 3 will create them that way.
+Overlay networks run over WireGuard and need an MTU of 1370: the stack's default network and the swarm's ingress network get it automatically; give other networks you declare `driver_opts: {com.docker.network.driver.mtu: "1370"}`.
 
 ## Run it on a server (systemd)
 

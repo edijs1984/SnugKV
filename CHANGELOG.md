@@ -1,5 +1,12 @@
 # Changelog
 
+### Feature — stacks on the swarm
+
+- Agent commands `stack.deploy`, `stack.rm`, `stack.services`, `service.scale`, `service.restart`, `service.rollback`, `service.logs`, `registry.login` (docker CLI on a manager).
+- Secret values in commands are sealed to the server (X25519 + HKDF-SHA256 + AES-256-GCM, `boxKey` on the card).
+- Overlay MTU 1370 for the stack's default network and a new swarm's ingress network (VXLAN inside WireGuard).
+- Agent version 0.4.0.
+
 ### Feature — signed commands and Swarm over the mesh
 
 - The agent runs commands from the console, only when signed with the console's Ed25519 key (given at join, `SNUG_AGENT_COMMAND_KEY`), naming this server, current and not seen before; results on `snug:agent:results:<region>:<server>`; position kept in the systemd state directory. The card says whether commands are on.
