@@ -13,7 +13,7 @@ import (
 )
 
 // Version is reported on the card.
-const Version = "0.3.0"
+const Version = "0.4.0"
 
 // Keys in SnugKV (the console's Servers page reads them):
 //
@@ -61,7 +61,8 @@ type Card struct {
 	NICs       []NIC     `json:"nics"`
 	Disks      []Disk    `json:"disks"`
 	Docker     *Docker   `json:"docker,omitempty"`
-	Commands   bool      `json:"commands"` // takes signed commands from the console
+	Commands   bool      `json:"commands"`         // takes signed commands from the console
+	BoxKey     string    `json:"boxKey,omitempty"` // X25519 key the console seals secrets to (box.go)
 }
 
 // sample is one entry of the metrics stream (short names: it is stored every few seconds).
@@ -124,7 +125,7 @@ func Run(ctx context.Context, o Options) error {
 		if cr, err := newCommandRunner(o, dock); err != nil {
 			o.Logf("commands: off: %v", err)
 		} else {
-			card.Commands = true
+			card.Commands, card.BoxKey = true, cr.BoxKey()
 			go cr.loop(ctx)
 		}
 	}

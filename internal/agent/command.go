@@ -2,7 +2,9 @@ package agent
 
 import (
 	"context"
+	"crypto/ecdh"
 	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -97,15 +99,18 @@ func VerifyCommand(key ed25519.PublicKey, payload, sig, region, server string, n
 
 // commandRunner runs the console's commands on this server.
 type commandRunner struct {
-	o       Options
-	key     ed25519.PublicKey
-	dock    *dockerClient
-	meshIP  string
-	mu      sync.Mutex
-	seen    map[string]int64 // id -> expiry, against replays
-	state   string           // file with the last stream id handled
-	stream  string
-	results string
+	o      Options
+	key    ed25519.PublicKey
+	dock   *dockerClient
+	meshIP string
+	box    *ecdh.PrivateKey // opens values sealed to this server
+	// docker CLI (tests use a fake)
+	dockerBin string
+	mu        sync.Mutex
+	seen      map[string]int64 // id -> expiry, against replays
+	state     string           // file with the last stream id handled
+	stream    string
+	results   string
 }
 
 func newCommandRunner(o Options, dock *dockerClient) (*commandRunner, error) {
@@ -117,8 +122,18 @@ func newCommandRunner(o Options, dock *dockerClient) (*commandRunner, error) {
 		stream: KeyCommands + o.Region + ":" + o.Server, results: KeyResults + o.Region + ":" + o.Server}
 	if o.StateDir != "" {
 		r.state = filepath.Join(o.StateDir, "commands.last")
+		if r.box, err = EnsureBoxKey(o.StateDir); err != nil {
+			return nil, fmt.Errorf("sealing key: %w", err)
+		}
+	} else if r.box, err = ecdh.X25519().GenerateKey(rand.Reader); err != nil {
+		return nil, err
 	}
 	return r, nil
+}
+
+// BoxKey is the public half of the sealing key, for the card.
+func (r *commandRunner) BoxKey() string {
+	return base64.StdEncoding.EncodeToString(r.box.PublicKey().Bytes())
 }
 
 func (r *commandRunner) lastID() string {
@@ -288,7 +303,8 @@ func (r *commandRunner) firstTime(c Command) bool {
 	return true
 }
 
-// run does one command. Kinds: ping, swarm.init, swarm.join, swarm.leave, swarm.tokens.
+// run does one command. Kinds: ping, swarm.init, swarm.join, swarm.leave, swarm.tokens,
+// and the stack ones in stack.go.
 func (r *commandRunner) run(_ context.Context, c Command) (data any, output string, err error) {
 	var args struct {
 		Managers []string `json:"managers"`
@@ -372,6 +388,9 @@ func (r *commandRunner) run(_ context.Context, c Command) (data any, output stri
 			return nil, "", err
 		}
 		return nil, "left the swarm", nil
+	}
+	if isStackKind(c.Kind) {
+		return r.runStack(context.Background(), c)
 	}
 	return nil, "", fmt.Errorf("unknown command %q", c.Kind)
 }
