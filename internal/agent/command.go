@@ -393,6 +393,9 @@ func (r *commandRunner) run(_ context.Context, c Command) (data any, output stri
 	if isStackKind(c.Kind) {
 		return r.runStack(context.Background(), c)
 	}
+	if isDockerKind(c.Kind) {
+		return r.runDocker(context.Background(), c)
+	}
 	if isNodeKind(c.Kind) {
 		return r.runNode(context.Background(), c)
 	}

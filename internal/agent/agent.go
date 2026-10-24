@@ -14,7 +14,7 @@ import (
 )
 
 // Version is reported on the card.
-const Version = "0.6.1"
+const Version = "0.7.0"
 
 // Keys in SnugKV (the console's Servers page reads them):
 //

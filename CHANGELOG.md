@@ -1,5 +1,9 @@
 # Changelog
 
+### Feature — Docker clean-up
+
+- `docker.df` (disk use and what could be freed) and `docker.cleanup` (stopped containers, unused images older than 72 h by default, unused networks, build cache; never volumes), on any server. Agent version 0.7.0.
+
 ### Feature — service tasks
 
 - `service.ps`: a service's tasks with node, desired/current state and error (the console's Tasks view). Agent version 0.6.1.
