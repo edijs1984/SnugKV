@@ -1,5 +1,9 @@
 # Changelog
 
+### Feature — stack placement
+
+- `stack.deploy` takes `placement`: rules such as `node.role==worker` or `node.labels.snug.<stack>==1`, added to every service of the stack (a third compose file; the stack's own constraints stay). The console uses it to run a stack only on the servers picked for it. Agent version 0.8.0.
+
 ### Feature — Docker clean-up
 
 - `docker.df` (disk use and what could be freed) and `docker.cleanup` (stopped containers, unused images older than 72 h by default, unused networks, build cache; never volumes), on any server. Agent version 0.7.0.
