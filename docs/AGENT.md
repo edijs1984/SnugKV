@@ -49,7 +49,7 @@ So the SnugKV password alone is not enough to run anything on a server. Commands
 | `swarm.join` | joins a swarm through the given managers, on this server's mesh address |
 | `swarm.leave` | leaves the swarm |
 | `swarm.tokens` | the join tokens (managers) |
-| `stack.deploy` | `docker stack deploy --with-registry-auth --prune` of the console's compose file; values from the secrets module arrive sealed to this server and are given to the docker CLI as environment (`${VAR}`, `environment: [VAR]`); the stack's default network gets MTU 1370 |
+| `stack.deploy` | `docker stack deploy --with-registry-auth --prune` of the console's compose file; values from the secrets module arrive sealed to this server and are given to the docker CLI as environment (`${VAR}`, `environment: [VAR]`); the stack's default network gets MTU 1370; `placement` (0.8+) adds rules such as `node.role==worker` to every service |
 | `stack.rm`, `stack.services` | remove a stack, list its services |
 | `service.scale`, `service.restart`, `service.rollback`, `service.logs` | on one service (`restart` is a rolling `update --force`) |
 | `registry.login` | `docker login` for private images, password sealed to this server |

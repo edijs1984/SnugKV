@@ -140,3 +140,26 @@ func TestStackCommands(t *testing.T) {
 		t.Fatal("env sealed for another server must be refused")
 	}
 }
+
+func TestPlacementOverride(t *testing.T) {
+	compose := "version: '3.8'\n# app\nservices:\n  api:\n    image: x\n    environment:\n      - A\n  \"worker\":\n    image: y\n\nnetworks:\n  web:\n    external: true\n"
+	if got := composeServices(compose); strings.Join(got, ",") != "api,worker" {
+		t.Fatalf("services: %v", got)
+	}
+	out, err := placementOverride(compose, []string{"node.role==worker", "node.labels.snug.airsig-api==1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "version: \"3.8\"\nservices:\n  \"api\":\n    deploy:\n      placement:\n        constraints:\n          - \"node.role==worker\"\n          - \"node.labels.snug.airsig-api==1\"\n  \"worker\":\n    deploy:\n      placement:\n        constraints:\n          - \"node.role==worker\"\n          - \"node.labels.snug.airsig-api==1\"\n"
+	if out != want {
+		t.Fatalf("override:\n%s", out)
+	}
+	for _, bad := range []string{"node.role==worker; rm -rf /", "engine.labels.x==1", "node.labels.X==1", "node.role=worker"} {
+		if _, err := placementOverride(compose, []string{bad}); err == nil {
+			t.Fatalf("%q accepted", bad)
+		}
+	}
+	if _, err := placementOverride("services: {}\n", []string{"node.role==worker"}); err == nil {
+		t.Fatal("no services accepted")
+	}
+}

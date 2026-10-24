@@ -26,6 +26,8 @@ var (
 	serviceNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,120}$`)
 	envNameRe     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
 	versionLineRe = regexp.MustCompile(`(?m)^version:\s*["']?([0-9.]+)["']?\s*$`)
+	// A placement rule the console may add to every service of a stack: role or label tests only
+	placementRe = regexp.MustCompile(`^node\.(role|hostname|labels\.[a-z0-9][a-z0-9._-]{0,62})\s*(==|!=)\s*[A-Za-z0-9._:/-]{1,63}$`)
 )
 
 // OverlayMTU fits a VXLAN overlay inside WireGuard (1420 - 50).
@@ -86,6 +88,8 @@ type stackArgs struct {
 	Username string          `json:"username"`
 	Password *Sealed         `json:"password"`
 	Extra    json.RawMessage `json:"extra,omitempty"`
+	// Placement rules added to every service (agent 0.8+), e.g. node.role==worker
+	Placement []string `json:"placement,omitempty"`
 }
 
 // TaskRow is one task of a service (`docker service ps`): where it runs or ran, and why it stopped.
@@ -176,7 +180,20 @@ func (r *commandRunner) runStack(ctx context.Context, c Command) (any, string, e
 		if err := os.WriteFile(netFile, []byte(networkOverride(a.Compose)), 0o600); err != nil {
 			return nil, "", err
 		}
-		out, err := r.dockerCLI(ctx, 3*time.Minute, env, "", "stack", "deploy", "--with-registry-auth", "--prune", "-c", composeFile, "-c", netFile, a.Name)
+		files := []string{"-c", composeFile, "-c", netFile}
+		if len(a.Placement) > 0 {
+			over, err := placementOverride(a.Compose, a.Placement)
+			if err != nil {
+				return nil, "", err
+			}
+			placeFile := filepath.Join(dir, "snug-placement.yml")
+			if err := os.WriteFile(placeFile, []byte(over), 0o600); err != nil {
+				return nil, "", err
+			}
+			files = append(files, "-c", placeFile)
+		}
+		args := append([]string{"stack", "deploy", "--with-registry-auth", "--prune"}, files...)
+		out, err := r.dockerCLI(ctx, 3*time.Minute, env, "", append(args, a.Name)...)
 		return map[string]int{"envVars": len(env)}, out, err
 	case "stack.rm":
 		if err := needStack(); err != nil {
@@ -278,4 +295,68 @@ func networkOverride(compose string) string {
 	}
 	b.WriteString("networks:\n  default:\n    driver: overlay\n    driver_opts:\n      com.docker.network.driver.mtu: \"" + OverlayMTU + "\"\n")
 	return b.String()
+}
+
+// composeServices lists the services of a compose file: the keys one level under
+// the top-level services: (block style; services: {} has none).
+func composeServices(compose string) []string {
+	var out []string
+	in := false
+	indent := -1
+	for _, line := range strings.Split(compose, "\n") {
+		trimmed := strings.TrimRight(line, " \t\r")
+		if trimmed == "" || strings.HasPrefix(strings.TrimSpace(trimmed), "#") {
+			continue
+		}
+		lead := len(trimmed) - len(strings.TrimLeft(trimmed, " "))
+		if lead == 0 {
+			in = strings.HasPrefix(trimmed, "services:") && strings.TrimSpace(strings.TrimPrefix(trimmed, "services:")) == ""
+			indent = -1
+			continue
+		}
+		if !in {
+			continue
+		}
+		if indent < 0 {
+			indent = lead
+		}
+		if lead != indent {
+			continue
+		}
+		name, _, ok := strings.Cut(strings.TrimSpace(trimmed), ":")
+		name = strings.Trim(name, `"'`)
+		if ok && serviceNameRe.MatchString(name) {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// placementOverride adds placement rules to every service, merged as one more compose
+// file: docker stack deploy appends them to the services' own constraints.
+func placementOverride(compose string, rules []string) (string, error) {
+	if len(rules) > 8 {
+		return "", errors.New("at most 8 placement rules")
+	}
+	for _, p := range rules {
+		if !placementRe.MatchString(p) {
+			return "", fmt.Errorf("placement rule %q: node.role, node.hostname or node.labels.<name> with == or !=", p)
+		}
+	}
+	services := composeServices(compose)
+	if len(services) == 0 {
+		return "", errors.New("no services found in the compose file (write services: as a block, one service per key)")
+	}
+	var b strings.Builder
+	if m := versionLineRe.FindStringSubmatch(compose); m != nil {
+		fmt.Fprintf(&b, "version: %q\n", m[1])
+	}
+	b.WriteString("services:\n")
+	for _, s := range services {
+		fmt.Fprintf(&b, "  %q:\n    deploy:\n      placement:\n        constraints:\n", s)
+		for _, p := range rules {
+			fmt.Fprintf(&b, "          - %q\n", p)
+		}
+	}
+	return b.String(), nil
 }
