@@ -54,6 +54,8 @@ So the SnugKV password alone is not enough to run anything on a server. Commands
 | `service.scale`, `service.restart`, `service.rollback`, `service.logs` | on one service (`restart` is a rolling `update --force`) |
 | `registry.login` | `docker login` for private images, password sealed to this server |
 | `service.ps` | a service's tasks: node, desired and current state, error (why a container stopped) |
+| `docker.df` | what Docker uses on this server and what could be freed (`docker system df`) |
+| `docker.cleanup` | removes stopped containers, images no container uses older than `olderThanHours` (default 72, so a roll back still finds the previous image), unused networks and the build cache; **never volumes** |
 | `node.ls` | every swarm node: role, availability, state, mesh address, labels (manager) |
 | `node.update` | availability `active`/`pause`/`drain`, role `manager`/`worker`, labels to add or remove (manager) |
 | `node.rm` | removes a node that left the swarm (`force` for one that is down) (manager) |
